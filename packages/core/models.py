@@ -264,6 +264,58 @@ class InboundMessage(Base):
     at: Mapped[datetime] = _created_at()
 
 
+class Project(Base):
+    """A project imported from an external source, for résumé inclusion.
+
+    Not in CLAUDE.md §5 — added for GitHub project ingestion. These rows are
+    *source facts*: they come from the owner's own account, not from a model,
+    which is what makes putting them on a résumé compatible with §2.1. Every
+    text field here is stored exactly as the source reported it.
+    """
+
+    __tablename__ = "projects"
+
+    id: Mapped[uuid.UUID] = _pk()
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False
+    )
+    #: Where it came from. Only "github" today.
+    source: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'github'"))
+    #: The source's own id, so re-syncing updates rather than duplicates.
+    external_id: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(300))
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    homepage: Mapped[str | None] = mapped_column(Text)
+    #: Verbatim from the source. Never generated — an empty description stays
+    #: empty rather than being invented.
+    description: Mapped[str | None] = mapped_column(Text)
+    language: Mapped[str | None] = mapped_column(String(50))
+    topics_json: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    stars: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    forks: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    is_fork: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    is_private: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: Owner's explicit choice. None means "decide by the ranking rules".
+    include: Mapped[bool | None] = mapped_column(Boolean)
+    #: Always put this one on the résumé, ahead of ranked picks.
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+
+    synced_at: Mapped[datetime] = _created_at()
+    created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "source", "external_id", name="uq_projects_source_id"),
+        Index("ix_projects_candidate", "candidate_id"),
+    )
+
+
 class QueueTask(Base):
     """Postgres-backed queue. Consumed with FOR UPDATE SKIP LOCKED.
 
