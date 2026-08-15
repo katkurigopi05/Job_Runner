@@ -1,0 +1,63 @@
+[project]
+name = "jobrunner"
+version = "0.1.0"
+description = "Local, single-user job-application agent."
+requires-python = ">=3.12"
+
+# Phase 0 only. Playwright, sentence-transformers, WeasyPrint et al. arrive
+# with the phase that needs them. No paid service belongs in here.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pgvector>=0.3.6",
+    "cryptography>=43.0",
+    "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["packages*", "apps*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Reference docs are quoted verbatim — the formatter must not rewrite the code
+# blocks inside them.
+extend-exclude = ["docs", "*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# Fixtures and tests share one loop, so the session-scoped engine and the
+# per-test connection are not bound to different loops.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+
+# strict on core and ats, per CLAUDE.md §3
+[[tool.mypy.overrides]]
+module = ["packages.core.*", "packages.ats.*"]
+strict = true

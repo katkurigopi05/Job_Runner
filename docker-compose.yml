@@ -1,0 +1,22 @@
+# Postgres only. No Redis — the queue is Postgres FOR UPDATE SKIP LOCKED.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: jobrunner-postgres
+    environment:
+      POSTGRES_USER: jobrunner
+      POSTGRES_PASSWORD: jobrunner
+      POSTGRES_DB: jobrunner
+    ports:
+      - "5432:5432"
+    volumes:
+      - jobrunner-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobrunner -d jobrunner"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  jobrunner-pgdata:

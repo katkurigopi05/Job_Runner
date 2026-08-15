@@ -1,0 +1,40 @@
+"""Settings loaded from the environment. See .env.example."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    database_url: str = "postgresql+asyncpg://jobrunner:jobrunner@localhost:5432/jobrunner"
+
+    #: Nothing submits without approval unless this is flipped AND the profile
+    #: opts in above its match threshold. CLAUDE.md §2.3.
+    auto_submit: bool = False
+    min_match_score: float = 0.75
+
+    llm_provider: str = "stub"
+
+    vault_key: str | None = None
+
+    #: Floor, not a default — the crawler refuses to go below this.
+    crawler_min_delay_s: int = 60
+
+    storage_root: str = "./storage"
+
+    @property
+    def async_database_url(self) -> str:
+        """Normalize a psycopg-style URL to the asyncpg driver."""
+        url = self.database_url
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
