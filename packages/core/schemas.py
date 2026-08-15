@@ -135,3 +135,62 @@ class ApplicationEventOut(BaseModel):
     type: str
     payload: dict[str, Any] | None = Field(default=None, validation_alias="payload_json")
     at: datetime
+
+
+# --------------------------------------------------------------------------
+# Projects
+# --------------------------------------------------------------------------
+
+
+class SyncGitHubRequest(BaseModel):
+    candidate_id: uuid.UUID
+    username: str = Field(min_length=1, max_length=100)
+    #: Overrides GITHUB_TOKEN for this call. Never stored, never logged.
+    token: str | None = None
+    include_private: bool = False
+
+
+class SyncResultOut(BaseModel):
+    added: int
+    updated: int
+    total: int
+
+
+class ProjectOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    source: str
+    name: str
+    full_name: str | None
+    url: str
+    description: str | None
+    language: str | None
+    topics: list[str] = Field(default_factory=list, validation_alias="topics_json")
+    stars: int
+    is_fork: bool
+    is_archived: bool
+    is_private: bool
+    pushed_at: datetime | None
+    include: bool | None
+    pinned: bool
+
+
+class ProjectUpdate(BaseModel):
+    """Owner curation. A sync never overwrites these."""
+
+    include: bool | None = None
+    pinned: bool | None = None
+
+
+class ProjectPreview(BaseModel):
+    """What would appear on a résumé, and why it ranked where it did."""
+
+    id: uuid.UUID
+    name: str
+    description: str | None
+    url: str
+    score: float
+    pinned: bool
+    #: Exactly the text that will be rendered as the link.
+    rendered_link: str
