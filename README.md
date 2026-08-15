@@ -45,7 +45,13 @@ the architecture teardown this project is modeled on.
   requests to the same host). Apply only to postings you personally intend to
   pursue — this is not a spray-and-pray tool.
 - **Secrets never touch the database in plaintext or logs.** ATS account
-  passwords go through an encrypted vault.
+  passwords go through an encrypted vault, stored outside `storage/` so they
+  never travel with your résumés and screenshots.
+- **The API refuses non-local callers.** It has no authentication and can
+  submit real applications, so it rejects anything that is not loopback even
+  if you start it with `--host 0.0.0.0`.
+- **One worker per `WORKER_ID`.** Browser profiles are locked; a second worker
+  sharing an id fails loudly instead of corrupting the session store.
 - **Your résumé and application data are PII.** They stay on your machine in
   `storage/`, which is gitignored — nothing in there is ever committed.
 

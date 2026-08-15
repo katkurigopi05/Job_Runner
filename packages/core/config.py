@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     crawler_min_delay_s: int = 60
 
     storage_root: str = "./storage"
+    #: Screenshots of long job descriptions can be large; cap what a single
+    #: audit artifact may occupy.
+    storage_max_file_mb: int = 10
+
+    #: Refuse non-loopback callers. Only turn this off if you have put your
+    #: own authentication in front of the API.
+    allow_non_local: bool = False
 
     @property
     def async_database_url(self) -> str:
