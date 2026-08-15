@@ -21,6 +21,7 @@ already-advanced application status as an error.
 from __future__ import annotations
 
 import socket
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -154,13 +155,40 @@ async def heartbeat(
     *,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
 ) -> None:
-    """Extend the lease on a task that is still being worked.
+    """Extend the lease in the caller's transaction.
 
-    Long jobs (a browser driving a slow ATS form) must call this or another
-    worker will reclaim the task out from under them.
+    Note this is only visible to other workers once the caller commits. For
+    renewal *during* a long-running handler, use `renew_lease()` on a separate
+    session — an uncommitted extension does not stop a reclaim.
     """
     task.lease_expires_at = datetime.now(UTC) + timedelta(seconds=lease_seconds)
     await session.flush()
+
+
+async def renew_lease(
+    session: AsyncSession,
+    task_id: uuid.UUID,
+    worker_id: str,
+    *,
+    lease_seconds: int = DEFAULT_LEASE_SECONDS,
+) -> bool:
+    """Extend the lease and commit, so other workers actually see it.
+
+    Returns False if this worker no longer owns the task — meaning the lease
+    already lapsed and someone else claimed it. The caller should stop work
+    rather than keep driving a form it no longer owns.
+    """
+    result = await session.execute(
+        update(QueueTask)
+        .where(
+            QueueTask.id == task_id,
+            QueueTask.locked_by == worker_id,
+            QueueTask.status == QueueTaskStatus.RUNNING.value,
+        )
+        .values(lease_expires_at=datetime.now(UTC) + timedelta(seconds=lease_seconds))
+    )
+    await session.commit()
+    return bool(cast("CursorResult[Any]", result).rowcount)
 
 
 async def complete_task(session: AsyncSession, task: QueueTask) -> None:

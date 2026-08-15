@@ -10,6 +10,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import signal
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import structlog
 
@@ -25,6 +28,7 @@ from packages.core.queue import (
     complete_task,
     default_worker_id,
     fail_task,
+    renew_lease,
 )
 
 log = structlog.get_logger(__name__)
@@ -59,8 +63,50 @@ async def run_once(
         # zero.
         await session.commit()
 
-        await _process(session, claimed)
+        # A browser run can outlast the lease. Without renewal the task would
+        # be reclaimed mid-flight and a second worker would start driving the
+        # same form — the one way this design could double-submit.
+        async with _keep_lease_alive(claimed.task.id, worker_id, lease_seconds):
+            await _process(session, claimed)
         return True
+
+
+@asynccontextmanager
+async def _keep_lease_alive(
+    task_id: uuid.UUID, worker_id: str, lease_seconds: int
+) -> AsyncIterator[None]:
+    """Renew the lease on its own session for as long as the body runs."""
+    stop = asyncio.Event()
+
+    async def _renew() -> None:
+        # A third of the lease gives two chances to renew before it lapses.
+        interval = max(lease_seconds / 3, 1.0)
+        while not stop.is_set():
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+            if stop.is_set():
+                return
+            try:
+                async with core_db.get_sessionmaker()() as renewal_session:
+                    still_ours = await renew_lease(
+                        renewal_session, task_id, worker_id, lease_seconds=lease_seconds
+                    )
+                if not still_ours:
+                    # Someone else owns it now; stop renewing and let the
+                    # handler finish. Its writes will be the loser of any race.
+                    log.warning("lease_lost", task_id=str(task_id), worker_id=worker_id)
+                    return
+            except Exception as exc:  # noqa: BLE001 - renewal must not kill the run
+                log.warning("lease_renewal_failed", error=type(exc).__name__)
+
+    renewer = asyncio.create_task(_renew())
+    try:
+        yield
+    finally:
+        stop.set()
+        renewer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await renewer
 
 
 async def _process(session, claimed: ClaimedTask) -> None:

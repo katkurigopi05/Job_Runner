@@ -278,3 +278,53 @@ async def test_redelivery_after_completion_is_a_no_op(db_session, application, t
 
     assert await begin_work(db_session, application) is WorkClaim.ALREADY_DONE
     assert application.status == terminal
+
+
+# --------------------------------------------------------------------------
+# Lease renewal — a long browser run must not be stolen mid-flight
+# --------------------------------------------------------------------------
+
+
+async def test_renew_lease_extends_ownership(db_session) -> None:
+    from packages.core.queue import renew_lease
+
+    await enqueue(db_session, "apply", {"application_id": "x"})
+    claimed = await claim_task(db_session, worker_id=WORKER_A, lease_seconds=10)
+    assert claimed is not None
+    before = claimed.task.lease_expires_at
+    assert before is not None
+
+    assert await renew_lease(db_session, claimed.task.id, WORKER_A, lease_seconds=600)
+
+    await db_session.refresh(claimed.task)
+    assert claimed.task.lease_expires_at is not None
+    assert claimed.task.lease_expires_at > before
+
+
+async def test_renew_lease_reports_loss_of_ownership(db_session) -> None:
+    """If another worker took over, renewal must say so rather than resurrect."""
+    from packages.core.queue import renew_lease
+
+    await enqueue(db_session, "apply", {"application_id": "x"})
+    claimed = await claim_task(db_session, worker_id=WORKER_A)
+    assert claimed is not None
+
+    await expire_leases(db_session)
+    stolen = await claim_task(db_session, worker_id=WORKER_B)
+    assert stolen is not None
+
+    # Worker A is still running, but no longer owns the task.
+    assert not await renew_lease(db_session, claimed.task.id, WORKER_A)
+
+
+async def test_renewal_keeps_a_slow_task_unclaimable(db_session) -> None:
+    from packages.core.queue import renew_lease
+
+    await enqueue(db_session, "apply", {"application_id": "x"})
+    claimed = await claim_task(db_session, worker_id=WORKER_A, lease_seconds=1)
+    assert claimed is not None
+
+    await expire_leases(db_session)
+    await renew_lease(db_session, claimed.task.id, WORKER_A, lease_seconds=600)
+
+    assert await claim_task(db_session, worker_id=WORKER_B) is None
