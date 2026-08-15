@@ -61,6 +61,7 @@ def upgrade() -> None:
         ),
         sa.Column("locked_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("locked_by", sa.String(length=200), nullable=True),
+        sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_error", sa.Text(), nullable=True),
         sa.Column(
             "created_at",
@@ -135,15 +136,6 @@ def upgrade() -> None:
         "postings",
         [sa.literal_column("first_seen_at DESC")],
         unique=False,
-    )
-    op.create_index(
-        "ix_postings_embedding_ivfflat",
-        "postings",
-        ["description_embedding"],
-        unique=False,
-        postgresql_using="ivfflat",
-        postgresql_ops={"description_embedding": "vector_cosine_ops"},
-        postgresql_with={"lists": 100},
     )
     op.create_table(
         "resumes",
@@ -305,7 +297,6 @@ def downgrade() -> None:
     op.drop_table("applications")
     op.drop_table("profiles")
     op.drop_table("resumes")
-    op.drop_index("ix_postings_embedding_ivfflat", table_name="postings")
     op.drop_index("ix_postings_first_seen_at", table_name="postings")
     op.drop_index("ix_postings_content_hash", table_name="postings")
     op.drop_table("postings")

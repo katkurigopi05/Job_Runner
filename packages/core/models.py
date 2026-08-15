@@ -160,18 +160,13 @@ class Posting(Base):
     first_seen_at: Mapped[datetime] = _created_at()
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # No vector index. At ~50 companies the corpus is 500–5k postings, where an
+    # exact scan is both faster and more accurate than approximate search, and
+    # an ivfflat index built on an empty table cannot cluster at all. Add one
+    # (HNSW, not ivfflat) once the row count actually justifies it.
     __table_args__ = (
         Index("ix_postings_first_seen_at", text("first_seen_at DESC")),
         Index("ix_postings_content_hash", "content_hash"),
-        # Cosine is the scoring metric (CLAUDE.md §9, Phase 5). `lists` is tuned
-        # for a small local corpus; revisit once the posting count is known.
-        Index(
-            "ix_postings_embedding_ivfflat",
-            "description_embedding",
-            postgresql_using="ivfflat",
-            postgresql_ops={"description_embedding": "vector_cosine_ops"},
-            postgresql_with={"lists": 100},
-        ),
     )
 
 
@@ -270,7 +265,14 @@ class InboundMessage(Base):
 
 
 class QueueTask(Base):
-    """Postgres-backed queue. Consumed with FOR UPDATE SKIP LOCKED."""
+    """Postgres-backed queue. Consumed with FOR UPDATE SKIP LOCKED.
+
+    A claim takes a *lease* rather than a permanent lock: `locked_by` records
+    which worker holds it and `lease_expires_at` when that claim goes stale. A
+    worker that dies mid-task leaves an expired lease, which the next claim
+    reclaims. Holding an unexpired lease is what makes a handler the exclusive
+    owner of the task — see packages/core/queue.py.
+    """
 
     __tablename__ = "queue_tasks"
 
@@ -287,7 +289,11 @@ class QueueTask(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Stable worker identity (WORKER_ID / hostname), so a restarted worker can
+    #: recognize its own abandoned lease.
     locked_by: Mapped[str | None] = mapped_column(String(200))
+    #: When the current claim goes stale and becomes reclaimable.
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _created_at()
 
