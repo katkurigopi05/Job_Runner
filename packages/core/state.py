@@ -14,6 +14,7 @@ row. Direct assignment to `Application.status` anywhere else is a bug.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -146,3 +147,48 @@ async def transition(
         )
     )
     return application
+
+
+class WorkClaim(StrEnum):
+    """What `begin_work()` found when a worker picked the application up."""
+
+    #: Moved into running from a resting state.
+    STARTED = "started"
+    #: Already running — a previous attempt died mid-flight. Resume it.
+    RESUMED = "resumed"
+    #: Terminal already. The work is done; ack the task and move on.
+    ALREADY_DONE = "already_done"
+
+
+async def begin_work(
+    session: AsyncSession,
+    application: Application,
+    *,
+    payload: dict[str, Any] | None = None,
+) -> WorkClaim:
+    """Put an application into `running` for a worker that holds its task lease.
+
+    This exists because `can_transition()` alone deadlocks a retried task. If a
+    worker commits `queued -> running` and then dies, the redelivered task finds
+    the row already `running`, and `running -> running` is not a legal edge —
+    so a handler that only guards with `can_transition()` can neither proceed
+    nor legally fail.
+
+    The queue lease resolves it. The caller only reaches this function while
+    holding an unexpired lease on the task, which means no other worker can be
+    acting on it, which means an already-`running` row is an abandoned attempt
+    and is safe to resume. Resuming writes no transition event because no edge
+    was traversed; the queue's `attempts` counter is the record of the retry.
+
+    Callers MUST hold the task lease. Calling this without one races.
+    """
+    status = ApplicationStatus(application.status)
+
+    if is_terminal(status):
+        return WorkClaim.ALREADY_DONE
+
+    if status is ApplicationStatus.RUNNING:
+        return WorkClaim.RESUMED
+
+    await transition(session, application, ApplicationStatus.RUNNING, payload=payload)
+    return WorkClaim.STARTED

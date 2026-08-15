@@ -19,6 +19,12 @@ class Settings(BaseSettings):
 
     llm_provider: str = "stub"
 
+    #: Stable across restarts so a worker recognizes its own abandoned lease.
+    #: Defaults to the hostname when unset.
+    worker_id: str | None = None
+    #: How long a claimed task stays owned without a heartbeat.
+    lease_seconds: int = 300
+
     vault_key: str | None = None
 
     #: Floor, not a default — the crawler refuses to go below this.
