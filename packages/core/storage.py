@@ -17,6 +17,10 @@ from typing import Protocol
 from packages.core.config import get_settings
 
 
+class StorageLimitError(Exception):
+    """A write exceeded the configured per-file cap."""
+
+
 class StorageBackend(Protocol):
     """The subset of S3 semantics this project needs."""
 
@@ -36,9 +40,20 @@ class StorageBackend(Protocol):
 class LocalStorage:
     """Files under a root directory. Keys are POSIX-style relative paths."""
 
-    def __init__(self, root: str | Path | None = None) -> None:
-        self.root = Path(root or get_settings().storage_root).resolve()
+    def __init__(self, root: str | Path | None = None, *, max_file_mb: int | None = None) -> None:
+        settings = get_settings()
+        self.root = Path(root or settings.storage_root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        limit = settings.storage_max_file_mb if max_file_mb is None else max_file_mb
+        self.max_bytes = limit * 1024 * 1024
+
+    def _check_size(self, key: str, size: int) -> None:
+        """Screenshots of long postings grow without bound otherwise."""
+        if size > self.max_bytes:
+            raise StorageLimitError(
+                f"{key} is {size / 1024 / 1024:.1f}MB, over the "
+                f"{self.max_bytes / 1024 / 1024:.0f}MB limit"
+            )
 
     def _resolve(self, key: str) -> Path:
         """Resolve a key inside the root, refusing to escape it.
@@ -55,15 +70,29 @@ class LocalStorage:
 
     def put(self, key: str, data: bytes) -> str:
         target = self._resolve(key)
+        self._check_size(key, len(data))
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
         return key
 
     def put_file(self, key: str, source: Path) -> str:
         target = self._resolve(key)
+        self._check_size(key, source.stat().st_size)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
         return key
+
+    def enforce_limit(self, key: str) -> bool:
+        """Delete a file already on disk if it is over the cap.
+
+        Used for writes that go straight to a path (a browser screenshot),
+        where the size is only knowable afterwards.
+        """
+        target = self._resolve(key)
+        if target.is_file() and target.stat().st_size > self.max_bytes:
+            target.unlink()
+            return False
+        return True
 
     def get(self, key: str) -> bytes:
         return self._resolve(key).read_bytes()

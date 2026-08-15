@@ -125,13 +125,28 @@ async def _run_pipeline(
 
 
 async def _capture(page: Any, application: Application, name: str) -> str | None:
-    """Screenshot into storage. A failed capture must not fail the run."""
+    """Screenshot into storage. A failed capture must not fail the run.
+
+    A full-page shot of a long posting can be very large, so an oversized one
+    is retried at viewport size rather than discarded — a smaller receipt is
+    worth more than none.
+    """
     try:
         key = receipt_key(str(application.id), name)
         storage = get_storage()
         target = storage.path_for(key)
         target.parent.mkdir(parents=True, exist_ok=True)
+
         await page.screenshot(path=str(target), full_page=True)
+
+        enforce = getattr(storage, "enforce_limit", None)
+        if enforce is not None and not enforce(key):
+            log.warning("screenshot_over_limit_retrying_viewport", key=key)
+            await page.screenshot(path=str(target), full_page=False)
+            if not enforce(key):
+                log.warning("screenshot_still_over_limit_discarded", key=key)
+                return None
+
         return key
     except Exception as exc:  # noqa: BLE001 - the audit artifact is best-effort
         log.warning("screenshot_failed", error=type(exc).__name__)

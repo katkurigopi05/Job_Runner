@@ -199,3 +199,51 @@ def test_vault_root_is_outside_storage(monkeypatch, tmp_path) -> None:
         assert storage_root not in vault_root.parents
     finally:
         get_settings.cache_clear()
+
+
+# --------------------------------------------------------------------------
+# Storage size cap
+# --------------------------------------------------------------------------
+
+
+def test_oversized_put_is_rejected(tmp_path) -> None:
+    from packages.core.storage import StorageLimitError
+
+    storage = LocalStorage(tmp_path, max_file_mb=1)
+    with pytest.raises(StorageLimitError, match="over the"):
+        storage.put("big.png", b"x" * (2 * 1024 * 1024))
+
+
+def test_oversized_put_file_is_rejected(tmp_path) -> None:
+    from packages.core.storage import StorageLimitError
+
+    source = tmp_path / "big.pdf"
+    source.write_bytes(b"x" * (2 * 1024 * 1024))
+    storage = LocalStorage(tmp_path / "root", max_file_mb=1)
+
+    with pytest.raises(StorageLimitError):
+        storage.put_file("big.pdf", source)
+
+
+def test_within_limit_is_accepted(tmp_path) -> None:
+    storage = LocalStorage(tmp_path, max_file_mb=1)
+    storage.put("small.png", b"x" * 1024)
+    assert storage.exists("small.png")
+
+
+def test_enforce_limit_deletes_an_oversized_file(tmp_path) -> None:
+    """Screenshots go straight to a path; size is only knowable afterwards."""
+    storage = LocalStorage(tmp_path, max_file_mb=1)
+    target = storage.path_for("shot.png")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"x" * (2 * 1024 * 1024))
+
+    assert storage.enforce_limit("shot.png") is False
+    assert not storage.exists("shot.png")
+
+
+def test_enforce_limit_keeps_a_small_file(tmp_path) -> None:
+    storage = LocalStorage(tmp_path, max_file_mb=1)
+    storage.put("shot.png", b"x" * 1024)
+    assert storage.enforce_limit("shot.png") is True
+    assert storage.exists("shot.png")
