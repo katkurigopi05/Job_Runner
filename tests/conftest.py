@@ -39,6 +39,7 @@ _ALL_TABLES = (
     "inbound_messages",
     "applications",
     "matches",
+    "projects",
     "queue_tasks",
     "profiles",
     "resumes",
