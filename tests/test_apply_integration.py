@@ -156,11 +156,15 @@ async def test_approval_with_answers_resumes_and_submits(
     parked = (await client.get(f"/applications/{app_id}")).json()
     assert parked["status"] == ApplicationStatus.NEEDS_REVIEW
 
-    # Answer exactly the questions the site asked, keyed as the form keys them.
-    answers = {q["key"]: "Yes" for q in parked["review"]["unanswered"]}
-    answers["job_application_answers_attributes_1_boolean_value"] = "1"
-    answers["job_application_answers_attributes_2_text_value"] = "I admire the work."
-    answers["resume"] = None  # still no résumé upload until Phase 2
+    # The résumé is attached to the profile, so only the employer's custom
+    # questions are still open.
+    open_keys = {q["key"] for q in parked["review"]["unanswered"]}
+    assert "resume" not in open_keys, "an attached résumé should fill the file field"
+
+    answers = {
+        "job_application_answers_attributes_1_boolean_value": "1",
+        "job_application_answers_attributes_2_text_value": "I admire the work.",
+    }
 
     approved = await client.post(
         f"/applications/{app_id}/review", json={"approve": True, "answers": answers}
@@ -176,9 +180,5 @@ async def test_approval_with_answers_resumes_and_submits(
         get_settings.cache_clear()
 
     final = (await client.get(f"/applications/{app_id}")).json()
-    # The résumé field is required and still unfilled, so it correctly parks
-    # again rather than submitting an incomplete application.
-    assert final["status"] == ApplicationStatus.NEEDS_REVIEW
-    assert any(q["key"] == "resume" for q in final["review"]["unanswered"]), (
-        "a required résumé field must keep the application parked"
-    )
+    # Everything required is now answered, so the approved run completes.
+    assert final["status"] == ApplicationStatus.SUBMITTED, final["review"].get("unanswered")

@@ -159,3 +159,12 @@ def test_salary_is_copied_verbatim(candidate, profile) -> None:
     questions = [q("salary", "Salary Expectations")]
     answers = build_answers(questions, candidate, profile)
     assert answers["salary"] == "$180,000"
+
+
+def test_empty_owner_answer_does_not_shadow_a_real_one(candidate, profile) -> None:
+    """A review that omits a field must not unset the résumé attached to it."""
+    questions = [q("resume", "Resume/CV", QuestionKind.FILE)]
+    answers = build_answers(
+        questions, candidate, profile, extra={"resume": None}, resume_path="/tmp/cv.pdf"
+    )
+    assert answers["resume"] == "/tmp/cv.pdf"

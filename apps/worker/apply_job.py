@@ -28,7 +28,7 @@ from packages.ats.base import (
 from packages.ats.registry import adapter_for
 from packages.core.config import get_settings
 from packages.core.enums import ApplicationStatus, FailureReason
-from packages.core.models import Application, Candidate, Profile
+from packages.core.models import Application, Candidate, Profile, Resume
 from packages.core.queue import ClaimedTask
 from packages.core.state import WorkClaim, begin_work, transition
 from packages.core.storage import get_storage, receipt_key
@@ -115,13 +115,38 @@ async def _run_pipeline(
         owner_answers = review.get("owner_answers") or {}
 
         answers = build_answers(
-            questions, candidate, profile, extra=owner_answers, resume_path=None
+            questions,
+            candidate,
+            profile,
+            extra=owner_answers,
+            resume_path=await _resume_path(session, profile),
         )
         report = await adapter.fill(page, answers)
 
         report.screenshot_ref = await _capture(page, application, "filled-form.png")
 
         await _decide(session, application, profile, report, adapter, page)
+
+
+async def _resume_path(session: AsyncSession, profile: Profile) -> str | None:
+    """Absolute path of the profile's base résumé, for the file upload field.
+
+    Returns None if there is no résumé or the stored file has gone missing —
+    the required résumé field then goes to the owner unanswered rather than
+    the run failing with a stack trace.
+    """
+    if profile.base_resume_id is None:
+        return None
+
+    resume = await session.get(Resume, profile.base_resume_id)
+    if resume is None:
+        return None
+
+    path = get_storage().path_for(resume.storage_ref)
+    if not path.is_file():
+        log.warning("resume_file_missing", storage_ref=resume.storage_ref)
+        return None
+    return str(path)
 
 
 async def _capture(page: Any, application: Application, name: str) -> str | None:

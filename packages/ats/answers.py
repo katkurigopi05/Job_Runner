@@ -104,8 +104,10 @@ def build_answers(
     answers: dict[str, Any] = {}
 
     for question in questions:
-        # An owner-supplied answer for this exact field always wins.
-        if question.key in owner_supplied:
+        # An owner-supplied answer for this exact field wins — but an empty one
+        # is not an answer. Letting a null shadow a real value would mean a
+        # review that omitted a field silently unset the résumé attached to it.
+        if question.key in owner_supplied and owner_supplied[question.key] not in (None, ""):
             answers[question.key] = owner_supplied[question.key]
             continue
 
