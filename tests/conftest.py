@@ -61,6 +61,12 @@ async def engine():
     try:
         async with eng.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # A run that dies mid-test (a crash, a ^C) skips the per-test
+            # truncate and leaves committed rows behind. The next run then
+            # fails somewhere unrelated: claim_task() is table-wide, so a
+            # stray queue_tasks row gets claimed by whichever test claims
+            # next. Start every session from an empty database.
+            await conn.execute(text(f"TRUNCATE {', '.join(_ALL_TABLES)} RESTART IDENTITY CASCADE"))
     except Exception as exc:  # noqa: BLE001 - any connection failure means skip
         await eng.dispose()
         message = (

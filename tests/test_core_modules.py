@@ -91,9 +91,13 @@ def test_wrong_key_cannot_decrypt(tmp_path) -> None:
 
 
 def test_missing_key_refuses_rather_than_storing_plaintext(tmp_path, monkeypatch) -> None:
-    from packages.core.config import get_settings
+    from packages.core.config import Settings, get_settings
 
+    # Clearing the variable is not enough: Settings also reads the .env *file*,
+    # which the README tells you to create. Both sources have to go, or this
+    # test passes only on a checkout that never followed the setup steps.
     monkeypatch.delenv("VAULT_KEY", raising=False)
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
     get_settings.cache_clear()
     try:
         with pytest.raises(VaultKeyMissingError):

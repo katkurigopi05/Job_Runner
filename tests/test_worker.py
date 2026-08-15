@@ -11,7 +11,7 @@ import contextlib
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from apps.worker import apply_job
 from apps.worker import run as worker_run
@@ -261,7 +261,9 @@ async def test_handler_error_retries_then_fails_the_application(
     created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
     app_id = created.json()["id"]
 
-    async def _boom(session, application):
+    # Must mirror the real _run_pipeline signature, or the call raises TypeError
+    # before the body runs and this stops testing the failure path it names.
+    async def _boom(session, application, candidate, profile):
         raise RuntimeError("site exploded")
 
     monkeypatch.setattr(apply_job, "_run_pipeline", _boom)
@@ -273,11 +275,14 @@ async def test_handler_error_retries_then_fails_the_application(
             await worker_session.refresh(task)
             if task.status == QueueTaskStatus.FAILED:
                 break
-        # Retries are scheduled into the future; pull them forward.
+        # Retries are scheduled into the future; pull them forward. Stamp it
+        # with the database clock — claim_task compares run_after against
+        # clock_timestamp(), so a host timestamp can itself land in the future.
         if task is not None and task.status == QueueTaskStatus.PENDING:
-            from datetime import UTC, datetime
-
-            task.run_after = datetime.now(UTC)
+            await worker_session.execute(
+                text("UPDATE queue_tasks SET run_after = clock_timestamp() WHERE id = :id"),
+                {"id": task.id},
+            )
             await worker_session.commit()
 
     polled = await client.get(f"/applications/{app_id}")
