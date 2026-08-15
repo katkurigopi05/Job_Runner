@@ -26,7 +26,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from packages.core.models import Application, Base, Candidate, Profile, User
+from packages.core.models import Application, Base, Candidate, Match, Posting, Profile, User
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -145,6 +145,30 @@ async def committing_sessionmaker(engine) -> AsyncIterator[async_sessionmaker[As
 async def worker_session(committing_sessionmaker) -> AsyncIterator[AsyncSession]:
     async with committing_sessionmaker() as session:
         yield session
+
+
+@pytest_asyncio.fixture
+async def score_application(committing_sessionmaker):
+    """Attach a scored posting to an existing application.
+
+    Auto-submit only fires at or above the profile's min_match_score
+    (CLAUDE.md §2.3), and an unscored posting never clears it — there is no
+    default that means "good enough". Any test driving the automatic path has
+    to say what the score is.
+    """
+
+    async def _score(application_id: str, profile_id: str, score: float = 0.95) -> None:
+        async with committing_sessionmaker() as session:
+            application = await session.get(Application, uuid.UUID(application_id))
+            assert application is not None
+            posting = Posting(url=application.url, title="Staff Engineer")
+            session.add(posting)
+            await session.flush()
+            session.add(Match(profile_id=uuid.UUID(profile_id), posting_id=posting.id, score=score))
+            application.posting_id = posting.id
+            await session.commit()
+
+    return _score
 
 
 @pytest.fixture(autouse=True)

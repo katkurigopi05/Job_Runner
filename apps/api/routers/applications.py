@@ -146,13 +146,19 @@ async def review_application(
         payload = {"decision": "approve"}
         if body.note:
             payload["note"] = body.note
+        # The approval has to be recorded on the application, not only as an
+        # event: the resumed run re-enters the submit gate, and without this it
+        # cannot tell an owner-approved run from a fresh one. With AUTO_SUBMIT
+        # off — the shipped default — it would park again, and approving would
+        # never submit anything.
+        review = dict(application.review_json or {})
+        review["owner_approved"] = True
         # Answers the owner supplied get merged into the review record so the
         # worker can pick them up on resume.
         if body.answers:
-            review = dict(application.review_json or {})
             review["owner_answers"] = body.answers
-            application.review_json = review
             payload["answered"] = sorted(body.answers)
+        application.review_json = review
 
         await transition(session, application, ApplicationStatus.RUNNING, payload=payload)
         await enqueue(session, APPLY_TASK_KIND, {"application_id": str(application.id)})

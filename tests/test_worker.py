@@ -87,12 +87,39 @@ async def test_application_parks_at_needs_review_by_default(
     assert polled.json()["status"] == ApplicationStatus.NEEDS_REVIEW
 
 
+async def test_approval_submits_under_the_shipped_default(
+    client: AsyncClient, complete_candidate
+) -> None:
+    """Approving must submit with AUTO_SUBMIT off — that is the whole product.
+
+    AUTO_SUBMIT=false is the shipped default, and the README's promise is that
+    every application stops for approval and then goes when you approve it. If
+    the resumed run re-enters the auto-submit gate it parks again, and the
+    owner can never submit at all.
+    """
+    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    app_id = created.json()["id"]
+
+    await _drain()
+    assert (await client.get(f"/applications/{app_id}")).json()["status"] == "needs_review"
+
+    approved = await client.post(
+        f"/applications/{app_id}/review",
+        json={"approve": True, "answers": {"why_us": "I like the product"}},
+    )
+    assert approved.status_code == 200
+
+    await _drain()
+    assert (await client.get(f"/applications/{app_id}")).json()["status"] == "submitted"
+
+
 async def test_application_reaches_submitted_with_auto_submit(
-    client: AsyncClient, auto_submit_candidate, _auto_submit
+    client: AsyncClient, auto_submit_candidate, _auto_submit, score_application
 ) -> None:
     """Gate 0: POST /applications -> poll GET /applications/{id} -> submitted."""
     created = await client.post("/applications", json={**auto_submit_candidate, "url": APPLY_URL})
     app_id = created.json()["id"]
+    await score_application(app_id, auto_submit_candidate["profile_id"])
 
     assert await _drain() == 1
 
@@ -102,10 +129,11 @@ async def test_application_reaches_submitted_with_auto_submit(
 
 
 async def test_every_transition_has_an_event(
-    client: AsyncClient, auto_submit_candidate, _auto_submit
+    client: AsyncClient, auto_submit_candidate, _auto_submit, score_application
 ) -> None:
     """Gate 0: ApplicationEvent rows exist for every transition."""
     created = await client.post("/applications", json={**auto_submit_candidate, "url": APPLY_URL})
+    await score_application(created.json()["id"], auto_submit_candidate["profile_id"])
     await _drain()
 
     events = await client.get(f"/applications/{created.json()['id']}/events")
@@ -183,11 +211,12 @@ async def test_empty_queue_is_a_no_op(client: AsyncClient) -> None:
 
 
 async def test_crashed_run_is_resumed_not_deadlocked(
-    client: AsyncClient, auto_submit_candidate, worker_session, _auto_submit
+    client: AsyncClient, auto_submit_candidate, worker_session, _auto_submit, score_application
 ) -> None:
     """Simulate a worker dying after committing queued->running."""
     created = await client.post("/applications", json={**auto_submit_candidate, "url": APPLY_URL})
     app_id = created.json()["id"]
+    await score_application(app_id, auto_submit_candidate["profile_id"])
 
     # Worker A claims and advances the application, then "dies" before acking.
     claimed = await claim_task(worker_session, worker_id="worker-a")
@@ -212,11 +241,12 @@ async def test_crashed_run_is_resumed_not_deadlocked(
 
 
 async def test_redelivery_after_submission_does_not_resubmit(
-    client: AsyncClient, auto_submit_candidate, worker_session, _auto_submit
+    client: AsyncClient, auto_submit_candidate, worker_session, _auto_submit, score_application
 ) -> None:
     """At-least-once delivery must not produce a second submission."""
     created = await client.post("/applications", json={**auto_submit_candidate, "url": APPLY_URL})
     app_id = created.json()["id"]
+    await score_application(app_id, auto_submit_candidate["profile_id"])
     await _drain()
     assert (await client.get(f"/applications/{app_id}")).json()["status"] == "submitted"
 
