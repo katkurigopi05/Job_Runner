@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 import structlog
 
 from apps.worker.apply_job import TaskPayloadError, handle_apply
+from apps.worker.crawl_job import CRAWL_TASK_KIND, handle_crawl
 from packages.core import db as core_db
 from packages.core.config import get_settings
 from packages.core.enums import FailureReason
@@ -38,7 +39,10 @@ IDLE_SLEEP_SECONDS = 1.0
 
 APPLY_TASK_KIND = "apply"
 
-HANDLERS = {APPLY_TASK_KIND: handle_apply}
+HANDLERS = {
+    APPLY_TASK_KIND: handle_apply,
+    CRAWL_TASK_KIND: handle_crawl,
+}
 
 
 async def run_once(
