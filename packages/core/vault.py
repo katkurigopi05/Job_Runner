@@ -50,9 +50,11 @@ class Vault:
         except (ValueError, TypeError) as exc:
             raise VaultError("VAULT_KEY is not a valid Fernet key") from exc
 
-        # Deliberately not inside storage/ — secrets and PII have different
-        # handling, and conflating them makes it easy to sync the wrong tree.
-        self.root = Path(root or Path(settings.storage_root) / ".secrets").resolve()
+        # Deliberately NOT inside storage/. That tree holds résumés,
+        # screenshots, and browser profiles — things you might copy off the
+        # machine to look at. Encrypted credentials should not ride along with
+        # them, so the vault gets its own root.
+        self.root = Path(root or settings.vault_root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, ref: str) -> Path:

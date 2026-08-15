@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     lease_seconds: int = 300
 
     vault_key: str | None = None
+    #: Kept out of storage_root on purpose — see packages/core/vault.py.
+    vault_root: str = "./.secrets"
 
     #: Floor, not a default — the crawler refuses to go below this.
     crawler_min_delay_s: int = 60

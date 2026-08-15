@@ -177,3 +177,25 @@ def test_build_provider_defaults_to_stub(monkeypatch) -> None:
 def test_unimplemented_provider_raises() -> None:
     with pytest.raises(LLMError, match="not implemented"):
         build_provider("anthropic")
+
+
+def test_vault_root_is_outside_storage(monkeypatch, tmp_path) -> None:
+    """Encrypted credentials must not live in the tree you copy off the box.
+
+    storage/ holds résumés, screenshots, and browser profiles. If the vault
+    sat inside it, backing up or inspecting that tree would carry the
+    ciphertext along with the PII.
+    """
+    from pathlib import Path
+
+    from packages.core.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        settings = get_settings()
+        storage_root = Path(settings.storage_root).resolve()
+        vault_root = Path(settings.vault_root).resolve()
+        assert storage_root != vault_root
+        assert storage_root not in vault_root.parents
+    finally:
+        get_settings.cache_clear()

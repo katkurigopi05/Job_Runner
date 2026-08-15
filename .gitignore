@@ -3,6 +3,7 @@
 .env.local
 *.pem
 *.key
+.secrets/
 
 # PII / user data — resumes, tailored PDFs, screenshots, browser profiles
 storage/
