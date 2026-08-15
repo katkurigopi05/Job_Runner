@@ -23,7 +23,7 @@ from __future__ import annotations
 import socket
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, select, text, update
@@ -37,6 +37,22 @@ DEFAULT_LEASE_SECONDS = 300
 
 #: Give up after this many attempts and park the task as failed.
 DEFAULT_MAX_ATTEMPTS = 3
+
+
+def db_now_plus(seconds: float) -> Any:
+    """`seconds` from now, measured by the *database* clock.
+
+    Every deadline this module writes is later judged by a claim, and a claim
+    judges with `clock_timestamp()`. Writing one from the host clock instead
+    mixes two clocks: the deadline is then wrong by however far the two have
+    drifted apart. That is microseconds on a healthy machine and seconds on a
+    container whose clock has slipped, and it breaks in both directions — a
+    retry that is not yet due when it should be, or a lease judged expired
+    while its owner is still working. Take every deadline from one clock.
+    """
+    return text("clock_timestamp() + make_interval(secs => :interval_secs)").bindparams(
+        interval_secs=seconds
+    )
 
 
 def default_worker_id() -> str:
@@ -161,8 +177,13 @@ async def heartbeat(
     renewal *during* a long-running handler, use `renew_lease()` on a separate
     session — an uncommitted extension does not stop a reclaim.
     """
-    task.lease_expires_at = datetime.now(UTC) + timedelta(seconds=lease_seconds)
     await session.flush()
+    await session.execute(
+        update(QueueTask)
+        .where(QueueTask.id == task.id)
+        .values(lease_expires_at=db_now_plus(lease_seconds))
+    )
+    await session.refresh(task)
 
 
 async def renew_lease(
@@ -185,7 +206,7 @@ async def renew_lease(
             QueueTask.locked_by == worker_id,
             QueueTask.status == QueueTaskStatus.RUNNING.value,
         )
-        .values(lease_expires_at=datetime.now(UTC) + timedelta(seconds=lease_seconds))
+        .values(lease_expires_at=db_now_plus(lease_seconds))
     )
     await session.commit()
     return bool(cast("CursorResult[Any]", result).rowcount)
@@ -225,17 +246,8 @@ async def fail_task(
     task.status = QueueTaskStatus.PENDING.value
     await session.flush()
 
-    # The database clock decides when a retry is due: claim_task compares
-    # run_after against clock_timestamp(). Setting it from the host clock mixes
-    # two clocks, so retry_in_s=0 lands *after* the database's idea of now
-    # whenever they differ — microseconds apart on a healthy machine, seconds
-    # once a container clock drifts. Let the database stamp it.
     await session.execute(
-        text(
-            "UPDATE queue_tasks SET run_after = clock_timestamp() "
-            "+ make_interval(secs => :retry_in_s) WHERE id = :id"
-        ),
-        {"retry_in_s": retry_in_s, "id": task.id},
+        update(QueueTask).where(QueueTask.id == task.id).values(run_after=db_now_plus(retry_in_s))
     )
     await session.refresh(task)
     return True
@@ -265,7 +277,7 @@ async def expire_leases(session: AsyncSession) -> int:
     result = await session.execute(
         update(QueueTask)
         .where(QueueTask.status == QueueTaskStatus.RUNNING.value)
-        .values(lease_expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        .values(lease_expires_at=db_now_plus(-1))
     )
     await session.flush()
     return int(cast("CursorResult[Any]", result).rowcount)

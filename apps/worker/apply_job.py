@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.worker.browser import browser_page
@@ -28,12 +29,29 @@ from packages.ats.base import (
 from packages.ats.registry import adapter_for
 from packages.core.config import get_settings
 from packages.core.enums import ApplicationStatus, FailureReason
-from packages.core.models import Application, Candidate, Profile, Resume
+from packages.core.models import Application, Candidate, Match, Profile, Resume
 from packages.core.queue import ClaimedTask
 from packages.core.state import WorkClaim, begin_work, transition
 from packages.core.storage import get_storage, receipt_key
 
 log = structlog.get_logger(__name__)
+
+
+async def _match_score(session: AsyncSession, application: Application) -> float | None:
+    """This profile's score for the posting, or None if it was never scored.
+
+    An application created straight from a URL has no posting attached, so
+    there is nothing to have scored. Callers must treat None as "did not clear
+    the threshold" rather than substituting a default.
+    """
+    if application.posting_id is None:
+        return None
+    return await session.scalar(
+        select(Match.score).where(
+            Match.profile_id == application.profile_id,
+            Match.posting_id == application.posting_id,
+        )
+    )
 
 
 class TaskPayloadError(Exception):
@@ -216,6 +234,14 @@ async def _decide(
         )
         return
 
+    # The owner already looked at this form and said yes. That approval *is*
+    # the authorization CLAUDE.md §2.3 asks for, so it stands on its own —
+    # AUTO_SUBMIT and the score threshold govern submitting *without* a human,
+    # and re-applying them here would park an approved application forever.
+    if (application.review_json or {}).get("owner_approved"):
+        await _submit(session, application, adapter, page)
+        return
+
     if not (settings.auto_submit and profile.auto_submit):
         await transition(
             session,
@@ -225,6 +251,39 @@ async def _decide(
         )
         return
 
+    # §2.3 makes the threshold part of the opt-in, not advice: auto-submit is
+    # permitted "above a match-score threshold you choose". A profile carrying
+    # min_match_score=0.9 must not submit to something scored 0.2 — and must
+    # not submit to something never scored at all, which is every application
+    # until matching lands in Phase 5. No score is not a passing score.
+    score = await _match_score(session, application)
+    if score is None or score < profile.min_match_score:
+        await transition(
+            session,
+            application,
+            ApplicationStatus.NEEDS_REVIEW,
+            payload={
+                "reason": (
+                    "auto-submit is on but this posting has no match score yet"
+                    if score is None
+                    else "match score is below the profile's threshold"
+                ),
+                "score": score,
+                "min_match_score": profile.min_match_score,
+            },
+        )
+        return
+
+    await _submit(session, application, adapter, page)
+
+
+async def _submit(
+    session: AsyncSession,
+    application: Application,
+    adapter: Any,
+    page: Any,
+) -> None:
+    """Send the form and record the receipt. The only path that submits."""
     receipt = await adapter.submit(page)
     receipt.screenshot_ref = await _capture(page, application, "submitted.png")
     application.receipt_json = receipt.model_dump()
