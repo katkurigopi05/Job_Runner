@@ -1,0 +1,259 @@
+# Hand-picked company registry — CLAUDE.md §9, Phase 5.
+#
+# Roughly 50 companies, not a mass crawl. `slug` is the company's
+# identifier on its ATS board, which is what the extractor requests.
+#
+# poll_interval_s is per company and is only ever an *upper* bound on
+# frequency: the 60s per-host floor in packages/crawler/ratelimit.py
+# applies regardless of what is written here.
+
+companies:
+  - name: "Stripe"
+    slug: "stripe"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Airbnb"
+    slug: "airbnb"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Databricks"
+    slug: "databricks"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Cloudflare"
+    slug: "cloudflare"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Figma"
+    slug: "figma"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Notion"
+    slug: "notion"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Vercel"
+    slug: "vercel"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Linear"
+    slug: "linear"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Ramp"
+    slug: "ramp"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Plaid"
+    slug: "plaid"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Retool"
+    slug: "retool"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Render"
+    slug: "render"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Supabase"
+    slug: "supabase"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "PlanetScale"
+    slug: "planetscale"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Temporal"
+    slug: "temporaltechnologies"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "dbt Labs"
+    slug: "dbtlabs"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Fivetran"
+    slug: "fivetran"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Airbyte"
+    slug: "airbyte"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Astronomer"
+    slug: "astronomer"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Grafana Labs"
+    slug: "grafanalabs"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "HashiCorp"
+    slug: "hashicorp"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Datadog"
+    slug: "datadog"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Sentry"
+    slug: "sentry"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Elastic"
+    slug: "elastic"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "MongoDB"
+    slug: "mongodb"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Redis"
+    slug: "redislabs"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Confluent"
+    slug: "confluent"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Snowflake"
+    slug: "snowflakecomputing"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Instacart"
+    slug: "instacart"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "DoorDash"
+    slug: "doordash"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Robinhood"
+    slug: "robinhood"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Coinbase"
+    slug: "coinbase"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Affirm"
+    slug: "affirm"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Brex"
+    slug: "brex"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Gusto"
+    slug: "gusto"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Rippling"
+    slug: "rippling"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Deel"
+    slug: "deel"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Asana"
+    slug: "asana"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Miro"
+    slug: "miro"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Loom"
+    slug: "loom"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Discord"
+    slug: "discord"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Reddit"
+    slug: "reddit"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Pinterest"
+    slug: "pinterest"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Duolingo"
+    slug: "duolingo"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Chime"
+    slug: "chime"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Faire"
+    slug: "faire"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Webflow"
+    slug: "webflow"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Amplitude"
+    slug: "amplitude"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Mixpanel"
+    slug: "mixpanel"
+    ats: "greenhouse"
+    poll_interval_s: 21600
+
+  - name: "Segment"
+    slug: "segment"
+    ats: "greenhouse"
+    poll_interval_s: 21600
