@@ -10,6 +10,7 @@ from apps.api.routers import (
     applications,
     candidates,
     detect,
+    postings,
     profiles,
     projects,
     resumes,
@@ -32,6 +33,7 @@ app.include_router(profiles.router)
 app.include_router(applications.router)
 app.include_router(projects.router)
 app.include_router(resumes.router)
+app.include_router(postings.router)
 
 
 @app.get("/health", tags=["meta"])

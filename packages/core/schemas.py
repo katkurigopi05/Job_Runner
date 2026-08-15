@@ -222,3 +222,40 @@ class ResumeParsedOut(BaseModel):
     sections: dict[str, int]
     line_count: int
     parsed: dict[str, Any]
+
+
+# --------------------------------------------------------------------------
+# Postings
+# --------------------------------------------------------------------------
+
+
+class PostingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    url: str
+    title: str | None
+    location: str | None
+    ats_type: str | None
+    external_id: str | None
+    first_seen_at: datetime
+    closed_at: datetime | None
+
+
+class PostingSearchOut(BaseModel):
+    results: list[PostingOut] = Field(default_factory=list)
+    total_indexed: int = 0
+    #: Set when the empty result means "nothing indexed" rather than "no match".
+    note: str | None = None
+
+
+class ResumePreviewOut(BaseModel):
+    """What an assembled résumé would contain, without rendering it."""
+
+    resume_id: uuid.UUID
+    version: int
+    sections: list[str] = Field(default_factory=list)
+    project_names: list[str] = Field(default_factory=list)
+    source_line_count: int = 0
+    #: Exactly the text each project link will render as.
+    rendered_links: list[str] = Field(default_factory=list)
