@@ -79,5 +79,5 @@ strict = true
 
 # weasyprint ships no py.typed marker.
 [[tool.mypy.overrides]]
-module = ["weasyprint.*", "pypdf.*"]
+module = ["weasyprint.*", "pypdf.*", "sentence_transformers.*"]
 ignore_missing_imports = true
