@@ -78,6 +78,20 @@ make worker                 # in a second terminal
 Bare `pytest` skips the database tests instead, so a fresh checkout is green
 before `make up`.
 
+### First-run notes
+
+- **macOS needs Pango for PDF rendering.** WeasyPrint links against system
+  libraries that macOS does not ship: `brew install pango`. Without it,
+  `import weasyprint` fails with a `libgobject` load error and résumé
+  rendering will not work. Linux users generally already have these.
+- **Install the browser once**: `.venv/bin/playwright install chromium`.
+  Playwright pins its browser build to the wheel version, which is why
+  `pyproject.toml` pins the wheel to a single minor.
+- **Port 5432** maps straight through. If you already run Postgres locally
+  (Homebrew, Postgres.app), change the host side of the port mapping in
+  `docker-compose.yml` or stop the other server first.
+- **Python 3.12** — `make install` calls `python3.12` explicitly.
+
 This project is built in phases (skeleton → first ATS → tailoring → MCP →
 discovery → tracker), each gated by its own test suite. See `CLAUDE.md` §9 for
 the current phase and what's implemented so far.
