@@ -23,15 +23,41 @@ from packages.core.queue import claim_task, expire_leases
 APPLY_URL = "https://boards.greenhouse.io/acme/jobs/98765"
 
 
+class _FakeAdapter:
+    """Stands in for a real ATS adapter. No browser, no network.
+
+    The browser-driven half of the pipeline is covered by test_greenhouse.py;
+    these tests are about the queue, the lease, and the approval gate.
+    """
+
+    name = "greenhouse"
+
+    async def submit(self, page):
+        from packages.ats.base import Receipt
+
+        return Receipt(submitted=True, ats=self.name, url=APPLY_URL, confirmation_text="Thanks!")
+
+
 @pytest.fixture(autouse=True)
-def _fast_stub(monkeypatch):
-    """The Phase 0 stub sleeps 2s; tests do not need to wait for it."""
-    monkeypatch.setattr(apply_job, "STUB_WORK_SECONDS", 0.0)
+def _stub_pipeline(monkeypatch):
+    """Replace the browser run, but keep the real approval-gate decision."""
+
+    async def _fake(session, application, candidate, profile):
+        from packages.ats.base import FillReport
+
+        # An empty report is a complete one: nothing was left unanswered.
+        await apply_job._decide(session, application, profile, FillReport(), _FakeAdapter(), None)
+
+    monkeypatch.setattr(apply_job, "_run_pipeline", _fake)
 
 
 @pytest.fixture
 def _auto_submit(monkeypatch):
-    """Flip AUTO_SUBMIT on, bypassing the approval gate for one test."""
+    """Turn on the global half of the auto-submit gate.
+
+    Not sufficient on its own — the profile must opt in too (CLAUDE.md §2.3),
+    which is what `auto_submit_candidate` provides.
+    """
     monkeypatch.setenv("AUTO_SUBMIT", "true")
     get_settings.cache_clear()
     yield
@@ -62,10 +88,10 @@ async def test_application_parks_at_needs_review_by_default(
 
 
 async def test_application_reaches_submitted_with_auto_submit(
-    client: AsyncClient, complete_candidate, _auto_submit
+    client: AsyncClient, auto_submit_candidate, _auto_submit
 ) -> None:
     """Gate 0: POST /applications -> poll GET /applications/{id} -> submitted."""
-    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    created = await client.post("/applications", json={**auto_submit_candidate, "url": APPLY_URL})
     app_id = created.json()["id"]
 
     assert await _drain() == 1
@@ -76,10 +102,10 @@ async def test_application_reaches_submitted_with_auto_submit(
 
 
 async def test_every_transition_has_an_event(
-    client: AsyncClient, complete_candidate, _auto_submit
+    client: AsyncClient, auto_submit_candidate, _auto_submit
 ) -> None:
     """Gate 0: ApplicationEvent rows exist for every transition."""
-    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    created = await client.post("/applications", json={**auto_submit_candidate, "url": APPLY_URL})
     await _drain()
 
     events = await client.get(f"/applications/{created.json()['id']}/events")
@@ -91,10 +117,10 @@ async def test_every_transition_has_an_event(
 
 
 async def test_approval_resumes_and_submits(
-    client: AsyncClient, complete_candidate, monkeypatch
+    client: AsyncClient, auto_submit_candidate, monkeypatch
 ) -> None:
     """The full gate: park, approve, resume, submit."""
-    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    created = await client.post("/applications", json={**auto_submit_candidate, "url": APPLY_URL})
     app_id = created.json()["id"]
 
     await _drain()
@@ -157,10 +183,10 @@ async def test_empty_queue_is_a_no_op(client: AsyncClient) -> None:
 
 
 async def test_crashed_run_is_resumed_not_deadlocked(
-    client: AsyncClient, complete_candidate, worker_session, _auto_submit
+    client: AsyncClient, auto_submit_candidate, worker_session, _auto_submit
 ) -> None:
     """Simulate a worker dying after committing queued->running."""
-    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    created = await client.post("/applications", json={**auto_submit_candidate, "url": APPLY_URL})
     app_id = created.json()["id"]
 
     # Worker A claims and advances the application, then "dies" before acking.
@@ -186,10 +212,10 @@ async def test_crashed_run_is_resumed_not_deadlocked(
 
 
 async def test_redelivery_after_submission_does_not_resubmit(
-    client: AsyncClient, complete_candidate, worker_session, _auto_submit
+    client: AsyncClient, auto_submit_candidate, worker_session, _auto_submit
 ) -> None:
     """At-least-once delivery must not produce a second submission."""
-    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    created = await client.post("/applications", json={**auto_submit_candidate, "url": APPLY_URL})
     app_id = created.json()["id"]
     await _drain()
     assert (await client.get(f"/applications/{app_id}")).json()["status"] == "submitted"
@@ -280,3 +306,21 @@ async def test_configured_worker_id_is_used(monkeypatch) -> None:
 
     get_settings.cache_clear()
     assert seen and seen[0] == "configured-worker"
+
+
+async def test_profile_must_opt_in_before_auto_submit(
+    client: AsyncClient, complete_candidate, _auto_submit
+) -> None:
+    """AUTO_SUBMIT alone is not enough — the profile must opt in too.
+
+    CLAUDE.md §2.3 makes auto-submit opt-in per profile on top of the global
+    flag, so a global toggle can never silently start sending applications for
+    every profile.
+    """
+    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    app_id = created.json()["id"]
+
+    await _drain()
+
+    polled = await client.get(f"/applications/{app_id}")
+    assert polled.json()["status"] == ApplicationStatus.NEEDS_REVIEW

@@ -177,3 +177,34 @@ async def complete_candidate(client: AsyncClient) -> dict[str, str]:
     )
     assert prof.status_code == 201, prof.text
     return {"candidate_id": candidate_id, "profile_id": prof.json()["id"]}
+
+
+@pytest_asyncio.fixture
+async def auto_submit_candidate(client: AsyncClient) -> dict[str, str]:
+    """A complete candidate whose profile has opted in to auto-submit.
+
+    Both halves of the gate must be on before anything submits: the global
+    AUTO_SUBMIT and this per-profile flag. CLAUDE.md §2.3.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    cand = await client.post(
+        "/candidates",
+        json={"name": "Auto Owner", "email": f"auto-{suffix}@example.com"},
+    )
+    assert cand.status_code == 201, cand.text
+    candidate_id = cand.json()["id"]
+
+    prof = await client.post(
+        "/profiles",
+        json={
+            "candidate_id": candidate_id,
+            "label": "auto",
+            "phone": "+1-555-0100",
+            "location": "Austin, TX",
+            "work_auth": "US citizen",
+            "needs_sponsorship": False,
+            "auto_submit": True,
+        },
+    )
+    assert prof.status_code == 201, prof.text
+    return {"candidate_id": candidate_id, "profile_id": prof.json()["id"]}

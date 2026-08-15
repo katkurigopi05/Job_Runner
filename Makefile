@@ -1,5 +1,5 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
-        check-migrations api worker gate-0
+        check-migrations api worker gate-0 gate-1 gate-1-live
 
 PY := .venv/bin
 
@@ -33,7 +33,7 @@ fmt:
 	$(PY)/ruff check --fix .
 
 typecheck:
-	$(PY)/mypy packages/core
+	$(PY)/mypy packages/core packages/ats
 
 # Schema drift: the migrations must fully describe the models.
 check-migrations:
@@ -57,3 +57,17 @@ worker:
 gate-0: lint typecheck check-migrations
 	REQUIRE_DB=1 $(PY)/pytest -q
 	@echo "gate-0 passed"
+
+# Gate 1 — CLAUDE.md §9. The offline half: the adapter drives a real Chromium
+# against a local fixture of a Greenhouse form, end to end.
+#
+# The other half (a LIVE Greenhouse posting) cannot run here and is not
+# asserted by this target. Run `make gate-1-live URL=<posting>` for that.
+gate-1: gate-0
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_greenhouse.py
+	@echo "gate-1 (offline) passed"
+
+# make gate-1-live URL=https://boards.greenhouse.io/<company>/jobs/<id>
+gate-1-live:
+	@test -n "$(URL)" || (echo "set URL=<greenhouse posting url>" && exit 1)
+	$(PY)/python -m scripts.live_check "$(URL)"
