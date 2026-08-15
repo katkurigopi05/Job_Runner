@@ -18,6 +18,7 @@ from packages.core.schemas import (
     ApplicationCreate,
     ApplicationEventOut,
     ApplicationOut,
+    OtpSubmission,
     ReviewDecision,
 )
 from packages.core.state import transition
@@ -163,6 +164,43 @@ async def review_application(
             failure_reason=FailureReason.REJECTED_AT_REVIEW,
             payload={"decision": "reject", "note": body.note} if body.note else None,
         )
+
+    await session.commit()
+    await session.refresh(application)
+    return application
+
+
+@router.post("/{application_id}/otp", response_model=ApplicationOut)
+async def submit_otp(
+    application_id: uuid.UUID, body: OtpSubmission, session: SessionDep
+) -> Application:
+    """Supply a verification code to an application parked at `needs_otp`.
+
+    Without this the state machine has a dead end: a run that hits an OTP
+    challenge parks and can never resume.
+
+    The code is stored on the application for the worker to consume and is
+    deliberately kept out of the event payload, which is append-only.
+    """
+    application = await session.get(Application, application_id)
+    if application is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+
+    if application.status != ApplicationStatus.NEEDS_OTP.value:
+        raise ApiError(
+            ErrorCode.INVALID_STATE,
+            f"application is {application.status}, not needs_otp",
+        )
+
+    application.review_json = {**(application.review_json or {}), "otp": body.code}
+
+    await transition(
+        session,
+        application,
+        ApplicationStatus.RUNNING,
+        payload={"otp_supplied": True},
+    )
+    await enqueue(session, APPLY_TASK_KIND, {"application_id": str(application.id)})
 
     await session.commit()
     await session.refresh(application)

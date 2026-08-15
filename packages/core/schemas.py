@@ -118,6 +118,16 @@ class ReviewDecision(BaseModel):
     note: str | None = None
 
 
+class OtpSubmission(BaseModel):
+    """A verification code the site asked for.
+
+    Short-lived and single-use. It is handed to the worker through the
+    application row and cleared once consumed; it is never logged.
+    """
+
+    code: str = Field(min_length=1, max_length=32)
+
+
 class ApplicationEventOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

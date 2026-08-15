@@ -281,3 +281,56 @@ async def test_list_supported_ats(client: AsyncClient) -> None:
     r = await client.get("/ats")
     assert r.status_code == 200
     assert "greenhouse" in r.json()
+
+
+# --------------------------------------------------------------------------
+# OTP — needs_otp must have a way out
+# --------------------------------------------------------------------------
+
+
+async def _park_at_needs_otp(client: AsyncClient, complete_candidate, worker_session) -> str:
+    from packages.core.enums import ApplicationStatus
+    from packages.core.models import Application
+    from packages.core.state import transition
+
+    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    app_id = created.json()["id"]
+
+    application = await worker_session.get(Application, app_id)
+    await transition(worker_session, application, ApplicationStatus.RUNNING)
+    await transition(worker_session, application, ApplicationStatus.NEEDS_OTP)
+    await worker_session.commit()
+    return app_id
+
+
+async def test_otp_resumes_a_parked_application(
+    client: AsyncClient, complete_candidate, worker_session
+) -> None:
+    app_id = await _park_at_needs_otp(client, complete_candidate, worker_session)
+
+    r = await client.post(f"/applications/{app_id}/otp", json={"code": "123456"})
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "running"
+
+
+async def test_otp_code_is_not_written_to_the_event_log(
+    client: AsyncClient, complete_candidate, worker_session
+) -> None:
+    """The audit log is append-only; a verification code does not belong in it."""
+    app_id = await _park_at_needs_otp(client, complete_candidate, worker_session)
+    await client.post(f"/applications/{app_id}/otp", json={"code": "987654"})
+
+    events = (await client.get(f"/applications/{app_id}/events")).json()
+    assert "987654" not in str(events)
+    assert any(e.get("payload", {}).get("otp_supplied") for e in events)
+
+
+async def test_otp_on_a_queued_application_is_invalid_state(
+    client: AsyncClient, complete_candidate
+) -> None:
+    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    r = await client.post(f"/applications/{created.json()['id']}/otp", json={"code": "1"})
+
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "invalid_state"
