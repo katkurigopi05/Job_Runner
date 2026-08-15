@@ -223,8 +223,21 @@ async def fail_task(
         return False
 
     task.status = QueueTaskStatus.PENDING.value
-    task.run_after = datetime.now(UTC) + timedelta(seconds=retry_in_s)
     await session.flush()
+
+    # The database clock decides when a retry is due: claim_task compares
+    # run_after against clock_timestamp(). Setting it from the host clock mixes
+    # two clocks, so retry_in_s=0 lands *after* the database's idea of now
+    # whenever they differ — microseconds apart on a healthy machine, seconds
+    # once a container clock drifts. Let the database stamp it.
+    await session.execute(
+        text(
+            "UPDATE queue_tasks SET run_after = clock_timestamp() "
+            "+ make_interval(secs => :retry_in_s) WHERE id = :id"
+        ),
+        {"retry_in_s": retry_in_s, "id": task.id},
+    )
+    await session.refresh(task)
     return True
 
 
