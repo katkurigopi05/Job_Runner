@@ -92,6 +92,25 @@ before `make up`.
   `docker-compose.yml` or stop the other server first.
 - **Python 3.12** — `make install` calls `python3.12` explicitly.
 
+## Driving it from Claude Code
+
+`.mcp.json` is committed, so Claude Code picks the server up when you open the
+repo. Start the API first — the tools call it rather than the database, so the
+approval gate and completeness checks have exactly one implementation:
+
+```bash
+make api        # the MCP tools talk to this
+```
+
+Then ask for what you want in plain language: *"is this URL supported?"*,
+*"apply to this posting"*, *"what's in the review queue?"*, *"answer the
+questions and approve it"*.
+
+Two deliberate absences in the tool surface: there is no tool that submits an
+application (approval releases it; the worker does the rest), and there is no
+`tailor_resume` — tailoring is Phase 3, so what exists is `preview_resume`,
+which assembles rather than rewrites.
+
 This project is built in phases (skeleton → first ATS → tailoring → MCP →
 discovery → tracker), each gated by its own test suite. See `CLAUDE.md` §9 for
 the current phase and what's implemented so far.

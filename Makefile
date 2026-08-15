@@ -1,5 +1,5 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
-        check-migrations api worker gate-0 gate-1 gate-1-live
+        check-migrations api worker mcp gate-0 gate-1 gate-1-live gate-4
 
 PY := .venv/bin
 
@@ -47,6 +47,11 @@ api:
 worker:
 	$(PY)/python -m apps.worker.run
 
+# Speaks MCP over stdio; Claude Code launches it itself via .mcp.json.
+# Run it by hand only to check it starts. It needs `make api` running.
+mcp:
+	$(PY)/python -m apps.mcp.server
+
 # Gate 0 — CLAUDE.md §9. All assertions covered:
 #   pytest green, POST /applications reaches submitted, invalid transition
 #   raises, duplicate (candidate_id, url) returns 409, ApplicationEvent rows
@@ -66,6 +71,12 @@ gate-0: lint typecheck check-migrations
 gate-1: gate-0
 	REQUIRE_DB=1 $(PY)/pytest -q tests/test_greenhouse.py
 	@echo "gate-1 (offline) passed"
+
+# Gate 4 — CLAUDE.md §9. A full apply-to-review cycle driven by tool calls
+# alone, plus the tool surface's own invariants.
+gate-4: gate-0
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_mcp.py
+	@echo "gate-4 passed"
 
 # make gate-1-live URL=https://boards.greenhouse.io/<company>/jobs/<id>
 gate-1-live:
