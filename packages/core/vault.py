@@ -56,6 +56,11 @@ class Vault:
         # them, so the vault gets its own root.
         self.root = Path(root or settings.vault_root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        # Owner-only. The contents are encrypted, but a credential store should
+        # not also be readable by every account on the machine — that hands an
+        # attacker the ciphertext to work on offline, and makes the key the
+        # only thing standing between them and the passwords.
+        self.root.chmod(0o700)
 
     def _path(self, ref: str) -> Path:
         if not ref or "/" in ref or ".." in ref:
@@ -65,7 +70,11 @@ class Vault:
     def put(self, ref: str, secrets: dict[str, str]) -> str:
         """Encrypt and store. Returns the reference to persist on the row."""
         payload = json.dumps(secrets).encode()
-        self._path(ref).write_bytes(self._fernet.encrypt(payload))
+        # os.open with the mode rather than write_bytes-then-chmod: the latter
+        # leaves the file world-readable for the window in between.
+        fd = os.open(self._path(ref), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(self._fernet.encrypt(payload))
         return ref
 
     def get(self, ref: str) -> dict[str, str]:
