@@ -1,4 +1,5 @@
-.PHONY: install up down migrate revision test lint fmt typecheck check gate-0
+.PHONY: install up down migrate revision test lint fmt typecheck check \
+        check-migrations api worker gate-0
 
 PY := .venv/bin
 
@@ -40,10 +41,15 @@ check-migrations:
 
 check: lint typecheck test
 
-# Gate 0 — CLAUDE.md §9.
-# Covers: pytest green, invalid transition raises, ApplicationEvent per
-# transition, ruff + mypy clean, migrations match models.
-# Still to add with the API routes: POST /applications reaching submitted,
-# and duplicate (candidate_id, url) returning 409.
+api:
+	$(PY)/uvicorn apps.api.main:app --reload --host 127.0.0.1 --port 8000
+
+worker:
+	$(PY)/python -m apps.worker.run
+
+# Gate 0 — CLAUDE.md §9. All assertions covered:
+#   pytest green, POST /applications reaches submitted, invalid transition
+#   raises, duplicate (candidate_id, url) returns 409, ApplicationEvent rows
+#   exist for every transition, ruff + mypy clean, migrations match models.
 gate-0: lint typecheck check-migrations test
-	@echo "gate-0 checks passed"
+	@echo "gate-0 passed"
