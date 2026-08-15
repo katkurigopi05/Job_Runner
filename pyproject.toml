@@ -9,7 +9,12 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
-    "pydantic>=2.9",
+    # Never imported directly — FastAPI reaches for it at runtime to parse the
+    # multipart body on the résumé upload route.
+    "python-multipart>=0.0.9",
+    # [email] — packages/core/schemas.py validates candidate addresses with
+    # EmailStr, which imports email-validator lazily at first use.
+    "pydantic[email]>=2.9",
     "pydantic-settings>=2.6",
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30",
@@ -23,6 +28,8 @@ dependencies = [
     "playwright>=1.56,<1.57",
     "weasyprint>=62",
     "pypdf>=5",
+    # Résumés arrive as .docx as often as .pdf — packages/tailor/parse.py.
+    "python-docx>=1.1",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +68,8 @@ testpaths = ["tests"]
 
 [tool.mypy]
 python_version = "3.12"
+explicit_package_bases = true
+mypy_path = "."
 plugins = ["pydantic.mypy"]
 
 # strict on core and ats, per CLAUDE.md §3
