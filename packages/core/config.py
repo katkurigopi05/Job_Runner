@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     crawler_min_delay_s: int = 60
 
     storage_root: str = "./storage"
+
+    #: Read-only token. Raises the API limit from 60/hour to 5000/hour and
+    #: allows private repositories to be listed.
+    github_token: str | None = None
+    github_username: str | None = None
     #: Screenshots of long job descriptions can be large; cap what a single
     #: audit artifact may occupy.
     storage_max_file_mb: int = 10

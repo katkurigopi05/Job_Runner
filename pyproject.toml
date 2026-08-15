@@ -17,9 +17,12 @@ dependencies = [
     "pgvector>=0.3.6",
     "cryptography>=43.0",
     "structlog>=24.4",
+    "httpx>=0.27",
     # Pinned to a minor: the wheel and the browser build ship together,
     # and a mismatch means Playwright tries to re-download Chromium.
     "playwright>=1.56,<1.57",
+    "weasyprint>=62",
+    "pypdf>=5",
 ]
 
 [project.optional-dependencies]
@@ -64,3 +67,8 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = ["packages.core.*", "packages.ats.*"]
 strict = true
+
+# weasyprint ships no py.typed marker.
+[[tool.mypy.overrides]]
+module = ["weasyprint.*", "pypdf.*"]
+ignore_missing_imports = true
