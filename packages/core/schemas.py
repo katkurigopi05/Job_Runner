@@ -194,3 +194,31 @@ class ProjectPreview(BaseModel):
     pinned: bool
     #: Exactly the text that will be rendered as the link.
     rendered_link: str
+
+
+# --------------------------------------------------------------------------
+# Résumés
+# --------------------------------------------------------------------------
+
+
+class ResumeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    candidate_id: uuid.UUID
+    version: int
+    storage_ref: str
+    is_default: bool
+    created_at: datetime
+
+
+class ResumeParsedOut(BaseModel):
+    """What the parser extracted, so it can be checked before it is trusted."""
+
+    id: uuid.UUID
+    version: int
+    contact: dict[str, Any]
+    #: Section name → line count. A missing section here is a warning sign.
+    sections: dict[str, int]
+    line_count: int
+    parsed: dict[str, Any]

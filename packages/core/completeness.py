@@ -49,9 +49,9 @@ def missing_requirements(candidate: Candidate, profile: Profile) -> list[str]:
         if getattr(profile, field, None) is None:
             missing.append(f"profile.{field}")
 
-    # NOTE: `profile.base_resume_id` belongs on this list, but résumé upload
-    # does not exist until Phase 2 — requiring it now would make every
-    # application unsubmittable. Add it to REQUIRED_PROFILE_FIELDS when
-    # Phase 2 lands.
+    # Every ATS form has a required résumé field, so an application without
+    # one provably cannot be completed.
+    if profile.base_resume_id is None:
+        missing.append("profile.base_resume_id")
 
     return missing
