@@ -297,4 +297,9 @@ class QueueTask(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _created_at()
 
-    __table_args__ = (Index("ix_queue_tasks_status_run_after", "status", "run_after"),)
+    __table_args__ = (
+        Index("ix_queue_tasks_status_run_after", "status", "run_after"),
+        # The reclaim half of a claim scans for expired leases; without
+        # this it is a sequential scan of every running task.
+        Index("ix_queue_tasks_status_lease", "status", "lease_expires_at"),
+    )
