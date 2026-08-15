@@ -1,5 +1,5 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
-        check-migrations api worker mcp gate-0 gate-1 gate-1-live gate-4
+        check-migrations api worker mcp gate-0 gate-1 gate-1-live gate-3 gate-4
 
 PY := .venv/bin
 
@@ -71,6 +71,13 @@ gate-0: lint typecheck check-migrations
 gate-1: gate-0
 	REQUIRE_DB=1 $(PY)/pytest -q tests/test_greenhouse.py
 	@echo "gate-1 (offline) passed"
+
+# Gate 3 — CLAUDE.md §9. The fabrication merge gate: 20 job descriptions
+# crossed with 3 résumés, plus adversarial cases the guard must reject and
+# legitimate rewrites it must allow, plus the tailored-PDF round trip.
+gate-3: gate-0
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_no_fabrication.py
+	@echo "gate-3 passed"
 
 # Gate 4 — CLAUDE.md §9. A full apply-to-review cycle driven by tool calls
 # alone, plus the tool surface's own invariants.
