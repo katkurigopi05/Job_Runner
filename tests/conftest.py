@@ -141,6 +141,16 @@ async def worker_session(committing_sessionmaker) -> AsyncIterator[AsyncSession]
         yield session
 
 
+@pytest.fixture(autouse=True)
+def _tmp_storage(tmp_path):
+    """Every test writes to its own storage root, never the repo's."""
+    from packages.core.storage import LocalStorage, set_storage
+
+    set_storage(LocalStorage(tmp_path / "storage"))
+    yield
+    set_storage(None)
+
+
 @pytest_asyncio.fixture
 async def client(committing_sessionmaker, monkeypatch) -> AsyncIterator[AsyncClient]:
     """HTTP client bound to the real app, talking to the test database."""
@@ -152,6 +162,67 @@ async def client(committing_sessionmaker, monkeypatch) -> AsyncIterator[AsyncCli
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+#: Minimal parseable résumé for fixtures.
+_SAMPLE_RESUME = b"""Ada Lovelace
+ada@example.com | +1 (555) 555-0100
+
+Summary
+Backend engineer.
+
+Experience
+Staff Engineer, Analytical Engines Ltd
+
+Skills
+Python, PostgreSQL
+"""
+
+
+async def _attach_resume(client: AsyncClient, candidate_id: str, profile_id: str) -> None:
+    """Upload a résumé and make it the profile's base.
+
+    Required since the completeness gate learned that every ATS form has a
+    mandatory résumé field.
+    """
+    import io
+
+    created = await client.post(
+        "/resumes",
+        data={"candidate_id": candidate_id},
+        files={"file": ("resume.txt", io.BytesIO(_SAMPLE_RESUME), "text/plain")},
+    )
+    assert created.status_code == 201, created.text
+    linked = await client.post(
+        f"/resumes/{created.json()['id']}/set-base", params={"profile_id": profile_id}
+    )
+    assert linked.status_code == 200, linked.text
+
+
+@pytest_asyncio.fixture
+async def bare_candidate(client: AsyncClient) -> dict[str, str]:
+    """Profile fields all filled, but no résumé attached.
+
+    For tests about the résumé requirement itself.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    cand = await client.post(
+        "/candidates", json={"name": "Bare Owner", "email": f"bare-{suffix}@example.com"}
+    )
+    assert cand.status_code == 201, cand.text
+    prof = await client.post(
+        "/profiles",
+        json={
+            "candidate_id": cand.json()["id"],
+            "label": "bare",
+            "phone": "+1-555-0100",
+            "location": "Austin, TX",
+            "work_auth": "US citizen",
+            "needs_sponsorship": False,
+        },
+    )
+    assert prof.status_code == 201, prof.text
+    return {"candidate_id": cand.json()["id"], "profile_id": prof.json()["id"]}
 
 
 @pytest_asyncio.fixture
@@ -177,7 +248,9 @@ async def complete_candidate(client: AsyncClient) -> dict[str, str]:
         },
     )
     assert prof.status_code == 201, prof.text
-    return {"candidate_id": candidate_id, "profile_id": prof.json()["id"]}
+    profile_id = prof.json()["id"]
+    await _attach_resume(client, candidate_id, profile_id)
+    return {"candidate_id": candidate_id, "profile_id": profile_id}
 
 
 @pytest_asyncio.fixture
@@ -208,4 +281,6 @@ async def auto_submit_candidate(client: AsyncClient) -> dict[str, str]:
         },
     )
     assert prof.status_code == 201, prof.text
-    return {"candidate_id": candidate_id, "profile_id": prof.json()["id"]}
+    profile_id = prof.json()["id"]
+    await _attach_resume(client, candidate_id, profile_id)
+    return {"candidate_id": candidate_id, "profile_id": profile_id}

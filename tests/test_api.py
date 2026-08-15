@@ -77,6 +77,10 @@ async def test_same_url_different_candidate_is_allowed(
             "needs_sponsorship": False,
         },
     )
+    from tests.conftest import _attach_resume
+
+    await _attach_resume(client, other.json()["id"], other_profile.json()["id"])
+
     second = await client.post(
         "/applications",
         json={
@@ -148,6 +152,10 @@ async def test_needs_sponsorship_false_is_a_real_answer(client: AsyncClient) -> 
             "needs_sponsorship": False,
         },
     )
+
+    from tests.conftest import _attach_resume
+
+    await _attach_resume(client, cand.json()["id"], prof.json()["id"])
 
     r = await client.post(
         "/applications",
