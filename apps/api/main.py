@@ -5,13 +5,17 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from apps.api.errors import register_error_handlers
+from apps.api.middleware import LocalhostOnlyMiddleware
 from apps.api.routers import applications, candidates, detect, profiles
+from packages.core.config import get_settings
 
 app = FastAPI(
     title="Jobrunner",
     description="Local, single-user job-application agent.",
     version="0.1.0",
 )
+
+app.add_middleware(LocalhostOnlyMiddleware, allow_non_local=get_settings().allow_non_local)
 
 register_error_handlers(app)
 
