@@ -49,6 +49,11 @@ _ALL_TABLES = (
 )
 
 
+#: Set by `make gate-0`. Turns "no database, skip" into a hard failure — a
+#: gate that passes because 56 tests silently skipped is worse than no gate.
+REQUIRE_DB = os.environ.get("REQUIRE_DB") == "1"
+
+
 @pytest_asyncio.fixture(scope="session")
 async def engine():
     eng = create_async_engine(TEST_DATABASE_URL)
@@ -57,7 +62,13 @@ async def engine():
             await conn.run_sync(Base.metadata.create_all)
     except Exception as exc:  # noqa: BLE001 - any connection failure means skip
         await eng.dispose()
-        pytest.skip(f"no database at {TEST_DATABASE_URL}: {exc}")
+        message = (
+            f"no database at {TEST_DATABASE_URL}: {exc}\n"
+            "Start one with `make up`, or point TEST_DATABASE_URL elsewhere."
+        )
+        if REQUIRE_DB:
+            pytest.fail(message, pytrace=False)
+        pytest.skip(message)
     yield eng
     await eng.dispose()
 

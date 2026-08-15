@@ -51,5 +51,9 @@ worker:
 #   pytest green, POST /applications reaches submitted, invalid transition
 #   raises, duplicate (candidate_id, url) returns 409, ApplicationEvent rows
 #   exist for every transition, ruff + mypy clean, migrations match models.
-gate-0: lint typecheck check-migrations test
+#
+# REQUIRE_DB=1 so a missing database fails the gate instead of skipping the
+# tests that do most of the asserting.
+gate-0: lint typecheck check-migrations
+	REQUIRE_DB=1 $(PY)/pytest -q
 	@echo "gate-0 passed"

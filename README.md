@@ -58,9 +58,19 @@ dashboard).
 git clone <this-repo>
 cd Job_Runner
 cp .env.example .env        # fill in your own values — .env is gitignored
-docker compose up -d        # starts Postgres
-# install and run per apps/api, apps/worker, apps/web — see CLAUDE.md
+
+make install                # venv + dependencies
+make up                     # Postgres + pgvector, creates jobrunner and jobrunner_test
+make migrate                # apply the schema
+make gate-0                 # lint, types, migration drift, full test suite
+
+make api                    # http://127.0.0.1:8000
+make worker                 # in a second terminal
 ```
+
+`make gate-0` requires a running database and fails if it cannot reach one.
+Bare `pytest` skips the database tests instead, so a fresh checkout is green
+before `make up`.
 
 This project is built in phases (skeleton → first ATS → tailoring → MCP →
 discovery → tracker), each gated by its own test suite. See `CLAUDE.md` §9 for
