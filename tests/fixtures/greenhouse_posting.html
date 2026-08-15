@@ -1,0 +1,74 @@
+<title>Senior Backend Engineer - Acme</title>
+<div id="wrapper">
+  <div id="header">
+    <h1 class="app-title">Senior Backend Engineer</h1>
+    <span class="location">Austin, TX (Remote)</span>
+  </div>
+
+  <div id="content">
+    <p>Acme is hiring a Senior Backend Engineer to work on distributed systems.</p>
+    <p>You will design APIs, own services in production, and mentor engineers.</p>
+  </div>
+
+  <form id="application_form" method="post" enctype="multipart/form-data">
+    <div class="field">
+      <label for="first_name">First Name *</label>
+      <input type="text" id="first_name" name="job_application[first_name]" required>
+    </div>
+
+    <div class="field">
+      <label for="last_name">Last Name *</label>
+      <input type="text" id="last_name" name="job_application[last_name]" required>
+    </div>
+
+    <div class="field">
+      <label for="email">Email *</label>
+      <input type="email" id="email" name="job_application[email]" required>
+    </div>
+
+    <div class="field">
+      <label for="phone">Phone</label>
+      <input type="tel" id="phone" name="job_application[phone]">
+    </div>
+
+    <div class="field">
+      <label for="resume">Resume/CV *</label>
+      <input type="file" id="resume" name="job_application[resume]" required>
+    </div>
+
+    <div class="field">
+      <label for="cover_letter">Cover Letter</label>
+      <textarea id="cover_letter" name="job_application[cover_letter]"></textarea>
+    </div>
+
+    <div class="field">
+      <label for="job_application_answers_attributes_0_text_value">LinkedIn Profile</label>
+      <input type="url" id="job_application_answers_attributes_0_text_value"
+             name="job_application[answers_attributes][0][text_value]">
+    </div>
+
+    <div class="field">
+      <label for="job_application_answers_attributes_1_boolean_value">
+        Are you legally authorized to work in the United States? *
+      </label>
+      <select id="job_application_answers_attributes_1_boolean_value"
+              name="job_application[answers_attributes][1][boolean_value]" required>
+        <option value="">Please select</option>
+        <option value="1">Yes</option>
+        <option value="0">No</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="job_application_answers_attributes_2_text_value">
+        Why do you want to work at Acme? *
+      </label>
+      <textarea id="job_application_answers_attributes_2_text_value"
+                name="job_application[answers_attributes][2][text_value]" required></textarea>
+    </div>
+
+    <input type="hidden" id="utm_source" name="utm_source" value="jobrunner">
+
+    <input type="submit" id="submit_app" value="Submit Application">
+  </form>
+</div>

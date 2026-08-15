@@ -17,6 +17,9 @@ dependencies = [
     "pgvector>=0.3.6",
     "cryptography>=43.0",
     "structlog>=24.4",
+    # Pinned to a minor: the wheel and the browser build ship together,
+    # and a mismatch means Playwright tries to re-download Chromium.
+    "playwright>=1.56,<1.57",
 ]
 
 [project.optional-dependencies]
