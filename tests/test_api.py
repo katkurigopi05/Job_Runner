@@ -254,3 +254,30 @@ async def test_creation_writes_an_event(client: AsyncClient, complete_candidate)
 
     assert events.status_code == 200
     assert [e["type"] for e in events.json()] == ["created"]
+
+
+# --------------------------------------------------------------------------
+# ATS detection
+# --------------------------------------------------------------------------
+
+
+async def test_detect_greenhouse(client: AsyncClient) -> None:
+    r = await client.post("/detect", json={"url": "https://boards.greenhouse.io/acme/jobs/4012345"})
+    assert r.status_code == 200
+    assert r.json() == {
+        "url": "https://boards.greenhouse.io/acme/jobs/4012345",
+        "ats": "greenhouse",
+        "supported": True,
+    }
+
+
+async def test_detect_unknown_site(client: AsyncClient) -> None:
+    r = await client.post("/detect", json={"url": "https://acme.com/careers/1"})
+    assert r.json()["ats"] is None
+    assert r.json()["supported"] is False
+
+
+async def test_list_supported_ats(client: AsyncClient) -> None:
+    r = await client.get("/ats")
+    assert r.status_code == 200
+    assert "greenhouse" in r.json()
