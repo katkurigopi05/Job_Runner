@@ -78,6 +78,39 @@ make worker                 # in a second terminal
 Bare `pytest` skips the database tests instead, so a fresh checkout is green
 before `make up`.
 
+### First-run notes
+
+- **macOS needs Pango for PDF rendering.** WeasyPrint links against system
+  libraries that macOS does not ship: `brew install pango`. Without it,
+  `import weasyprint` fails with a `libgobject` load error and résumé
+  rendering will not work. Linux users generally already have these.
+- **Install the browser once**: `.venv/bin/playwright install chromium`.
+  Playwright pins its browser build to the wheel version, which is why
+  `pyproject.toml` pins the wheel to a single minor.
+- **Port 5432** maps straight through. If you already run Postgres locally
+  (Homebrew, Postgres.app), change the host side of the port mapping in
+  `docker-compose.yml` or stop the other server first.
+- **Python 3.12** — `make install` calls `python3.12` explicitly.
+
+## Driving it from Claude Code
+
+`.mcp.json` is committed, so Claude Code picks the server up when you open the
+repo. Start the API first — the tools call it rather than the database, so the
+approval gate and completeness checks have exactly one implementation:
+
+```bash
+make api        # the MCP tools talk to this
+```
+
+Then ask for what you want in plain language: *"is this URL supported?"*,
+*"apply to this posting"*, *"what's in the review queue?"*, *"answer the
+questions and approve it"*.
+
+Two deliberate absences in the tool surface: there is no tool that submits an
+application (approval releases it; the worker does the rest), and there is no
+`tailor_resume` — tailoring is Phase 3, so what exists is `preview_resume`,
+which assembles rather than rewrites.
+
 This project is built in phases (skeleton → first ATS → tailoring → MCP →
 discovery → tracker), each gated by its own test suite. See `CLAUDE.md` §9 for
 the current phase and what's implemented so far.

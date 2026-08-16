@@ -138,6 +138,9 @@ class Company(Base):
         Integer, nullable=False, server_default=text("3600")
     )
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: sha256 of the last board response. When it is unchanged, the crawler
+    #: skips parsing entirely instead of re-hashing every posting.
+    board_hash: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = _created_at()
 
 

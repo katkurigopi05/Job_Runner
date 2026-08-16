@@ -17,10 +17,13 @@ from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
-from packages.core.models import Candidate, Profile, Resume
-from packages.core.schemas import ResumeOut, ResumeParsedOut
+from packages.core.models import Candidate, Profile, Project, Resume
+from packages.core.schemas import ResumeOut, ResumeParsedOut, ResumePreviewOut
 from packages.core.storage import get_storage, resume_key
-from packages.tailor.parse import ParseError, parse_resume
+from packages.github.select import select_projects
+from packages.tailor.assemble import describe
+from packages.tailor.parse import ParsedResume, ParseError, parse_resume
+from packages.tailor.projects import LinkStyle, ProjectEntry, link_text
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
@@ -161,3 +164,40 @@ async def download_resume(resume_id: uuid.UUID, session: SessionDep) -> object:
 
     get_settings()  # keep settings resolution on the same path as storage
     return FileResponse(path, filename=path.name)
+
+
+@router.post("/{resume_id}/preview", response_model=ResumePreviewOut)
+async def preview_assembly(
+    resume_id: uuid.UUID, session: SessionDep, job_text: str = "", limit: int = 4
+) -> ResumePreviewOut:
+    """What an assembled résumé would contain for a given posting.
+
+    Inspectable before anything is sent: which sections survive parsing, which
+    projects the ranking picked, and exactly how each link will read.
+    """
+    resume = await session.get(Resume, resume_id)
+    if resume is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "resume not found")
+
+    parsed = ParsedResume.model_validate(resume.parsed_json or {})
+
+    projects = list(
+        (
+            await session.scalars(
+                select(Project).where(Project.candidate_id == resume.candidate_id)
+            )
+        ).all()
+    )
+    chosen = select_projects(projects, job_text, limit=limit)
+    report = describe(parsed, chosen)
+
+    return ResumePreviewOut(
+        resume_id=resume.id,
+        version=resume.version,
+        sections=report.sections,
+        project_names=report.project_names,
+        source_line_count=report.source_line_count,
+        rendered_links=[
+            link_text(ProjectEntry.from_project(p), LinkStyle.ICON_SLUG) for p in chosen
+        ],
+    )

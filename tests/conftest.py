@@ -60,6 +60,24 @@ async def engine():
     eng = create_async_engine(TEST_DATABASE_URL)
     try:
         async with eng.begin() as conn:
+            # Drop first. `create_all` only creates missing *tables*, so a
+            # column added since the last run would be silently absent and
+            # every test touching it would fail somewhere confusing.
+            #
+            # The lock timeout matters: a session left "idle in transaction" by
+            # an interrupted run holds locks on these tables, and without it
+            # the drop waits forever. A fast, explanatory failure beats a hang.
+            await conn.execute(text("SET lock_timeout = '5s'"))
+            try:
+                await conn.run_sync(Base.metadata.drop_all)
+            except Exception as exc:  # noqa: BLE001 - report, do not hang
+                raise RuntimeError(
+                    "could not reset the test schema — another connection is "
+                    "holding locks (often a previous run interrupted mid-test). "
+                    "Close it, or run: "
+                    'psql -c "select pg_terminate_backend(pid) from '
+                    "pg_stat_activity where datname='jobrunner_test'\""
+                ) from exc
             await conn.run_sync(Base.metadata.create_all)
             # A run that dies mid-test (a crash, a ^C) skips the per-test
             # truncate and leaves committed rows behind. The next run then

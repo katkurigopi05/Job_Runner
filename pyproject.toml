@@ -30,15 +30,26 @@ dependencies = [
     "pypdf>=5",
     # Résumés arrive as .docx as often as .pdf — packages/tailor/parse.py.
     "python-docx>=1.1",
+    # apps/mcp/server.py imports this at module scope.
+    "mcp>=1.2",
+    # packages/crawler/extract.py reads the company seed list.
+    "pyyaml>=6",
 ]
 
 [project.optional-dependencies]
+# Real embeddings. Optional on purpose: this pulls torch, and
+# packages/matching/embed.py already falls back to lexical scoring and logs
+# `sentence_transformers_unavailable_using_lexical` when it is absent. Install
+# with `pip install -e ".[embeddings]"` when you want the real vectors.
+embeddings = ["sentence-transformers>=3"]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "httpx>=0.27",
     "ruff>=0.8",
     "mypy>=1.13",
+    # PyYAML ships no inline types; without the stubs mypy fails the gate.
+    "types-PyYAML>=6",
 ]
 
 [build-system]
@@ -79,5 +90,5 @@ strict = true
 
 # weasyprint ships no py.typed marker.
 [[tool.mypy.overrides]]
-module = ["weasyprint.*", "pypdf.*"]
+module = ["weasyprint.*", "pypdf.*", "sentence_transformers.*"]
 ignore_missing_imports = true

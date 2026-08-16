@@ -1,5 +1,5 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
-        check-migrations api worker gate-0 gate-1 gate-1-live
+        check-migrations api worker mcp gate-0 gate-1 gate-1-live gate-3 gate-4 gate-5
 
 PY := .venv/bin
 
@@ -33,7 +33,8 @@ fmt:
 	$(PY)/ruff check --fix .
 
 typecheck:
-	$(PY)/mypy packages/core packages/ats
+	$(PY)/mypy packages/core packages/ats packages/github packages/tailor \
+		packages/crawler packages/matching
 
 # Schema drift: the migrations must fully describe the models.
 check-migrations:
@@ -46,6 +47,11 @@ api:
 
 worker:
 	$(PY)/python -m apps.worker.run
+
+# Speaks MCP over stdio; Claude Code launches it itself via .mcp.json.
+# Run it by hand only to check it starts. It needs `make api` running.
+mcp:
+	$(PY)/python -m apps.mcp.server
 
 # Gate 0 — CLAUDE.md §9. All assertions covered:
 #   pytest green, POST /applications reaches submitted, invalid transition
@@ -66,6 +72,25 @@ gate-0: lint typecheck check-migrations
 gate-1: gate-0
 	REQUIRE_DB=1 $(PY)/pytest -q tests/test_greenhouse.py
 	@echo "gate-1 (offline) passed"
+
+# Gate 3 — CLAUDE.md §9. The fabrication merge gate: 20 job descriptions
+# crossed with 3 résumés, plus adversarial cases the guard must reject and
+# legitimate rewrites it must allow, plus the tailored-PDF round trip.
+gate-3: gate-0
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_no_fabrication.py
+	@echo "gate-3 passed"
+
+# Gate 5 — CLAUDE.md §9. A full cycle inside the rate limit, a second run
+# emitting zero postings, and hand-labeled postings ranking sanely.
+gate-5: gate-0
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_crawler.py tests/test_matching.py
+	@echo "gate-5 passed"
+
+# Gate 4 — CLAUDE.md §9. A full apply-to-review cycle driven by tool calls
+# alone, plus the tool surface's own invariants.
+gate-4: gate-0
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_mcp.py
+	@echo "gate-4 passed"
 
 # make gate-1-live URL=https://boards.greenhouse.io/<company>/jobs/<id>
 gate-1-live:
