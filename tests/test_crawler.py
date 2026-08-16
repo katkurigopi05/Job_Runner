@@ -312,6 +312,31 @@ def test_strip_html() -> None:
     assert strip_html("<p>a</p><p>b</p>") == "a\nb"
     assert strip_html("&amp;") == "&"
     assert strip_html(None) is None
+    assert strip_html("<div></div>") is None
+
+
+def test_script_and_style_are_not_description_text() -> None:
+    """Code inside a posting is not something a human wrote about the job.
+
+    description_raw feeds embeddings and the fabrication guard, so a tracking
+    snippet landing in it is treated downstream as a fact from the source.
+    """
+    assert strip_html("<p>Real text.</p><script>var trackingId=42;</script>") == "Real text."
+    assert strip_html("<style>.a{color:red}</style><p>Real text.</p>") == "Real text."
+    assert strip_html("<noscript>Enable JS</noscript><p>Real.</p>") == "Real."
+
+
+def test_unclosed_block_still_separates_words() -> None:
+    """Boards do emit unclosed <p>. Welding two paragraphs invents a word."""
+    assert (
+        strip_html("<div><p>Unclosed <strong>bold<p>Next para</div>") == "Unclosed bold\nNext para"
+    )
+
+
+def test_inline_tags_do_not_split_words() -> None:
+    assert strip_html("<p>We use <strong>Python</strong> and <em>Go</em>.</p>") == (
+        "We use Python and Go."
+    )
 
 
 def test_posting_hash_changes_with_content() -> None:
