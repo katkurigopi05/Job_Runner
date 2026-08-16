@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+from html.parser import HTMLParser
 from typing import Any, Protocol
 
 import structlog
@@ -21,7 +22,6 @@ from pydantic import BaseModel, Field
 
 log = structlog.get_logger(__name__)
 
-_TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"[ \t]+")
 
 
@@ -46,16 +46,64 @@ class PostingExtractor(Protocol):
     def parse(self, body: str, company_slug: str) -> list[ExtractedPosting]: ...
 
 
+class _TextExtractor(HTMLParser):
+    """Collect the visible text of an HTML fragment.
+
+    The stdlib tokenizer rather than tag regexes, because a regex cannot know
+    it is inside <script>: tracking code and stylesheet rules were landing in
+    description_raw as if a human had written them. That text feeds embeddings
+    and the fabrication guard, so junk in it is not cosmetic.
+    """
+
+    #: Elements whose contents are code, not prose.
+    SKIP = frozenset({"script", "style", "noscript", "template", "svg"})
+
+    #: Elements that end a line. Opening tags break too — a description that
+    #: omits its closing </p> should not weld two paragraphs into one word.
+    BLOCK = frozenset(
+        {
+            "p", "div", "br", "li", "ul", "ol", "tr", "table", "section",
+            "article", "header", "footer", "blockquote", "pre", "hr",
+            "h1", "h2", "h3", "h4", "h5", "h6",
+        }
+    )  # fmt: skip
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._skipping = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self.SKIP:
+            self._skipping += 1
+        elif tag in self.BLOCK:
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self.SKIP:
+            self._skipping = max(0, self._skipping - 1)
+        elif tag in self.BLOCK:
+            self._parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self._skipping:
+            self._parts.append(data)
+
+    @property
+    def text(self) -> str:
+        return "".join(self._parts)
+
+
 def strip_html(raw: str | None) -> str | None:
     """Plain text from an HTML fragment, whitespace normalized."""
     if not raw:
         return None
-    import html as html_module
 
-    text = html_module.unescape(raw)
-    text = re.sub(r"<(br|/p|/div|/li)[^>]*>", "\n", text, flags=re.I)
-    text = _TAG_RE.sub("", text)
-    text = _WS_RE.sub(" ", text)
+    parser = _TextExtractor()
+    parser.feed(raw)
+    parser.close()
+
+    text = _WS_RE.sub(" ", parser.text)
     lines = [line.strip() for line in text.splitlines()]
     cleaned = "\n".join(line for line in lines if line)
     return cleaned or None
