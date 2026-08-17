@@ -358,10 +358,25 @@ def test_posting_hash_changes_with_content() -> None:
 
 
 def test_seed_registry_loads() -> None:
+    """The registry is hand-picked, and every entry is one this project can use.
+
+    This asserted `len(seeds) >= 40` and passed while 21 of the 50 entries were
+    dead boards. Size is not health: a 404 board yields zero postings, which
+    reads identically to "nothing new since the last poll", so the count stayed
+    reassuring while discovery covered barely half the list.
+
+    Liveness needs the network and belongs in `make validate-seeds`. What can
+    be checked offline is that entries are well-formed, unique, and for an ATS
+    there is an adapter for.
+    """
     seeds = load_seed()
-    assert len(seeds) >= 40, "the registry should be hand-picked, not empty"
+
+    assert len(seeds) >= 20, "the registry should be hand-picked, not empty"
     assert all(s.slug for s in seeds)
-    assert all(s.ats == "greenhouse" for s in seeds)
+    assert all(s.ats == "greenhouse" for s in seeds), "no adapter for other ATSes yet"
+
+    slugs = [s.slug for s in seeds]
+    assert len(slugs) == len(set(slugs)), "a duplicate slug polls the same board twice"
 
 
 async def test_seed_validation_checks_rendered_board_after_api_404() -> None:
