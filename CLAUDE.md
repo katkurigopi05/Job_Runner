@@ -73,6 +73,8 @@ No paid service is permitted in `requirements.txt` or `package.json` without ask
 jobrunner/
 ├── CLAUDE.md
 ├── docker-compose.yml            postgres only
+├── Dockerfile                    verification artifact, not a deployment
+├── .github/workflows/ci.yml      runs the gates on a clean machine
 ├── .env.example                  never .env
 ├── apps/
 │   ├── api/                      FastAPI app
@@ -329,7 +331,9 @@ Do not build these. If a task seems to need one, stop and ask.
 - Mobile apps, iMessage, WhatsApp
 - Chrome extension (maybe later, not now)
 - Captcha solving, proxy rotation, fingerprint spoofing
-- Cloud deployment, CI beyond local `make gate-N`
+- Cloud deployment, and any hosted runtime. The app runs on localhost only.
+  (CI is now in scope — see §13. It *runs* the gates, it does not deploy
+  anything, and no image is pushed to a registry.)
 - Workday adapter (revisit after Phase 6)
 - Any paid API
 
@@ -354,3 +358,50 @@ Then, first prompt:
 Work one phase at a time. Do not let it run ahead — every phase has a gate for a reason,
 and a broken Phase 1 adapter is much cheaper to find than a broken Phase 5 pipeline built
 on top of it.
+
+---
+
+## 13. CI
+
+`.github/workflows/ci.yml` runs on every push to `main`, every pull request, and
+on demand. Two jobs.
+
+**`gates`** — the same checks `make gate-N` runs locally, on a machine that has
+nothing installed. It brings up `pgvector/pgvector:pg16` as a service container,
+installs the native libraries WeasyPrint loads through cffi, installs Playwright
+Chromium, applies migrations, then runs `make gate-0` followed by gates 1, 3, 4
+and 5 by name.
+
+Gate 0 already runs the whole suite, so the four named gates are subsets re-run
+for labelling. That is deliberate: when CI goes red you want to be told which
+gate broke, not that "a test failed".
+
+**`image`** — builds the `Dockerfile`, imports every entry point inside it, and
+checks Chromium is present. Nothing is pushed anywhere.
+
+### Why this exists
+
+Every dependency defect this project has had was invisible locally and only
+appeared on a clean install: `email-validator`, `python-docx`,
+`python-multipart`, `mcp`, `pyyaml`. `python-multipart` is the instructive one —
+nothing imports it, FastAPI reaches for it at runtime, so no amount of reading
+the source finds it. Only installing from nothing does.
+
+The native side is the same story. WeasyPrint needs Pango and Playwright needs a
+browser; neither is a Python dependency, and a missing Pango does not fail
+cleanly — it segfaults pytest partway through the run.
+
+### The Dockerfile is not a deployment
+
+There is no registry, no orchestrator, and no hosted runtime. §1 still holds:
+this runs on localhost for one user. The image exists so "it installs from
+nothing" is checked on every commit.
+
+Two things in it are load-bearing and easy to undo by accident:
+
+- **No `chown -R` over `/opt/playwright`.** Changing a file's mode rewrites it
+  into a new layer, so recursing over a 1.3GB browser added 947MB of duplicates.
+  Chromium only needs to be readable and executable. Root can own it.
+- **`.dockerignore` excludes `.env`, `.secrets/`, and `storage/`.** Those are
+  the vault key, the encrypted credentials, and résumé PII. An image layer is
+  forever, so keep them out of the build context.
