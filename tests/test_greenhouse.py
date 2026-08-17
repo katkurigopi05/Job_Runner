@@ -312,3 +312,57 @@ async def test_screenshot_lands_in_storage(posting_page, tmp_path) -> None:
         assert storage.get(key)[:8] == b"\x89PNG\r\n\x1a\n"
     finally:
         set_storage(None)
+
+
+# --------------------------------------------------------------------------
+# react-select comboboxes — found by gate-1-live against Figma and Vercel
+# --------------------------------------------------------------------------
+
+#: Trimmed from the live Figma board. Greenhouse renders every dropdown this
+#: way: there is no <select> element on the page at all.
+_REACT_SELECT_FORM = """
+<form id="application_form">
+  <div class="select__container">
+    <label id="q1-label" for="q1" class="label select__label">
+      Are you authorized to work in the country for which you applied?
+    </label>
+    <input class="select__input" id="q1" type="text" role="combobox"
+           aria-haspopup="true" aria-autocomplete="list" aria-required="true" />
+  </div>
+  <label for="first_name">First Name</label>
+  <input id="first_name" type="text" />
+  <div class="iti">
+    <input id="iti-0__search-input" type="text" class="iti__search-input" />
+  </div>
+</form>
+"""
+
+
+async def test_react_select_is_a_dropdown_not_free_text(page) -> None:
+    """§2.2 — a work-authorization answer must match an offered option.
+
+    Greenhouse's dropdowns are `input type="text"` with role="combobox".
+    Believing the type attribute classified this as free text, and typing into
+    a combobox selects nothing, so the answer silently never landed.
+    """
+    await page.set_content(_REACT_SELECT_FORM)
+
+    questions = await GreenhouseAdapter().enumerate_fields(page)
+    by_key = {q.key: q for q in questions}
+
+    assert by_key["q1"].kind is QuestionKind.SINGLE_SELECT
+    # A real text input beside it must stay text.
+    assert by_key["first_name"].kind is QuestionKind.TEXT
+
+
+async def test_widget_internals_are_not_offered_as_questions(page) -> None:
+    """intl-tel-input mounts a country search box inside the form.
+
+    It is not something an employer asked, and surfacing it in the review queue
+    invites the owner to answer a question that does not exist.
+    """
+    await page.set_content(_REACT_SELECT_FORM)
+
+    questions = await GreenhouseAdapter().enumerate_fields(page)
+
+    assert not any(q.key.startswith("iti-") for q in questions)
