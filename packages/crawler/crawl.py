@@ -36,6 +36,7 @@ class CompanyResult:
     updated_postings: int = 0
     closed_postings: int = 0
     skipped_reason: str | None = None
+    error: str | None = None
     waited_seconds: float = 0.0
 
     @property
@@ -59,11 +60,17 @@ class CrawlReport:
     def blocked(self) -> list[str]:
         return [r.company for r in self.results if r.skipped_reason]
 
+    @property
+    def failed(self) -> list[str]:
+        return [r.company for r in self.results if r.error]
+
     def summary(self) -> str:
-        return (
+        summary = (
             f"{self.fetched} boards fetched, {self.emitted} postings emitted, "
-            f"{len(self.blocked)} skipped"
+            f"{len(self.blocked)} skipped, {len(self.failed)} failed"
         )
+        failures = [f"{result.company}: {result.error}" for result in self.results if result.error]
+        return f"{summary} [{'; '.join(failures)}]" if failures else summary
 
 
 async def upsert_company(session: AsyncSession, seed: CompanySeed) -> Company:
@@ -195,7 +202,7 @@ async def crawl_company(
         return result
     except Exception as exc:  # noqa: BLE001 - one bad host must not stop the cycle
         log.warning("crawl_fetch_failed", company=seed.name, error=type(exc).__name__)
-        result.skipped_reason = f"fetch failed: {type(exc).__name__}"
+        result.error = f"fetch failed: {type(exc).__name__}"
         return result
 
     result.fetched = True
@@ -203,7 +210,14 @@ async def crawl_company(
     company.last_polled_at = datetime.now(UTC)
 
     if not response.ok:
-        result.skipped_reason = f"HTTP {response.status}"
+        result.error = f"HTTP {response.status}"
+        log.warning(
+            "crawl_board_request_failed",
+            company=seed.name,
+            slug=seed.slug,
+            url=url,
+            status=response.status,
+        )
         return result
 
     # Board-level short circuit: identical bytes means nothing to parse.

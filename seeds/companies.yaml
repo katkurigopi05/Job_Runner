@@ -1,11 +1,20 @@
 # Hand-picked company registry — CLAUDE.md §9, Phase 5.
 #
-# Roughly 50 companies, not a mass crawl. `slug` is the company's
-# identifier on its ATS board, which is what the extractor requests.
+# Not a mass crawl. `slug` is the company's identifier on its ATS board, which
+# is what the extractor requests.
 #
 # poll_interval_s is per company and is only ever an *upper* bound on
-# frequency: the 60s per-host floor in packages/crawler/ratelimit.py
-# applies regardless of what is written here.
+# frequency: the 60s per-host floor in packages/crawler/ratelimit.py applies
+# regardless of what is written here.
+#
+# Every entry below was verified live on 2026-08-17 with `make validate-seeds`:
+# the board API answered 200 and returned a job list.
+#
+# 21 companies were removed in that pass. They are listed at the
+# bottom with the evidence rather than deleted outright, so nobody re-adds them
+# from memory. A 404 board is worse than an absent one: it yields zero postings,
+# which reads identically to "nothing new since the last poll", so discovery
+# silently covered a fraction of the registry it claimed to.
 
 companies:
   - name: "Stripe"
@@ -33,43 +42,8 @@ companies:
     ats: "greenhouse"
     poll_interval_s: 21600
 
-  - name: "Notion"
-    slug: "notion"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
   - name: "Vercel"
     slug: "vercel"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Linear"
-    slug: "linear"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Ramp"
-    slug: "ramp"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Plaid"
-    slug: "plaid"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Retool"
-    slug: "retool"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Render"
-    slug: "render"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Supabase"
-    slug: "supabase"
     ats: "greenhouse"
     poll_interval_s: 21600
 
@@ -83,23 +57,8 @@ companies:
     ats: "greenhouse"
     poll_interval_s: 21600
 
-  - name: "dbt Labs"
-    slug: "dbtlabs"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
   - name: "Fivetran"
     slug: "fivetran"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Airbyte"
-    slug: "airbyte"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Astronomer"
-    slug: "astronomer"
     ats: "greenhouse"
     poll_interval_s: 21600
 
@@ -108,18 +67,8 @@ companies:
     ats: "greenhouse"
     poll_interval_s: 21600
 
-  - name: "HashiCorp"
-    slug: "hashicorp"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
   - name: "Datadog"
     slug: "datadog"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Sentry"
-    slug: "sentry"
     ats: "greenhouse"
     poll_interval_s: 21600
 
@@ -133,28 +82,8 @@ companies:
     ats: "greenhouse"
     poll_interval_s: 21600
 
-  - name: "Redis"
-    slug: "redislabs"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Confluent"
-    slug: "confluent"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Snowflake"
-    slug: "snowflakecomputing"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
   - name: "Instacart"
     slug: "instacart"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "DoorDash"
-    slug: "doordash"
     ats: "greenhouse"
     poll_interval_s: 21600
 
@@ -183,28 +112,8 @@ companies:
     ats: "greenhouse"
     poll_interval_s: 21600
 
-  - name: "Rippling"
-    slug: "rippling"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Deel"
-    slug: "deel"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
   - name: "Asana"
     slug: "asana"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Miro"
-    slug: "miro"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Loom"
-    slug: "loom"
     ats: "greenhouse"
     poll_interval_s: 21600
 
@@ -253,7 +162,35 @@ companies:
     ats: "greenhouse"
     poll_interval_s: 21600
 
-  - name: "Segment"
-    slug: "segment"
-    ats: "greenhouse"
-    poll_interval_s: 21600
+
+
+# ---------------------------------------------------------------------------
+# Removed 2026-08-17 — no Greenhouse board.
+#
+# Each returned 404 from both boards-api.greenhouse.io and the rendered
+# job-boards.greenhouse.io page, so this is not the API-not-published case.
+# Most have moved to another ATS. Re-adding one needs its current slug
+# verified, and an adapter for whatever ATS it moved to — this project only
+# speaks Greenhouse today (CLAUDE.md §8).
+#
+#   Notion (notion) — api=404 rendered=404
+#   Linear (linear) — api=404 rendered=404
+#   Ramp (ramp) — api=404 rendered=404
+#   Plaid (plaid) — api=404 rendered=404
+#   Retool (retool) — api=404 rendered=404
+#   Render (render) — api=404 rendered=404
+#   Supabase (supabase) — api=404 rendered=404
+#   dbt Labs (dbtlabs) — api=404 rendered=404
+#   Airbyte (airbyte) — api=404 rendered=404
+#   Astronomer (astronomer) — api=404 rendered=404
+#   HashiCorp (hashicorp) — api=404 rendered=404
+#   Sentry (sentry) — api=404 rendered=404
+#   Redis (redislabs) — api=404 rendered=404
+#   Confluent (confluent) — api=404 rendered=404
+#   Snowflake (snowflakecomputing) — api=404 rendered=404
+#   DoorDash (doordash) — api=404 rendered=404
+#   Rippling (rippling) — api=404 rendered=404
+#   Deel (deel) — api=404 rendered=404
+#   Miro (miro) — api=404 rendered=404
+#   Loom (loom) — api=404 rendered=404
+#   Segment (segment) — api=404 rendered=404

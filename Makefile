@@ -1,5 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
-        check-migrations api worker mcp web web-install gate-0 gate-1 gate-1-live gate-3 gate-4 gate-5 gate-6
+        check-migrations api worker mcp web web-install validate-seeds \
+        gate-0 gate-1 gate-1-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
 
@@ -60,6 +61,11 @@ web:
 
 mcp:
 	$(PY)/python -m apps.mcp.server
+
+# Sequential live validation. A Greenhouse API 404 is checked against the
+# rendered board before the slug is reported missing. Expect ~50 minutes.
+validate-seeds:
+	$(PY)/python -m packages.crawler.validate seeds/companies.yaml
 
 # Gate 0 — CLAUDE.md §9. All assertions covered:
 #   pytest green, POST /applications reaches submitted, invalid transition
