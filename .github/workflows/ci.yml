@@ -121,6 +121,9 @@ jobs:
       - name: gate-5 (crawler and matching)
         run: .venv/bin/pytest -q tests/test_crawler.py tests/test_matching.py
 
+      - name: gate-6 (inbox tracker)
+        run: .venv/bin/pytest -q tests/test_inbox.py
+
   image:
     name: docker image builds and runs
     runs-on: ubuntu-latest

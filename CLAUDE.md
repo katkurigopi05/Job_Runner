@@ -369,12 +369,17 @@ on demand. Two jobs.
 **`gates`** — the same checks `make gate-N` runs locally, on a machine that has
 nothing installed. It brings up `pgvector/pgvector:pg16` as a service container,
 installs the native libraries WeasyPrint loads through cffi, installs Playwright
-Chromium, applies migrations, then runs `make gate-0` followed by gates 1, 3, 4
-and 5 by name.
+Chromium, applies migrations, then runs `make gate-0` followed by every other
+gate by name.
 
-Gate 0 already runs the whole suite, so the four named gates are subsets re-run
-for labelling. That is deliberate: when CI goes red you want to be told which
-gate broke, not that "a test failed".
+Gate 0 already runs the whole suite, so the named gates are subsets re-run for
+labelling. That is deliberate: when CI goes red you want to be told which gate
+broke, not that "a test failed".
+
+**A new gate has to be added here too.** The named steps are a hand-maintained
+list, so a `gate-N` that exists in the Makefile but not in `ci.yml` still gets
+*run* — gate 0 covers every test — but a failure in it reports as a gate-0
+failure and you lose the label that says which phase regressed.
 
 **`image`** — builds the `Dockerfile`, imports every entry point inside it, and
 checks Chromium is present. Nothing is pushed anywhere.
