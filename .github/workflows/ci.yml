@@ -1,0 +1,160 @@
+# Runs the same gates `make gate-N` runs locally, on a clean machine every time.
+#
+# The point is the "clean machine" part. Every dependency defect this repo has
+# had — email-validator, python-docx, python-multipart, mcp, pyyaml — was
+# invisible on a developer box that already had the package installed from
+# something else, and only showed up on a fresh install. So does the native
+# side: WeasyPrint needs Pango, Playwright needs a browser, and neither is a
+# Python dependency that pip can pull.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Manual runs, for when you want a check without pushing.
+  workflow_dispatch:
+
+# A second push to the same branch cancels the first — no point finishing a
+# run whose commit is already superseded.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Both halves of the gate. conftest.py reads TEST_DATABASE_URL directly and
+  # does not load .env, so it has to be set in the environment.
+  DATABASE_URL: postgresql://jobrunner:jobrunner@localhost:5432/jobrunner
+  TEST_DATABASE_URL: postgresql+asyncpg://jobrunner:jobrunner@localhost:5432/jobrunner_test
+  # REQUIRE_DB turns "no database, skip" into a hard failure. A green gate that
+  # silently skipped the database tests is worse than no gate.
+  REQUIRE_DB: "1"
+
+jobs:
+  gates:
+    name: gates (lint, types, migrations, tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        # Must match docker-compose.yml. Plain postgres has no pgvector, and
+        # the schema has a vector(384) column.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: jobrunner
+          POSTGRES_PASSWORD: jobrunner
+          POSTGRES_DB: jobrunner
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jobrunner -d jobrunner"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # scripts/init-db.sql runs from a compose volume mount, which service
+      # containers have no equivalent of. Same statements, applied by hand.
+      - name: Create the test database and pgvector
+        run: |
+          export PGPASSWORD=jobrunner
+          psql -h localhost -U jobrunner -d jobrunner -c 'CREATE DATABASE jobrunner_test;'
+          psql -h localhost -U jobrunner -d jobrunner      -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+          psql -h localhost -U jobrunner -d jobrunner_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+
+      # WeasyPrint loads these through cffi at import time, not via pip. Without
+      # them the PDF tests fail with `cannot load library 'libpango-1.0-0'` and
+      # pytest segfaults partway through the run.
+      - name: Install native libraries for WeasyPrint
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 libffi-dev
+
+      # Into .venv, not the runner's system Python: the Makefile runs every
+      # tool as $(PY)/… with PY = .venv/bin, so a system-wide install leaves
+      # `make gate-0` looking for a .venv/bin/ruff that does not exist. Using
+      # the same layout as a developer box also means CI exercises the paths
+      # the Makefile documents rather than a parallel set of its own.
+      - name: Install the project
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -e ".[dev]"
+
+      # --with-deps pulls the shared libraries Chromium needs on a bare runner.
+      # Only chromium: the adapters never touch firefox or webkit.
+      - name: Install Playwright Chromium
+        run: .venv/bin/python -m playwright install --with-deps chromium
+
+      - name: Apply migrations
+        run: .venv/bin/alembic upgrade head
+
+      # gate-0 is the comprehensive one: ruff, ruff format --check, mypy,
+      # alembic check for schema drift, then the whole suite. Gates 1, 3, 4 and
+      # 5 re-run subsets of that same suite for labelling, so this covers them.
+      - name: make gate-0
+        run: make gate-0
+
+      # Named separately so a failure says which gate broke rather than just
+      # "some test failed". These are subsets of the run above, so they are
+      # cheap and they keep the CLAUDE.md §9 gate names meaningful in CI.
+      - name: gate-1 (offline Greenhouse adapter)
+        run: .venv/bin/pytest -q tests/test_greenhouse.py
+
+      - name: gate-3 (fabrication merge gate)
+        run: .venv/bin/pytest -q tests/test_no_fabrication.py
+
+      - name: gate-4 (MCP tool surface)
+        run: .venv/bin/pytest -q tests/test_mcp.py
+
+      - name: gate-5 (crawler and matching)
+        run: .venv/bin/pytest -q tests/test_crawler.py tests/test_matching.py
+
+  image:
+    name: docker image builds and runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built, never pushed. There is no registry and no deployment — CLAUDE.md
+      # §1 says this runs on localhost. The image exists so that "it installs
+      # from nothing" is checked on every commit, which is the failure mode a
+      # developer machine cannot see.
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: jobrunner:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A build that succeeds and an image that cannot import its own entry
+      # points are different things. This catches a missing native library or
+      # an undeclared dependency that only bites at import time.
+      - name: Import the entry points
+        run: |
+          docker run --rm jobrunner:ci python -c "
+          import apps.api.main, apps.worker.run, apps.mcp.server
+          import weasyprint, packages.tailor.assemble, packages.crawler.extract
+          print('entry points import cleanly')
+          "
+
+      - name: Playwright Chromium is present in the image
+        run: docker run --rm jobrunner:ci python -m playwright install --dry-run chromium
