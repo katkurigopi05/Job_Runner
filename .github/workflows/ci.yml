@@ -112,6 +112,9 @@ jobs:
       - name: gate-1 (offline Greenhouse adapter)
         run: .venv/bin/pytest -q tests/test_greenhouse.py
 
+      - name: gate-2 (review queue, offline half)
+        run: .venv/bin/pytest -q tests/test_gate2.py
+
       - name: gate-3 (fabrication merge gate)
         run: .venv/bin/pytest -q tests/test_no_fabrication.py
 

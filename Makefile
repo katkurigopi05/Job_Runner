@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker mcp web web-install validate-seeds \
-        gate-0 gate-1 gate-1-live gate-3 gate-4 gate-5 gate-6
+        gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
 
@@ -86,6 +86,23 @@ gate-0: lint typecheck check-migrations
 gate-1: gate-0
 	REQUIRE_DB=1 $(PY)/pytest -q tests/test_greenhouse.py
 	@echo "gate-1 (offline) passed"
+
+# Gate 2 — CLAUDE.md §9. The offline half: the review queue carries every
+# unfilled field with the employer's original wording, and approving resumes
+# the run. The fill-rate half of the gate needs a real posting and a real
+# profile, which is `make gate-2-live`.
+gate-2: gate-0
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_gate2.py tests/test_worker.py
+	@echo "gate-2 (offline) passed"
+
+# make gate-2-live URL=https://job-boards.greenhouse.io/<company>/jobs/<id>
+#
+# The half that cannot be faked: fills a real form from the real profile and
+# reports what fraction of fields it answered with no manual input. §9 asks for
+# >=80%.
+gate-2-live:
+	@test -n "$(URL)" || (echo "set URL=<greenhouse posting url>" && exit 1)
+	$(PY)/python -m scripts.live_check "$(URL)"
 
 # Gate 3 — CLAUDE.md §9. The fabrication merge gate: 20 job descriptions
 # crossed with 3 résumés, plus adversarial cases the guard must reject and

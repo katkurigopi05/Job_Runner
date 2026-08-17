@@ -1,17 +1,19 @@
 """Adapter lookup by URL.
 
 Order matters only if two adapters could claim the same URL; today none can.
-Adapters register here and nowhere else — adding Lever is one import and one
-list entry.
+Adapters register here and nowhere else — adding one is an import and a list
+entry.
 """
 
 from __future__ import annotations
 
 from packages.ats.base import ATSAdapter, UnsupportedSiteError
 from packages.ats.greenhouse import GreenhouseAdapter
+from packages.ats.lever import LeverAdapter
 
 ADAPTERS: list[type[ATSAdapter]] = [
     GreenhouseAdapter,
+    LeverAdapter,
 ]
 
 
