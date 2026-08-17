@@ -81,18 +81,24 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 libffi-dev
 
+      # Into .venv, not the runner's system Python: the Makefile runs every
+      # tool as $(PY)/… with PY = .venv/bin, so a system-wide install leaves
+      # `make gate-0` looking for a .venv/bin/ruff that does not exist. Using
+      # the same layout as a developer box also means CI exercises the paths
+      # the Makefile documents rather than a parallel set of its own.
       - name: Install the project
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -e ".[dev]"
 
       # --with-deps pulls the shared libraries Chromium needs on a bare runner.
       # Only chromium: the adapters never touch firefox or webkit.
       - name: Install Playwright Chromium
-        run: python -m playwright install --with-deps chromium
+        run: .venv/bin/python -m playwright install --with-deps chromium
 
       - name: Apply migrations
-        run: alembic upgrade head
+        run: .venv/bin/alembic upgrade head
 
       # gate-0 is the comprehensive one: ruff, ruff format --check, mypy,
       # alembic check for schema drift, then the whole suite. Gates 1, 3, 4 and
@@ -104,16 +110,16 @@ jobs:
       # "some test failed". These are subsets of the run above, so they are
       # cheap and they keep the CLAUDE.md §9 gate names meaningful in CI.
       - name: gate-1 (offline Greenhouse adapter)
-        run: pytest -q tests/test_greenhouse.py
+        run: .venv/bin/pytest -q tests/test_greenhouse.py
 
       - name: gate-3 (fabrication merge gate)
-        run: pytest -q tests/test_no_fabrication.py
+        run: .venv/bin/pytest -q tests/test_no_fabrication.py
 
       - name: gate-4 (MCP tool surface)
-        run: pytest -q tests/test_mcp.py
+        run: .venv/bin/pytest -q tests/test_mcp.py
 
       - name: gate-5 (crawler and matching)
-        run: pytest -q tests/test_crawler.py tests/test_matching.py
+        run: .venv/bin/pytest -q tests/test_crawler.py tests/test_matching.py
 
   image:
     name: docker image builds and runs
