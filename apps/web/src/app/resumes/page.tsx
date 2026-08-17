@@ -1,16 +1,19 @@
 import { ApiError, api, type Profile, type Resume, type ResumeParsed } from "@/lib/api";
 import { ResumePreview } from "@/components/resume-preview";
 import { ErrorPanel } from "@/components/error-panel";
+import { ResumeUpload } from "@/components/resume-upload";
 
 export const dynamic = "force-dynamic";
 
 export default async function ResumesPage() {
   let resumes: Resume[];
   let profiles: Profile[];
+  let candidateId = "";
   try {
     // Résumés are listed per candidate, so the candidate list comes first.
     const [candidates, loadedProfiles] = await Promise.all([api.candidates(), api.profiles()]);
     profiles = loadedProfiles;
+    candidateId = candidates[0]?.id ?? "";
     const perCandidate = await Promise.all(
       candidates.map((candidate) => api.resumes(candidate.id)),
     );
@@ -44,6 +47,10 @@ export default async function ResumesPage() {
           missing from every application that sends this file.
         </p>
       </header>
+
+      {candidateId ? (
+        <ResumeUpload candidateId={candidateId} profileId={profiles[0]?.id} />
+      ) : null}
 
       {resumes.length === 0 ? (
         <p className="border border-dashed border-rule px-6 py-16 text-center font-mono text-sm text-ink-faint">
