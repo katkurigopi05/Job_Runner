@@ -179,8 +179,8 @@ def test_build_provider_defaults_to_stub(monkeypatch) -> None:
 
 
 def test_unimplemented_provider_raises() -> None:
-    with pytest.raises(LLMError, match="not implemented"):
-        build_provider("anthropic")
+    with pytest.raises(LLMError, match="unknown or not implemented"):
+        build_provider("invalid_provider")
 
 
 def test_vault_root_is_outside_storage(monkeypatch, tmp_path) -> None:
