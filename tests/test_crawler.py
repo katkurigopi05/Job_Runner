@@ -33,6 +33,7 @@ from packages.crawler.ratelimit import (
     RateLimitTooLow,
 )
 from packages.crawler.robots import RobotsCache
+from packages.crawler.validate import SeedState, validate_seeds
 
 
 class FakeClock:
@@ -224,6 +225,15 @@ def _board_transport(payload: dict, robots: str = "User-agent: *\nDisallow:"):
     return httpx.MockTransport(handler)
 
 
+def _status_transport(status: int):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nDisallow:")
+        return httpx.Response(status, text="not found")
+
+    return httpx.MockTransport(handler)
+
+
 def _job(job_id: int, title: str = "Senior Backend Engineer", content: str = "<p>Python</p>"):
     return {
         "id": job_id,
@@ -354,6 +364,56 @@ def test_seed_registry_loads() -> None:
     assert all(s.ats == "greenhouse" for s in seeds)
 
 
+async def test_seed_validation_checks_rendered_board_after_api_404() -> None:
+    statuses = {
+        ("boards-api.greenhouse.io", "api-only"): 200,
+        ("boards-api.greenhouse.io", "rendered-only"): 404,
+        ("job-boards.greenhouse.io", "rendered-only"): 200,
+        ("boards-api.greenhouse.io", "missing"): 404,
+        ("job-boards.greenhouse.io", "missing"): 404,
+    }
+    request_times: dict[str, list[float]] = {}
+    clock = FakeClock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        request_times.setdefault(request.url.host, []).append(clock.now)
+        if request.url.host.startswith("boards-api"):
+            slug = request.url.path.split("/")[-2]
+            body = json.dumps({"jobs": []})
+        else:
+            slug = request.url.path.strip("/")
+            body = "<title>Jobs</title>"
+        return httpx.Response(statuses[(request.url.host, slug)], text=body)
+
+    fetcher = PoliteFetcher(transport=httpx.MockTransport(handler), rate_limiter=limiter(clock))
+    seeds = [
+        CompanySeed(name="API", slug="api-only"),
+        CompanySeed(name="Rendered", slug="rendered-only"),
+        CompanySeed(name="Missing", slug="missing"),
+    ]
+
+    results = await validate_seeds(seeds, fetcher)
+
+    assert [result.state for result in results] == [
+        SeedState.API,
+        SeedState.RENDERED_ONLY,
+        SeedState.MISSING,
+    ]
+    assert request_times["boards-api.greenhouse.io"] == [0.0, 60.0, 120.0]
+    rendered_times = request_times["job-boards.greenhouse.io"]
+    assert rendered_times[1] - rendered_times[0] >= MIN_DELAY_SECONDS
+
+
+async def test_seed_validation_keeps_recorded_non_greenhouse_ats() -> None:
+    fetcher = PoliteFetcher(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
+
+    results = await validate_seeds([CompanySeed(name="Moved", slug="moved", ats="lever")], fetcher)
+
+    assert results[0].state is SeedState.OTHER_ATS
+
+
 # --------------------------------------------------------------------------
 # Gate 5 — change detection
 # --------------------------------------------------------------------------
@@ -448,6 +508,27 @@ async def test_blocked_company_is_skipped_not_fatal(db_session, seed) -> None:
 
     assert report.emitted == 0
     assert report.blocked == ["Acme"]
+
+
+async def test_404_board_is_reported_not_counted_as_empty(db_session, seed) -> None:
+    """A dead API board must be visible in worker output, not look healthy."""
+    fetcher = PoliteFetcher(transport=_status_transport(404), rate_limiter=limiter())
+
+    report = await crawl_all(db_session, [seed], fetcher, force=True)
+
+    assert report.fetched == 1
+    assert report.failed == ["Acme"]
+    assert report.results[0].error == "HTTP 404"
+    assert "Acme: HTTP 404" in report.summary()
+
+
+async def test_empty_200_board_is_not_a_failure(db_session, seed) -> None:
+    fetcher = PoliteFetcher(transport=_board_transport({"jobs": []}), rate_limiter=limiter())
+
+    report = await crawl_all(db_session, [seed], fetcher, force=True)
+
+    assert report.emitted == 0
+    assert report.failed == []
 
 
 async def test_unknown_ats_is_skipped(db_session) -> None:
