@@ -8,6 +8,7 @@ import {
 } from "@/lib/api";
 import { ReviewCard } from "./review-card";
 import { ErrorPanel } from "@/components/error-panel";
+import { AssistantDock } from "@/components/assistant-dock";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +85,8 @@ export default async function ReviewPage() {
           })}
         </div>
       )}
+
+      <AssistantDock />
     </div>
   );
 }

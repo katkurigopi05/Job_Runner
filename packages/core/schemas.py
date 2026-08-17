@@ -320,3 +320,27 @@ class InboundMessageOut(BaseModel):
     body: str | None
     classification: str | None
     at: datetime
+
+
+# --------------------------------------------------------------------------
+# Assistant
+# --------------------------------------------------------------------------
+
+
+class ChatRequest(BaseModel):
+    """A question about the owner's own job search."""
+
+    message: str = Field(min_length=1, max_length=4000)
+    #: Scopes the answer to one application, so "what is it waiting on?" works.
+    application_id: uuid.UUID | None = None
+
+
+class ChatReply(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    reply: str
+    #: Which provider answered, or "refused" when a §2.2 boundary stopped it.
+    #: Surfaced so the owner can see the assistant really is running locally.
+    provider: str
+    #: False when the answer came from a rule rather than the model.
+    grounded: bool
