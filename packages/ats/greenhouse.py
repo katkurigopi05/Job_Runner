@@ -33,6 +33,9 @@ from packages.ats.base import (
 
 log = structlog.get_logger(__name__)
 
+#: How long to wait for a react-select menu to render after opening it.
+MENU_OPEN_TIMEOUT_MS = 3_000
+
 SELECTORS: dict[str, str] = {
     # The application form itself, both generations.
     "form": "#application_form, form#application-form, form[id*='application']",
@@ -254,12 +257,25 @@ class GreenhouseAdapter:
         """Open react-select long enough to read its portal-rendered options."""
         # Opening a real form control is interaction. Stop before touching it
         # when an automation block is present; never try to route around one.
+        from playwright.async_api import TimeoutError as PlaywrightTimeout
+
         await self._guard_automation_blocks(page)
         await control.click()
 
         try:
             menu = page.locator(SELECTORS["react_select_listbox"]).first
-            if not await menu.count():
+            try:
+                # react-select does not render inside the click handler — the
+                # menu arrives a tick or more later, through React's scheduler.
+                # count() does not wait, so checking immediately finds nothing
+                # and reports a dropdown with no options, which reads
+                # downstream as "the employer offered no choices" rather than
+                # as a timing failure.
+                await menu.wait_for(state="attached", timeout=MENU_OPEN_TIMEOUT_MS)
+            except PlaywrightTimeout:
+                # Genuinely no menu: a combobox that is disabled, empty, or not
+                # react-select after all. An empty option list is the honest
+                # answer, and §2.4 parks the question for the owner.
                 return []
 
             nodes = menu.locator(SELECTORS["react_select_option"])
