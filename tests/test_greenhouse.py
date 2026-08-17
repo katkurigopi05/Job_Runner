@@ -335,6 +335,26 @@ _REACT_SELECT_FORM = """
     <input id="iti-0__search-input" type="text" class="iti__search-input" />
   </div>
 </form>
+<script>
+  const control = document.querySelector("#q1");
+  control.addEventListener("click", () => {
+    if (document.querySelector("#react-select-2-listbox")) return;
+    control.setAttribute("aria-expanded", "true");
+    control.setAttribute("aria-controls", "react-select-2-listbox");
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<div id="react-select-2-listbox" role="listbox">
+         <div id="react-select-2-option-0" role="option">Yes</div>
+         <div id="react-select-2-option-1" role="option">No</div>
+       </div>`,
+    );
+  });
+  control.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    document.querySelector("#react-select-2-listbox")?.remove();
+    control.setAttribute("aria-expanded", "false");
+  });
+</script>
 """
 
 
@@ -353,6 +373,20 @@ async def test_react_select_is_a_dropdown_not_free_text(page) -> None:
     assert by_key["q1"].kind is QuestionKind.SINGLE_SELECT
     # A real text input beside it must stay text.
     assert by_key["first_name"].kind is QuestionKind.TEXT
+
+
+async def test_enumerate_opens_react_select_and_reads_options(page) -> None:
+    """Options only exist while react-select's portal menu is open."""
+    await page.set_content(_REACT_SELECT_FORM)
+    assert not await page.locator('[role="listbox"]').count()
+
+    questions = {q.key: q for q in await GreenhouseAdapter().enumerate_fields(page)}
+
+    assert [(option.label, option.value) for option in questions["q1"].options] == [
+        ("Yes", "Yes"),
+        ("No", "No"),
+    ]
+    assert not await page.locator('[role="listbox"]').count()
 
 
 async def test_widget_internals_are_not_offered_as_questions(page) -> None:
