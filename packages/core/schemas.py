@@ -65,6 +65,27 @@ class ProfileCreate(BaseModel):
     auto_submit: bool = False
 
 
+class ProfileUpdate(BaseModel):
+    """A partial edit. Every field is optional and `None` means "not supplied".
+
+    Deliberately not reusing ProfileCreate: there, an omitted work_auth means
+    "no answer yet", while here it has to mean "leave it as it is". Sharing one
+    model would make a profile edit silently blank the answers §2.2 requires be
+    copied verbatim onto real applications.
+    """
+
+    label: str | None = Field(default=None, min_length=1, max_length=200)
+    phone: str | None = None
+    location: str | None = None
+    work_auth: str | None = None
+    needs_sponsorship: bool | None = None
+    links: dict[str, str] | None = None
+    salary_expectation: str | None = None
+    answers: dict[str, Any] | None = None
+    min_match_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    auto_submit: bool | None = None
+
+
 class ProfileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

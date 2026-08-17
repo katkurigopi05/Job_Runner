@@ -11,7 +11,7 @@ from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.enums import ErrorCode
 from packages.core.models import Candidate, Profile
-from packages.core.schemas import ProfileCreate, ProfileOut
+from packages.core.schemas import ProfileCreate, ProfileOut, ProfileUpdate
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
@@ -52,4 +52,43 @@ async def get_profile(profile_id: uuid.UUID, session: SessionDep) -> Profile:
     profile = await session.get(Profile, profile_id)
     if profile is None:
         raise ApiError(ErrorCode.NOT_FOUND, "profile not found")
+    return profile
+
+
+#: Maps request field to model attribute where the two names differ.
+_UPDATE_FIELDS = {
+    "label": "label",
+    "phone": "phone",
+    "location": "location",
+    "work_auth": "work_auth",
+    "needs_sponsorship": "needs_sponsorship",
+    "links": "links_json",
+    "salary_expectation": "salary_expectation",
+    "answers": "answers_kv_json",
+    "min_match_score": "min_match_score",
+    "auto_submit": "auto_submit",
+}
+
+
+@router.patch("/{profile_id}", response_model=ProfileOut)
+async def update_profile(
+    profile_id: uuid.UUID, body: ProfileUpdate, session: SessionDep
+) -> Profile:
+    """Edit a profile in place.
+
+    `exclude_unset` rather than `exclude_none`: a field the caller did not send
+    is left alone, but one sent explicitly as null is cleared. Those are
+    different intentions and the dashboard relies on both — clearing an answer
+    has to be possible, and a form that posts three fields must not blank the
+    other seven.
+    """
+    profile = await session.get(Profile, profile_id)
+    if profile is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "profile not found")
+
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(profile, _UPDATE_FIELDS[field], value)
+
+    await session.commit()
+    await session.refresh(profile)
     return profile

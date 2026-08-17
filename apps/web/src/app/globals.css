@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+/* Jobrunner is a review desk, not a dashboard. The screen that matters shows
+   one application at a time with the employer's exact words on it, and asks a
+   yes/no that sends something real. So: paper ground, ink text, one ochre
+   accent reserved for "this needs you", and a mono face for anything the
+   machine produced. Nothing decorative competes with the decision. */
+
+@theme {
+  --color-paper: oklch(97.5% 0.008 85);
+  --color-paper-raised: oklch(99% 0.005 85);
+  --color-ink: oklch(22% 0.012 60);
+  --color-ink-soft: oklch(46% 0.014 60);
+  --color-ink-faint: oklch(66% 0.012 60);
+  --color-rule: oklch(88% 0.01 70);
+
+  /* Reserved for the review queue. If it is ochre, you have to look at it. */
+  --color-attn: oklch(64% 0.13 70);
+  --color-attn-soft: oklch(94% 0.04 80);
+
+  --color-go: oklch(52% 0.1 155);
+  --color-go-soft: oklch(94% 0.035 155);
+  --color-stop: oklch(52% 0.16 25);
+  --color-stop-soft: oklch(94% 0.04 25);
+  --color-wait: oklch(52% 0.09 250);
+  --color-wait-soft: oklch(94% 0.03 250);
+
+  --font-display: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-sans: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --text-display: clamp(2rem, 1.2rem + 2.6vw, 3.25rem);
+}
+
+/* Plain custom properties, not a nested `@theme`. Tailwind hoists `@theme` out
+   of the media query it is written in, so a dark block written that way is not
+   conditional at all — it simply overwrites the light palette and every reader
+   gets dark. The utilities resolve `var(--color-…)` at use time, so overriding
+   the same names here is what actually makes the theme follow the reader. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-paper: oklch(17% 0.008 65);
+    --color-paper-raised: oklch(21% 0.009 65);
+    --color-ink: oklch(94% 0.006 80);
+    --color-ink-soft: oklch(72% 0.01 75);
+    --color-ink-faint: oklch(54% 0.01 70);
+    --color-rule: oklch(30% 0.01 65);
+
+    --color-attn: oklch(78% 0.13 75);
+    --color-attn-soft: oklch(28% 0.05 75);
+
+    --color-go: oklch(76% 0.12 155);
+    --color-go-soft: oklch(26% 0.04 155);
+    --color-stop: oklch(72% 0.15 25);
+    --color-stop-soft: oklch(27% 0.05 25);
+    --color-wait: oklch(76% 0.1 250);
+    --color-wait-soft: oklch(26% 0.04 250);
+  }
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The employer's own words, quoted back. Never restyled into UI copy — it has
+   to stay visibly *theirs*, because answering it wrong has consequences. */
+.quoted {
+  font-family: var(--font-display);
+  font-size: 1.0625rem;
+  line-height: 1.5;
+  border-left: 2px solid var(--color-attn);
+  padding-left: 0.875rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
