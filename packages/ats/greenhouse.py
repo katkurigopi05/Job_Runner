@@ -44,6 +44,8 @@ SELECTORS: dict[str, str] = {
         "input:not([type='hidden']):not([type='submit']):not([type='button']), textarea, select"
     ),
     "field_container": "div, fieldset, li",
+    "react_select_listbox": '[id^="react-select-"][id$="-listbox"]',
+    "react_select_option": '[role="option"]',
     "submit_button": (
         "#submit_app, input[type='submit'], button[type='submit'], "
         "button:has-text('Submit Application')"
@@ -224,13 +226,16 @@ class GreenhouseAdapter:
 
             options: list[Option] = []
             if kind in (QuestionKind.SINGLE_SELECT, QuestionKind.MULTI_SELECT):
-                option_nodes = control.locator("option")
-                for opt_index in range(await option_nodes.count()):
-                    node = option_nodes.nth(opt_index)
-                    value = await node.get_attribute("value") or ""
-                    text = _clean_label(await node.inner_text())
-                    if value:  # skip the empty "Please select" placeholder
-                        options.append(Option(label=text, value=value))
+                if tag == "select":
+                    option_nodes = control.locator("option")
+                    for opt_index in range(await option_nodes.count()):
+                        node = option_nodes.nth(opt_index)
+                        value = await node.get_attribute("value") or ""
+                        text = _clean_label(await node.inner_text())
+                        if value:  # skip the empty "Please select" placeholder
+                            options.append(Option(label=text, value=value))
+                else:
+                    options = await self._react_select_options(page, control)
 
             questions.append(
                 Question(
@@ -244,6 +249,31 @@ class GreenhouseAdapter:
             )
 
         return questions
+
+    async def _react_select_options(self, page: Any, control: Any) -> list[Option]:
+        """Open react-select long enough to read its portal-rendered options."""
+        # Opening a real form control is interaction. Stop before touching it
+        # when an automation block is present; never try to route around one.
+        await self._guard_automation_blocks(page)
+        await control.click()
+
+        try:
+            menu = page.locator(SELECTORS["react_select_listbox"]).first
+            if not await menu.count():
+                return []
+
+            nodes = menu.locator(SELECTORS["react_select_option"])
+            options: list[Option] = []
+            for index in range(await nodes.count()):
+                node = nodes.nth(index)
+                label = _clean_label(await node.inner_text())
+                if label:
+                    value = await node.get_attribute("data-value") or label
+                    options.append(Option(label=label, value=value))
+            return options
+        finally:
+            # Escape closes the menu without selecting an option or submitting.
+            await control.press("Escape")
 
     async def _label_for(self, page: Any, form: Any, control: Any, key: str) -> str:
         """The label exactly as the site words it.
