@@ -133,6 +133,12 @@ class ApplicationOut(BaseModel):
     #: can show the actual document before it is sent, rather than asking the
     #: owner to approve a file they cannot see.
     tailored_resume_id: uuid.UUID | None = None
+    #: What the employer's reply said, once one arrived — interview, rejection,
+    #: offer. Distinct from `status`, which tracks *our* side of the work: an
+    #: application is `submitted` the moment it is sent and stays there whether
+    #: the answer is an offer or silence.
+    outcome: str | None = None
+    outcome_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -288,3 +294,29 @@ class ResumePreviewOut(BaseModel):
     source_line_count: int = 0
     #: Exactly the text each project link will render as.
     rendered_links: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Inbox
+# --------------------------------------------------------------------------
+
+
+class InboundMessageOut(BaseModel):
+    """A recruiter reply, as it was received.
+
+    Subject and body are the sender's words, kept verbatim: the classification
+    is a guess and the owner needs the original to check it against. They are
+    also somebody else's personal correspondence, so they stay on this machine
+    — CLAUDE.md §2.8.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    candidate_id: uuid.UUID
+    application_id: uuid.UUID | None
+    from_addr: str
+    subject: str | None
+    body: str | None
+    classification: str | None
+    at: datetime

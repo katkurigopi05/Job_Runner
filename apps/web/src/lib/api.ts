@@ -64,6 +64,13 @@ export interface Application {
   review: ReviewRecord | null;
   /** The tailored résumé to be attached. Null means the profile's base goes as-is. */
   tailored_resume_id: string | null;
+  /**
+   * What the employer's reply said, once one arrived. Distinct from `status`,
+   * which tracks our side: an application is `submitted` the moment it is sent
+   * and stays there whether the answer is an offer or silence.
+   */
+  outcome: string | null;
+  outcome_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -113,6 +120,27 @@ export interface ResumeParsed {
     sections?: Record<string, string[]>;
     raw_lines?: string[];
   };
+}
+
+export type Classification =
+  | "interview"
+  | "rejection"
+  | "offer"
+  | "info_request"
+  | "acknowledgement"
+  | "otp"
+  | "noise";
+
+/** A recruiter reply, as received. Subject and body are the sender's words. */
+export interface InboundMessage {
+  id: string;
+  candidate_id: string;
+  application_id: string | null;
+  from_addr: string;
+  subject: string | null;
+  body: string | null;
+  classification: Classification | null;
+  at: string;
 }
 
 export interface Candidate {
@@ -179,6 +207,8 @@ export const api = {
     request<Resume[]>(`/resumes?candidate_id=${encodeURIComponent(candidateId)}`),
   resumeParsed: (id: string) => request<ResumeParsed>(`/resumes/${id}/parsed`),
   profiles: () => request<Profile[]>("/profiles"),
+  inbox: () => request<InboundMessage[]>("/inbox"),
+  unrouted: () => request<InboundMessage[]>("/inbox/unrouted"),
 
   review: (id: string, body: { approve: boolean; answers?: Record<string, unknown>; note?: string }) =>
     request<Application>(`/applications/${id}/review`, {
