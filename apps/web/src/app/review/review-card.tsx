@@ -2,7 +2,8 @@
 
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
-import type { Application } from "@/lib/api";
+import type { Application, ResumeParsed } from "@/lib/api";
+import { ResumePreview } from "@/components/resume-preview";
 import { FillRate, StatusPill } from "@/components/status";
 import { approve, reject, submitOtp, type ReviewResult } from "./actions";
 
@@ -21,7 +22,15 @@ function Submitting({ children, tone }: { children: React.ReactNode; tone: "go" 
   );
 }
 
-export function ReviewCard({ application }: { application: Application }) {
+export function ReviewCard({
+  application,
+  resume,
+  tailored,
+}: {
+  application: Application;
+  resume: ResumeParsed | null;
+  tailored: boolean;
+}) {
   const review = application.review ?? {};
   const unanswered = review.unanswered ?? [];
   const required = unanswered.filter((q) => q.required !== false);
@@ -143,6 +152,8 @@ export function ReviewCard({ application }: { application: Application }) {
           </section>
         )}
 
+        <AttachedResume resume={resume} tailored={tailored} />
+
         <FilledSummary review={review} />
 
         <footer className="flex flex-wrap items-center gap-4 px-6 py-5">
@@ -195,6 +206,37 @@ function FilledSummary({ review }: { review: NonNullable<Application["review"]> 
           </div>
         ))}
       </dl>
+    </details>
+  );
+}
+
+
+function AttachedResume({ resume, tailored }: { resume: ResumeParsed | null; tailored: boolean }) {
+  if (resume === null) {
+    return (
+      <section className="border-b border-rule px-6 py-5">
+        <h3 className="font-mono text-xs uppercase tracking-widest text-stop">
+          No résumé attached
+        </h3>
+        <p className="mt-2 max-w-prose text-sm text-ink-soft">
+          Every ATS form has a required résumé field. Set a base résumé on the profile before
+          approving this, or the submission will fail on the far side.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <details className="border-b border-rule px-6 py-4" open>
+      <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
+        Résumé to be sent
+        <span className="ml-2 text-ink-faint">
+          {tailored ? "· tailored for this posting" : "· profile base, unmodified"}
+        </span>
+      </summary>
+      <div className="mt-4">
+        <ResumePreview parsed={resume} />
+      </div>
     </details>
   );
 }

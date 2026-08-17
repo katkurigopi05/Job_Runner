@@ -62,6 +62,8 @@ export interface Application {
   status: ApplicationStatus;
   failure_reason: FailureReason | null;
   review: ReviewRecord | null;
+  /** The tailored résumé to be attached. Null means the profile's base goes as-is. */
+  tailored_resume_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -86,6 +88,31 @@ export interface Profile {
   salary_expectation: string | null;
   min_match_score: number;
   auto_submit: boolean;
+}
+
+export interface Resume {
+  id: string;
+  candidate_id: string;
+  version: number;
+  storage_ref: string;
+  is_default: boolean;
+  created_at: string;
+}
+
+/** What the parser pulled out, so it can be checked before it is trusted. */
+export interface ResumeParsed {
+  id: string;
+  version: number;
+  contact: Record<string, unknown>;
+  /** Section name to line count. A missing section here is a warning sign. */
+  sections: Record<string, number>;
+  line_count: number;
+  parsed: {
+    contact?: Record<string, unknown>;
+    preamble?: string[];
+    sections?: Record<string, string[]>;
+    raw_lines?: string[];
+  };
 }
 
 export interface Candidate {
@@ -146,6 +173,11 @@ export const api = {
   application: (id: string) => request<Application>(`/applications/${id}`),
   events: (id: string) => request<ApplicationEvent[]>(`/applications/${id}/events`),
   candidates: () => request<Candidate[]>("/candidates"),
+  // Scoped to a candidate by the API, not optional. Single-user or not,
+  // the route requires it.
+  resumes: (candidateId: string) =>
+    request<Resume[]>(`/resumes?candidate_id=${encodeURIComponent(candidateId)}`),
+  resumeParsed: (id: string) => request<ResumeParsed>(`/resumes/${id}/parsed`),
   profiles: () => request<Profile[]>("/profiles"),
 
   review: (id: string, body: { approve: boolean; answers?: Record<string, unknown>; note?: string }) =>

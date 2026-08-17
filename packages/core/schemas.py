@@ -92,6 +92,9 @@ class ProfileOut(BaseModel):
     id: uuid.UUID
     candidate_id: uuid.UUID
     label: str
+    #: The résumé this profile applies with. Exposed so a caller can show the
+    #: document before it is sent rather than naming a file it cannot read.
+    base_resume_id: uuid.UUID | None
     phone: str | None
     location: str | None
     work_auth: str | None
@@ -125,6 +128,11 @@ class ApplicationOut(BaseModel):
     status: ApplicationStatus
     failure_reason: FailureReason | None
     review: dict[str, Any] | None = Field(default=None, validation_alias="review_json")
+    #: The tailored résumé this application will attach, once one exists. Null
+    #: means the profile's base résumé goes as-is. Exposed so the review screen
+    #: can show the actual document before it is sent, rather than asking the
+    #: owner to approve a file they cannot see.
+    tailored_resume_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
 
