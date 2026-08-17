@@ -12,6 +12,7 @@ from apps.api.routers import (
     chat,
     detect,
     inbox,
+    matches,
     postings,
     profiles,
     projects,
@@ -38,6 +39,7 @@ app.include_router(resumes.router)
 app.include_router(postings.router)
 app.include_router(inbox.router)
 app.include_router(chat.router)
+app.include_router(matches.router)
 
 
 @app.get("/health", tags=["meta"])
