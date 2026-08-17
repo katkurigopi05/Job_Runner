@@ -36,3 +36,8 @@ test-results/
 
 # Logs
 *.log
+
+# Next.js build artifacts
+apps/web/.next/
+apps/web/tsconfig.tsbuildinfo
+apps/web/next-env.d.ts

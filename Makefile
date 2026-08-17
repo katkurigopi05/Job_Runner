@@ -1,5 +1,5 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
-        check-migrations api worker mcp gate-0 gate-1 gate-1-live gate-3 gate-4 gate-5 gate-6
+        check-migrations api worker mcp web web-install gate-0 gate-1 gate-1-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
 
@@ -50,6 +50,14 @@ worker:
 
 # Speaks MCP over stdio; Claude Code launches it itself via .mcp.json.
 # Run it by hand only to check it starts. It needs `make api` running.
+web-install:
+	cd apps/web && npm install
+
+# The dashboard. Talks to the API through a Next rewrite rather than from the
+# browser, so the API keeps refusing non-loopback callers and needs no CORS.
+web:
+	cd apps/web && npm run dev
+
 mcp:
 	$(PY)/python -m apps.mcp.server
 

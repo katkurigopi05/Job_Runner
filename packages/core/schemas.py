@@ -65,12 +65,36 @@ class ProfileCreate(BaseModel):
     auto_submit: bool = False
 
 
+class ProfileUpdate(BaseModel):
+    """A partial edit. Every field is optional and `None` means "not supplied".
+
+    Deliberately not reusing ProfileCreate: there, an omitted work_auth means
+    "no answer yet", while here it has to mean "leave it as it is". Sharing one
+    model would make a profile edit silently blank the answers §2.2 requires be
+    copied verbatim onto real applications.
+    """
+
+    label: str | None = Field(default=None, min_length=1, max_length=200)
+    phone: str | None = None
+    location: str | None = None
+    work_auth: str | None = None
+    needs_sponsorship: bool | None = None
+    links: dict[str, str] | None = None
+    salary_expectation: str | None = None
+    answers: dict[str, Any] | None = None
+    min_match_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    auto_submit: bool | None = None
+
+
 class ProfileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     candidate_id: uuid.UUID
     label: str
+    #: The résumé this profile applies with. Exposed so a caller can show the
+    #: document before it is sent rather than naming a file it cannot read.
+    base_resume_id: uuid.UUID | None
     phone: str | None
     location: str | None
     work_auth: str | None
@@ -104,6 +128,11 @@ class ApplicationOut(BaseModel):
     status: ApplicationStatus
     failure_reason: FailureReason | None
     review: dict[str, Any] | None = Field(default=None, validation_alias="review_json")
+    #: The tailored résumé this application will attach, once one exists. Null
+    #: means the profile's base résumé goes as-is. Exposed so the review screen
+    #: can show the actual document before it is sent, rather than asking the
+    #: owner to approve a file they cannot see.
+    tailored_resume_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
 
