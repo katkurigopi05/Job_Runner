@@ -14,6 +14,7 @@ Greenhouse's live DOM. Only this does.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -50,7 +51,10 @@ async def main(url: str) -> int:
     adapter = adapter_for(url)
     print(f"adapter: {adapter.name}\nurl:     {url}\n")
 
-    async with ephemeral_page() as page:
+    # HEADED=1 opens a real window and slows the driver down, so the run can be
+    # watched. It changes nothing about what the adapter does.
+    headed = os.environ.get("HEADED") == "1"
+    async with ephemeral_page(headless=not headed, slow_mo_ms=400 if headed else 0) as page:
         await page.goto(url, wait_until="domcontentloaded")
 
         try:
@@ -88,7 +92,20 @@ async def main(url: str) -> int:
             print(f"      label: {question.label!r}{options}")
 
         answers = build_answers(questions, FIXTURE_CANDIDATE, FIXTURE_PROFILE)
-        report = await adapter.fill(page, answers)
+        try:
+            report = await adapter.fill(page, answers)
+        except ManualCompletionRequired as exc:
+            # Not a failure. §2.5 — a site that blocks automation is a hard
+            # boundary, and refusing is the adapter working. The guard runs
+            # again inside fill() because a captcha can mount after the field
+            # list is read, which is exactly what Vercel's board does.
+            print(f"\nBLOCKED during fill: {exc}")
+            print("This is the correct outcome, not a bug. Finish this one by hand.")
+            shot = Path("storage/receipts/live-check-blocked.png")
+            shot.parent.mkdir(parents=True, exist_ok=True)
+            await page.screenshot(path=str(shot), full_page=True)
+            print(f"screenshot: {shot}")
+            return 0
 
         print(f"\n--- fill: {len(report.filled)} filled, {report.fill_rate:.0%} of fields ---")
         for field in report.filled:
