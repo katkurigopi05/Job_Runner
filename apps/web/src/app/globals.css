@@ -1,79 +1,154 @@
 @import "tailwindcss";
 
-/* Jobrunner is a review desk, not a dashboard. The screen that matters shows
-   one application at a time with the employer's exact words on it, and asks a
-   yes/no that sends something real. So: paper ground, ink text, one ochre
-   accent reserved for "this needs you", and a mono face for anything the
-   machine produced. Nothing decorative competes with the decision. */
+/* Theme ported from the photo-editor's apps/web/src/index.css.
+   Its palette, radii, shadows, type scale, and theming mechanism, mapped onto
+   the semantic names this app's components already use — so the meaning of a
+   colour survives the port. Ochre still means "this needs you"; it is now the
+   photo-editor's --warn rather than a colour invented here.
+
+   Dark is the base, as it is there. An explicit [data-theme] wins; with no
+   attribute set the system preference decides. */
 
 @theme {
-  --color-paper: oklch(97.5% 0.008 85);
-  --color-paper-raised: oklch(99% 0.005 85);
-  --color-ink: oklch(22% 0.012 60);
-  --color-ink-soft: oklch(46% 0.014 60);
-  --color-ink-faint: oklch(66% 0.012 60);
-  --color-rule: oklch(88% 0.01 70);
+  /* --bg / --panel / --panel-2 */
+  --color-paper: #0e1015;
+  --color-paper-raised: #161922;
+  --color-paper-high: #1e222d;
 
-  /* Reserved for the review queue. If it is ochre, you have to look at it. */
-  --color-attn: oklch(64% 0.13 70);
-  --color-attn-soft: oklch(94% 0.04 80);
+  /* --text / --muted / --faint / --line */
+  --color-ink: #eef1f6;
+  --color-ink-soft: #98a1b3;
+  --color-ink-faint: #6b7484;
+  --color-rule: #2c3242;
+  --color-rule-soft: #232838;
 
-  --color-go: oklch(52% 0.1 155);
-  --color-go-soft: oklch(94% 0.035 155);
-  --color-stop: oklch(52% 0.16 25);
-  --color-stop-soft: oklch(94% 0.04 25);
-  --color-wait: oklch(52% 0.09 250);
-  --color-wait-soft: oklch(94% 0.03 250);
+  /* --warn: reserved for the two states waiting on the owner. */
+  --color-attn: #ffb454;
+  --color-attn-soft: #33291a;
 
-  --font-display: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-  --font-sans: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  /* --accent-2 teal for done, --danger for stopped, --accent violet for
+     in-flight. */
+  --color-go: #4ad2c9;
+  --color-go-soft: #142b2c;
+  --color-stop: #ff5d6c;
+  --color-stop-soft: #2e1a1f;
+  --color-wait: #7c5cff;
+  --color-wait-soft: #1e1b33;
+
+  --color-glow: #1a1f2e;
+  --color-on-accent: #0c0e14;
+
+  --font-display: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 
-  --text-display: clamp(2rem, 1.2rem + 2.6vw, 3.25rem);
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow-panel: 0 8px 26px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.3);
+
+  --text-display: clamp(1.75rem, 1.1rem + 2.2vw, 2.75rem);
 }
 
-/* Plain custom properties, not a nested `@theme`. Tailwind hoists `@theme` out
-   of the media query it is written in, so a dark block written that way is not
-   conditional at all — it simply overwrites the light palette and every reader
-   gets dark. The utilities resolve `var(--color-…)` at use time, so overriding
-   the same names here is what actually makes the theme follow the reader. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-paper: oklch(17% 0.008 65);
-    --color-paper-raised: oklch(21% 0.009 65);
-    --color-ink: oklch(94% 0.006 80);
-    --color-ink-soft: oklch(72% 0.01 75);
-    --color-ink-faint: oklch(54% 0.01 70);
-    --color-rule: oklch(30% 0.01 65);
+/* Light, from the photo-editor's [data-theme="light"] block. Plain custom
+   properties rather than a nested @theme: Tailwind hoists @theme out of the
+   selector it is written in, so a nested one is not conditional at all. */
+:root[data-theme="light"] {
+  --color-paper: #f3f4f8;
+  --color-paper-raised: #ffffff;
+  --color-paper-high: #f5f6fa;
+  --color-ink: #1c1f2a;
+  --color-ink-soft: #5b6376;
+  --color-ink-faint: #8890a0;
+  --color-rule: #dadde8;
+  --color-rule-soft: #e6e8f0;
+  --color-attn: #c97400;
+  --color-attn-soft: #fdf1de;
+  --color-go: #12a89d;
+  --color-go-soft: #ddf4f1;
+  --color-stop: #e0303f;
+  --color-stop-soft: #fce4e6;
+  --color-wait: #6a4bfa;
+  --color-wait-soft: #ebe7fe;
+  --color-glow: #dfe3f5;
+  --color-on-accent: #ffffff;
+  --shadow-panel: 0 8px 26px rgba(30, 34, 60, 0.12);
+  --shadow-soft: 0 2px 10px rgba(30, 34, 60, 0.08);
+}
 
-    --color-attn: oklch(78% 0.13 75);
-    --color-attn-soft: oklch(28% 0.05 75);
-
-    --color-go: oklch(76% 0.12 155);
-    --color-go-soft: oklch(26% 0.04 155);
-    --color-stop: oklch(72% 0.15 25);
-    --color-stop-soft: oklch(27% 0.05 25);
-    --color-wait: oklch(76% 0.1 250);
-    --color-wait-soft: oklch(26% 0.04 250);
+/* Only when nothing was chosen — the attribute always wins. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --color-paper: #f3f4f8;
+    --color-paper-raised: #ffffff;
+    --color-paper-high: #f5f6fa;
+    --color-ink: #1c1f2a;
+    --color-ink-soft: #5b6376;
+    --color-ink-faint: #8890a0;
+    --color-rule: #dadde8;
+    --color-rule-soft: #e6e8f0;
+    --color-attn: #c97400;
+    --color-attn-soft: #fdf1de;
+    --color-go: #12a89d;
+    --color-go-soft: #ddf4f1;
+    --color-stop: #e0303f;
+    --color-stop-soft: #fce4e6;
+    --color-wait: #6a4bfa;
+    --color-wait-soft: #ebe7fe;
+    --color-glow: #dfe3f5;
+    --color-on-accent: #ffffff;
+    --shadow-panel: 0 8px 26px rgba(30, 34, 60, 0.12);
+    --shadow-soft: 0 2px 10px rgba(30, 34, 60, 0.08);
   }
 }
 
 html {
-  color-scheme: light dark;
+  color-scheme: dark light;
 }
 
+/* The radial wash behind everything, from their html/body rule. */
 body {
-  background: var(--color-paper);
+  min-height: 100%;
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 80% -10%, var(--color-glow) 0%, transparent 60%),
+    var(--color-paper);
   color: var(--color-ink);
   font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  transition:
+    background 0.2s,
+    color 0.2s;
+}
+
+/* Their .panel-title: small, uppercase, wide-tracked, with a hairline that
+   runs out to the edge. Applied to section headings here. */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 2px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+
+.section-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-rule-soft);
 }
 
 /* The employer's own words, quoted back. Never restyled into UI copy — it has
    to stay visibly *theirs*, because answering it wrong has consequences. */
 .quoted {
-  font-family: var(--font-display);
-  font-size: 1.0625rem;
+  font-size: 1rem;
+  font-weight: 500;
   line-height: 1.5;
   border-left: 2px solid var(--color-attn);
   padding-left: 0.875rem;
