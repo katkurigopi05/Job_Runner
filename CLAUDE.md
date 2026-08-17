@@ -87,6 +87,7 @@ jobrunner/
 │   │   └── crawl_job.py          career-page polling
 │   ├── mcp/                      MCP server exposing tools to Claude Code
 │   └── web/                      Next.js dashboard
+│       └── assistant             local chat over the owner's own data, §14
 ├── packages/
 │   ├── core/                     models, schemas, state machine, vault, storage, queue
 │   ├── ats/                      adapters — base.py + one file per ATS
@@ -94,7 +95,7 @@ jobrunner/
 │   ├── tailor/                   résumé rewrite, diff, PDF render, fabrication guard
 │   ├── matching/                 embeddings, hard filters, scoring
 │   ├── inbox/                    IMAP ingest, classification, routing
-│   └── llm/                      provider abstraction
+│   └── llm/                      provider abstraction, task router, audit trail
 ├── migrations/                   alembic
 ├── storage/                      gitignored — resumes, PDFs, screenshots, browser profiles
 ├── tests/
@@ -410,3 +411,61 @@ Two things in it are load-bearing and easy to undo by accident:
 - **`.dockerignore` excludes `.env`, `.secrets/`, and `storage/`.** Those are
   the vault key, the encrypted credentials, and résumé PII. An image layer is
   forever, so keep them out of the build context.
+
+---
+
+## 14. The assistant
+
+`/chat` in the dashboard, and a dock on the review screen. A chat surface over
+the owner's own data, answered by a model on this machine.
+
+It was built after §9's phases and is not one of them. Three properties are
+load-bearing and easy to undo by accident.
+
+**Local-only, not configurable.** Chat context carries application URLs,
+profile fields, and recruiter correspondence. §2.8 permits exactly one
+third-party upload — the tailoring call — and a chat window is not it. So
+`apps/api/routers/chat.py` asks for Ollama *by name* rather than reading
+`LLM_PROVIDER`, and when Ollama is down it errors instead of falling back to a
+cloud provider that happens to be configured. Setting `LLM_PROVIDER=gemini`
+changes tailoring and leaves the assistant local.
+
+**§2.2 is refused before the model is reached.** Asked what to put for work
+authorization, sponsorship, employment history, or salary, the route returns a
+refusal and points at the profile. The system prompt says the same thing, but
+the prompt is a request and this is a rule — the check runs in code.
+
+**Grounded, not freehand.** The model is handed real counts, the actual
+application, and its recent replies, and told to say when it does not know. An
+assistant that invents an application status is worse than no assistant.
+
+The audit trail in `packages/llm/audit.py` records every provider call —
+digests and sizes, never the prompt itself. §2.8 wants proof of what left the
+machine; §10 forbids logging résumé contents. Both hold: the trail proves what
+was sent without becoming a second copy of it.
+
+---
+
+## 15. What the gates do and do not prove
+
+Every gate in §9 passes. Two of them pass against fixtures rather than the real
+material their wording asks for, and that distinction is worth keeping visible
+where the gates are defined rather than only in a test docstring.
+
+- **Gate 5** asks for "a hand-labeled set of 20 postings — the ones you'd
+  actually apply to". `tests/test_matching.py` has 20, written the way real
+  postings read. They are not postings the owner labeled.
+- **Gate 6** asks for "30 hand-labeled **real** recruiter emails".
+  `tests/test_inbox.py` has 30 written to match. They are not real correspondence.
+
+Both suites are worth having — they catch regressions. Neither answers the
+question its gate was written to ask, which is whether the scoring and the
+classifier work on *this owner's* material. Swap the fixtures for real data
+before trusting either number.
+
+- **Gate 1's live half** has never completed. `make gate-1-live` reaches
+  `parse_posting` and `enumerate_fields` against real Greenhouse boards and is
+  then blocked by a captcha at `fill`. Per §2.5 that is the correct outcome, not
+  a bug — but it means the fill path is proven only against a fixture.
+- **Gate 2** needs a real posting and a real profile by definition.
+  `make gate-2` checks the offline half; `make gate-2-live` is the other half.
