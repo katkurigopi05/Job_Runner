@@ -18,6 +18,7 @@ import structlog
 
 from apps.worker.apply_job import TaskPayloadError, handle_apply
 from apps.worker.crawl_job import CRAWL_TASK_KIND, handle_crawl
+from apps.worker.inbox_job import INBOX_TASK_KIND, handle_inbox
 from packages.core import db as core_db
 from packages.core.config import get_settings
 from packages.core.enums import FailureReason
@@ -42,6 +43,7 @@ APPLY_TASK_KIND = "apply"
 HANDLERS = {
     APPLY_TASK_KIND: handle_apply,
     CRAWL_TASK_KIND: handle_crawl,
+    INBOX_TASK_KIND: handle_inbox,
 }
 
 

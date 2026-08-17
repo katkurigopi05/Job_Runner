@@ -214,6 +214,10 @@ class Application(Base):
     )
     cover_letter_ref: Mapped[str | None] = mapped_column(String(500))
     receipt_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    #: What the employer did after submission. Separate from `status`, which
+    #: tracks our automation and ends at `submitted`. See enums.Outcome.
+    outcome: Mapped[str | None] = mapped_column(String(30))
+    outcome_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

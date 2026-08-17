@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     #: How long a claimed task stays owned without a heartbeat.
     lease_seconds: int = 300
 
+    #: Managed inbox — the mailbox recruiter replies land in.
+    imap_host: str | None = None
+    imap_port: int = 993
+    imap_username: str | None = None
+    imap_password: str | None = None
+    #: The bare address aliases are built from: you@gmail.com.
+    inbox_alias_base: str | None = None
+
     vault_key: str | None = None
     #: Kept out of storage_root on purpose — see packages/core/vault.py.
     vault_root: str = "./.secrets"
