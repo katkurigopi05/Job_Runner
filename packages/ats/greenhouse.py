@@ -90,10 +90,30 @@ def _clean_label(raw: str) -> str:
     return text.strip().rstrip(":").strip()
 
 
-def _kind_for(tag: str, input_type: str, key: str, multiple: bool) -> QuestionKind:
+#: Inputs that belong to a third-party widget rather than to the employer's
+#: form. intl-tel-input mounts a country search box inside the phone field;
+#: enumerating it offers the owner a question no employer asked.
+_WIDGET_INTERNAL_KEYS = ("iti-", "react-select-")
+
+
+def _is_widget_internal(key: str) -> bool:
+    return key.startswith(_WIDGET_INTERNAL_KEYS)
+
+
+def _kind_for(
+    tag: str, input_type: str, key: str, multiple: bool, role: str = "", css: str = ""
+) -> QuestionKind:
     if tag == "textarea":
         return QuestionKind.COVER_LETTER if "cover" in key.lower() else QuestionKind.TEXTAREA
     if tag == "select":
+        return QuestionKind.MULTI_SELECT if multiple else QuestionKind.SINGLE_SELECT
+    # Greenhouse renders every dropdown with react-select, which is an
+    # `input type="text"` carrying role="combobox" — there is no <select> on
+    # the page at all. Trusting the type attribute classified work
+    # authorization as free text, and §2.2 requires that answer to match an
+    # offered option exactly. Typing into a combobox does not select anything,
+    # so the answer silently never lands.
+    if role == "combobox" or "select__input" in css:
         return QuestionKind.MULTI_SELECT if multiple else QuestionKind.SINGLE_SELECT
     return {
         "email": QuestionKind.EMAIL,
@@ -181,13 +201,15 @@ class GreenhouseAdapter:
         for index in range(count):
             control = controls.nth(index)
             key = await control.get_attribute("id") or await control.get_attribute("name")
-            if not key:
+            if not key or _is_widget_internal(key):
                 continue
 
             tag = (await control.evaluate("el => el.tagName")).lower()
             input_type = (await control.get_attribute("type") or "").lower()
             multiple = await control.get_attribute("multiple") is not None
-            kind = _kind_for(tag, input_type, key, multiple)
+            role = (await control.get_attribute("role") or "").lower()
+            css = await control.get_attribute("class") or ""
+            kind = _kind_for(tag, input_type, key, multiple, role, css)
 
             # A radio group is one question, not one per option.
             if kind is QuestionKind.RADIO:

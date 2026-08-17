@@ -108,12 +108,16 @@ async def browser_page(
 
 
 @asynccontextmanager
-async def ephemeral_page(*, headless: bool = True) -> AsyncIterator[Any]:
-    """A throwaway page with no persisted profile. Used by tests."""
+async def ephemeral_page(*, headless: bool = True, slow_mo_ms: int = 0) -> AsyncIterator[Any]:
+    """A throwaway page with no persisted profile. Used by tests.
+
+    `headless=False` with a slow_mo is for watching a live run against a real
+    posting — the adapter drives the same way either case, it is just visible.
+    """
     from playwright.async_api import async_playwright
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=headless)
+        browser = await pw.chromium.launch(headless=headless, slow_mo=slow_mo_ms)
         context = await browser.new_context()
         context.set_default_timeout(DEFAULT_TIMEOUT_MS)
         page = await context.new_page()
