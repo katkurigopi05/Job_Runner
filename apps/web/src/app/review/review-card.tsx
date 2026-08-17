@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import type { Application, ResumeParsed } from "@/lib/api";
 import { ResumePreview } from "@/components/resume-preview";
+import { ResumeDiffView } from "@/components/resume-diff";
 import { FillRate, StatusPill } from "@/components/status";
 import { approve, reject, submitOtp, type ReviewResult } from "./actions";
 
@@ -151,6 +152,17 @@ export function ReviewCard({
             </p>
           </section>
         )}
+
+        {review.resume_diff ? (
+          <details className="border-b border-rule px-6 py-4" open>
+            <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
+              What tailoring changed
+            </summary>
+            <div className="mt-4">
+              <ResumeDiffView diff={review.resume_diff} />
+            </div>
+          </details>
+        ) : null}
 
         <AttachedResume resume={resume} tailored={tailored} />
 

@@ -39,12 +39,29 @@ export interface FilledField {
   value?: unknown;
 }
 
+export interface ResumeChange {
+  original: string;
+  tailored: string;
+  inline_html?: string;
+}
+
+/** What tailoring changed, shown before the owner approves. §2.1. */
+export interface ResumeDiff {
+  changed: number;
+  unchanged: number;
+  /** Rewrites the fabrication guard refused and replaced with the original. */
+  rejected: number;
+  unified: string;
+  changes: ResumeChange[];
+}
+
 export interface ReviewRecord {
   fill_rate?: number;
   filled?: FilledField[];
   skipped?: FilledField[];
   unanswered?: UnansweredQuestion[];
   screenshot_ref?: string | null;
+  resume_diff?: ResumeDiff | null;
   owner_answers?: Record<string, unknown>;
   owner_approved?: boolean;
   reason?: string;
