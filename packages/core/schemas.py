@@ -344,3 +344,32 @@ class ChatReply(BaseModel):
     provider: str
     #: False when the answer came from a rule rather than the model.
     grounded: bool
+
+
+# --------------------------------------------------------------------------
+# Matches
+# --------------------------------------------------------------------------
+
+
+class MatchOut(BaseModel):
+    """A scored posting, with the breakdown that produced the score.
+
+    The reasoning travels with the number on purpose. A feed that shows a score
+    and not why is a ranking the owner has to take on trust, and this score
+    decides what gets applied to.
+    """
+
+    id: uuid.UUID
+    profile_id: uuid.UUID
+    posting_id: uuid.UUID
+    score: float
+    title: str | None
+    location: str | None
+    url: str
+    ats_type: str | None
+    first_seen_at: datetime
+    closed: bool
+    title_similarity: float = 0.0
+    body_similarity: float = 0.0
+    #: Hard filters that ruled it out — location, seniority, sponsorship.
+    excluded_by: list[str] = Field(default_factory=list)

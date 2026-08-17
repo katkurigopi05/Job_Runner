@@ -160,6 +160,24 @@ export interface InboundMessage {
   at: string;
 }
 
+/** A scored posting, with the breakdown that produced the score. */
+export interface Match {
+  id: string;
+  profile_id: string;
+  posting_id: string;
+  score: number;
+  title: string | null;
+  location: string | null;
+  url: string;
+  ats_type: string | null;
+  first_seen_at: string;
+  closed: boolean;
+  title_similarity: number;
+  body_similarity: number;
+  /** Hard filters that ruled it out — location, seniority, sponsorship. */
+  excluded_by: string[];
+}
+
 export interface Candidate {
   id: string;
   name: string;
@@ -225,6 +243,8 @@ export const api = {
   resumeParsed: (id: string) => request<ResumeParsed>(`/resumes/${id}/parsed`),
   profiles: () => request<Profile[]>("/profiles"),
   inbox: () => request<InboundMessage[]>("/inbox"),
+  matches: (includeApplied = false) =>
+    request<Match[]>(`/matches?include_applied=${includeApplied}`),
   unrouted: () => request<InboundMessage[]>("/inbox/unrouted"),
 
   review: (id: string, body: { approve: boolean; answers?: Record<string, unknown>; note?: string }) =>
