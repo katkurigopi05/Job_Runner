@@ -33,6 +33,50 @@ class FailureReason(StrEnum):
     SITE_ERROR = "site_error"
 
 
+class Outcome(StrEnum):
+    """What the employer did — a different axis from ApplicationStatus.
+
+    `status` tracks *our automation*: queued, running, submitted, failed. It
+    ends at `submitted`, and that terminality is what makes the queue safe to
+    retry. What happens afterwards is the employer's business, not ours, so a
+    rejection email records an outcome instead of trying to move a terminal
+    status. CLAUDE.md §6 stays exactly as written.
+    """
+
+    #: Submitted, nothing heard back yet.
+    AWAITING = "awaiting"
+    ACKNOWLEDGED = "acknowledged"
+    INTERVIEW = "interview"
+    OFFER = "offer"
+    REJECTED = "rejected"
+    #: They asked the applicant for something.
+    INFO_REQUESTED = "info_requested"
+
+
+class Classification(StrEnum):
+    """What an inbound message is."""
+
+    INTERVIEW = "interview"
+    REJECTION = "rejection"
+    OFFER = "offer"
+    INFO_REQUEST = "info_request"
+    ACKNOWLEDGEMENT = "acknowledgement"
+    #: A verification code — the one kind that legitimately moves status.
+    OTP = "otp"
+    NOISE = "noise"
+
+
+#: How a classification maps onto an outcome. NOISE and OTP deliberately map to
+#: nothing: neither says anything about the employer's decision.
+OUTCOME_FOR_CLASSIFICATION: dict[Classification, Outcome] = {
+    Classification.INTERVIEW: Outcome.INTERVIEW,
+    Classification.REJECTION: Outcome.REJECTED,
+    Classification.OFFER: Outcome.OFFER,
+    Classification.INFO_REQUEST: Outcome.INFO_REQUESTED,
+    Classification.ACKNOWLEDGEMENT: Outcome.ACKNOWLEDGED,
+}
+
+
 class EmailMode(StrEnum):
     MANAGED = "managed"
     SELF = "self"

@@ -1,5 +1,5 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
-        check-migrations api worker mcp gate-0 gate-1 gate-1-live gate-3 gate-4 gate-5
+        check-migrations api worker mcp gate-0 gate-1 gate-1-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
 
@@ -34,7 +34,7 @@ fmt:
 
 typecheck:
 	$(PY)/mypy packages/core packages/ats packages/github packages/tailor \
-		packages/crawler packages/matching
+		packages/crawler packages/matching packages/inbox
 
 # Schema drift: the migrations must fully describe the models.
 check-migrations:
@@ -91,6 +91,12 @@ gate-5: gate-0
 gate-4: gate-0
 	REQUIRE_DB=1 $(PY)/pytest -q tests/test_mcp.py
 	@echo "gate-4 passed"
+
+# Gate 6 — CLAUDE.md §9. Alias routing to the right application, and
+# classification accuracy on 30 hand-labeled recruiter emails.
+gate-6: gate-0
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_inbox.py
+	@echo "gate-6 passed"
 
 # make gate-1-live URL=https://boards.greenhouse.io/<company>/jobs/<id>
 gate-1-live:
