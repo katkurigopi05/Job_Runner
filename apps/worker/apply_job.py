@@ -33,6 +33,7 @@ from packages.core.models import Application, Candidate, Match, Profile, Resume
 from packages.core.queue import ClaimedTask
 from packages.core.state import WorkClaim, begin_work, transition
 from packages.core.storage import get_storage, receipt_key
+from packages.llm import router as llm_router
 
 log = structlog.get_logger(__name__)
 
@@ -143,7 +144,11 @@ async def _run_pipeline(
 
         report.screenshot_ref = await _capture(page, application, "filled-form.png")
 
-        await _decide(session, application, profile, report, adapter, page)
+        # §9 Phase 3 — the diff has to be on the screen before the owner
+        # approves, not after. Computed here so the review record carries it.
+        diff = await _resume_diff(session, profile, posting.description_raw or "")
+
+        await _decide(session, application, profile, report, adapter, page, diff)
 
 
 async def _resume_path(session: AsyncSession, profile: Profile) -> str | None:
@@ -165,6 +170,60 @@ async def _resume_path(session: AsyncSession, profile: Profile) -> str | None:
         log.warning("resume_file_missing", storage_ref=resume.storage_ref)
         return None
     return str(path)
+
+
+async def _resume_diff(
+    session: AsyncSession, profile: Profile, posting_text: str
+) -> dict[str, Any] | None:
+    """Tailor the base résumé for this posting and return the diff.
+
+    Phase 3 built the rewriter, the fabrication guard, and the diff, and
+    nothing ever called them — tailored_resume_id was always null, so the
+    review screen had nothing to show. This is the call that makes a diff
+    exist.
+
+    §2.1 is enforced inside tailor_bullets: every rewrite is guard-checked
+    against the source, and one that introduces an unsupported entity falls
+    back to the original line. `rejected` counts those, and the review screen
+    shows it — a guard that silently substituted would be indistinguishable
+    from a guard that never fired.
+
+    Returns None when there is nothing to tailor. A failure here must not stop
+    the application: the untailored résumé is still a correct résumé.
+    """
+    if profile.base_resume_id is None or not posting_text.strip():
+        return None
+
+    resume = await session.get(Resume, profile.base_resume_id)
+    if resume is None or not resume.parsed_json:
+        return None
+
+    try:
+        from packages.tailor.diff import summarize
+        from packages.tailor.guard import SourceCorpus
+        from packages.tailor.parse import ParsedResume
+        from packages.tailor.rewrite import tailor_bullets
+
+        parsed = ParsedResume.model_validate(resume.parsed_json)
+        bullets = [line for line in parsed.section("experience") if line.strip()]
+        if not bullets:
+            return None
+
+        corpus = SourceCorpus.from_texts(parsed.text)
+        provider = llm_router.tailor_resume()
+        result = await tailor_bullets(provider, bullets, posting_text, corpus)
+        summary = summarize(result)
+        return {
+            "changed": summary.changed,
+            "unchanged": summary.unchanged,
+            # Rewrites the guard refused. Surfaced, not swallowed.
+            "rejected": summary.rejected,
+            "unified": summary.unified,
+            "changes": [change.model_dump() for change in summary.changes],
+        }
+    except Exception as exc:  # noqa: BLE001 - tailoring is an enhancement
+        log.warning("tailoring_failed", error=type(exc).__name__)
+        return None
 
 
 async def _capture(page: Any, application: Application, name: str) -> str | None:
@@ -203,6 +262,7 @@ async def _decide(
     report: FillReport,
     adapter: Any,
     page: Any,
+    resume_diff: dict[str, Any] | None = None,
 ) -> None:
     """Park for review, or submit — the approval gate.
 
@@ -220,6 +280,7 @@ async def _decide(
         # The exact question text, preserved for the owner.
         "unanswered": [q.model_dump() for q in report.unanswered],
         "screenshot_ref": report.screenshot_ref,
+        "resume_diff": resume_diff,
     }
 
     if not report.is_complete:

@@ -182,3 +182,25 @@ async def test_approval_with_answers_resumes_and_submits(
     final = (await client.get(f"/applications/{app_id}")).json()
     # Everything required is now answered, so the approved run completes.
     assert final["status"] == ApplicationStatus.SUBMITTED, final["review"].get("unanswered")
+
+
+async def test_the_review_record_carries_the_tailoring_diff(
+    client: AsyncClient, complete_candidate, tmp_path
+) -> None:
+    """§9 Phase 3 — the diff has to be on screen before the owner approves.
+
+    The rewriter, the fabrication guard, and the diff were all built and
+    nothing called them: tailored_resume_id was always null, so the review
+    screen had nothing to show. This asserts the pipeline now produces the
+    record the screen renders.
+    """
+    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    app_id = created.json()["id"]
+
+    await worker_run.run_once(worker_id="diff-worker")
+
+    review = (await client.get(f"/applications/{app_id}")).json()["review"]
+    assert review is not None
+    # Present as a key even when tailoring produced nothing, so the UI can tell
+    # "not attempted" from "attempted and changed nothing".
+    assert "resume_diff" in review

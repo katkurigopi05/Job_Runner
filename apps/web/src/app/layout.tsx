@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ThemeToggle } from "@/components/theme-toggle";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,7 +20,7 @@ const NAV = [
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen">
         <header className="border-b border-rule">
           <div className="mx-auto flex max-w-5xl flex-wrap items-baseline gap-x-8 gap-y-2 px-6 py-5">
@@ -37,7 +38,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </Link>
               ))}
             </nav>
-            <p className="ml-auto font-mono text-xs text-ink-faint">localhost only</p>
+            <div className="ml-auto flex items-center gap-4">
+              <p className="font-mono text-xs text-ink-faint">localhost only</p>
+              <ThemeToggle />
+            </div>
           </div>
         </header>
         <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>
