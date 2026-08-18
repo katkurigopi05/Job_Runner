@@ -12,6 +12,7 @@ the score decides what gets applied to.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC
 
 from fastapi import APIRouter, Query
 from sqlalchemy import select
@@ -28,6 +29,25 @@ from packages.matching.search import (
 from packages.matching.search import matches as filter_matches
 
 router = APIRouter(prefix="/matches", tags=["matches"])
+
+
+def _lag_hours(posting: Posting) -> float | None:
+    """How long the crawler took to notice, in hours.
+
+    None when the board reports no publication date. That is an unmeasurable
+    lag, not a lag of zero, and reporting it as zero would flatter the number
+    the measurement exists to question.
+    """
+    if posting.published_at is None:
+        return None
+    published = posting.published_at
+    if published.tzinfo is None:
+        published = published.replace(tzinfo=UTC)
+    seen = posting.first_seen_at
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=UTC)
+    return round(max((seen - published).total_seconds(), 0.0) / 3600, 2)
+
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
@@ -114,6 +134,8 @@ async def list_matches(
                 url=posting.url,
                 ats_type=posting.ats_type,
                 first_seen_at=posting.first_seen_at,
+                published_at=posting.published_at,
+                lag_hours=_lag_hours(posting),
                 closed=posting.closed_at is not None,
                 title_similarity=float(reasons.get("title_similarity") or 0.0),
                 body_similarity=float(reasons.get("body_similarity") or 0.0),

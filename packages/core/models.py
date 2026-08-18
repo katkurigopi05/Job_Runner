@@ -160,6 +160,10 @@ class Posting(Base):
     description_embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
     #: Change detection — an unchanged hash means the crawler emits nothing.
     content_hash: Mapped[str | None] = mapped_column(String(64))
+    #: When the *source* says the posting went up. Distinct from first_seen_at,
+    #: which is when the crawler noticed it. The gap between them is our lag,
+    #: and it is the only evidence that poll_interval_s is set sensibly.
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     first_seen_at: Mapped[datetime] = _created_at()
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -169,6 +173,7 @@ class Posting(Base):
     # (HNSW, not ivfflat) once the row count actually justifies it.
     __table_args__ = (
         Index("ix_postings_first_seen_at", text("first_seen_at DESC")),
+        Index("ix_postings_published_at", text("published_at DESC")),
         Index("ix_postings_content_hash", "content_hash"),
     )
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Protocol
@@ -36,6 +37,9 @@ class ExtractedPosting(BaseModel):
     location: str | None = None
     description_raw: str | None = None
     ats_type: str | None = None
+    #: When the source says the posting went up. None when the board does not
+    #: say — which is a fact worth keeping, not a reason to substitute now().
+    published_at: datetime | None = None
     #: Hash of the fields that matter, for change detection per posting.
     content_hash: str = ""
 
@@ -111,6 +115,34 @@ def strip_html(raw: str | None) -> str | None:
     return cleaned or None
 
 
+def parse_timestamp(value: Any) -> datetime | None:
+    """A source timestamp, in whatever shape the board reports it.
+
+    Greenhouse sends ISO 8601 with an offset; Lever sends epoch milliseconds.
+    Anything unrecognized returns None rather than a guess: a wrong publication
+    date makes the lag measurement lie, and a missing one is honest.
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, int | float):
+        # Milliseconds if it is far too large to be seconds.
+        seconds = value / 1000 if value > 10_000_000_000 else float(value)
+        try:
+            return datetime.fromtimestamp(seconds, UTC)
+        except (OverflowError, OSError, ValueError):
+            return None
+
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+    return None
+
+
 def posting_hash(posting: ExtractedPosting) -> str:
     from packages.crawler.fetch import content_hash
 
@@ -170,6 +202,7 @@ class GreenhouseExtractor:
                 location=location,
                 description_raw=strip_html(job.get("content")),
                 ats_type=self.ats,
+                published_at=parse_timestamp(job.get("first_published") or job.get("updated_at")),
             )
             posting.content_hash = posting_hash(posting)
             postings.append(posting)
@@ -235,6 +268,7 @@ class LeverExtractor:
                 location=location,
                 description_raw=strip_html("\n".join(p for p in body_parts if p)),
                 ats_type=self.ats,
+                published_at=parse_timestamp(job.get("createdAt")),
             )
             posting.content_hash = posting_hash(posting)
             postings.append(posting)
@@ -286,6 +320,7 @@ class AshbyExtractor:
                 description_raw=strip_html(job.get("descriptionHtml"))
                 or (job.get("descriptionPlain") or "").strip(),
                 ats_type=self.ats,
+                published_at=parse_timestamp(job.get("publishedAt") or job.get("updatedAt")),
             )
             posting.content_hash = posting_hash(posting)
             postings.append(posting)

@@ -171,6 +171,10 @@ export interface Match {
   url: string;
   ats_type: string | null;
   first_seen_at: string;
+  /** When the source says it went up. Null when the board does not say. */
+  published_at: string | null;
+  /** Hours from publication to us noticing. Null means unmeasurable, not zero. */
+  lag_hours: number | null;
   closed: boolean;
   title_similarity: number;
   body_similarity: number;
