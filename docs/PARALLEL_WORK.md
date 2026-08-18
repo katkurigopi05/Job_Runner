@@ -18,10 +18,22 @@ checkout — a worktree.
 
 ```bash
 cd /Users/gopikrishnareddykatkuri/Desktop/Job_Runner
-git worktree add /private/tmp/Job_Runner_<stream> -b <branch> origin/main
-cd /private/tmp/Job_Runner_<stream>
-ln -s /Users/gopikrishnareddykatkuri/Desktop/Job_Runner/.venv .venv
+make worktree NAME=<short-name> BRANCH=<branch-name>
 ```
+
+That creates the worktree, links the venv, and prints the environment variables
+to export. Three things break `make gate-0` in a fresh worktree and all three
+have already happened:
+
+- **No `.venv`**, so every `$(PY)/` command fails with "No such file".
+- **No `.env`.** It is gitignored, so it does not travel with a worktree, and
+  alembic cannot reach the database — `check-migrations` fails on
+  `InvalidPasswordError` before a single test runs. Export `DATABASE_URL`,
+  `TEST_DATABASE_URL`, and `VAULT_KEY` instead of copying the file: one secret,
+  one location, and a second copy is a secret waiting to be committed from a
+  directory nobody is watching.
+- **A system python that is not the project's 3.12.** An agent reported
+  Playwright missing when it is installed and working; it had checked 3.14.
 
 The main checkout at `~/Desktop/Job_Runner` belongs to whoever is driving
 interactively. An agent that starts editing there shares an index and a working
@@ -154,7 +166,20 @@ showed as merged. The branch had the commit. `main` did not.
 Nobody noticed for days. It surfaced only when someone grepped `main` for a
 constant the fix introduced and got nothing back.
 
-**So: after a merge, verify the artifact on `main`, not on your branch.**
+**The cause, now that it has happened twice:** GitHub's PR object does not
+always reflect a push immediately. `gh pr merge` merges the head GitHub
+currently believes the branch is at. Push a commit, merge a minute later, and
+the merge can take the state *before* it — the PR reports merged, the branch
+has the commit, `main` does not.
+
+**So, two checks. Before merging:**
+
+```bash
+gh pr view <n> --json headRefOid --jq .headRefOid   # must equal
+git rev-parse HEAD                                   # your local head
+```
+
+**And after merging, verify the artifact on `main`, not on your branch:**
 
 ```bash
 git checkout main && git pull
