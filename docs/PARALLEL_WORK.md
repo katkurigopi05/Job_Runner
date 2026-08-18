@@ -166,7 +166,20 @@ showed as merged. The branch had the commit. `main` did not.
 Nobody noticed for days. It surfaced only when someone grepped `main` for a
 constant the fix introduced and got nothing back.
 
-**So: after a merge, verify the artifact on `main`, not on your branch.**
+**The cause, now that it has happened twice:** GitHub's PR object does not
+always reflect a push immediately. `gh pr merge` merges the head GitHub
+currently believes the branch is at. Push a commit, merge a minute later, and
+the merge can take the state *before* it — the PR reports merged, the branch
+has the commit, `main` does not.
+
+**So, two checks. Before merging:**
+
+```bash
+gh pr view <n> --json headRefOid --jq .headRefOid   # must equal
+git rev-parse HEAD                                   # your local head
+```
+
+**And after merging, verify the artifact on `main`, not on your branch:**
 
 ```bash
 git checkout main && git pull
