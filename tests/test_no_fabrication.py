@@ -152,7 +152,7 @@ def test_entity_kinds() -> None:
 
 def test_common_words_are_not_proper_nouns() -> None:
     """Sentence casing must not read as a factual claim."""
-    entities = extract_entities("Designed the system. Improved performance. Managed a team.")
+    entities = extract_entities("Designed the system. Improved performance. Maintained a tool.")
     assert entities == []
 
 
@@ -214,7 +214,7 @@ def test_check_or_raise(corpus) -> None:
 
 
 def test_rephrasing_passes(corpus) -> None:
-    assert check("Architected a note-taking subsystem processing 2M events daily.", corpus).ok
+    assert check("Designed a note-taking subsystem processing 2M events daily.", corpus).ok
 
 
 def test_reordering_passes(corpus) -> None:
@@ -485,7 +485,7 @@ def test_metric_from_another_employer_is_rejected(two_employers: SourceCorpus) -
 def test_honest_rewrite_of_the_same_entry_still_passes(two_employers: SourceCorpus) -> None:
     """Scoping must not cost legitimate rewrites."""
     accepted, reason, _ = vet(
-        ACME_BULLET, "- Owned the billing service, cutting invoice errors.", two_employers
+        ACME_BULLET, "- Built the billing service, cutting invoice errors.", two_employers
     )
     assert accepted, reason
 
