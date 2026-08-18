@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
 import httpx
@@ -18,6 +20,33 @@ from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter
 from packages.crawler.robots import USER_AGENT, RobotsCache
 
 log = structlog.get_logger(__name__)
+
+#: Used when a 429 arrives with no Retry-After to say how long to wait.
+_DEFAULT_BACKOFF = 60.0
+
+
+def _retry_after(response: httpx.Response, *, default: float) -> float:
+    """Seconds the server asked us to wait, or `default` if it did not say.
+
+    `Retry-After` comes as either a delay in seconds or an HTTP date; both
+    are in the spec and both appear in the wild.
+    """
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return default
+    try:
+        return max(0.0, float(raw.strip()))
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(raw.strip())
+    except (TypeError, ValueError):
+        return default
+    if when is None:
+        return default
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - datetime.now(UTC)).total_seconds())
 
 
 class Blocked(Exception):
@@ -74,14 +103,19 @@ class PoliteFetcher:
 
         # A site asking for more space than our floor gets it. Asking for less
         # changes nothing — §2.6 is configurable upward only.
-        if decision.crawl_delay and decision.crawl_delay > self.rate_limiter.delay_seconds:
+        #
+        # Recorded against *this host*. Writing it to `delay_seconds` would
+        # make one slow site's crawl-delay the delay for every other site in
+        # the registry, which is not what that site asked for.
+        current = self.rate_limiter.delay_for(host)
+        if decision.crawl_delay and decision.crawl_delay > current:
             log.info(
                 "honouring_site_crawl_delay",
                 host=host,
                 site_delay=decision.crawl_delay,
-                our_delay=self.rate_limiter.delay_seconds,
+                our_delay=current,
             )
-            self.rate_limiter.delay_seconds = float(decision.crawl_delay)
+            self.rate_limiter.host_delays[host] = float(decision.crawl_delay)
 
         waited = await self.rate_limiter.acquire(host)
 
@@ -92,6 +126,12 @@ class PoliteFetcher:
             follow_redirects=True,
         ) as client:
             response = await client.get(url)
+
+        # Being rate-limited is the server telling us our pace is wrong, and
+        # it outranks whatever we had configured. This is the half that makes
+        # the faster shared-API floor defensible rather than merely faster.
+        if response.status_code in (429, 503):
+            self.rate_limiter.penalize(host, _retry_after(response, default=_DEFAULT_BACKOFF))
 
         return FetchResult(
             url=url,

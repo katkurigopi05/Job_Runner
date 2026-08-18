@@ -36,6 +36,18 @@ These are correctness requirements, not preferences. Violating any of them is a 
    the owner finishes it by hand. This is a hard scope boundary.
 6. **Crawler respects robots.txt and rate limits.** Minimum 60s between requests to the same
    host. Configurable up, never down.
+
+   **Amended:** a host that is *known* to be a multi-tenant ATS API — one endpoint
+   serving thousands of companies' boards, listed explicitly in
+   `ratelimit.SHARED_API_HOSTS` — has its own floor of 2s instead. The original rule
+   pictures a company's own careers page, where 60s is courtesy. Applied to
+   `boards-api.greenhouse.io` it protects nobody: it serializes every company in the
+   registry behind one counter, capping the crawler at 60 boards an hour regardless of
+   how many are listed. What makes this a narrowing rather than a loophole: the host
+   list is explicit so nothing is promoted by resembling it, the 2s floor is refused
+   below exactly like the 60s one, a site's own `Crawl-delay` still raises its host's
+   delay, and a `429`/`Retry-After` backs that host off for as long as it asks. Polling
+   faster is only defensible while also listening.
 7. **Secrets never touch the database in plaintext and never appear in logs.** ATS account
    passwords go through `packages/core/vault.py` (Fernet, key from OS keychain or `.env`
    outside the repo). `.env` is gitignored and stays gitignored.
