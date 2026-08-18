@@ -55,7 +55,7 @@ class StubProvider:
 
     async def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
         self.calls.append((system, user))
-        record(self.name, system, user)
+        record(self.name, system, user, model=getattr(self, "model", None))
         for needle, response in self.responses.items():
             if needle in user or needle in system:
                 return response
@@ -63,7 +63,7 @@ class StubProvider:
 
     async def complete_json(self, system: str, user: str, schema: type[T]) -> T:
         self.calls.append((system, user))
-        record(self.name, system, user)
+        record(self.name, system, user, model=getattr(self, "model", None))
         for needle, response in self.responses.items():
             if needle in user or needle in system:
                 return schema.model_validate_json(response)
@@ -84,7 +84,7 @@ class OllamaProvider:
         self.model = model
 
     async def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
-        record(self.name, system, user)
+        record(self.name, system, user, model=getattr(self, "model", None))
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.post(
@@ -106,7 +106,7 @@ class OllamaProvider:
                 raise LLMError(f"Ollama call failed: {exc}") from exc
 
     async def complete_json(self, system: str, user: str, schema: type[T]) -> T:
-        record(self.name, system, user)
+        record(self.name, system, user, model=getattr(self, "model", None))
         system_with_json = f"{system}\n\n{render_json_instruction(schema)}"
         async with httpx.AsyncClient() as client:
             try:
@@ -142,7 +142,7 @@ class GeminiProvider:
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
 
     async def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
-        record(self.name, system, user)
+        record(self.name, system, user, model=getattr(self, "model", None))
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.post(
@@ -160,7 +160,7 @@ class GeminiProvider:
                 raise LLMError(f"Gemini call failed: {exc}") from exc
 
     async def complete_json(self, system: str, user: str, schema: type[T]) -> T:
-        record(self.name, system, user)
+        record(self.name, system, user, model=getattr(self, "model", None))
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.post(
@@ -193,7 +193,7 @@ class AnthropicProvider:
         self.model = model
 
     async def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
-        record(self.name, system, user)
+        record(self.name, system, user, model=getattr(self, "model", None))
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.post(
@@ -217,7 +217,7 @@ class AnthropicProvider:
                 raise LLMError(f"Anthropic call failed: {exc}") from exc
 
     async def complete_json(self, system: str, user: str, schema: type[T]) -> T:
-        record(self.name, system, user)
+        record(self.name, system, user, model=getattr(self, "model", None))
         system_with_json = f"{system}\n\n{render_json_instruction(schema)}"
         async with httpx.AsyncClient() as client:
             try:
