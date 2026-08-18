@@ -179,7 +179,26 @@ def _strip(token: str) -> str:
 
 
 def stem(word: str) -> str:
-    """Naive stemmer for morphological variants (e.g. scale vs scalability)."""
+    """Fold common suffixes, so `reliability` and `reliable` compare equal.
+
+    Deliberately naive, and narrower than it looks. Suffix stripping cannot
+    reach irregular forms or heavy derivations, and several pairs that matter
+    here do not fold together:
+
+        scale / scalability   -> scale, scalable      no match
+        scale / scaled        -> scale, scal          no match
+        lead / led            -> lead, led            no match
+        async / asynchronous  -> async, asynchronou   no match
+
+    Every one of those is caught by the explicit `_SCOPE_CLAIMS` list instead,
+    which is why that list enumerates variants rather than relying on this.
+
+    This docstring previously named `scale vs scalability` as the example it
+    handles. It does not, and the blocking that looked like proof of the
+    stemmer working was the word list doing it. Do not assume a variant is
+    covered because a stemmer exists — check that it is either listed or
+    genuinely folds.
+    """
     w = word.lower()
     if len(w) <= 3:
         return w
