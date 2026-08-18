@@ -7,6 +7,7 @@ double-submits, because every handler is idempotent.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import contextlib
 import signal
@@ -18,6 +19,7 @@ import structlog
 
 from apps.worker.apply_job import TaskPayloadError, handle_apply
 from apps.worker.crawl_job import CRAWL_TASK_KIND, handle_crawl
+from apps.worker.discover_job import DISCOVER_TASK_KIND, handle_discover
 from apps.worker.inbox_job import INBOX_TASK_KIND, handle_inbox
 from packages.core import db as core_db
 from packages.core.config import get_settings
@@ -43,6 +45,7 @@ APPLY_TASK_KIND = "apply"
 HANDLERS = {
     APPLY_TASK_KIND: handle_apply,
     CRAWL_TASK_KIND: handle_crawl,
+    DISCOVER_TASK_KIND: handle_discover,
     INBOX_TASK_KIND: handle_inbox,
 }
 
@@ -213,8 +216,51 @@ async def run_forever(
     log.info("worker_stopped", worker_id=wid)
 
 
+async def run_pool(count: int, *, lease_seconds: int | None = None) -> None:
+    """Run `count` workers in one process, each claiming independently.
+
+    The queue was always safe for this — `FOR UPDATE SKIP LOCKED` means two
+    workers never claim the same row — but nothing could actually start more
+    than one, so the safety went unused.
+
+    Each gets a distinct worker id, because the id is what lets a restarted
+    worker recognize its own expired lease. Sharing one id across a pool
+    would let a worker resume a task another member is still running.
+
+    Concurrency here is for *waiting*, not for CPU: a crawl spends its cycle
+    inside the rate limiter and an apply spends it inside a browser, and one
+    worker blocked on either is a worker not doing the other. Past a handful
+    the limits stop being ours — the rate limiter serializes per host no
+    matter how many claimants there are.
+    """
+    settings = get_settings()
+    base = settings.worker_id or default_worker_id()
+
+    await asyncio.gather(
+        *(
+            run_forever(worker_id=f"{base}-{index}", lease_seconds=lease_seconds)
+            for index in range(count)
+        )
+    )
+
+
 def main() -> None:
-    asyncio.run(run_forever())
+    parser = argparse.ArgumentParser(description="Jobrunner queue worker")
+    parser.add_argument(
+        "-n",
+        "--workers",
+        type=int,
+        default=1,
+        help="how many workers to run in this process (default 1)",
+    )
+    args = parser.parse_args()
+
+    if args.workers < 1:
+        parser.error("--workers must be at least 1")
+    if args.workers == 1:
+        asyncio.run(run_forever())
+    else:
+        asyncio.run(run_pool(args.workers))
 
 
 if __name__ == "__main__":

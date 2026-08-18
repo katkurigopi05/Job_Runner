@@ -15,9 +15,11 @@ from __future__ import annotations
 import json
 import re
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any, Protocol
 
 import structlog
+import yaml
 from pydantic import BaseModel, Field
 
 log = structlog.get_logger(__name__)
@@ -315,13 +317,14 @@ class CompanySeed(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+def default_seed_path() -> Path:
+    """Where the registry lives. One definition, so writers and readers agree."""
+    return Path(__file__).resolve().parents[2] / "seeds" / "companies.yaml"
+
+
 def load_seed(path: str | None = None) -> list[CompanySeed]:
     """Read the company registry from YAML."""
-    from pathlib import Path
-
-    import yaml
-
-    location = Path(path or Path(__file__).resolve().parents[2] / "seeds" / "companies.yaml")
+    location = Path(path) if path else default_seed_path()
     if not location.is_file():
         log.warning("company_seed_missing", path=str(location))
         return []
