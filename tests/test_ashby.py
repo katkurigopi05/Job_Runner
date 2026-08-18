@@ -48,7 +48,7 @@ async def test_url_matching_and_registry() -> None:
     assert not AshbyAdapter.matches("https://jobs.lever.co/ro/f25a6c49-5ed4-4aa0-a5bb-b30e9790")
     assert detect_ats(url) == "ashby"
     assert adapter_for(url).name == "ashby"
-    assert supported() == ["greenhouse", "lever", "ashby"]
+    assert supported() == ["greenhouse", "lever", "ashby", "workable"]
 
 
 async def test_fields_are_found_without_a_form_element(page) -> None:

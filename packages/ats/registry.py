@@ -11,11 +11,13 @@ from packages.ats.ashby import AshbyAdapter
 from packages.ats.base import ATSAdapter, UnsupportedSiteError
 from packages.ats.greenhouse import GreenhouseAdapter
 from packages.ats.lever import LeverAdapter
+from packages.ats.workable import WorkableAdapter
 
 ADAPTERS: list[type[ATSAdapter]] = [
     GreenhouseAdapter,
     LeverAdapter,
     AshbyAdapter,
+    WorkableAdapter,
 ]
 
 
