@@ -89,7 +89,7 @@ gate-0: lint typecheck check-migrations
 # The other half (a LIVE Greenhouse posting) cannot run here and is not
 # asserted by this target. Run `make gate-1-live URL=<posting>` for that.
 gate-1: gate-0
-	REQUIRE_DB=1 $(PY)/pytest -q tests/test_greenhouse.py
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_greenhouse.py tests/test_greenhouse_har.py
 	@echo "gate-1 (offline) passed"
 
 # Gate 2 — CLAUDE.md §9. The offline half: the review queue carries every

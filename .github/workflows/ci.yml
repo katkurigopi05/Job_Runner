@@ -115,7 +115,7 @@ jobs:
       # "some test failed". These are subsets of the run above, so they are
       # cheap and they keep the CLAUDE.md §9 gate names meaningful in CI.
       - name: gate-1 (offline Greenhouse adapter)
-        run: .venv/bin/pytest -q tests/test_greenhouse.py
+        run: .venv/bin/pytest -q tests/test_greenhouse.py tests/test_greenhouse_har.py
 
       - name: gate-2 (review queue, offline half)
         run: .venv/bin/pytest -q tests/test_gate2.py
