@@ -36,10 +36,38 @@ from packages.llm.prompts import identify
 
 log = structlog.get_logger(__name__)
 
-#: Local providers never leave the machine, so §2.8 does not apply to them.
-#: They are still recorded, marked, so the trail is complete rather than
-#: selectively honest.
+#: Providers that run on this machine — but see `is_local`, because for Ollama
+#: that depends on the model.
 LOCAL_PROVIDERS = frozenset({"stub", "ollama"})
+
+#: Ollama serves cloud-hosted models under the same API as local ones, marked
+#: only by "cloud" in the model tag. `kimi-k2.6:cloud` and
+#: `qwen3-coder:480b-cloud` are not on disk and do not run here — and note the
+#: two spell it differently, `:cloud` against `-cloud`, so matching the exact
+#: suffix misses one. Matching the substring catches both.
+#:
+#: It also over-reports: a local model with "cloud" in its name would be
+#: recorded as having left. That is the right direction to be wrong in. An
+#: audit that under-reports says a résumé stayed here when it did not, which is
+#: the one failure this file exists to prevent.
+#:
+#: Judging locality by provider name alone recorded those calls as
+#: `left_machine=False` — the trail asserting a résumé never left the machine
+#: while it was being sent to Ollama's servers. §2.8 permits that upload for
+#: tailoring, but only *audited*, and an audit that is confidently wrong is
+#: worse than none: it answers the one question it exists for, incorrectly.
+CLOUD_MODEL_MARKERS = ("cloud",)
+
+
+def is_local(provider: str, model: str | None = None) -> bool:
+    """Whether a call stayed on this machine.
+
+    The model matters, not just the provider. Ollama is local until the model
+    is one it hosts remotely.
+    """
+    if provider not in LOCAL_PROVIDERS:
+        return False
+    return not (model and any(m in model.lower() for m in CLOUD_MODEL_MARKERS))
 
 
 @dataclass(frozen=True)
@@ -60,6 +88,9 @@ class AuditEntry:
     #: nobody has versioned yet. Metadata, not content: §2.8 and §10 both hold.
     prompt_name: str | None = None
     prompt_version: int | None = None
+    #: Which model answered. Recorded because provider alone does not say
+    #: whether a call stayed here — see `is_local`.
+    model: str | None = None
 
     def matches(self, system: str, user: str) -> bool:
         """Whether this entry records that exact pair of prompts.
@@ -74,7 +105,14 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def record(provider: str, system: str, user: str, *, task: str = "unspecified") -> AuditEntry:
+def record(
+    provider: str,
+    system: str,
+    user: str,
+    *,
+    task: str = "unspecified",
+    model: str | None = None,
+) -> AuditEntry:
     """Authorize, then append one entry to the audit trail and return it.
 
     Two kinds of failure, deliberately treated differently:
@@ -94,7 +132,8 @@ def record(provider: str, system: str, user: str, *, task: str = "unspecified") 
     entry = AuditEntry(
         at=datetime.now(UTC).isoformat(),
         provider=provider,
-        left_machine=provider not in LOCAL_PROVIDERS,
+        model=model,
+        left_machine=not is_local(provider, model),
         task=task,
         system_sha256=_digest(system),
         user_sha256=_digest(user),
@@ -108,6 +147,7 @@ def record(provider: str, system: str, user: str, *, task: str = "unspecified") 
     log.info(
         "llm_call",
         provider=entry.provider,
+        model=entry.model,
         left_machine=entry.left_machine,
         task=entry.task,
         prompt=prompt.label if prompt else None,

@@ -92,6 +92,23 @@ def _user_prompt(bullet: str, job_description: str, terms: TermReport | None = N
     return "\n\n".join(parts)
 
 
+def _borrowed_terms(original: str, candidate: str, forbidden: tuple[str, ...]) -> list[str]:
+    """Posting terms the rewrite introduced that the source did not have.
+
+    Only *introduced* ones count. A term already in the original bullet is the
+    owner's own word, and the posting happening to use it too is not a reason
+    to reject their sentence.
+    """
+    if not forbidden:
+        return []
+
+    had = normalize(original)
+    has = normalize(candidate)
+    return [
+        term for term in forbidden if (key := normalize(term)) and key in has and key not in had
+    ]
+
+
 def _clean(candidate: str) -> str:
     """Strip the wrappers models add despite being told not to."""
     text = candidate.strip()
@@ -118,13 +135,29 @@ def vocabulary_overlap(original: str, candidate: str) -> float:
 
 
 def vet(
-    original: str, candidate: str, corpus: SourceCorpus
+    original: str,
+    candidate: str,
+    corpus: SourceCorpus,
+    forbidden: tuple[str, ...] = (),
 ) -> tuple[bool, str | None, GuardReport]:
     """Decide whether a rewrite may be used.
 
-    Rejection reasons, in order of how often they matter: fabricated content,
-    a bullet replaced wholesale rather than rewritten, implausible growth, or
-    an empty answer.
+    Rejection reasons, in order of how often they matter: a term the posting
+    asked for that the résumé does not support, fabricated content, a bullet
+    replaced wholesale rather than rewritten, implausible growth, or an empty
+    answer.
+
+    `forbidden` is the posting's vocabulary the résumé does not back, computed
+    by `packages/tailor/keywords.py`. It is checked *here* rather than only
+    named in the prompt, because the prompt already named it and every model
+    tested used the terms anyway:
+
+        Built backend services in Python.
+          -> Designed and developed high-throughput payment services in Python.
+
+    "payment" is an ordinary lowercase word, so the entity check traces it to
+    nothing and flags nothing — the résumé would claim payments experience its
+    owner does not have. Prompts are advisory; this is the guarantee.
 
     The fabrication check is scoped to the entry the original bullet came
     from. Checking against the whole résumé would accept a rewrite that moved
@@ -135,6 +168,15 @@ def vet(
 
     if not candidate:
         return False, "model returned nothing", report
+
+    borrowed = _borrowed_terms(original, candidate, forbidden)
+    if borrowed:
+        return (
+            False,
+            "takes " + ", ".join(repr(term) for term in borrowed) + " from the posting; "
+            "the résumé does not support it",
+            report,
+        )
     if not report.ok:
         return False, report.summary(), report
 
@@ -174,7 +216,8 @@ async def tailor_bullet(
         )
 
     candidate = _clean(raw)
-    accepted, reason, report = vet(bullet, candidate, corpus)
+    forbidden = tuple(terms.missing) if terms else ()
+    accepted, reason, report = vet(bullet, candidate, corpus, forbidden)
 
     if not accepted:
         # Never log the candidate itself — it may carry résumé content.
