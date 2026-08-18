@@ -282,7 +282,9 @@ async def tailor_cover_letter(
     """Write a cover letter. Every output is guard-checked against the entire corpus."""
     system_prompt = (
         "Write a brief cover letter for the following job description, based entirely "
-        "on the provided resume. Do not invent any claims, metrics, or experiences."
+        "on the provided resume. Do not invent any claims, metrics, or experiences.\n"
+        "ABSOLUTE RULE: Do not write any sentence about work authorization, sponsorship, "
+        "employment history, or salary. Those topics are strictly forbidden."
     )
     user_prompt = f"Job description:\n{job_description.strip()[:4000]}\n\nResume:\n{corpus.text}"
 
@@ -293,7 +295,38 @@ async def tailor_cover_letter(
         return CoverLetterResult(text="", rejected_reason=f"provider error: {type(exc).__name__}")
 
     candidate = raw.strip()
-    # A cover letter is document-wide, so scope=None
+
+    # §2.2 check: no work authorization, sponsorship, employment history, or salary
+    lower_candidate = candidate.lower()
+    for topic in (
+        "authorization",
+        "sponsorship",
+        "salary",
+        "visa",
+        "citizen",
+        "compensation",
+        "employment history",
+    ):
+        if topic in lower_candidate:
+            reason = f"mentions forbidden topic: {topic}"
+            log.info("cover_letter_rejected", reason=reason)
+            return CoverLetterResult(text="", rejected_reason=reason, entities_checked=0)
+
+    # Keyword check: missing terms cannot be claimed
+    from packages.tailor.keywords import analyze
+
+    terms = analyze(job_description, corpus)
+    borrowed = _borrowed_terms(corpus.text, candidate, tuple(terms.missing))
+    if borrowed:
+        reason = (
+            "takes "
+            + ", ".join(repr(term) for term in borrowed)
+            + " from the posting; the résumé does not support it"
+        )
+        log.info("cover_letter_rejected", reason=reason)
+        return CoverLetterResult(text="", rejected_reason=reason, entities_checked=0)
+
+    # Fabrication check
     from packages.tailor.guard import check
 
     report = check(candidate, corpus, scope=None)

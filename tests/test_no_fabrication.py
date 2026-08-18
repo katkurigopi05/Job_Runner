@@ -509,3 +509,87 @@ def test_flat_corpus_degrades_to_document_scope_and_says_so() -> None:
 
     _, _, report = vet(ACME_BULLET, "- Maintained the billing service.", corpus)
     assert report.scope_ref is None
+
+
+# --------------------------------------------------------------------------
+# Cover Letter
+# --------------------------------------------------------------------------
+
+
+async def test_cover_letter_rejects_missing_keywords() -> None:
+    from packages.tailor.rewrite import tailor_cover_letter
+
+    corpus = SourceCorpus.from_texts(RESUME_BACKEND)
+    # The job asks for React, but the resume only has Python/Backend
+    job_desc = "Senior Engineer. Must know React and Next.js."
+
+    provider = StubProvider(
+        {"brief cover letter": "I am a Senior Engineer with React and Next.js experience."}
+    )
+    result = await tailor_cover_letter(provider, job_desc, corpus)
+
+    assert result.used_fallback
+    assert "takes 'react', 'next.js' from the posting" in result.rejected_reason.lower()
+
+
+async def test_cover_letter_rejects_fabrication() -> None:
+    from packages.tailor.rewrite import tailor_cover_letter
+
+    corpus = SourceCorpus.from_texts(RESUME_BACKEND)
+    job_desc = "Senior Engineer."
+
+    provider = StubProvider(
+        {"brief cover letter": "I worked at Google and scaled systems to 50TB."}
+    )
+    result = await tailor_cover_letter(provider, job_desc, corpus)
+
+    assert result.used_fallback
+    assert "unsupported" in result.rejected_reason
+
+
+async def test_cover_letter_rejects_forbidden_topics() -> None:
+    from packages.tailor.rewrite import tailor_cover_letter
+
+    corpus = SourceCorpus.from_texts(RESUME_BACKEND)
+    job_desc = "Senior Engineer."
+
+    provider = StubProvider(
+        {
+            "brief cover letter": (
+                "I am a citizen and do not need visa sponsorship. My salary requirement is 100k."
+            )
+        }
+    )
+    result = await tailor_cover_letter(provider, job_desc, corpus)
+
+    assert result.used_fallback
+    assert (
+        "mentions forbidden topic: sponsorship" in result.rejected_reason
+        or "mentions forbidden topic: visa" in result.rejected_reason
+        or "mentions forbidden topic: citizen" in result.rejected_reason
+        or "mentions forbidden topic: salary" in result.rejected_reason
+    )
+
+
+async def test_cover_letter_clean_output() -> None:
+    from packages.tailor.rewrite import tailor_cover_letter
+
+    corpus = SourceCorpus.from_texts(RESUME_BACKEND)
+    job_desc = "Backend Engineer."
+
+    # Text completely supported by RESUME_BACKEND
+    provider = StubProvider(
+        {
+            "brief cover letter": (
+                "I am a Staff Engineer with Python and PostgreSQL experience. "
+                "I migrated a billing service."
+            )
+        }
+    )
+    result = await tailor_cover_letter(provider, job_desc, corpus)
+
+    assert not result.used_fallback
+    assert (
+        result.text == "I am a Staff Engineer with Python and PostgreSQL experience. "
+        "I migrated a billing service."
+    )
