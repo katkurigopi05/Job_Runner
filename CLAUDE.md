@@ -364,8 +364,9 @@ on top of it.
 
 ## 13. CI
 
-`.github/workflows/ci.yml` runs on every push to `main`, every pull request, and
-on demand. Two jobs.
+`.github/workflows/ci.yml` runs on every push to `main`, every pull request,
+weekly, and on demand. Two jobs, and they do not both run on every trigger —
+see `image` below.
 
 **`gates`** — the same checks `make gate-N` runs locally, on a machine that has
 nothing installed. It brings up `pgvector/pgvector:pg16` as a service container,
@@ -384,6 +385,15 @@ failure and you lose the label that says which phase regressed.
 
 **`image`** — builds the `Dockerfile`, imports every entry point inside it, and
 checks Chromium is present. Nothing is pushed anywhere.
+
+It does **not** run on pull requests. The repo is private, so Actions minutes
+are metered on the free plan, and this job is the expensive half of a run — it
+downloads Chromium a second time to build the image (~3 of the ~7 billable
+minutes). What it proves changes when the `Dockerfile` or the dependency set
+changes, not on every branch push, so it runs on `main`, weekly, and on
+demand. **A pull request that touches either should be checked by hand with
+`workflow_dispatch` before merging** — that is the cost of this trade, and it
+is on you to remember it.
 
 ### Why this exists
 

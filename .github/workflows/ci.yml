@@ -15,6 +15,11 @@ on:
   pull_request:
   # Manual runs, for when you want a check without pushing.
   workflow_dispatch:
+  # Weekly, so the image job still runs regularly even in a quiet week —
+  # it is the check that catches a base-image or upstream package drift
+  # nobody's commit caused.
+  schedule:
+    - cron: "0 6 * * 1"
 
 # A second push to the same branch cancels the first — no point finishing a
 # run whose commit is already superseded.
@@ -131,6 +136,15 @@ jobs:
     name: docker image builds and runs
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Not on pull requests. This repo is private, so Actions minutes are a
+    # metered resource on the free plan, and this job is the expensive half
+    # of a run — it downloads Chromium a second time to build the image.
+    #
+    # What it proves ("the project installs from nothing") changes when the
+    # Dockerfile or the dependency set changes, not on every branch push, so
+    # it runs on main, weekly, and on demand. A PR that edits either should
+    # be checked with `workflow_dispatch` before merging.
+    if: github.event_name != 'pull_request'
 
     steps:
       - uses: actions/checkout@v4

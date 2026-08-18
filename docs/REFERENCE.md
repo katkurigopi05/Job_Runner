@@ -305,13 +305,21 @@ aimed at a different product; §11 puts the equivalent surface out of scope.
 
 Ordered by value, all independent of each other:
 
-1. **§3.1** — per-item corpus scoping in `packages/tailor/guard.py`, with the
-   attribution-drift case above as its test. This is a correctness bug in a §2.1
-   guarantee, and it is the only item here that is.
-2. **§3.4** — refuse to bulk-close postings on a zero-yield parse in
-   `packages/crawler/crawl.py`. Destructive, and cheap to fix.
-3. **§3.2** — prompt version in `AuditEntry`.
-4. **§3.3** — daily provider quota that fails closed.
+1. ~~**§3.1** — per-item corpus scoping in `packages/tailor/guard.py`.~~
+   **Done.** `SourceCorpus` now carries `items` and `shared`;
+   `SourceCorpus.from_resume()` splits experience and projects into one item
+   per entry, `vet()` scopes each rewrite to the entry its bullet came from,
+   and `GuardReport.scope_ref` records which item was used — so a
+   document-wide check is never mistaken for a narrow one. The repro above is
+   `test_metric_from_another_employer_is_rejected`.
+2. ~~**§3.4** — refuse to bulk-close postings on a zero-yield parse.~~
+   **Done.** `_close_missing()` returns `(closed, suspect)` and declines to
+   close anything when a clean fetch parses to nothing while open postings
+   exist. The board hash is deliberately not recorded in that case, so the
+   next cycle re-reads instead of short-circuiting on "unchanged" and going
+   quiet. Surfaced as `CrawlReport.suspect`.
+3. **§3.2** — prompt version in `AuditEntry`. Still open.
+4. **§3.3** — daily provider quota that fails closed. Still open.
 5. **§3.5 / §3.6** — read together before any tuning pass, not after.
 
 ---
