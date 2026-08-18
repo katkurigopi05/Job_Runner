@@ -68,7 +68,7 @@ These are correctness requirements, not preferences. Violating any of them is a 
 | LLM | provider abstraction, see §7 | Ollama local / free tiers / Claude Code |
 | Embeddings | `sentence-transformers` BAAI/bge-small-en-v1.5 | local, CPU, 384-dim |
 | Storage | `./storage/` behind an S3-shaped interface | swap to S3 later without code change |
-| Frontend | Next.js 15 + Tailwind + shadcn/ui | `next dev`, localhost only |
+| Frontend | Next.js 15 + Tailwind v4 | `next dev`, localhost only. Components are hand-rolled, not shadcn — see below |
 | Mail | IMAP poll, Gmail `+alias` addressing | `owner+app{id}@gmail.com` |
 | Migrations | Alembic | |
 | Tests | pytest + pytest-asyncio | |
@@ -76,6 +76,17 @@ These are correctness requirements, not preferences. Violating any of them is a 
 | Types | mypy strict on `packages/core` and `packages/ats` | |
 
 No paid service is permitted in `requirements.txt` or `package.json` without asking the owner first.
+
+The frontend line originally said shadcn/ui. It was built without it, and the
+row now says so. The components are small and few, the theme is ported wholesale
+from another project of the owner's, and a generator that writes files into the
+tree buys little when there are a dozen of them. Recording the deviation matters
+more than the choice: a stack table that describes something the repo does not
+contain is worse than either option.
+
+Postgres runs on **5433** on the owner's machine, not the 5432 in the row above:
+another project holds 5432. The remap lives in an uncommitted
+`docker-compose.override.yml`, and `.env` points at 5433 to match.
 
 ---
 
@@ -301,10 +312,17 @@ later phase testable by conversation instead of by curl.
 
 ### Phase 5 — Discovery
 
-Build: company registry (~50 hand-picked, seeded from a YAML file). Crawler with
+Build: company registry (hand-picked, seeded from a YAML file). Crawler with
 content-hash change detection and per-host rate limiting. Posting extraction per ATS.
 Embedding of postings and profile. Hard filters (location, seniority, work authorization,
 sponsorship). Cosine scoring. Match feed in the dashboard.
+
+The registry started at 50 and is now 29. `make validate-seeds` found that 21
+of the original entries returned 404 from both the board API and the rendered
+page — those companies have left Greenhouse. They are listed at the bottom of
+`seeds/companies.yaml` with the evidence rather than deleted, because a 404
+board is worse than an absent one: it yields zero postings, which reads
+identically to "nothing new since the last poll".
 
 **Gate 5:** crawler runs a full cycle over the seed list without exceeding rate limits;
 second run emits zero postings (change detection works); match scores are sane against a
@@ -485,9 +503,31 @@ question its gate was written to ask, which is whether the scoring and the
 classifier work on *this owner's* material. Swap the fixtures for real data
 before trusting either number.
 
+- **Gate 1's HAR replay** is now real. `tests/test_greenhouse_har.py` replays
+  bytes Greenhouse actually served, offline, and runs in `make gate-1` and in
+  CI. It exists because the hand-written fixture beside it had native
+  `<select>` while the live board had moved to react-select, so the adapter
+  misread every dropdown and the suite stayed green. Re-record with
+  `python -m scripts.record_har <posting-url>`. A fixture drifts silently; a
+  recording only goes stale, and stale is visible.
+
 - **Gate 1's live half** has never completed. `make gate-1-live` reaches
   `parse_posting` and `enumerate_fields` against real Greenhouse boards and is
   then blocked by a captcha at `fill`. Per §2.5 that is the correct outcome, not
   a bug — but it means the fill path is proven only against a fixture.
 - **Gate 2** needs a real posting and a real profile by definition.
   `make gate-2` checks the offline half; `make gate-2-live` is the other half.
+
+### Phase 3 scope that is not built
+
+§9 Phase 3 lists two things that do not exist and are not covered by Gate 3:
+
+- **Cover letter.** No module writes one. `answer_open_ended_question` in the
+  LLM router would be the seam.
+- **Per-company caching of tailored versions.** Every apply re-tailors from
+  scratch. Harmless today because tailoring is cheap and local; it becomes a
+  cost the moment a remote provider is used for it.
+
+Gate 3 passes without them because it tests fabrication and the PDF round trip,
+which is the part with consequences. Recorded here so the gap is not mistaken
+for completion.
