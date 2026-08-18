@@ -11,21 +11,47 @@ Read `CLAUDE.md` first. Everything in §2 is non-negotiable in every stream.
 
 ---
 
+## Before you start: a worktree of your own
+
+Every agent works in its own git worktree. Not a branch in the shared
+checkout — a worktree.
+
+```bash
+cd /Users/gopikrishnareddykatkuri/Desktop/Job_Runner
+git worktree add /private/tmp/Job_Runner_<stream> -b <branch> origin/main
+cd /private/tmp/Job_Runner_<stream>
+ln -s /Users/gopikrishnareddykatkuri/Desktop/Job_Runner/.venv .venv
+```
+
+The main checkout at `~/Desktop/Job_Runner` belongs to whoever is driving
+interactively. An agent that starts editing there shares an index and a working
+tree with them: same files, same staged changes, and git offers no protection
+because it is one repository. This has already happened once — an agent
+reported it was on another agent's feature branch, in that checkout, about to
+begin.
+
+**Always run `.venv/bin/python`, never bare `python3`.** The system interpreter
+on this machine is 3.14; the project needs the 3.12 venv. An agent that checked
+`python -m playwright --version` against system Python reported Playwright
+missing when it is installed and working — and would also have failed to run
+the test suite, since `make gate-0` uses `.venv/bin`.
+
 ## Ownership
 
 | Stream | Owns | Must not touch |
 |---|---|---|
-| **1 — Adapter** | `packages/ats/**`, `tests/test_greenhouse.py` | `apps/web/**`, `packages/core/schemas.py`, `apps/api/**` |
-| **2 — Discovery data** | `seeds/**`, `packages/crawler/**`, `tests/test_crawler.py` | `apps/web/**`, `packages/core/schemas.py`, `apps/api/**` |
-| **3 — Tracker** | `packages/inbox/**`, `apps/api/routers/inbox.py`, `apps/web/src/app/tracker/**`, `tests/test_inbox*.py` | `packages/ats/**`, `packages/crawler/**`, stream 4's pages |
-| **4 — Matches + diff** | `apps/api/routers/postings.py`, `apps/web/src/app/matches/**`, `apps/web/src/app/review/**`, `tests/test_matching.py` | `packages/ats/**`, `packages/crawler/**`, stream 3's pages |
+| **5 — Workable** | `packages/ats/workable.py`, `registry.py`, `tests/test_workable.py` | `apps/**`, `packages/core/schemas.py`, `packages/tailor/**` |
+| **6 — Tailoring** | `packages/tailor/**`, `tests/test_no_fabrication.py`, `tests/test_keywords.py` | `apps/**`, `packages/ats/**`, `packages/core/schemas.py` |
+| **Interactive** | `apps/**`, `packages/core/schemas.py`, routers, docs | the other two streams' files |
 
-**Streams 1 and 2 never touch shared files.** Hand those to the other agent —
-they are the safe ones to run unattended.
+**Streams 5 and 6 never touch shared files.** Those are the ones safe to hand
+to an agent working unattended in its own session.
 
 ### Shared files
 
-Only streams 3 and 4 touch these, and they must coordinate:
+Neither background stream touches these. They belong to whoever is driving
+interactively, and they are listed so an agent recognises when it has wandered
+out of its lane:
 
 - `packages/core/schemas.py` — **append only**, at the end of the relevant
   section. Never reorder or reformat existing models.
@@ -34,101 +60,128 @@ Only streams 3 and 4 touch these, and they must coordinate:
 - `apps/web/src/app/layout.tsx` — one `NAV` entry each.
 - `Makefile`, `.github/workflows/ci.yml` — one gate line each.
 
-If both streams are running, do 3 first and let 4 rebase onto it. Both are
-small edits; the conflict is annoying, not dangerous.
+If a stream genuinely needs one of these, stop and ask rather than editing it.
+A conflict here costs more than the wait — these are the files every surface
+reads, and a botched merge in `schemas.py` breaks the API, the worker, and the
+dashboard at once.
 
 ---
 
-## Stream 1 — react-select options
+## Streams 1–4 — done
 
-**Problem.** Greenhouse renders dropdowns with react-select. The kind is now
-detected correctly (`role="combobox"` → `single_select`), but `options` is still
-empty, because react-select only renders its menu into the DOM after the control
-is opened. The adapter reads `option` elements that do not exist.
+The first split is finished and merged. Kept here in one line each, because the
+reasoning is in the PRs and the value now is knowing what was tried.
 
-**Why it matters.** §2.2 requires the work-authorization answer to be copied
-verbatim *and* to match an option the employer offered. With no options list
-there is nothing to match against, so `build_answers` cannot map an answer and
-the question falls through to `needs_review` every time. Correct, but it means
-every application stops on a question the profile already answers.
-
-**Do.** Open each combobox, read the rendered menu, close it. Live markup is in
-`tests/test_greenhouse.py::_REACT_SELECT_FORM`; the real menu appears under
-`[id^="react-select-"][id$="-listbox"]` with `[role="option"]` children.
-
-**Done when.** `make gate-1` passes, and `make gate-1-live URL=<figma posting>`
-shows non-empty `options=[...]` on the work-authorization question.
-
-**Watch out.** Opening a menu is interaction. Do not let it submit anything, and
-keep the captcha guard in front of it — §2.5.
+1. **react-select options** — Greenhouse renders dropdowns as `input
+   role="combobox"` with no `<option>`. Options are read by opening the menu.
+   The follow-up fix (`0622cb7`) is the lost-commit story above.
+2. **Seed slugs** — 21 of 50 registry entries were dead boards. Removed, with
+   `make validate-seeds` to check the rest. A 404 board yields zero postings,
+   which reads identically to "nothing new".
+3. **Tracker** — `packages/inbox/` was complete and unreachable; it now has a
+   router and a `/tracker` board grouped by outcome rather than status.
+4. **Match feed and diff** — both were gate requirements with working backends
+   and no interface. Tailoring was never invoked at all.
 
 ---
 
-## Stream 2 — seed slugs
+## Stream 5 — Workable adapter
 
-**Problem.** `seeds/companies.yaml` lists 50 companies. Sampling six found four
-dead: `linear`, `ramp`, `retool`, `render` all return 404 from both the board
-API and the rendered page. `vercel` and `figma` work.
+**Owns** `packages/ats/workable.py`, `packages/ats/registry.py`,
+`tests/test_workable.py`. Touches nothing else.
 
-**Why it matters.** Gate 5 cannot catch this. A 404 board yields zero postings,
-which is indistinguishable from "nothing new since last poll" — so discovery
-silently covers a fraction of the registry it claims to.
+§8 names four adapters in build order — Greenhouse, Lever, Ashby, Workable —
+and the first three exist. Any posting outside them fails as
+`unsupported_site`.
 
-**Do.** Validate all 50 slugs, correct the ones with a different Greenhouse
-identifier, drop the ones that have left Greenhouse. Then make the crawler
-*notice*: a board that 404s should be logged and marked, not treated as an empty
-result.
+**Build it against a live posting, not a fixture written from memory.** This is
+not a preference. Every adapter so far turned out structurally different in a
+way nobody predicted:
 
-**Done when.** Every slug in the file resolves, and `make gate-5` passes with a
-new test proving a 404 board is reported rather than silently counted as zero.
+| | |
+|---|---|
+| Greenhouse | a real form, every dropdown react-select with no `<option>` |
+| Lever | a real form, native `<select>` |
+| Ashby | **no `<form>` element at all** |
 
-**Watch out.** §2.6 — 60 seconds between requests to the same host, and every
-Greenhouse board shares one. Validating 50 slugs takes ~50 minutes of wall
-clock. Space the requests; do not parallelize them.
+The react-select bug survived a green suite for weeks because its fixture was
+hand-written and more polite than the real DOM.
 
----
+**Done when** `make gate-0` passes and the tests are trimmed from markup that
+was actually observed. `fill()` and `submit()` may raise `NotImplementedError`
+if they cannot be verified against a live form — an unverified fill path puts
+unchecked values on a real application, which is worse than an honest gap.
 
-## Stream 3 — tracker (Phase 6 UI)
-
-**Problem.** `packages/inbox/` is built — IMAP poll, alias routing,
-classification — and has no API router at all. Nothing outside the worker can
-see an inbound message.
-
-**Do.** Add `apps/api/routers/inbox.py` exposing inbound messages per
-application, then a `/tracker` page: applications as a pipeline board, with the
-recruiter replies that moved them.
-
-**Done when.** `make gate-6` passes, and a test email to
-`owner+app{id}@gmail.com` shows up on the right application in the dashboard.
-
-**Watch out.** Inbound message bodies are the recruiter's words and may contain
-personal detail — §2.8. They stay local, and the API is loopback-only already.
+Expect a captcha. All three existing ATSes mount one at the apply stage; §2.5
+says stop, never route around.
 
 ---
 
-## Stream 4 — match feed and diff
+## Stream 6 — tailoring quality
 
-**Problem.** Two gate requirements have working backends and no UI.
+**Owns** `packages/tailor/**`, `tests/test_no_fabrication.py`,
+`tests/test_keywords.py`.
 
-- §9 Phase 5: "Match feed in the dashboard." `packages/matching/` scores
-  postings; nothing displays them.
-- §9 Phase 3: "Diff renders in the UI before send."
-  `packages/tailor/diff.py` produces the diff; the review screen does not show
-  it.
+Tailoring is safe and not yet good. `scripts/bench_tailor.py` measured four
+local models and found three gaps the guard misses.
 
-**Do.** A `/matches` page ranking scored postings with the reasons behind each
-score, and a diff block in the review card — the tailored résumé against the
-source, shown before the approve button.
+**Scope claims.** Models write "Owned high-reliability backend services" and
+"Led a team" when the résumé says neither. §2.1 enumerates *skill, employer,
+date, credential, metric* — so these pass the letter and break the spirit. A
+hiring manager reads "Led" as a claim about scope.
 
-**Done when.** `make gate-3` and `make gate-5` pass, the feed ranks a
-hand-labelled set sanely, and the review screen shows what changed in the
-résumé before you approve it.
+**Morphological variants.** The off-limits check is exact-token. A posting said
+`scale`, a model wrote `scalability`, and it passed.
 
-**Watch out.** The diff is the §2.1 audit surface. It has to show what was
-actually sent, not a summary of it — if the guard rejected a rewrite, the
-reviewer needs to see the original that went instead.
+**Cover letter.** §9 Phase 3 lists it. It does not exist.
+
+**Done when** `make gate-0` and `make gate-3` pass and the benchmark shows
+fewer accepted-but-wrong rewrites. Report the before/after table — and print
+the rewrites, because the numbers mislead on their own: `phi3:mini` currently
+scores best on every metric and writes the worst output.
 
 ---
+
+## The failure mode that actually bit us
+
+Not conflicts. Git surfaces those loudly and they get resolved.
+
+**Work that quietly does not land.** Commit `0622cb7` — a fix for a race in
+react-select option reading, with the regression test that proved it — was
+pushed to a branch whose PR had already merged the state before it. The PR
+showed as merged. The branch had the commit. `main` did not.
+
+Nobody noticed for days. It surfaced only when someone grepped `main` for a
+constant the fix introduced and got nothing back.
+
+**So: after a merge, verify the artifact on `main`, not on your branch.**
+
+```bash
+git checkout main && git pull
+grep -r "<the thing you added>" <the file you added it to>
+```
+
+One grep. It is the only check that distinguishes "the PR merged" from "my work
+is in the product", and those are not the same statement.
+
+## Sessions and context
+
+Agents cannot reliably see their own limits. Asked directly, one answered
+UNCERTAIN to every limit question while its host was displaying `30% context
+left` on the same screen. The telemetry exists; the model has no access to it.
+
+**So the human watches the meter, not the agent.** Practical rules:
+
+- Start a stream in a **fresh session**. Context resets to full immediately;
+  waiting for a quota window to roll over is usually unnecessary, because
+  context is the constraint that binds first and the one a new session clears.
+- Assign **one stream per session**. Two is where it gets tight.
+- **Do not have agents read `CLAUDE.md` whole.** It is over 500 lines and grows
+  every time a decision is recorded. An agent reading it in full pays for the
+  entire spec to learn about one stream. Point at sections.
+- Size every task so it is **safe to abandon**. Small commits, each
+  independently mergeable. No stream that only pays off if it runs to
+  completion — because nobody can see the ceiling coming.
 
 ## Rules for both agents
 
@@ -145,6 +198,9 @@ reviewer needs to see the original that went instead.
 
 ## Order of merge
 
-Streams 1 and 2 are independent of everything and can merge whenever they are
-green. Stream 3 before stream 4, because both add a nav entry and a router
-registration, and 4 rebasing onto 3 is cheaper than the reverse.
+Streams 5 and 6 touch nothing in common and nothing the interactive session
+owns — no `apps/`, no `packages/core/schemas.py`, no routers. Either can merge
+whenever it is green.
+
+Whoever is driving interactively takes the shared surface, because conflicts
+there are the expensive kind and that context is already loaded.
