@@ -14,8 +14,12 @@ import json
 from dataclasses import dataclass
 from enum import StrEnum
 
-from packages.crawler.extract import CompanySeed, GreenhouseExtractor, load_seed
-from packages.crawler.fetch import FetchResult, PoliteFetcher, build_fetcher
+import structlog
+
+from packages.crawler.extract import CompanySeed, extractor_for, load_seed
+from packages.crawler.fetch import Blocked, FetchResult, PoliteFetcher, build_fetcher
+
+log = structlog.get_logger(__name__)
 
 RENDERED_BOARD_URL = "https://job-boards.greenhouse.io/{slug}"
 _MISSING_MARKERS = (
@@ -31,6 +35,8 @@ class SeedState(StrEnum):
     RENDERED_ONLY = "rendered_only"
     MISSING = "missing"
     OTHER_ATS = "other_ats"
+    #: robots.txt said no, or could not be read. Not a verdict on the slug.
+    BLOCKED = "blocked"
 
 
 @dataclass(frozen=True)
@@ -65,14 +71,22 @@ def _rendered_is_board(response: FetchResult) -> bool:
 async def validate_seeds(seeds: list[CompanySeed], fetcher: PoliteFetcher) -> list[SeedValidation]:
     """Check seeds in order; never delete or rewrite an entry."""
     results: list[SeedValidation] = []
-    extractor = GreenhouseExtractor()
 
     for seed in seeds:
-        if seed.ats != extractor.ats:
+        extractor = extractor_for(seed.ats)
+        if extractor is None:
+            # OTHER_ATS means "we cannot check it", not "it is wrong". The
+            # entry is reported and left exactly as the owner wrote it.
             results.append(SeedValidation(seed.name, seed.slug, seed.ats, SeedState.OTHER_ATS))
             continue
 
-        api = await fetcher.fetch(extractor.board_url(seed.slug))
+        try:
+            api = await fetcher.fetch(extractor.board_url(seed.slug))
+        except Blocked as exc:
+            # One unreadable robots.txt must not abandon the rest of the list.
+            log.info("seed_validation_blocked", company=seed.name, reason=str(exc))
+            results.append(SeedValidation(seed.name, seed.slug, seed.ats, SeedState.BLOCKED))
+            continue
         if _api_is_board(api):
             results.append(
                 SeedValidation(
@@ -81,6 +95,16 @@ async def validate_seeds(seeds: list[CompanySeed], fetcher: PoliteFetcher) -> li
                     seed.ats,
                     SeedState.API,
                     api_status=api.status,
+                )
+            )
+            continue
+
+        if seed.ats != "greenhouse":
+            # Only Greenhouse serves a rendered board at a second URL. For the
+            # others a dead API is the whole answer.
+            results.append(
+                SeedValidation(
+                    seed.name, seed.slug, seed.ats, SeedState.MISSING, api_status=api.status
                 )
             )
             continue

@@ -20,8 +20,10 @@ from sqlalchemy import select
 
 from packages.crawler.crawl import crawl_all, crawl_company, is_due
 from packages.crawler.extract import (
+    AshbyExtractor,
     CompanySeed,
     GreenhouseExtractor,
+    LeverExtractor,
     load_seed,
     posting_hash,
     strip_html,
@@ -29,8 +31,10 @@ from packages.crawler.extract import (
 from packages.crawler.fetch import Blocked, PoliteFetcher, build_fetcher, content_hash
 from packages.crawler.ratelimit import (
     MIN_DELAY_SECONDS,
+    MIN_SHARED_API_DELAY_SECONDS,
     HostRateLimiter,
     RateLimitTooLow,
+    floor_for,
 )
 from packages.crawler.robots import RobotsCache
 from packages.crawler.validate import SeedState, validate_seeds
@@ -274,7 +278,9 @@ async def test_site_crawl_delay_raises_ours_but_never_lowers_it() -> None:
     )
     await slow.fetch("https://example.com/board")
     assert slow.rate_limiter is not None
-    assert slow.rate_limiter.delay_seconds == 300.0
+    # Recorded against the host that asked, not globally.
+    assert slow.rate_limiter.delay_for("example.com") == 300.0
+    assert slow.rate_limiter.delay_seconds == MIN_DELAY_SECONDS
 
     fast = PoliteFetcher(
         transport=_board_transport({"jobs": []}, robots="User-agent: *\nCrawl-delay: 1\nDisallow:"),
@@ -282,7 +288,7 @@ async def test_site_crawl_delay_raises_ours_but_never_lowers_it() -> None:
     )
     await fast.fetch("https://example.com/board")
     assert fast.rate_limiter is not None
-    assert fast.rate_limiter.delay_seconds == MIN_DELAY_SECONDS
+    assert fast.rate_limiter.delay_for("example.com") == MIN_DELAY_SECONDS
 
 
 # --------------------------------------------------------------------------
@@ -416,17 +422,35 @@ async def test_seed_validation_checks_rendered_board_after_api_404() -> None:
         SeedState.RENDERED_ONLY,
         SeedState.MISSING,
     ]
-    assert request_times["boards-api.greenhouse.io"] == [0.0, 60.0, 120.0]
+    # The API host is the shared multi-tenant one; the rendered board is
+    # not, and still gets the full §2.6 floor. Both are asserted here so a
+    # future edit cannot quietly promote the second one.
+    api_gap = MIN_SHARED_API_DELAY_SECONDS
+    assert request_times["boards-api.greenhouse.io"] == [0.0, api_gap, api_gap * 2]
     rendered_times = request_times["job-boards.greenhouse.io"]
     assert rendered_times[1] - rendered_times[0] >= MIN_DELAY_SECONDS
 
 
-async def test_seed_validation_keeps_recorded_non_greenhouse_ats() -> None:
+async def test_seed_validation_keeps_recorded_unsupported_ats() -> None:
+    """An ATS we cannot read is reported, never rewritten or dropped."""
     fetcher = PoliteFetcher(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
 
-    results = await validate_seeds([CompanySeed(name="Moved", slug="moved", ats="lever")], fetcher)
+    results = await validate_seeds(
+        [CompanySeed(name="Moved", slug="moved", ats="workday")], fetcher
+    )
 
     assert results[0].state is SeedState.OTHER_ATS
+
+
+async def test_seed_validation_survives_a_blocked_host() -> None:
+    """One unreadable robots.txt must not abandon the rest of the list."""
+    fetcher = PoliteFetcher(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
+
+    results = await validate_seeds(
+        [CompanySeed(name="Blocked", slug="blocked", ats="lever")], fetcher
+    )
+
+    assert results[0].state is SeedState.BLOCKED
 
 
 # --------------------------------------------------------------------------
@@ -642,9 +666,13 @@ async def test_full_cycle_respects_the_rate_limit(db_session) -> None:
     report = await crawl_all(db_session, seeds, fetcher, force=True)
 
     assert report.fetched == 5
-    # Same host every time, so four full-delay waits between five fetches.
-    assert clock.slept == [60.0] * 4
-    assert all(s >= MIN_DELAY_SECONDS for s in clock.slept)
+    # Same host every time, so four waits between five fetches. That host is
+    # the shared Greenhouse API, which has its own floor — the cycle is fast
+    # because the floor is lower, never because a floor was skipped.
+    floor = floor_for("boards-api.greenhouse.io")
+    assert floor == MIN_SHARED_API_DELAY_SECONDS
+    assert clock.slept == [floor] * 4
+    assert all(s >= floor for s in clock.slept)
 
 
 def test_is_due_without_a_previous_poll(db_session) -> None:
@@ -708,3 +736,217 @@ async def test_crawl_handler_runs_a_cycle_and_scores(
     matches = list((await worker_session.scalars(select(Match))).all())
     assert len(matches) == 1
     assert matches[0].reasons_json is not None
+
+
+# --------------------------------------------------------------------------
+# Lever and Ashby — the two ATSes we could already apply to but not find
+# --------------------------------------------------------------------------
+
+
+def test_lever_board_url_carries_the_slug() -> None:
+    assert "acme" in LeverExtractor().board_url("acme")
+
+
+def test_lever_parses_a_board() -> None:
+    body = json.dumps(
+        [
+            {
+                "id": "abc-123",
+                "text": "Senior Backend Engineer",
+                "hostedUrl": "https://jobs.lever.co/acme/abc-123",
+                "categories": {"location": "Remote - US"},
+                "description": "<p>Build services.</p>",
+                "lists": [{"text": "Requirements", "content": "<li>Python</li>"}],
+                "additional": "<p>We offer equity.</p>",
+            }
+        ]
+    )
+
+    postings = LeverExtractor().parse(body, "acme")
+
+    assert len(postings) == 1
+    assert postings[0].external_id == "abc-123"
+    assert postings[0].title == "Senior Backend Engineer"
+    assert postings[0].location == "Remote - US"
+    assert postings[0].ats_type == "lever"
+
+
+def test_lever_keeps_the_requirements_not_just_the_blurb() -> None:
+    """`description` is the opening pitch; the requirements live in `lists`.
+
+    Reading only `description` would hand the matcher a posting with none of
+    the skills in it, which scores every role the same.
+    """
+    body = json.dumps(
+        [
+            {
+                "id": "1",
+                "text": "Engineer",
+                "description": "<p>Join us.</p>",
+                "lists": [{"text": "You have", "content": "<li>Kubernetes</li>"}],
+                "additional": "<p>Bonus: Rust.</p>",
+            }
+        ]
+    )
+
+    described = LeverExtractor().parse(body, "acme")[0].description_raw or ""
+
+    assert "Kubernetes" in described
+    assert "Rust" in described
+
+
+def test_lever_rejects_a_non_list_payload() -> None:
+    """Lever returns a bare array; an object means the API changed."""
+    assert LeverExtractor().parse(json.dumps({"jobs": []}), "acme") == []
+    assert LeverExtractor().parse("not json", "acme") == []
+
+
+def test_ashby_parses_a_board() -> None:
+    body = json.dumps(
+        {
+            "jobs": [
+                {
+                    "id": "9f8e",
+                    "title": "Data Engineer",
+                    "location": "Berlin",
+                    "jobUrl": "https://jobs.ashbyhq.com/acme/9f8e",
+                    "descriptionHtml": "<p>Pipelines in Python.</p>",
+                }
+            ]
+        }
+    )
+
+    postings = AshbyExtractor().parse(body, "acme")
+
+    assert len(postings) == 1
+    assert postings[0].title == "Data Engineer"
+    assert postings[0].location == "Berlin"
+    assert postings[0].ats_type == "ashby"
+    assert "Python" in (postings[0].description_raw or "")
+
+
+def test_ashby_falls_back_to_plain_description() -> None:
+    """A board that sends only plain text is not an empty posting."""
+    body = json.dumps(
+        {"jobs": [{"id": "1", "title": "Engineer", "descriptionPlain": "Rust and Go."}]}
+    )
+
+    posting = AshbyExtractor().parse(body, "acme")[0]
+
+    assert "Rust" in (posting.description_raw or "")
+
+
+def test_ashby_rejects_a_non_object_payload() -> None:
+    assert AshbyExtractor().parse(json.dumps([]), "acme") == []
+    assert AshbyExtractor().parse("not json", "acme") == []
+
+
+def test_every_ats_we_can_apply_to_can_also_be_crawled() -> None:
+    """The gap this closed: adapters existed for three, extractors for one.
+
+    A posting we cannot discover is a posting we never get to apply to, so
+    the two registries have to stay in step.
+    """
+    from packages.ats.registry import ADAPTERS
+    from packages.crawler.extract import EXTRACTORS
+
+    assert {adapter.name for adapter in ADAPTERS} <= set(EXTRACTORS)
+
+
+# --------------------------------------------------------------------------
+# §2.6 — the shared-ATS-host floor, and what keeps it honest
+# --------------------------------------------------------------------------
+
+
+def test_a_company_host_still_gets_the_full_floor() -> None:
+    limiter_ = HostRateLimiter()
+
+    assert limiter_.delay_for("careers.acme.com") == MIN_DELAY_SECONDS
+    assert floor_for("careers.acme.com") == MIN_DELAY_SECONDS
+
+
+def test_a_shared_ats_api_gets_the_shared_floor() -> None:
+    """One endpoint serves every Greenhouse board, so keying on host alone
+    serializes the whole registry behind one counter."""
+    limiter_ = HostRateLimiter()
+
+    for host in ("boards-api.greenhouse.io", "api.lever.co", "api.ashbyhq.com"):
+        assert limiter_.delay_for(host) == MIN_SHARED_API_DELAY_SECONDS
+
+
+def test_an_unknown_host_is_never_promoted_to_shared() -> None:
+    """The list is explicit; nothing gets the faster floor by resembling it."""
+    limiter_ = HostRateLimiter()
+
+    assert limiter_.delay_for("boards-api.greenhouse.io.evil.test") == MIN_DELAY_SECONDS
+    assert limiter_.delay_for("api.lever.co.attacker.test") == MIN_DELAY_SECONDS
+
+
+def test_a_shared_host_override_below_its_floor_is_refused() -> None:
+    """The shared floor is a floor too — refused, never clamped."""
+    with pytest.raises(RateLimitTooLow):
+        HostRateLimiter(host_delays={"api.lever.co": 0.1})
+
+
+def test_a_company_host_override_below_60s_is_refused() -> None:
+    with pytest.raises(RateLimitTooLow):
+        HostRateLimiter(host_delays={"careers.acme.com": 5.0})
+
+
+def test_a_429_backs_the_host_off() -> None:
+    """The half that makes a faster floor defensible: we listen."""
+    now = 1000.0
+    limiter_ = HostRateLimiter(clock=lambda: now)
+
+    limiter_.penalize("api.lever.co", 300.0)
+
+    assert limiter_.time_until_ready("api.lever.co") == 300.0
+    assert limiter_.is_ready("boards-api.greenhouse.io")
+
+
+def test_a_penalty_only_ever_extends() -> None:
+    """A server asking for a shorter pause does not shorten ours."""
+    now = 1000.0
+    limiter_ = HostRateLimiter(clock=lambda: now)
+
+    limiter_.penalize("api.lever.co", 300.0)
+    limiter_.penalize("api.lever.co", 5.0)
+
+    assert limiter_.time_until_ready("api.lever.co") == 300.0
+
+
+async def test_retry_after_is_honoured_from_the_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nDisallow:")
+        return httpx.Response(429, headers={"Retry-After": "120"}, text="slow down")
+
+    limiter_ = HostRateLimiter(host_delays={"api.lever.co": 2.0})
+    fetcher = PoliteFetcher(transport=httpx.MockTransport(handler), rate_limiter=limiter_)
+
+    result = await fetcher.fetch("https://api.lever.co/v0/postings/acme?mode=json")
+
+    assert result.status == 429
+    assert limiter_.time_until_ready("api.lever.co") >= 119
+
+
+async def test_one_sites_crawl_delay_does_not_slow_every_other_host() -> None:
+    """A crawl-delay is that site's request, not a global setting."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nCrawl-delay: 600\nDisallow:")
+        return httpx.Response(200, text="{}")
+
+    limiter_ = HostRateLimiter(clock=lambda: 0.0, sleeper=_never_sleep)
+    fetcher = PoliteFetcher(transport=httpx.MockTransport(handler), rate_limiter=limiter_)
+
+    await fetcher.fetch("https://careers.slowsite.test/jobs")
+
+    assert limiter_.delay_for("careers.slowsite.test") == 600.0
+    assert limiter_.delay_for("careers.other.test") == MIN_DELAY_SECONDS
+    assert limiter_.delay_seconds == MIN_DELAY_SECONDS
+
+
+async def _never_sleep(seconds: float) -> None:
+    raise AssertionError(f"should not have waited {seconds}s on a first request")
