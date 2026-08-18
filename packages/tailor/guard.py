@@ -113,6 +113,16 @@ class EntityKind(StrEnum):
     PROPER_NOUN = "proper_noun"
     ACRONYM = "acronym"
     YEAR = "year"
+    SCOPE = "scope"
+
+
+_SCOPE_CLAIMS_TEXT = """
+architect architected chief direct directed director drive drove head
+lead leader led manage managed manager own owned principal
+scale scaled scalability senior spearhead spearheaded sr staff
+"""
+
+_SCOPE_CLAIMS: frozenset[str] = frozenset(_SCOPE_CLAIMS_TEXT.split())
 
 
 @dataclass(frozen=True)
@@ -168,6 +178,44 @@ def _strip(token: str) -> str:
     return token.strip(".,;:!?()[]{}\"'")
 
 
+def stem(word: str) -> str:
+    """Naive stemmer for morphological variants (e.g. scale vs scalability)."""
+    w = word.lower()
+    if len(w) <= 3:
+        return w
+
+    # Order matters: longest suffixes first
+    suffixes = [
+        ("ibilities", "ible"),
+        ("ability", "able"),
+        ("ibility", "ible"),
+        ("ational", "ate"),
+        ("tional", "tion"),
+        ("ations", "ate"),
+        ("ation", "ate"),
+        ("ement", ""),
+        ("ments", ""),
+        ("ment", ""),
+        ("ness", ""),
+        ("ings", ""),
+        ("ing", ""),
+        ("ities", "ity"),
+        ("ity", ""),
+        ("ied", "y"),
+        ("ies", "y"),
+        ("ed", ""),
+        ("es", ""),
+        ("s", ""),
+        ("ly", ""),
+    ]
+
+    for suff, replacement in suffixes:
+        if w.endswith(suff) and len(w) - len(suff) >= 3:
+            return w[: -len(suff)] + replacement
+
+    return w
+
+
 def normalize(token: str) -> str:
     """Fold a token to the form the corpus is indexed under.
 
@@ -205,6 +253,12 @@ def _classify(token: str) -> EntityKind | None:
     if not bare:
         return None
 
+    normalized_bare = normalize(bare)
+    if normalized_bare in _SCOPE_CLAIMS or stem(normalized_bare) in {
+        stem(w) for w in _SCOPE_CLAIMS
+    }:
+        return EntityKind.SCOPE
+
     if _YEAR_RE.match(bare):
         return EntityKind.YEAR
 
@@ -215,7 +269,7 @@ def _classify(token: str) -> EntityKind | None:
     if len(bare) >= 2 and bare.isupper() and bare.isalpha():
         return EntityKind.ACRONYM
 
-    if bare[0].isupper() and normalize(bare) not in _COMMON_WORDS:
+    if bare[0].isupper() and normalized_bare not in _COMMON_WORDS:
         return EntityKind.PROPER_NOUN
 
     return None

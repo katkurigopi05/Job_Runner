@@ -93,20 +93,26 @@ def _user_prompt(bullet: str, job_description: str, terms: TermReport | None = N
 
 
 def _borrowed_terms(original: str, candidate: str, forbidden: tuple[str, ...]) -> list[str]:
-    """Posting terms the rewrite introduced that the source did not have.
-
-    Only *introduced* ones count. A term already in the original bullet is the
-    owner's own word, and the posting happening to use it too is not a reason
-    to reject their sentence.
-    """
+    """Posting terms the rewrite introduced that the source did not have."""
     if not forbidden:
         return []
 
-    had = normalize(original)
-    has = normalize(candidate)
-    return [
-        term for term in forbidden if (key := normalize(term)) and key in has and key not in had
-    ]
+    from packages.tailor.guard import _TOKEN_RE, stem
+
+    had_stems = {stem(w) for w in _TOKEN_RE.findall(original)}
+    has_stems = {stem(w) for w in _TOKEN_RE.findall(candidate)}
+
+    borrowed = []
+    for term in forbidden:
+        term_stems = {stem(w) for w in _TOKEN_RE.findall(term)}
+        if not term_stems:
+            continue
+        # Only consider it borrowed if ALL words in the term are present in candidate
+        # and NOT all words were present in the original.
+        if term_stems.issubset(has_stems) and not term_stems.issubset(had_stems):
+            borrowed.append(term)
+
+    return borrowed
 
 
 def _clean(candidate: str) -> str:
@@ -256,3 +262,45 @@ async def tailor_bullets(
         bullets=rewrites,
         rejected=sum(1 for r in rewrites if r.used_fallback),
     )
+
+
+class CoverLetterResult(BaseModel):
+    text: str
+    rejected_reason: str | None = None
+    entities_checked: int = 0
+
+    @property
+    def used_fallback(self) -> bool:
+        return self.rejected_reason is not None
+
+
+async def tailor_cover_letter(
+    provider: LLMProvider,
+    job_description: str,
+    corpus: SourceCorpus,
+) -> CoverLetterResult:
+    """Write a cover letter. Every output is guard-checked against the entire corpus."""
+    system_prompt = (
+        "Write a brief cover letter for the following job description, based entirely "
+        "on the provided resume. Do not invent any claims, metrics, or experiences."
+    )
+    user_prompt = f"Job description:\n{job_description.strip()[:4000]}\n\nResume:\n{corpus.text}"
+
+    try:
+        raw = await provider.complete(system_prompt, user_prompt, max_tokens=600)
+    except Exception as exc:
+        log.warning("cover_letter_provider_failed", error=type(exc).__name__)
+        return CoverLetterResult(text="", rejected_reason=f"provider error: {type(exc).__name__}")
+
+    candidate = raw.strip()
+    # A cover letter is document-wide, so scope=None
+    from packages.tailor.guard import check
+
+    report = check(candidate, corpus, scope=None)
+
+    if not report.ok:
+        reason = report.summary()
+        log.info("cover_letter_rejected", reason=reason, violations=len(report.violations))
+        return CoverLetterResult(text="", rejected_reason=reason, entities_checked=report.checked)
+
+    return CoverLetterResult(text=candidate, entities_checked=report.checked)
