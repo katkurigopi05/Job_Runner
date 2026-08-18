@@ -950,3 +950,85 @@ async def test_one_sites_crawl_delay_does_not_slow_every_other_host() -> None:
 
 async def _never_sleep(seconds: float) -> None:
     raise AssertionError(f"should not have waited {seconds}s on a first request")
+
+
+# --------------------------------------------------------------------------
+# Workable — §8's fourth ATS
+# --------------------------------------------------------------------------
+
+#: Trimmed from apply.workable.com/api/v1/widget/accounts/open-252?details=true
+_WORKABLE_BOARD = """
+{"name": "Open", "description": "<p>An AI platform.</p>", "jobs": [
+  {"shortcode": "2F30FC3103", "title": "CSM (Customer Success Manager)",
+   "city": "Amsterdam", "state": "North Holland", "country": "Netherlands",
+   "url": "https://apply.workable.com/j/2F30FC3103",
+   "application_url": "https://apply.workable.com/j/2F30FC3103/apply",
+   "published_on": "2026-06-14", "created_at": "2026-06-14",
+   "description": "<p>Support enterprise customers.</p><script>t(1)</script>"}
+]}
+"""
+
+
+def test_workable_board_parses() -> None:
+    from packages.crawler.extract import WorkableExtractor
+
+    postings = WorkableExtractor().parse(_WORKABLE_BOARD, "open-252")
+
+    assert len(postings) == 1
+    assert postings[0].external_id == "2F30FC3103"
+    assert postings[0].title == "CSM (Customer Success Manager)"
+
+
+def test_workable_url_is_rebuilt_with_the_company_segment() -> None:
+    """The API returns `apply.workable.com/j/<code>` — no company.
+
+    The adapter's pattern requires one, so a posting stored with the bare form
+    would not route to an adapter when it came time to apply. That failure is
+    silent: the posting looks fine in the feed and fails as `unsupported_site`
+    at the moment someone tries to use it.
+    """
+    from packages.ats.workable import WorkableAdapter
+    from packages.crawler.extract import WorkableExtractor
+
+    posting = WorkableExtractor().parse(_WORKABLE_BOARD, "open-252")[0]
+
+    assert "/open-252/j/" in posting.url
+    assert WorkableAdapter.matches(posting.url)
+
+
+def test_workable_location_joins_its_parts() -> None:
+    """Location arrives split. Joining is not cosmetic.
+
+    Search filters match on location text, and a posting whose location reads
+    only "Amsterdam" fails a filter for the Netherlands.
+    """
+    from packages.crawler.extract import WorkableExtractor
+
+    posting = WorkableExtractor().parse(_WORKABLE_BOARD, "open-252")[0]
+
+    assert posting.location == "Amsterdam, North Holland, Netherlands"
+
+
+def test_workable_reads_the_publication_date() -> None:
+    from packages.crawler.extract import WorkableExtractor
+
+    posting = WorkableExtractor().parse(_WORKABLE_BOARD, "open-252")[0]
+
+    assert posting.published_at is not None
+    assert posting.published_at.year == 2026
+
+
+def test_workable_description_drops_script_content() -> None:
+    from packages.crawler.extract import WorkableExtractor
+
+    posting = WorkableExtractor().parse(_WORKABLE_BOARD, "open-252")[0]
+
+    assert "Support enterprise customers." in (posting.description_raw or "")
+    assert "t(1)" not in (posting.description_raw or "")
+
+
+def test_workable_shares_one_api_host_with_every_other_customer() -> None:
+    """§2.6 — a 60s floor here serializes every Workable company."""
+    from packages.crawler.ratelimit import MIN_SHARED_API_DELAY_SECONDS, floor_for
+
+    assert floor_for("apply.workable.com") == MIN_SHARED_API_DELAY_SECONDS
