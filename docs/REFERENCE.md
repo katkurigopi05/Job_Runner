@@ -313,3 +313,33 @@ Ordered by value, all independent of each other:
 3. **§3.2** — prompt version in `AuditEntry`.
 4. **§3.3** — daily provider quota that fails closed.
 5. **§3.5 / §3.6** — read together before any tuning pass, not after.
+
+---
+
+## Credits
+
+Everything in this document that is worth anything came from **Shirin Khosravi
+Jam** and her *Observable Job Agent* project.
+
+- Repository: <https://github.com/jamwithai/observable-job-agent> (MIT)
+- Write-up: *Build your own Job Agent*, parts 1–4 —
+  <https://jamwithai.substack.com>
+  - [Part 1](https://jamwithai.substack.com/p/build-your-own-job-agent-part-1)
+  - [Part 2](https://jamwithai.substack.com/p/build-your-own-job-agent-part-2)
+  - [Part 3](https://jamwithai.substack.com/p/build-your-own-job-agent-part-3)
+
+Two debts in particular are worth naming, because in both cases her work found
+a defect in ours rather than merely suggesting an improvement:
+
+- **`corpus_ref`** — per-bullet provenance is the idea that exposed the
+  attribution hole in our fabrication guard (§3.1). We had been checking that
+  every fact was *true somewhere* and calling that grounded. It isn't.
+- **Publishing the numbers that went the wrong way** (§3.6). It costs nothing
+  to report a 53% improvement and stay quiet about the judge that moved 64% in
+  the opposite direction. She reported both, and that is the single most useful
+  paragraph either of us will read this year.
+
+No code was copied from her repository into this one. What was taken is design
+reasoning, which is credited here rather than absorbed silently. Her project is
+MIT-licensed and worth reading in full — it is a better piece of engineering
+than this summary of it.
