@@ -31,6 +31,7 @@ from packages.tailor.guard import (
     extract_entities,
     normalize,
 )
+from packages.tailor.parse import parse_text
 from packages.tailor.rewrite import tailor_bullet, tailor_bullets, vet
 
 # --------------------------------------------------------------------------
@@ -429,3 +430,82 @@ async def test_round_tripped_pdf_still_passes_the_guard() -> None:
 
     report = check(recovered, corpus)
     assert report.ok, report.summary()
+
+
+# --------------------------------------------------------------------------
+# Attribution: a fact is not grounded just because it is true somewhere
+# --------------------------------------------------------------------------
+
+RESUME_TWO_EMPLOYERS = """Jane Doe
+jane@example.com
+
+Experience
+Acme Corp - Backend Engineer
+- Maintained the billing service and reduced invoice errors.
+Globex Inc - Data Engineer
+- Built a streaming pipeline processing 40TB per day across 12 regions.
+
+Skills
+Python, PostgreSQL, Kubernetes
+"""
+
+
+@pytest.fixture
+def two_employers() -> SourceCorpus:
+    return SourceCorpus.from_resume(parse_text(RESUME_TWO_EMPLOYERS))
+
+
+ACME_BULLET = "- Maintained the billing service and reduced invoice errors."
+
+
+def test_resume_splits_into_one_item_per_employer(two_employers: SourceCorpus) -> None:
+    assert [item.ref for item in two_employers.items] == ["experience:0", "experience:1"]
+
+
+def test_metric_from_another_employer_is_rejected(two_employers: SourceCorpus) -> None:
+    """The case a document-wide corpus cannot see.
+
+    Every number here appears in the résumé, so the old whole-document check
+    accepted it. It is still a fabrication: the throughput was earned at
+    Globex and this sentence attributes it to Acme.
+    """
+    drifted = (
+        "- Maintained the billing service, reduced invoice errors across 12 "
+        "regions processing 40TB per day."
+    )
+    accepted, reason, report = vet(ACME_BULLET, drifted, two_employers)
+
+    assert not accepted
+    assert report.scope_ref == "experience:0"
+    unsupported = {v.entity.text for v in report.violations}
+    assert {"12", "40TB"} <= unsupported
+    assert reason is not None
+
+
+def test_honest_rewrite_of_the_same_entry_still_passes(two_employers: SourceCorpus) -> None:
+    """Scoping must not cost legitimate rewrites."""
+    accepted, reason, _ = vet(
+        ACME_BULLET, "- Owned the billing service, cutting invoice errors.", two_employers
+    )
+    assert accepted, reason
+
+
+def test_shared_sections_are_available_to_every_entry(two_employers: SourceCorpus) -> None:
+    """Skills describe the person, not one job, so a bullet may reach them."""
+    accepted, reason, _ = vet(
+        ACME_BULLET,
+        "- Maintained the billing service in Python, reducing invoice errors.",
+        two_employers,
+    )
+    assert accepted, reason
+
+
+def test_flat_corpus_degrades_to_document_scope_and_says_so() -> None:
+    """No structure means no attribution claim — recorded, not pretended."""
+    corpus = SourceCorpus.from_texts(RESUME_TWO_EMPLOYERS)
+
+    assert corpus.items == ()
+    assert corpus.locate(ACME_BULLET) is None
+
+    _, _, report = vet(ACME_BULLET, "- Maintained the billing service.", corpus)
+    assert report.scope_ref is None

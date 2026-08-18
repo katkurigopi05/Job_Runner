@@ -120,8 +120,13 @@ def vet(
     Rejection reasons, in order of how often they matter: fabricated content,
     a bullet replaced wholesale rather than rewritten, implausible growth, or
     an empty answer.
+
+    The fabrication check is scoped to the entry the original bullet came
+    from. Checking against the whole résumé would accept a rewrite that moved
+    one employer's metric onto another employer's bullet — every fact true
+    somewhere, the sentence false where it stands.
     """
-    report = check(candidate, corpus)
+    report = check(candidate, corpus, scope=corpus.locate(original))
 
     if not candidate:
         return False, "model returned nothing", report

@@ -209,7 +209,10 @@ async def _resume_diff(
         if not bullets:
             return None
 
-        corpus = SourceCorpus.from_texts(parsed.text)
+        # from_resume, not from_texts: the guard has to be able to tell one
+        # employer's entry from another's, or a rewrite can move a metric
+        # between them and still trace to "the résumé".
+        corpus = SourceCorpus.from_resume(parsed)
         provider = llm_router.tailor_resume()
         result = await tailor_bullets(provider, bullets, posting_text, corpus)
         summary = summarize(result)
