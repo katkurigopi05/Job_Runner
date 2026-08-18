@@ -12,6 +12,8 @@ prompts are advisory and models disregard them.
 
 from __future__ import annotations
 
+import re
+
 import structlog
 from pydantic import BaseModel, Field
 
@@ -312,28 +314,89 @@ async def tailor_cover_letter(
             log.info("cover_letter_rejected", reason=reason)
             return CoverLetterResult(text="", rejected_reason=reason, entities_checked=0)
 
-    # Keyword check: missing terms cannot be claimed
-    from packages.tailor.keywords import analyze
-
     terms = analyze(job_description, corpus)
-    borrowed = _borrowed_terms(corpus.text, candidate, tuple(terms.missing))
-    if borrowed:
-        reason = (
-            "takes "
-            + ", ".join(repr(term) for term in borrowed)
-            + " from the posting; the résumé does not support it"
-        )
-        log.info("cover_letter_rejected", reason=reason)
-        return CoverLetterResult(text="", rejected_reason=reason, entities_checked=0)
+    forbidden = tuple(terms.missing)
 
-    # Fabrication check
-    from packages.tailor.guard import check
+    # Split into sentences keeping delimiters
+    # regex: match non-greedy up to a sentence terminator (.!? followed by space or end) or newline
+    sentence_pattern = re.compile(r"(.*?(?:[.!?](?:\s+|$)|(?:\n\s*)+)|.+$)")
+    sentences = [s for s in sentence_pattern.findall(candidate) if s]
 
-    report = check(candidate, corpus, scope=None)
+    naming_phrases = {
+        "apply",
+        "applying",
+        "application",
+        "position",
+        "role",
+        "opportunity",
+        "opening",
+        "writing to",
+        "excited to",
+        "interested in",
+    }
+    claim_words = {
+        "experience",
+        "skill",
+        "ability",
+        "proven",
+        "track",
+        "background",
+        "knowledge",
+        "expert",
+        "worked",
+        "built",
+        "designed",
+        "led",
+        "managed",
+        "own",
+    }
 
-    if not report.ok:
-        reason = report.summary()
-        log.info("cover_letter_rejected", reason=reason, violations=len(report.violations))
-        return CoverLetterResult(text="", rejected_reason=reason, entities_checked=report.checked)
+    filtered_sentences = []
+    total_checked = 0
 
-    return CoverLetterResult(text=candidate, entities_checked=report.checked)
+    for sentence_raw in sentences:
+        sentence_text = sentence_raw.strip()
+        if not sentence_text:
+            filtered_sentences.append(sentence_raw)
+            continue
+
+        lower_s = sentence_text.lower()
+
+        # Is it a naming sentence?
+        has_naming = any(p in lower_s for p in naming_phrases)
+        has_claim = any(c in lower_s for c in claim_words)
+
+        # We exempt sentences that name the target from the strict claiming rules
+        if has_naming and not has_claim:
+            filtered_sentences.append(sentence_raw)
+            continue
+
+        # Check for missing terms
+        borrowed = _borrowed_terms(corpus.text, sentence_text, forbidden)
+        if borrowed:
+            log.info(
+                "cover_letter_sentence_rejected",
+                reason="borrowed missing term",
+                terms=borrowed,
+                sentence=sentence_text,
+            )
+            continue
+
+        # Fabrication check
+        report = check(sentence_text, corpus, scope=None)
+        total_checked += report.checked
+        if not report.ok:
+            log.info(
+                "cover_letter_sentence_rejected", reason=report.summary(), sentence=sentence_text
+            )
+            continue
+
+        filtered_sentences.append(sentence_raw)
+
+    final_text = "".join(filtered_sentences).strip()
+
+    if not final_text:
+        reason = "all meaningful sentences were rejected for fabrication or missing terms"
+        return CoverLetterResult(text="", rejected_reason=reason, entities_checked=total_checked)
+
+    return CoverLetterResult(text=final_text, entities_checked=total_checked)
