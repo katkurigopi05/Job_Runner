@@ -72,6 +72,31 @@ mcp:
 validate-seeds:
 	$(PY)/python -m packages.crawler.validate seeds/companies.yaml
 
+# make worktree NAME=workable BRANCH=feat/workable-adapter
+#
+# A worktree for a second agent, set up so `make gate-0` actually runs there.
+# Three things bite otherwise, and all three did:
+#
+#   - no .venv, so every $(PY)/ command fails
+#   - no .env, because it is gitignored and does not travel with a worktree,
+#     so alembic cannot reach the database
+#   - a system python that is not the project's 3.12, so `python -m playwright`
+#     reports missing when it is installed
+#
+# The symlink and the exported URLs fix all three. .env itself is deliberately
+# not copied: one file, one place, and a second copy is a secret waiting to be
+# committed from a directory nobody is watching.
+worktree:
+	@test -n "$(NAME)" || (echo "set NAME=<short-name>" && exit 1)
+	@test -n "$(BRANCH)" || (echo "set BRANCH=<branch-name>" && exit 1)
+	git worktree add /private/tmp/Job_Runner_$(NAME) -b $(BRANCH) origin/main
+	ln -sfn $(CURDIR)/.venv /private/tmp/Job_Runner_$(NAME)/.venv
+	@echo
+	@echo "cd /private/tmp/Job_Runner_$(NAME)"
+	@echo "Then export these before running make gate-0:"
+	@grep -E '^(DATABASE_URL|TEST_DATABASE_URL|VAULT_KEY)=' .env 2>/dev/null \
+		| sed 's/^/  export /' || echo "  (no .env found — copy from .env.example)"
+
 # Gate 0 — CLAUDE.md §9. All assertions covered:
 #   pytest green, POST /applications reaches submitted, invalid transition
 #   raises, duplicate (candidate_id, url) returns 409, ApplicationEvent rows
