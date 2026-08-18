@@ -18,10 +18,22 @@ checkout — a worktree.
 
 ```bash
 cd /Users/gopikrishnareddykatkuri/Desktop/Job_Runner
-git worktree add /private/tmp/Job_Runner_<stream> -b <branch> origin/main
-cd /private/tmp/Job_Runner_<stream>
-ln -s /Users/gopikrishnareddykatkuri/Desktop/Job_Runner/.venv .venv
+make worktree NAME=<short-name> BRANCH=<branch-name>
 ```
+
+That creates the worktree, links the venv, and prints the environment variables
+to export. Three things break `make gate-0` in a fresh worktree and all three
+have already happened:
+
+- **No `.venv`**, so every `$(PY)/` command fails with "No such file".
+- **No `.env`.** It is gitignored, so it does not travel with a worktree, and
+  alembic cannot reach the database — `check-migrations` fails on
+  `InvalidPasswordError` before a single test runs. Export `DATABASE_URL`,
+  `TEST_DATABASE_URL`, and `VAULT_KEY` instead of copying the file: one secret,
+  one location, and a second copy is a secret waiting to be committed from a
+  directory nobody is watching.
+- **A system python that is not the project's 3.12.** An agent reported
+  Playwright missing when it is installed and working; it had checked 3.14.
 
 The main checkout at `~/Desktop/Job_Runner` belongs to whoever is driving
 interactively. An agent that starts editing there shares an index and a working
