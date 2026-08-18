@@ -138,6 +138,7 @@ async def _store(
                     title=item.title,
                     location=item.location,
                     description_raw=item.description_raw,
+                    published_at=item.published_at,
                     content_hash=item.content_hash,
                 )
             )
@@ -150,6 +151,8 @@ async def _store(
 
         current.url = item.url
         current.title = item.title
+        if item.published_at is not None:
+            current.published_at = item.published_at
         current.location = item.location
         current.description_raw = item.description_raw
         current.content_hash = item.content_hash

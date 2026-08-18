@@ -90,6 +90,19 @@ export default async function MatchesPage({
                 <p className="mt-1 font-mono text-xs text-ink-faint">
                   {match.location ?? "location not stated"} · {match.ats_type ?? "unknown ats"}
                   {match.closed ? " · closed" : ""}
+                  {/* How long we took to notice. The board not saying is
+                      different from us being instant, so it reads differently. */}
+                  {match.lag_hours !== null ? (
+                    <span className={match.lag_hours <= 24 ? " text-go" : ""}>
+                      {" "}
+                      · found {match.lag_hours < 1
+                        ? "within the hour"
+                        : `${Math.round(match.lag_hours)}h`}{" "}
+                      after posting
+                    </span>
+                  ) : (
+                    " · no posting date"
+                  )}
                 </p>
 
                 {/* The breakdown. Two similarities and any hard filter that

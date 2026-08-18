@@ -273,6 +273,8 @@ class PostingOut(BaseModel):
     location: str | None
     ats_type: str | None
     external_id: str | None
+    #: When the source says it went up. None when the board does not say.
+    published_at: datetime | None = None
     first_seen_at: datetime
     closed_at: datetime | None
 
@@ -368,6 +370,10 @@ class MatchOut(BaseModel):
     url: str
     ats_type: str | None
     first_seen_at: datetime
+    published_at: datetime | None = None
+    #: Hours between the source publishing and the crawler seeing it. None when
+    #: the board reports no date — an unmeasurable lag, not a lag of zero.
+    lag_hours: float | None = None
     closed: bool
     title_similarity: float = 0.0
     body_similarity: float = 0.0
