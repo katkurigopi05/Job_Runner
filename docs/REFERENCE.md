@@ -1,3 +1,11 @@
+# References
+
+Teardowns of outside projects solving an overlapping problem, kept so the
+reasoning behind what we borrowed — and what we refused — survives the session
+it happened in. One section per project.
+
+---
+
 # Reference — Job Scout / observable-job-agent
 
 Notes taken from an outside project that solves an overlapping problem, kept so
@@ -359,3 +367,170 @@ No code was copied from her repository into this one. What was taken is design
 reasoning, which is credited here rather than absorbed silently. Her project is
 MIT-licensed and worth reading in full — it is a better piece of engineering
 than this summary of it.
+
+---
+
+# Reference — GiraffyReach
+
+**Source.** <https://www.giraffyreach.com> — a commercial real-time job
+discovery and recruiter-outreach product. Reviewed 2026-08-18.
+
+**Provenance caveat, and it is a large one.** Only the marketing site was read.
+There is no repository, no API docs, and no technical write-up. The
+"how it works" page describes outcomes and discloses no mechanism: nothing
+about how portals are enumerated, which ATSes are integrated, or how
+submission actually happens. Every number below is a claim of theirs, quoted,
+and none of it is verified. Where a statement about *our* code appears it was
+checked by running our code.
+
+This is the closest thing to a commercial version of what this project is, so
+it is worth reading as a map of the problem rather than as a source of designs.
+
+---
+
+## 1. What they claim to be
+
+Four steps, in their words:
+
+1. **Direct indexing** — *"Our crawler hits 106,000+ company career portals
+   every hour, around the clock."* Workday and Greenhouse named explicitly, and
+   framed against aggregators rather than alongside them.
+2. **Real-time feed** — postings surface *"before they hit the major job
+   boards"*, an asserted *"2–6 hour"* lead over LinkedIn and Indeed, with
+   *"updates within 60 minutes of post"* as the stated SLA.
+3. **First-mover application** — apply in their UI, or "C2C Autopilot", which
+   tailors the résumé and sends.
+4. **Tracking and outreach** — a "Universal Application Tracker", and
+   "MCP Connect" so Claude or ChatGPT can search and match against the feed.
+
+Filters they sell: saved searches, eight industry sectors, contract vs
+full-time. Pricing $0 / $19.99 / $39.99 / $69.99 a month, the top tier being
+*"up to 100 applications a day, sent for you"*.
+
+---
+
+## 2. The useful confirmation
+
+**They index ATS portals directly, not aggregators — and say so as a selling
+point.** That is the shape this project already has, so the crawler is not the
+thing to rethink.
+
+What differs is inventory: 106,000 tenant slugs against our 29. Their moat is
+not the crawler, it is the *list*. Read that way, `packages/crawler/discover.py`
+is aiming at the right target — promotion turns each resolved posting into a
+registry entry, so the list grows itself rather than being written up front.
+Mobile's aggregator sources are the bootstrap for that list, not a competing
+strategy, and this reference is the argument for keeping both.
+
+The open question they do not answer: how 106,000 slugs were enumerated in the
+first place. Nothing on the site says. Our promotion loop is the slow, honest
+version of whatever that was.
+
+---
+
+## 3. Adopt
+
+### 3.1 Freshness as a tracked number
+
+Their entire pitch is a time delta — *"within 60 minutes"*, *"2–6 hours ahead"*.
+We measure nothing like it. `Posting.first_seen_at` records when *we* saw a
+posting and nothing records when it was *published*, so "are we late?" is
+currently unanswerable.
+
+Greenhouse's board API returns `updated_at` per job and Lever's returns
+`createdAt`. Storing the source timestamp alongside `first_seen_at` makes the
+lag computable, and lag is the number that says whether `poll_interval_s` is
+set sensibly. Cheap, and it turns a guess into a measurement.
+
+### 3.2 Saved filters, separate from the profile
+
+They sell saved searches and sector filters as a first-class input. We derive
+every filter from the `Profile` row — `apply_filters(profile, posting, ...)`
+reads location, sponsorship and clearance off it, and the only caller-supplied
+knobs anywhere are `min_score` on `/matches` and a text `q` on `/postings`.
+
+That conflates two different things: *what I want to see* and *what goes on my
+application*. Changing your profile to stop seeing junior roles also changes
+what gets typed into a form. They are separate concerns and should be separate
+models.
+
+### 3.3 Poll cadence as a product decision
+
+They poll hourly. Our seeds carry `poll_interval_s: 21600` — six hours — and
+that number was never argued for. It is defensible when the floor was 60s per
+host and every Greenhouse board shared one; §2.6's amendment removes that
+constraint for shared ATS APIs, so the cadence should be revisited on purpose
+rather than inherited.
+
+---
+
+## 4. Considered, not adopted
+
+**Sector taxonomy.** Eight fixed categories — Software, Electrical, Civil,
+Pharma, Manufacturing, Biotech, Mechanical, Healthcare. Coarser than cosine
+scoring over an embedding, so it buys nothing for ranking.
+
+It would buy something for *cost*: a cheap pre-filter that drops most postings
+before embedding them. Not worth building at 29 companies. Worth revisiting if
+promotion grows the registry by an order of magnitude, which is the point of
+promotion.
+
+---
+
+## 5. Rejected, and why
+
+### 5.1 "Up to 100 applications a day, sent for you"
+
+This is the product's headline capability and it is out of scope here by
+design — §2.3 requires explicit approval before anything submits, and §11 rules
+out volume submission entirely.
+
+It is also, on the evidence we have, not straightforwardly possible. Running
+`make gate-1-live` against real boards on 2026-08-17 found **all three ATSes
+mount a captcha at the apply stage** — Greenhouse (Figma, Vercel), Lever, and
+Ashby, each confirmed independently. Getting to a hundred submissions a day
+through those forms requires either solving captchas or an access path the
+public forms do not offer.
+
+The site says **nothing** about captcha, rate limiting, or bot detection. For a
+crawler striking 106,000 portals hourly and an autopilot sending a hundred
+applications a day, that silence is the most informative thing on it.
+
+§2.5 is a scope boundary, not a missing feature. This reference does not change
+that; it clarifies what is on the other side of it.
+
+### 5.2 Tiered delay as a mechanic
+
+The free tier is deliberately 24 hours stale. A single-user local tool has no
+tier to sell and nobody to withhold freshness from.
+
+### 5.3 Recruiter outreach
+
+"Outreach" in their name and tracker implies contacting recruiters directly.
+Nothing in §9 covers it, the inbox is ingest-only by design, and adding an
+outbound path to real people is a scope decision for the owner rather than an
+increment.
+
+---
+
+## 6. If someone picks this up later
+
+Ordered by value:
+
+1. **§3.2** — a saved-search / filter model distinct from `Profile`, applied at
+   query time in `/matches` and `/postings`, surfaced on the match feed. This is
+   the one the owner described as the main idea of the project, and the spec's
+   §1 still describes the narrower "curated list" version.
+2. **§3.1** — store the source-published timestamp beside `first_seen_at` and
+   report the lag. One column and one number; it makes cadence arguable.
+3. **§3.3** — revisit `poll_interval_s` now that the shared-host floor is 2s.
+4. **§4** — sector pre-filter, only once the registry is large enough for
+   embedding cost to matter.
+
+---
+
+## Credits
+
+GiraffyReach is a commercial product; nothing was copied from it. What is
+recorded here is what reading a competitor's marketing honestly suggests about
+our own architecture, including the parts we will not build.
