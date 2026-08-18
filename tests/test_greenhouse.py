@@ -400,3 +400,43 @@ async def test_widget_internals_are_not_offered_as_questions(page) -> None:
     questions = await GreenhouseAdapter().enumerate_fields(page)
 
     assert not any(q.key.startswith("iti-") for q in questions)
+
+
+_ASYNC_REACT_SELECT = """
+<form id="application_form">
+  <div class="select__container">
+    <label id="q1-label" for="q1" class="label select__label">Work authorization?</label>
+    <input class="select__input" id="q1" type="text" role="combobox"
+           aria-haspopup="true" aria-autocomplete="list" />
+  </div>
+</form>
+<script>
+  const control = document.querySelector("#q1");
+  control.addEventListener("click", () => {
+    setTimeout(() => {
+      document.body.insertAdjacentHTML("beforeend",
+        `<div id="react-select-2-listbox" role="listbox">
+           <div role="option">Yes</div><div role="option">No</div>
+         </div>`);
+    }, 120);
+  });
+  control.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") document.querySelector("#react-select-2-listbox")?.remove();
+  });
+</script>
+"""
+
+
+async def test_options_read_when_the_menu_mounts_async(page) -> None:
+    """react-select does not render inside the click handler.
+
+    The menu arrives a tick or more later, through React's scheduler. A reader
+    that checks for it immediately finds nothing and reports a dropdown with no
+    options — which reads downstream as "the employer offered no choices"
+    rather than as a timing failure.
+    """
+    await page.set_content(_ASYNC_REACT_SELECT)
+
+    questions = {q.key: q for q in await GreenhouseAdapter().enumerate_fields(page)}
+
+    assert [o.label for o in questions["q1"].options] == ["Yes", "No"]
