@@ -18,7 +18,7 @@ from packages.llm.quota import QuotaExceeded
 #: A digest change with the same version is the failure this catches — the
 #: trail would then label old and new output identically.
 PINNED = [
-    ("tailor.system", 1, "71f431bffea15ad05bb534eaaf5628333ee680b27a908e74644a95ef811c04f1"),
+    ("tailor.system", 2, "93d2208664a6e3895bd72b9a48ef6daa9dd255830b1a50345b15c201a226b31b"),
     (
         "inbox.classify.system",
         1,
@@ -68,7 +68,7 @@ async def test_the_trail_records_which_prompt_ran(tmp_path, monkeypatch) -> None
 
     entry = audit.read_trail()[-1]
     assert entry.prompt_name == "tailor.system"
-    assert entry.prompt_version == 1
+    assert entry.prompt_version == 2
 
 
 async def test_an_unversioned_prompt_still_records(tmp_path, monkeypatch) -> None:

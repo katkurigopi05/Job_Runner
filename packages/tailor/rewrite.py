@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from packages.llm.prompts import TAILOR_SYSTEM
 from packages.llm.provider import LLMProvider
 from packages.tailor.guard import _COMMON_WORDS, GuardReport, SourceCorpus, check, normalize
+from packages.tailor.keywords import TermReport, analyze
 
 log = structlog.get_logger(__name__)
 
@@ -70,12 +71,25 @@ class TailorResult(BaseModel):
         return sum(1 for b in self.bullets if b.changed)
 
 
-def _user_prompt(bullet: str, job_description: str) -> str:
-    return (
-        f"Job description:\n{job_description.strip()[:4000]}\n\n"
-        f"Original bullet:\n{bullet.strip()}\n\n"
-        "Rewritten bullet:"
-    )
+def _user_prompt(bullet: str, job_description: str, terms: TermReport | None = None) -> str:
+    """The posting, plus which of its vocabulary the résumé actually backs.
+
+    Naming the supported terms is what makes §2.1's "inject keywords already
+    supported by the source" a computed set rather than a hope. Naming the
+    unsupported ones matters too: they are precisely what a model reaches for
+    when it invents, and a model told what not to say does it less often.
+    """
+    parts = [f"Job description:\n{job_description.strip()[:4000]}"]
+
+    if terms is not None:
+        if terms.supported:
+            parts.append("SUPPORTED TERMS (safe to work in):\n" + ", ".join(terms.supported))
+        if terms.missing:
+            parts.append("OFF-LIMITS TERMS (never use):\n" + ", ".join(terms.missing[:25]))
+
+    parts.append(f"Original bullet:\n{bullet.strip()}")
+    parts.append("Rewritten bullet:")
+    return "\n\n".join(parts)
 
 
 def _clean(candidate: str) -> str:
@@ -144,11 +158,12 @@ async def tailor_bullet(
     bullet: str,
     job_description: str,
     corpus: SourceCorpus,
+    terms: TermReport | None = None,
 ) -> BulletRewrite:
     """Rewrite one bullet, falling back to the original if it does not vet."""
     try:
         raw = await provider.complete(
-            SYSTEM_PROMPT, _user_prompt(bullet, job_description), max_tokens=300
+            SYSTEM_PROMPT, _user_prompt(bullet, job_description, terms), max_tokens=300
         )
     except Exception as exc:  # noqa: BLE001 - a provider failure is a fallback
         log.warning("tailor_provider_failed", error=type(exc).__name__)
@@ -186,8 +201,11 @@ async def tailor_bullets(
     corpus: SourceCorpus,
 ) -> TailorResult:
     """Rewrite a list of bullets. Every output is guard-checked."""
+    # Computed once for the whole posting rather than per bullet: the split is
+    # a property of the résumé and the job, not of any one line.
+    terms = analyze(job_description, corpus)
     rewrites = [
-        await tailor_bullet(provider, bullet, job_description, corpus)
+        await tailor_bullet(provider, bullet, job_description, corpus, terms)
         for bullet in bullets
         if bullet.strip()
     ]
