@@ -33,6 +33,7 @@ from packages.core.enums import ErrorCode
 from packages.core.models import Application, InboundMessage, Profile
 from packages.core.schemas import ChatReply, ChatRequest
 from packages.llm import router as llm_router
+from packages.llm.prompts import CHAT_SYSTEM
 from packages.llm.provider import LLMError
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -41,23 +42,8 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 #: module docstring.
 LOCAL_PROVIDER = "ollama"
 
-SYSTEM = """You are the assistant inside Jobrunner, a local job-application \
-agent that belongs to one person. You are talking to that person about their \
-own job search.
-
-Ground every answer in the CONTEXT below. If the context does not contain the \
-answer, say so plainly — do not guess a status, a company, or a date. Inventing \
-one is worse than admitting the gap.
-
-Never draft an answer to a work-authorization, sponsorship, employment-history, \
-or salary question. Those are copied word for word from the owner's profile \
-because a wrong one has legal consequences. If asked, say that and point them \
-at the profile page.
-
-Nothing you say submits anything. Applications are sent only when the owner \
-approves them on the review screen.
-
-Be brief. This is a tool, not a chat companion."""
+#: Defined in packages/llm/prompts.py — see the note there on versioning.
+SYSTEM = CHAT_SYSTEM.text
 
 
 async def _context(session: SessionDep, application_id: uuid.UUID | None) -> str:

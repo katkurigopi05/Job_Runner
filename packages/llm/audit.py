@@ -32,6 +32,7 @@ from pathlib import Path
 import structlog
 
 from packages.core.config import get_settings
+from packages.llm.prompts import identify
 
 log = structlog.get_logger(__name__)
 
@@ -54,6 +55,11 @@ class AuditEntry:
     user_sha256: str
     system_chars: int
     user_chars: int
+    #: Which registered prompt produced this call, e.g. "tailor.system", and
+    #: its version. None for an unregistered prompt — a user message, or one
+    #: nobody has versioned yet. Metadata, not content: §2.8 and §10 both hold.
+    prompt_name: str | None = None
+    prompt_version: int | None = None
 
     def matches(self, system: str, user: str) -> bool:
         """Whether this entry records that exact pair of prompts.
@@ -69,11 +75,22 @@ def _digest(text: str) -> str:
 
 
 def record(provider: str, system: str, user: str, *, task: str = "unspecified") -> AuditEntry:
-    """Append one entry to the audit trail and return it.
+    """Authorize, then append one entry to the audit trail and return it.
 
-    Never raises into the caller's path: a broken audit file must not stop an
-    application, but it also must not pass silently, so the failure is logged.
+    Two kinds of failure, deliberately treated differently:
+
+    - **Quota** raises. Called before the request goes out, so a refused call
+      never reaches the network. See `packages/llm/quota.py` on why spending
+      the allowance parks the work instead of downgrading it.
+    - **A broken audit file** does not raise. It must not stop an application,
+      and it must not pass silently either, so it is logged.
     """
+    from packages.llm.quota import authorize
+
+    authorize(provider)
+
+    prompt = identify(system)
+
     entry = AuditEntry(
         at=datetime.now(UTC).isoformat(),
         provider=provider,
@@ -83,6 +100,8 @@ def record(provider: str, system: str, user: str, *, task: str = "unspecified") 
         user_sha256=_digest(user),
         system_chars=len(system),
         user_chars=len(user),
+        prompt_name=prompt.name if prompt else None,
+        prompt_version=prompt.version if prompt else None,
     )
 
     # Digests and counts only — safe for the log. The prompt itself is not.
@@ -91,6 +110,7 @@ def record(provider: str, system: str, user: str, *, task: str = "unspecified") 
         provider=entry.provider,
         left_machine=entry.left_machine,
         task=entry.task,
+        prompt=prompt.label if prompt else None,
         user_chars=entry.user_chars,
         user_sha256=entry.user_sha256[:12],
     )

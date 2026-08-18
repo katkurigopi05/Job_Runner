@@ -15,9 +15,11 @@ from __future__ import annotations
 import json
 import re
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any, Protocol
 
 import structlog
+import yaml
 from pydantic import BaseModel, Field
 
 log = structlog.get_logger(__name__)
@@ -175,8 +177,126 @@ class GreenhouseExtractor:
         return postings
 
 
+class LeverExtractor:
+    """Reads the public Lever postings API.
+
+    `?mode=json` returns every posting with its full description in one call,
+    the same shape of bargain Greenhouse's `content=true` makes.
+    """
+
+    ats = "lever"
+
+    BOARD_URL = "https://api.lever.co/v0/postings/{slug}?mode=json"
+
+    def board_url(self, company_slug: str) -> str:
+        return self.BOARD_URL.format(slug=company_slug)
+
+    def parse(self, body: str, company_slug: str) -> list[ExtractedPosting]:
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            log.warning("lever_board_not_json", company=company_slug)
+            return []
+
+        # Lever returns a bare list, not an object with a "jobs" key.
+        if not isinstance(payload, list):
+            log.warning("lever_board_unexpected_shape", company=company_slug)
+            return []
+
+        postings: list[ExtractedPosting] = []
+        for job in payload:
+            if not isinstance(job, dict):
+                continue
+            job_id = job.get("id")
+            if not job_id:
+                continue
+
+            categories = job.get("categories")
+            location = None
+            if isinstance(categories, dict):
+                location = categories.get("location") or None
+
+            # `description` is the opening blurb; `lists` carries the bullets
+            # and `additional` the closing. Dropping the last two would hand
+            # the matcher a posting stripped of its actual requirements.
+            body_parts = [job.get("description") or ""]
+            for block in job.get("lists") or []:
+                if isinstance(block, dict):
+                    body_parts.append(block.get("text") or "")
+                    body_parts.append(block.get("content") or "")
+            body_parts.append(job.get("additional") or "")
+
+            posting = ExtractedPosting(
+                external_id=str(job_id),
+                url=job.get("hostedUrl")
+                or job.get("applyUrl")
+                or f"https://jobs.lever.co/{company_slug}/{job_id}",
+                title=job.get("text") or None,
+                location=location,
+                description_raw=strip_html("\n".join(p for p in body_parts if p)),
+                ats_type=self.ats,
+            )
+            posting.content_hash = posting_hash(posting)
+            postings.append(posting)
+
+        return postings
+
+
+class AshbyExtractor:
+    """Reads the public Ashby job-board API.
+
+    `includeCompensation=true` is not requested: salary is not scored, and
+    asking for less is the cheaper call.
+    """
+
+    ats = "ashby"
+
+    BOARD_URL = "https://api.ashbyhq.com/posting-api/job-board/{slug}"
+
+    def board_url(self, company_slug: str) -> str:
+        return self.BOARD_URL.format(slug=company_slug)
+
+    def parse(self, body: str, company_slug: str) -> list[ExtractedPosting]:
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            log.warning("ashby_board_not_json", company=company_slug)
+            return []
+        if not isinstance(payload, dict):
+            log.warning("ashby_board_unexpected_shape", company=company_slug)
+            return []
+
+        postings: list[ExtractedPosting] = []
+        for job in payload.get("jobs") or []:
+            if not isinstance(job, dict):
+                continue
+            job_id = job.get("id")
+            if not job_id:
+                continue
+
+            posting = ExtractedPosting(
+                external_id=str(job_id),
+                url=job.get("jobUrl")
+                or job.get("applyUrl")
+                or f"https://jobs.ashbyhq.com/{company_slug}/{job_id}",
+                title=job.get("title") or None,
+                location=job.get("location") or None,
+                # descriptionHtml when present, descriptionPlain otherwise —
+                # a board that sends only plain text is not an empty posting.
+                description_raw=strip_html(job.get("descriptionHtml"))
+                or (job.get("descriptionPlain") or "").strip(),
+                ats_type=self.ats,
+            )
+            posting.content_hash = posting_hash(posting)
+            postings.append(posting)
+
+        return postings
+
+
 EXTRACTORS: dict[str, PostingExtractor] = {
     GreenhouseExtractor.ats: GreenhouseExtractor(),
+    LeverExtractor.ats: LeverExtractor(),
+    AshbyExtractor.ats: AshbyExtractor(),
 }
 
 
@@ -197,13 +317,14 @@ class CompanySeed(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+def default_seed_path() -> Path:
+    """Where the registry lives. One definition, so writers and readers agree."""
+    return Path(__file__).resolve().parents[2] / "seeds" / "companies.yaml"
+
+
 def load_seed(path: str | None = None) -> list[CompanySeed]:
     """Read the company registry from YAML."""
-    from pathlib import Path
-
-    import yaml
-
-    location = Path(path or Path(__file__).resolve().parents[2] / "seeds" / "companies.yaml")
+    location = Path(path) if path else default_seed_path()
     if not location.is_file():
         log.warning("company_seed_missing", path=str(location))
         return []

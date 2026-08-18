@@ -1,5 +1,5 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
-        check-migrations api worker mcp web web-install validate-seeds \
+        check-migrations api worker workers mcp web web-install validate-seeds discover \
         gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
@@ -48,6 +48,11 @@ api:
 
 worker:
 	$(PY)/python -m apps.worker.run
+
+# make workers n=4 — one process, n independent claimants. The queue was
+# always safe for this (SKIP LOCKED); nothing could start more than one.
+workers:
+	$(PY)/python -m apps.worker.run --workers $(or $(n),4)
 
 # Speaks MCP over stdio; Claude Code launches it itself via .mcp.json.
 # Run it by hand only to check it starts. It needs `make api` running.
@@ -133,3 +138,8 @@ gate-6: gate-0
 gate-1-live:
 	@test -n "$(URL)" || (echo "set URL=<greenhouse posting url>" && exit 1)
 	$(PY)/python -m scripts.live_check "$(URL)"
+
+# make discover — one aggregator sweep, then promote what resolved into
+# seeds/companies.yaml. Broad and slow; the crawl is narrow and fast.
+discover:
+	$(PY)/python -m scripts.discover

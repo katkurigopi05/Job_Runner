@@ -34,6 +34,8 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from packages.tailor.parse import ParsedResume
+
 # A number keeps its unit: 40TB, 800ms and 2M are single claims, not a
 # number sitting next to an unrelated acronym.
 _TOKEN_RE = re.compile(r"\d[\d,.]*%?[A-Za-z]*|[A-Za-z][A-Za-z0-9+#./-]*")
@@ -140,10 +142,15 @@ class GuardReport:
     ok: bool
     violations: list[Violation] = field(default_factory=list)
     checked: int = 0
+    #: Which corpus item the claims were held against. None means the check
+    #: was document-wide — correct for a cover letter, too permissive for a
+    #: bullet, and recorded either way so the two are never confused.
+    scope_ref: str | None = None
 
     def summary(self) -> str:
+        against = "source" if self.scope_ref is None else self.scope_ref
         if self.ok:
-            return f"clean — {self.checked} entities traced to source"
+            return f"clean — {self.checked} entities traced to {against}"
         listed = "; ".join(str(v) for v in self.violations[:5])
         more = "" if len(self.violations) <= 5 else f" (+{len(self.violations) - 5} more)"
         return f"{len(self.violations)} unsupported: {listed}{more}"
@@ -236,6 +243,45 @@ def extract_entities(text: str) -> list[Entity]:
     return entities
 
 
+@dataclass(frozen=True)
+class CorpusItem:
+    """One attributable unit of the source — a job entry, or a project.
+
+    The unit matters. A metric belongs to the employer it was earned under,
+    and moving it onto a different employer's bullet is a fabrication even
+    though every word of it appears somewhere in the résumé.
+    """
+
+    ref: str
+    text: str
+    tokens: frozenset[str]
+
+
+def _index(text: str) -> set[str]:
+    """Every form a token in `text` should be findable under."""
+    tokens: set[str] = set()
+    for match in _TOKEN_RE.finditer(text):
+        normalized = normalize(match.group(0))
+        if not normalized:
+            continue
+        tokens.add(normalized)
+        tokens.add(singular(normalized))
+        # Index the digit form of a written number too, so a source saying
+        # "three" supports an output saying "3".
+        if normalized in _NUMBER_WORDS:
+            tokens.add(_NUMBER_WORDS[normalized])
+    return tokens
+
+
+#: A bullet continues the entry above it; anything else starts a new one.
+_BULLET_RE = re.compile(r"^\s*[-\u2022*\u2023\u25e6\u2013\u2014]\s+")
+
+#: Sections where a claim is *attributed* to something — an employer, a
+#: project — and so must not borrow from a sibling. Every other section
+#: describes the person as a whole and is shared.
+_ATTRIBUTED_SECTIONS = ("experience", "projects")
+
+
 @dataclass
 class SourceCorpus:
     """Everything a rewrite is allowed to draw on.
@@ -244,53 +290,154 @@ class SourceCorpus:
     included because they come from the owner's own account rather than from a
     model. Widening this set is how a fabrication becomes permissible, so it
     should be done deliberately and never quietly.
+
+    Two scopes live here, and the difference is the point:
+
+    - `tokens` is everything, and answers "is this fact true of the owner?"
+    - `items` are the attributable units, and answer the harder question,
+      "is this fact true of *the thing this bullet is about*?"
+
+    A check with no scope asks only the first. `vet()` in `rewrite.py` supplies
+    the scope so a bullet is held to the second.
     """
 
     tokens: set[str] = field(default_factory=set)
     #: Normalized full text, for substring checks a token set would miss.
     text: str = ""
+    #: Attributable units, in document order. Empty means unstructured input,
+    #: in which case scoping degrades to the document and says so.
+    items: tuple[CorpusItem, ...] = ()
+    #: Tokens available to every item — contact details, the skills list,
+    #: education. These describe the person, not one job.
+    shared: frozenset[str] = frozenset()
 
     @classmethod
     def from_texts(cls, *texts: str) -> SourceCorpus:
+        """Index flat text. Every token is shared, so scoping is a no-op.
+
+        Kept for callers that hold no structure — a pasted résumé, a test
+        fixture. Prefer `from_resume`, which can tell one employer from
+        another.
+        """
         tokens: set[str] = set()
         joined: list[str] = []
         for raw in texts:
             if not raw:
                 continue
             joined.append(raw.lower())
-            for match in _TOKEN_RE.finditer(raw):
-                normalized = normalize(match.group(0))
-                if normalized:
-                    tokens.add(normalized)
-                    tokens.add(singular(normalized))
-                    # Index the digit form of a written number too, so a source
-                    # saying "three" supports an output saying "3".
-                    if normalized in _NUMBER_WORDS:
-                        tokens.add(_NUMBER_WORDS[normalized])
-        return cls(tokens=tokens, text="\n".join(joined))
+            tokens |= _index(raw)
+        return cls(tokens=tokens, text="\n".join(joined), shared=frozenset(tokens))
 
-    def supports(self, entity: Entity) -> bool:
-        if entity.normalized in self.tokens or singular(entity.normalized) in self.tokens:
+    @classmethod
+    def from_resume(cls, resume: ParsedResume, *extra_texts: str) -> SourceCorpus:
+        """Index a parsed résumé, keeping each job and project separable.
+
+        `extra_texts` is verified outside material — GitHub projects — and is
+        indexed as its own item rather than shared, for the same reason a job
+        is: a project's stack does not belong on an employer's bullet.
+        """
+        items: list[CorpusItem] = []
+        shared_texts: list[str] = [*resume.preamble]
+
+        contact = resume.contact
+        shared_texts += [v for v in (contact.name, contact.email, contact.phone) if v]
+        shared_texts += contact.links
+
+        for name, lines in resume.sections.items():
+            if name not in _ATTRIBUTED_SECTIONS:
+                shared_texts.extend(lines)
+                continue
+            for position, entry in enumerate(_split_entries(lines)):
+                items.append(
+                    CorpusItem(
+                        ref=f"{name}:{position}",
+                        text=entry,
+                        tokens=frozenset(_index(entry)),
+                    )
+                )
+
+        for position, extra in enumerate(t for t in extra_texts if t):
+            items.append(
+                CorpusItem(ref=f"external:{position}", text=extra, tokens=frozenset(_index(extra)))
+            )
+
+        shared = frozenset(_index("\n".join(shared_texts)))
+        tokens = set(shared)
+        for item in items:
+            tokens |= item.tokens
+
+        full = "\n".join([*resume.raw_lines, *extra_texts])
+        return cls(tokens=tokens, text=full.lower(), items=tuple(items), shared=shared)
+
+    def locate(self, snippet: str) -> CorpusItem | None:
+        """The item a piece of source text came from, or None if unknown.
+
+        None is not a failure to report on its own — flat corpora have no
+        items — but it does mean the caller gets a document-wide check, and
+        `GuardReport.scope_ref` records that so a wide check is never mistaken
+        for a narrow one.
+        """
+        needle = " ".join(snippet.split()).lower()
+        if not needle:
+            return None
+        for item in self.items:
+            if needle in " ".join(item.text.split()).lower():
+                return item
+        return None
+
+    def supports(self, entity: Entity, scope: CorpusItem | None = None) -> bool:
+        available = self.tokens if scope is None else (scope.tokens | self.shared)
+
+        if entity.normalized in available or singular(entity.normalized) in available:
             return True
         # A hyphenated or slashed compound is supported when each part is.
         parts = [p for p in re.split(r"[-/]", entity.normalized) if p]
-        return len(parts) > 1 and all(part in self.tokens for part in parts)
+        return len(parts) > 1 and all(part in available for part in parts)
 
 
-def check(output: str, corpus: SourceCorpus) -> GuardReport:
-    """Verify every claim in `output` traces to `corpus`."""
+def _split_entries(lines: list[str]) -> list[str]:
+    """Group a section's lines into entries, one per employer or project."""
+    entries: list[list[str]] = []
+    for line in lines:
+        if _BULLET_RE.match(line) and entries:
+            entries[-1].append(line)
+        else:
+            entries.append([line])
+    return ["\n".join(entry) for entry in entries]
+
+
+def check(output: str, corpus: SourceCorpus, *, scope: CorpusItem | None = None) -> GuardReport:
+    """Verify every claim in `output` traces to `corpus`.
+
+    With a `scope`, each claim must trace to that item or to the shared
+    material, not merely to somewhere in the document. That is the difference
+    between "the owner did this" and "the owner did this *here*", and only the
+    second is what a rewritten bullet asserts.
+    """
     entities = extract_entities(output)
+    reason = (
+        "does not appear in the source material"
+        if scope is None
+        else f"does not appear in {scope.ref} or the shared sections"
+    )
     violations = [
-        Violation(entity=entity, reason="does not appear in the source material")
+        Violation(entity=entity, reason=reason)
         for entity in entities
-        if not corpus.supports(entity)
+        if not corpus.supports(entity, scope)
     ]
-    return GuardReport(ok=not violations, violations=violations, checked=len(entities))
+    return GuardReport(
+        ok=not violations,
+        violations=violations,
+        checked=len(entities),
+        scope_ref=None if scope is None else scope.ref,
+    )
 
 
-def check_or_raise(output: str, corpus: SourceCorpus) -> GuardReport:
+def check_or_raise(
+    output: str, corpus: SourceCorpus, *, scope: CorpusItem | None = None
+) -> GuardReport:
     """Same, but refuse to return output that fabricates."""
-    report = check(output, corpus)
+    report = check(output, corpus, scope=scope)
     if not report.ok:
         raise FabricationError(report)
     return report

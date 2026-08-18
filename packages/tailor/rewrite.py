@@ -15,24 +15,15 @@ from __future__ import annotations
 import structlog
 from pydantic import BaseModel, Field
 
+from packages.llm.prompts import TAILOR_SYSTEM
 from packages.llm.provider import LLMProvider
 from packages.tailor.guard import _COMMON_WORDS, GuardReport, SourceCorpus, check, normalize
 
 log = structlog.get_logger(__name__)
 
-SYSTEM_PROMPT = """
-You rewrite résumé bullets to match a job description.
-
-Absolute rule: use ONLY facts present in the original bullet. You may rephrase,
-reorder, change emphasis, and adopt the job description's vocabulary where the
-original already supports it. You may NOT add a skill, employer, date,
-credential, tool, or number that is not in the original.
-
-If a bullet cannot be improved without inventing something, return it
-unchanged. Returning the original is always an acceptable answer.
-
-Reply with the rewritten bullet only — no preamble, no quotes, no commentary.
-""".strip()
+#: Defined in packages/llm/prompts.py so the audit trail can name the
+#: version that produced a given rewrite. Edit it there, and bump.
+SYSTEM_PROMPT = TAILOR_SYSTEM.text
 
 #: A rewrite far longer than its source is usually padding, and padding is
 #: where invented detail hides.
@@ -120,8 +111,13 @@ def vet(
     Rejection reasons, in order of how often they matter: fabricated content,
     a bullet replaced wholesale rather than rewritten, implausible growth, or
     an empty answer.
+
+    The fabrication check is scoped to the entry the original bullet came
+    from. Checking against the whole résumé would accept a rewrite that moved
+    one employer's metric onto another employer's bullet — every fact true
+    somewhere, the sentence false where it stands.
     """
-    report = check(candidate, corpus)
+    report = check(candidate, corpus, scope=corpus.locate(original))
 
     if not candidate:
         return False, "model returned nothing", report

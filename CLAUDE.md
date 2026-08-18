@@ -36,6 +36,18 @@ These are correctness requirements, not preferences. Violating any of them is a 
    the owner finishes it by hand. This is a hard scope boundary.
 6. **Crawler respects robots.txt and rate limits.** Minimum 60s between requests to the same
    host. Configurable up, never down.
+
+   **Amended:** a host that is *known* to be a multi-tenant ATS API — one endpoint
+   serving thousands of companies' boards, listed explicitly in
+   `ratelimit.SHARED_API_HOSTS` — has its own floor of 2s instead. The original rule
+   pictures a company's own careers page, where 60s is courtesy. Applied to
+   `boards-api.greenhouse.io` it protects nobody: it serializes every company in the
+   registry behind one counter, capping the crawler at 60 boards an hour regardless of
+   how many are listed. What makes this a narrowing rather than a loophole: the host
+   list is explicit so nothing is promoted by resembling it, the 2s floor is refused
+   below exactly like the 60s one, a site's own `Crawl-delay` still raises its host's
+   delay, and a `429`/`Retry-After` backs that host off for as long as it asks. Polling
+   faster is only defensible while also listening.
 7. **Secrets never touch the database in plaintext and never appear in logs.** ATS account
    passwords go through `packages/core/vault.py` (Fernet, key from OS keychain or `.env`
    outside the repo). `.env` is gitignored and stays gitignored.
@@ -364,8 +376,9 @@ on top of it.
 
 ## 13. CI
 
-`.github/workflows/ci.yml` runs on every push to `main`, every pull request, and
-on demand. Two jobs.
+`.github/workflows/ci.yml` runs on every push to `main`, every pull request,
+weekly, and on demand. Two jobs, and they do not both run on every trigger —
+see `image` below.
 
 **`gates`** — the same checks `make gate-N` runs locally, on a machine that has
 nothing installed. It brings up `pgvector/pgvector:pg16` as a service container,
@@ -384,6 +397,15 @@ failure and you lose the label that says which phase regressed.
 
 **`image`** — builds the `Dockerfile`, imports every entry point inside it, and
 checks Chromium is present. Nothing is pushed anywhere.
+
+It does **not** run on pull requests. The repo is private, so Actions minutes
+are metered on the free plan, and this job is the expensive half of a run — it
+downloads Chromium a second time to build the image (~3 of the ~7 billable
+minutes). What it proves changes when the `Dockerfile` or the dependency set
+changes, not on every branch push, so it runs on `main`, weekly, and on
+demand. **A pull request that touches either should be checked by hand with
+`workflow_dispatch` before merging** — that is the cost of this trade, and it
+is on you to remember it.
 
 ### Why this exists
 
