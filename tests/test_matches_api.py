@@ -93,3 +93,83 @@ async def test_unknown_profile_is_404(client: AsyncClient) -> None:
         "/matches", params={"profile_id": "00000000-0000-0000-0000-000000000000"}
     )
     assert missing.status_code == 404
+
+
+# --------------------------------------------------------------------------
+# Search filters — the owner's input, not a reading of their profile
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def varied(client: AsyncClient, worker_session: AsyncSession, complete_candidate) -> str:
+    """Postings that differ on every axis a filter can cut."""
+    profile_id = uuid.UUID(complete_candidate["profile_id"])
+
+    rows = [
+        ("Senior Backend Engineer", "Remote — US", "Python and PostgreSQL.", 0.9),
+        ("Junior Backend Engineer", "Austin, TX", "Python, on-site role.", 0.8),
+        ("Principal Data Engineer", "Remote — EU", "Spark and Kubernetes.", 0.7),
+    ]
+    for index, (title, location, body, score) in enumerate(rows):
+        posting = Posting(
+            url=f"https://boards.greenhouse.io/acme/jobs/{index}",
+            title=title,
+            location=location,
+            description_raw=body,
+        )
+        worker_session.add(posting)
+        await worker_session.flush()
+        worker_session.add(
+            Match(profile_id=profile_id, posting_id=posting.id, score=score, reasons_json={})
+        )
+    await worker_session.commit()
+    return str(profile_id)
+
+
+async def _titles(client: AsyncClient, profile_id: str, **params) -> list[str]:
+    response = await client.get("/matches", params={"profile_id": profile_id, **params})
+    assert response.status_code == 200, response.text
+    return [row["title"] for row in response.json()]
+
+
+async def test_remote_filter(client: AsyncClient, varied) -> None:
+    assert await _titles(client, varied, remote="true") == [
+        "Senior Backend Engineer",
+        "Principal Data Engineer",
+    ]
+    assert await _titles(client, varied, remote="false") == ["Junior Backend Engineer"]
+
+
+async def test_seniority_range(client: AsyncClient, varied) -> None:
+    assert await _titles(client, varied, min_seniority="senior") == [
+        "Senior Backend Engineer",
+        "Principal Data Engineer",
+    ]
+    assert await _titles(client, varied, max_seniority="junior") == ["Junior Backend Engineer"]
+
+
+async def test_keywords_and_location(client: AsyncClient, varied) -> None:
+    assert await _titles(client, varied, keywords="kubernetes") == ["Principal Data Engineer"]
+    assert await _titles(client, varied, locations="Austin") == ["Junior Backend Engineer"]
+
+
+async def test_filters_combine(client: AsyncClient, varied) -> None:
+    assert await _titles(client, varied, remote="true", keywords="python") == [
+        "Senior Backend Engineer"
+    ]
+
+
+async def test_an_unknown_seniority_is_rejected_not_ignored(client: AsyncClient, varied) -> None:
+    """Silently ignoring it would return everything and look like a match."""
+    response = await client.get(
+        "/matches", params={"profile_id": varied, "min_seniority": "wizard"}
+    )
+    assert response.status_code == 400
+    assert "wizard" in response.json()["error"]["message"]
+
+
+async def test_the_limit_applies_after_filtering(client: AsyncClient, varied) -> None:
+    """A narrow search should still fill a page, not return whatever survived
+    an unfiltered slice."""
+    titles = await _titles(client, varied, remote="true", limit=2)
+    assert len(titles) == 2
