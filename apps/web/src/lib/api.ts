@@ -245,6 +245,8 @@ export const api = {
   inbox: () => request<InboundMessage[]>("/inbox"),
   matches: (includeApplied = false) =>
     request<Match[]>(`/matches?include_applied=${includeApplied}`),
+  /** Filters are the owner's search, passed straight through as query params. */
+  matchesFiltered: (query: URLSearchParams) => request<Match[]>(`/matches?${query}`),
   unrouted: () => request<InboundMessage[]>("/inbox/unrouted"),
 
   review: (id: string, body: { approve: boolean; answers?: Record<string, unknown>; note?: string }) =>

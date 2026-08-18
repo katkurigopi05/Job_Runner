@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ApiError, api, type Match, type Profile } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
+import { FilterBar } from "./filter-bar";
+import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
 
@@ -11,11 +13,30 @@ function verdict(score: number, threshold: number) {
   return { label: "below your threshold", tone: "text-ink-faint" };
 }
 
-export default async function MatchesPage() {
+const FILTER_KEYS = [
+  "keywords",
+  "locations",
+  "remote",
+  "min_seniority",
+  "max_seniority",
+  "posted_within_days",
+] as const;
+
+export default async function MatchesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
   let matches: Match[];
   let profiles: Profile[];
   try {
-    [matches, profiles] = await Promise.all([api.matches(false), api.profiles()]);
+    const query = new URLSearchParams({ include_applied: "false" });
+    for (const key of FILTER_KEYS) {
+      const value = params[key];
+      if (typeof value === "string" && value) query.set(key, value);
+    }
+    [matches, profiles] = await Promise.all([api.matchesFiltered(query), api.profiles()]);
   } catch (error) {
     if (error instanceof ApiError) return <ErrorPanel error={error} />;
     throw error;
@@ -34,6 +55,10 @@ export default async function MatchesPage() {
           it should be arguable rather than taken on trust.
         </p>
       </header>
+
+      <Suspense fallback={null}>
+        <FilterBar resultCount={matches.length} />
+      </Suspense>
 
       {matches.length === 0 ? (
         <div className="rounded-[var(--radius-lg)] border border-dashed border-rule px-6 py-16 text-center">

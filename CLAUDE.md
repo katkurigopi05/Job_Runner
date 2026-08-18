@@ -6,10 +6,24 @@ Project context for Claude Code. Read this before any task in this repo.
 
 ## 1. What we are building
 
-**Jobrunner** — a local, single-user job-application agent. It watches a curated list of
-company career pages, scores new postings against the owner's profile, rewrites the résumé
-per posting, fills the real ATS form in a headless browser, and holds for approval before
-submitting. Recruiter replies are ingested and routed back to the application record.
+**Jobrunner** — a local, single-user job-application agent. It finds job postings
+matching filters the owner sets, from any company's careers page it can reach, scores them
+against the owner's profile, rewrites the résumé per posting, fills the real ATS form in a
+headless browser, and holds for approval before submitting. Recruiter replies are ingested
+and routed back to the application record.
+
+**"Any company" is a direction, not a claim.** The registry in `seeds/companies.yaml` is a
+seed, not the boundary. Discovery ingests postings from aggregators, resolves each to a
+real ATS form where it can, and promotes the boards it finds into the registry so the
+crawler polls them first-hand from then on (`packages/crawler/discover.py`). The list grows
+itself from what it finds rather than being written up front. A commercial product in this
+space indexes 106,000 career portals; we index what we have promoted so far, and the
+mechanism that closes that gap is promotion, not a bigger hand-written file. See
+`docs/REFERENCE.md`.
+
+**Filters are the owner's input, not a reading of their profile.** What the owner wants to
+see and what goes on their application are different things, and conflating them means
+narrowing a search also changes what gets typed into a form.
 
 Reference teardown of the commercial product this is modeled on: `docs/TSENTA_ARCHITECTURE.md`.
 
