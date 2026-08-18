@@ -328,10 +328,80 @@ class AshbyExtractor:
         return postings
 
 
+class WorkableExtractor:
+    """Reads Workable's public widget API.
+
+    `?details=true` returns every open posting with its full description in one
+    call — the same bargain Greenhouse's `content=true` and Lever's `mode=json`
+    make.
+
+    Two shapes differ from the others and both matter:
+
+    The `url` field points at `apply.workable.com/j/<shortcode>` — no company
+    segment. The adapter's URL pattern requires one
+    (`apply.workable.com/<company>/j/<id>`), so a posting stored with the bare
+    form would not route to an adapter when it came time to apply. The company
+    form is reconstructed rather than trusted.
+
+    Location arrives split across `city`, `state`, and `country` rather than as
+    one string. Joining them is not cosmetic: the search filters match on
+    location text, and a posting whose location is only "Amsterdam" fails a
+    filter for the Netherlands.
+    """
+
+    ats = "workable"
+
+    BOARD_URL = "https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true"
+
+    def board_url(self, company_slug: str) -> str:
+        return self.BOARD_URL.format(slug=company_slug)
+
+    def parse(self, body: str, company_slug: str) -> list[ExtractedPosting]:
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            log.warning("workable_board_not_json", company=company_slug)
+            return []
+
+        if not isinstance(payload, dict):
+            log.warning("workable_board_unexpected_shape", company=company_slug)
+            return []
+
+        jobs = payload.get("jobs") or []
+        postings: list[ExtractedPosting] = []
+
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            shortcode = job.get("shortcode")
+            if not shortcode:
+                continue
+
+            location = ", ".join(
+                part for part in (job.get("city"), job.get("state"), job.get("country")) if part
+            )
+
+            posting = ExtractedPosting(
+                external_id=str(shortcode),
+                # Reconstructed with the company segment — see the docstring.
+                url=f"https://apply.workable.com/{company_slug}/j/{shortcode}/",
+                title=job.get("title") or None,
+                location=location or None,
+                description_raw=strip_html(job.get("description")),
+                ats_type=self.ats,
+                published_at=parse_timestamp(job.get("published_on") or job.get("created_at")),
+            )
+            posting.content_hash = posting_hash(posting)
+            postings.append(posting)
+
+        return postings
+
+
 EXTRACTORS: dict[str, PostingExtractor] = {
     GreenhouseExtractor.ats: GreenhouseExtractor(),
     LeverExtractor.ats: LeverExtractor(),
     AshbyExtractor.ats: AshbyExtractor(),
+    WorkableExtractor.ats: WorkableExtractor(),
 }
 
 

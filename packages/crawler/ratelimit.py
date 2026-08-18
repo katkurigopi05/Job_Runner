@@ -63,6 +63,10 @@ SHARED_API_HOSTS: frozenset[str] = frozenset(
         "boards-api.greenhouse.io",
         "api.lever.co",
         "api.ashbyhq.com",
+        # One widget endpoint serving every Workable customer's board, so the
+        # §2.6 criterion applies: a 60s floor here serializes every Workable
+        # company behind one counter and protects nobody.
+        "apply.workable.com",
     }
 )
 
