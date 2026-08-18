@@ -11,6 +11,10 @@ storage/
 *.docx
 
 # Python
+# Both forms: `.venv/` matches the real directory, `.venv` matches the symlink
+# a worktree uses. Only the first was listed, so a worktree's symlink was
+# committable — and was committed, pointing at an absolute path on one machine.
+.venv
 __pycache__/
 *.pyc
 .venv/
