@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     min_match_score: float = 0.75
 
     llm_provider: str = "stub"
+    #: Daily ceiling on calls to a provider that leaves the machine. 0 means
+    #: unlimited. Local providers are never counted — see packages/llm/quota.py
+    #: on why exceeding this refuses instead of downgrading.
+    llm_daily_remote_calls: int = 200
 
     #: Stable across restarts so a worker recognizes its own abandoned lease.
     #: Defaults to the hostname when unset.

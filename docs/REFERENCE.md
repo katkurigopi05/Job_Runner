@@ -318,8 +318,16 @@ Ordered by value, all independent of each other:
    exist. The board hash is deliberately not recorded in that case, so the
    next cycle re-reads instead of short-circuiting on "unchanged" and going
    quiet. Surfaced as `CrawlReport.suspect`.
-3. **§3.2** — prompt version in `AuditEntry`. Still open.
-4. **§3.3** — daily provider quota that fails closed. Still open.
+3. ~~**§3.2** — prompt version in `AuditEntry`.~~ **Done.**
+   `packages/llm/prompts.py` holds each prompt with a name and version, keyed
+   by digest so `record()` labels a call without anything having to pass the
+   version down. The pinned digests in `tests/test_llm_prompts.py` are what
+   make the version honest: editing a prompt without bumping it fails there.
+4. ~~**§3.3** — daily provider quota that fails closed.~~ **Done.**
+   `packages/llm/quota.py`, counted from the audit trail rather than a second
+   tally that could disagree with it. Local providers are unlimited. Exceeding
+   it raises before the request leaves, rather than falling back to a local
+   model and putting two quality tiers in one résumé.
 5. **§3.5 / §3.6** — read together before any tuning pass, not after.
 
 ---

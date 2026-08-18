@@ -27,6 +27,7 @@ from dataclasses import dataclass
 import structlog
 
 from packages.core.enums import Classification
+from packages.llm.prompts import CLASSIFY_SYSTEM
 
 log = structlog.get_logger(__name__)
 
@@ -144,16 +145,8 @@ class RuleClassifier:
         return ClassificationResult(classification=Classification.NOISE, evidence="")
 
 
-CLASSIFY_SYSTEM_PROMPT = """
-Classify a recruiter email into exactly one of:
-interview, rejection, offer, info_request, acknowledgement, otp, noise.
-
-Answer with the single word and nothing else.
-
-A rejection is any message declining the application, however politely worded.
-An acknowledgement only confirms receipt. An interview proposes speaking. Do
-not treat a polite rejection as an interview because it mentions next steps.
-""".strip()
+#: Defined in packages/llm/prompts.py — see the note there on versioning.
+CLASSIFY_SYSTEM_PROMPT = CLASSIFY_SYSTEM.text
 
 
 class LLMClassifier:
