@@ -499,6 +499,78 @@ async def test_a_removed_posting_is_closed(db_session, seed) -> None:
     assert second.closed_postings == 1
 
 
+async def test_an_empty_board_does_not_close_everything(db_session, seed) -> None:
+    """A parse that yields nothing is treated as a broken extractor.
+
+    HTTP 200 with a payload we cannot read is indistinguishable from an
+    employer closing every requisition at once, and the two call for opposite
+    responses. Guessing "they closed" drops the postings out of the match feed
+    with no error raised anywhere, so the crawler declines to guess.
+    """
+    fetcher_a = PoliteFetcher(
+        transport=_board_transport({"jobs": [_job(1), _job(2)]}),
+        rate_limiter=limiter(),
+    )
+    await crawl_company(db_session, seed, fetcher_a, force=True)
+
+    # The shape changed; the extractor now reads nothing out of a 200.
+    fetcher_b = PoliteFetcher(
+        transport=_board_transport({"results": [{"id": 1}]}),
+        rate_limiter=limiter(),
+    )
+    second = await crawl_company(db_session, seed, fetcher_b, force=True)
+
+    assert second.closed_postings == 0
+    assert second.suspect_parse
+
+
+async def test_a_suspect_parse_is_retried_rather_than_cached(db_session, seed) -> None:
+    """The board hash is not recorded, so the next cycle re-reads and re-warns."""
+    await crawl_company(
+        db_session,
+        seed,
+        PoliteFetcher(transport=_board_transport({"jobs": [_job(1)]}), rate_limiter=limiter()),
+        force=True,
+    )
+    broken = PoliteFetcher(transport=_board_transport({"results": []}), rate_limiter=limiter())
+
+    first = await crawl_company(db_session, seed, broken, force=True)
+    again = await crawl_company(db_session, seed, broken, force=True)
+
+    assert first.suspect_parse
+    # Had the hash been recorded, this second pass would short-circuit on
+    # "unchanged" and report nothing at all.
+    assert again.suspect_parse
+
+
+async def test_a_genuinely_empty_board_with_nothing_open_is_not_suspect(db_session, seed) -> None:
+    """No open postings means nothing to protect, and nothing to warn about."""
+    fetcher = PoliteFetcher(transport=_board_transport({"jobs": []}), rate_limiter=limiter())
+
+    result = await crawl_company(db_session, seed, fetcher, force=True)
+
+    assert not result.suspect_parse
+    assert result.closed_postings == 0
+
+
+async def test_suspect_boards_are_named_in_the_report(db_session, seed) -> None:
+    await crawl_company(
+        db_session,
+        seed,
+        PoliteFetcher(transport=_board_transport({"jobs": [_job(1)]}), rate_limiter=limiter()),
+        force=True,
+    )
+    report = await crawl_all(
+        db_session,
+        [seed],
+        PoliteFetcher(transport=_board_transport({"results": []}), rate_limiter=limiter()),
+        force=True,
+    )
+
+    assert report.suspect == ["Acme"]
+    assert "suspect" in report.summary()
+
+
 async def test_poll_interval_is_respected(db_session) -> None:
     seed = CompanySeed(name="Acme", slug="acme", poll_interval_s=86400)
     fetcher = PoliteFetcher(

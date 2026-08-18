@@ -38,6 +38,10 @@ class CompanyResult:
     skipped_reason: str | None = None
     error: str | None = None
     waited_seconds: float = 0.0
+    #: Set when the board fetched and parsed to nothing while we still hold
+    #: open postings for it. Almost always a broken extractor, not an empty
+    #: board, so nothing is closed and this is surfaced instead.
+    suspect_parse: bool = False
 
     @property
     def emitted(self) -> int:
@@ -64,11 +68,18 @@ class CrawlReport:
     def failed(self) -> list[str]:
         return [r.company for r in self.results if r.error]
 
+    @property
+    def suspect(self) -> list[str]:
+        """Boards that parsed to nothing while holding open postings."""
+        return [r.company for r in self.results if r.suspect_parse]
+
     def summary(self) -> str:
         summary = (
             f"{self.fetched} boards fetched, {self.emitted} postings emitted, "
             f"{len(self.blocked)} skipped, {len(self.failed)} failed"
         )
+        if self.suspect:
+            summary += f", {len(self.suspect)} suspect ({', '.join(self.suspect)})"
         failures = [f"{result.company}: {result.error}" for result in self.results if result.error]
         return f"{summary} [{'; '.join(failures)}]" if failures else summary
 
@@ -152,22 +163,45 @@ async def _store(
 
 async def _close_missing(
     session: AsyncSession, company: Company, extracted: list[ExtractedPosting]
-) -> int:
-    """Mark postings the board no longer lists as closed."""
-    seen = {item.external_id for item in extracted}
-    closed = 0
+) -> tuple[int, bool]:
+    """Mark postings the board no longer lists as closed.
 
-    for posting in (
+    Returns `(closed, suspect)`. A board that fetched cleanly and parsed to
+    *nothing* while we still hold open postings is refused: the far likelier
+    explanation is that the extractor broke — the ATS changed its payload
+    shape, or served a degraded response with a 200 — than that an employer
+    closed every requisition between two polls.
+
+    Getting this wrong is expensive and silent. Closing the whole set drops
+    those postings out of the match feed with no error anywhere, and the next
+    successful crawl re-creates them as new, so even the audit trail reads
+    like normal churn. Declining to act costs one stale posting until the
+    extractor is fixed; the alternative costs the feed.
+    """
+    open_postings = (
         await session.scalars(
             select(Posting).where(Posting.company_id == company.id, Posting.closed_at.is_(None))
         )
-    ).all():
+    ).all()
+
+    if not extracted and open_postings:
+        log.warning(
+            "crawl_parse_yielded_nothing",
+            company=company.name,
+            open_postings=len(open_postings),
+            action="left open; extractor is the likely fault",
+        )
+        return 0, True
+
+    seen = {item.external_id for item in extracted}
+    closed = 0
+    for posting in open_postings:
         if posting.external_id and posting.external_id not in seen:
             posting.closed_at = datetime.now(UTC)
             closed += 1
 
     await session.flush()
-    return closed
+    return closed, False
 
 
 async def crawl_company(
@@ -227,9 +261,15 @@ async def crawl_company(
 
     extracted = extractor.parse(response.text, seed.slug)
     result.new_postings, result.updated_postings = await _store(session, company, extracted)
-    result.closed_postings = await _close_missing(session, company, extracted)
+    result.closed_postings, result.suspect_parse = await _close_missing(session, company, extracted)
 
-    company.board_hash = response.content_hash
+    # A suspect parse deliberately does not record the hash. Recording it
+    # would make the next cycle short-circuit on "unchanged" and the warning
+    # would never be raised again — the failure would go quiet, which is the
+    # thing this is here to prevent.
+    if not result.suspect_parse:
+        company.board_hash = response.content_hash
+
     await session.flush()
     return result
 
