@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Posting, Profile
 from packages.core.queue import ClaimedTask
-from packages.crawler.discover import ingest, promote
+from packages.crawler.discover import ingest, promote, verify_open
 from packages.crawler.fetch import build_fetcher
 from packages.matching.score import embed_postings, score_and_store
 
@@ -41,6 +41,13 @@ async def handle_discover(session: AsyncSession, claimed: ClaimedTask) -> None:
 
     if payload.get("promote", True):
         report.promoted = await promote(session, seed_path=payload.get("seed_path"))
+
+    # Aggregator postings have no board to re-read, so nothing else in the
+    # system would ever notice they had closed.
+    if payload.get("verify", True):
+        report.verified, report.closed_stale = await verify_open(
+            session, build_fetcher(), limit=int(payload.get("verify_limit", 50))
+        )
 
     if not report.new_postings:
         return

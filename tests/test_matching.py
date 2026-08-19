@@ -29,7 +29,13 @@ from packages.matching.filters import (
     seniority_ok,
     sponsorship_ok,
 )
-from packages.matching.score import TITLE_WEIGHT, keyword_overlap, score_posting
+from packages.matching.score import (
+    TITLE_WEIGHT,
+    ScoredPosting,
+    keyword_overlap,
+    missing_terms,
+    score_posting,
+)
 
 
 def posting(
@@ -347,3 +353,79 @@ def test_gate5_ranking_is_stable() -> None:
         return [t for _, t in scored]
 
     assert rank() == rank()
+
+
+# --------------------------------------------------------------------------
+# The gap report — what the posting wants that the profile does not evidence
+# --------------------------------------------------------------------------
+
+_GAP_POSTING = """We are looking for an engineer to join our platform team.
+You will build and operate Kubernetes clusters at scale. Strong Terraform
+experience is required; Terraform is central to this role. Familiarity with Go
+is a plus, and we write most services in Go. Experience with Prometheus
+monitoring. We offer great benefits, medical dental vision, and equity."""
+
+
+def _gap_posting() -> Posting:
+    return Posting(
+        id=uuid.uuid4(),
+        title="Senior Kubernetes Platform Engineer",
+        description_raw=_GAP_POSTING,
+    )
+
+
+def test_missing_terms_surfaces_the_real_gaps() -> None:
+    """§2.1 stops the tailorer inventing a skill, which leaves the owner with
+    a refusal and no information. This is the information."""
+    gaps = missing_terms(
+        "Senior backend engineer. Python, PostgreSQL, Docker, AWS.", _gap_posting()
+    )
+
+    assert "kubernetes" in gaps
+    assert "terraform" in gaps
+
+
+def test_missing_terms_excludes_boilerplate() -> None:
+    """A gap list full of 'benefits' and 'team' is one nobody reads."""
+    gaps = missing_terms("Python developer.", _gap_posting())
+
+    for noise in ("benefits", "medical", "dental", "equity", "team", "great"):
+        assert noise not in gaps
+
+
+def test_a_term_the_profile_already_has_is_not_missing() -> None:
+    profile = "Platform engineer. Kubernetes, Terraform, Go, Prometheus, Python."
+
+    assert missing_terms(profile, _gap_posting()) == []
+
+
+def test_a_named_tool_mentioned_once_still_counts() -> None:
+    """Most postings say 'experience with Prometheus' exactly once. Requiring
+    repetition would drop precisely the specific requirements."""
+    gaps = missing_terms("Backend engineer. Python and Django.", _gap_posting())
+
+    assert "prometheus" in gaps
+
+
+def test_matched_and_missing_are_disjoint() -> None:
+    profile = "Backend engineer. Python, Kubernetes, PostgreSQL."
+    posting = _gap_posting()
+
+    assert not set(keyword_overlap(profile, posting)) & set(missing_terms(profile, posting))
+
+
+def test_a_trailing_full_stop_does_not_split_a_term() -> None:
+    """'Go.' and 'Go' indexed as different tokens, which halved a term's count
+    and put the same word in two buckets of the lexical embedding."""
+    assert tokenize("we use Go. Go is fast") == ["use", "go", "go", "fast"]
+    assert tokenize("built on node.js") == ["built", "node.js"]
+
+
+def test_the_gap_report_reaches_the_match_feed() -> None:
+    """A report nobody can see is not a report."""
+    result = ScoredPosting(
+        posting_id="x", score=0.5, matched_terms=["python"], missing_terms=["kubernetes"]
+    )
+
+    assert result.reasons()["missing_terms"] == ["kubernetes"]
+    assert result.reasons()["matched_terms"] == ["python"]

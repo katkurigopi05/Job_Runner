@@ -27,6 +27,7 @@ from packages.ats.base import (
     UnsupportedSiteError,
 )
 from packages.ats.registry import adapter_for
+from packages.ats.screen import ScreenReport, screen
 from packages.core.config import get_settings
 from packages.core.enums import ApplicationStatus, FailureReason
 from packages.core.models import Application, Candidate, Match, Profile, Resume
@@ -129,6 +130,12 @@ async def _run_pipeline(
 
         questions = await adapter.enumerate_fields(page)
 
+        # Read the form before answering any of it. A question whose honest
+        # answer ends the application, or one an employer should not be
+        # asking, is worth surfacing while the decision is still the owner's
+        # — not after a fill, a screenshot and a rejection.
+        screening = screen(questions, profile)
+
         # Answers the owner supplied at review, if this is a resumed run.
         review = application.review_json or {}
         owner_answers = review.get("owner_answers") or {}
@@ -148,7 +155,9 @@ async def _run_pipeline(
         # approves, not after. Computed here so the review record carries it.
         diff = await _resume_diff(session, profile, posting.description_raw or "")
 
-        await _decide(session, application, profile, report, adapter, page, diff)
+        await _decide(
+            session, application, profile, report, adapter, page, diff, screening=screening
+        )
 
 
 async def _resume_path(session: AsyncSession, profile: Profile) -> str | None:
@@ -266,12 +275,16 @@ async def _decide(
     adapter: Any,
     page: Any,
     resume_diff: dict[str, Any] | None = None,
+    screening: ScreenReport | None = None,
 ) -> None:
     """Park for review, or submit — the approval gate.
 
     Three independent conditions must all hold before anything is sent:
     every required question is answered, AUTO_SUBMIT is on, and this profile
     opted in. Otherwise the run stops with the form filled and screenshotted.
+
+    A knock-out finding stops the *unattended* path as a fourth condition —
+    see below. It never overrides the owner's own approval.
     """
     settings = get_settings()
 
@@ -284,6 +297,8 @@ async def _decide(
         "unanswered": [q.model_dump() for q in report.unanswered],
         "screenshot_ref": report.screenshot_ref,
         "resume_diff": resume_diff,
+        # Read off the form before anything was answered.
+        "screening": screening.as_dict() if screening else None,
     }
 
     if not report.is_complete:
@@ -304,6 +319,23 @@ async def _decide(
     # and re-applying them here would park an approved application forever.
     if (application.review_json or {}).get("owner_approved"):
         await _submit(session, application, adapter, page)
+        return
+
+    # A knock-out is a question whose honest answer from this profile likely
+    # disqualifies. Sending anyway costs the owner nothing and a recruiter
+    # their time, which is the spray behaviour this project exists not to do.
+    # So it parks — but only on the unattended path. The owner having already
+    # approved this form outranks it, and that branch is above.
+    if screening is not None and screening.knock_outs:
+        await transition(
+            session,
+            application,
+            ApplicationStatus.NEEDS_REVIEW,
+            payload={
+                "reason": "the form asks a question this profile likely fails",
+                "questions": [q.label for q in screening.knock_outs],
+            },
+        )
         return
 
     if not (settings.auto_submit and profile.auto_submit):
