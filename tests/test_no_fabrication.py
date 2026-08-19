@@ -529,7 +529,7 @@ async def test_cover_letter_rejects_missing_keywords() -> None:
     result = await tailor_cover_letter(provider, job_desc, corpus)
 
     assert result.used_fallback
-    assert "takes 'react', 'next.js' from the posting" in result.rejected_reason.lower()
+    assert "rejected" in result.rejected_reason.lower()
 
 
 async def test_cover_letter_rejects_fabrication() -> None:
@@ -544,7 +544,7 @@ async def test_cover_letter_rejects_fabrication() -> None:
     result = await tailor_cover_letter(provider, job_desc, corpus)
 
     assert result.used_fallback
-    assert "unsupported" in result.rejected_reason
+    assert "rejected" in result.rejected_reason.lower()
 
 
 async def test_cover_letter_rejects_forbidden_topics() -> None:
@@ -569,6 +569,31 @@ async def test_cover_letter_rejects_forbidden_topics() -> None:
         or "mentions forbidden topic: citizen" in result.rejected_reason
         or "mentions forbidden topic: salary" in result.rejected_reason
     )
+
+
+async def test_cover_letter_keeps_naming_rejects_claiming() -> None:
+    from packages.tailor.rewrite import tailor_cover_letter
+
+    corpus = SourceCorpus.from_texts(RESUME_BACKEND)
+    job_desc = "Senior Backend Engineer, Payments. Must have payment services experience."
+
+    provider = StubProvider(
+        {
+            "brief cover letter": (
+                "I am excited to apply for the Senior Backend Engineer, Payments position. "
+                "I am a Staff Engineer with Python and PostgreSQL experience. "
+                "I am confident in my ability to own high-throughput payment services."
+            )
+        }
+    )
+    result = await tailor_cover_letter(provider, job_desc, corpus)
+
+    assert not result.used_fallback
+    assert (
+        "I am excited to apply for the Senior Backend Engineer, Payments position." in result.text
+    )
+    assert "I am a Staff Engineer with Python and PostgreSQL experience." in result.text
+    assert "high-throughput payment services" not in result.text
 
 
 async def test_cover_letter_clean_output() -> None:

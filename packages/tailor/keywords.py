@@ -41,6 +41,11 @@ job role position candidate applicant company team work working experience
 years year skills ability able strong excellent good great required requirement
 requirements responsibilities responsible qualifications preferred plus nice
 opportunity looking seeking join help build building including etc
+improve improved improving increase increased increasing
+scale scaled scaling manage managed managing lead led leading
+support supported supporting create created creating
+design designed designing develop developed developing
+deliver delivered delivering
 """
 
 _STOPWORDS: frozenset[str] = frozenset(_STOPWORDS_TEXT.split())
