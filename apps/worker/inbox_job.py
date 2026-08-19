@@ -9,8 +9,10 @@ rejection counted twice would look like two rejections.
 from __future__ import annotations
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.core.models import Candidate
 from packages.core.queue import ClaimedTask
 from packages.inbox.imap import DEFAULT_BATCH, build_mail_source
 from packages.inbox.route import route_message
@@ -34,10 +36,25 @@ async def handle_inbox(session: AsyncSession, claimed: ClaimedTask) -> None:
     if not messages:
         return
 
+    # Inference needs to know whose applications to search. This is a
+    # single-owner tool (§1), so the sole candidate is the answer; with none
+    # or several, alias routing still works and inference simply sits out
+    # rather than guessing across people.
+    candidates = list((await session.scalars(select(Candidate))).all())
+    candidate_id = candidates[0].id if len(candidates) == 1 else None
+
     routed = 0
+    inferred = 0
     for message in messages:
-        result = await route_message(session, message)
+        result = await route_message(session, message, candidate_id=candidate_id)
         if result.routed:
             routed += 1
+        if result.inferred:
+            inferred += 1
 
-    log.info("inbox_batch_processed", fetched=len(messages), routed=routed)
+    log.info(
+        "inbox_batch_processed",
+        fetched=len(messages),
+        routed=routed,
+        inferred=inferred,
+    )

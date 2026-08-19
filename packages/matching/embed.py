@@ -56,10 +56,20 @@ class Embedder(Protocol):
 
 
 def tokenize(text: str) -> list[str]:
+    """Words, lowercased, minus stopwords.
+
+    The trailing dot is stripped, and that is not cosmetic. `.` is in the
+    token pattern on purpose — "node.js", "asp.net", "3.11" are single terms —
+    but it also swallowed sentence-ending punctuation, so "Go." and "Go"
+    indexed as two different tokens. That splits a term's count in half, keeps
+    it out of any frequency-ranked list, and lands the same word in two
+    different buckets of the lexical embedding depending on where the sentence
+    ended. Only the trailing dot goes: ".net" keeps its leading one.
+    """
     return [
-        token
+        stripped
         for token in _TOKEN_RE.findall(text.lower())
-        if len(token) > 1 and token not in _STOPWORDS
+        if (stripped := token.rstrip(".")) and len(stripped) > 1 and stripped not in _STOPWORDS
     ]
 
 
