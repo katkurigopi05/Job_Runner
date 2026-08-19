@@ -379,6 +379,54 @@ Still open from this source:
   against our 29.
 - **Follow-up cadence** — nothing currently says "applied 14 days ago, silent".
 
+### Reviewed again 2026-08-19, against the owner's auto-apply goal
+
+The repository was cloned and read directly this time — 464 `.mjs` files, 79
+providers under `providers/`, MIT. Three findings, all checked rather than
+inferred.
+
+**Their apply step is weaker than ours, and deliberately so.**
+`prepare-application.mjs` says it "prints a prefill summary to stdout. Never
+POSTs anything — the user reviews the output, opens the apply URL, and submits
+themselves." The README is blunter: *"It never submits, sends, or clicks
+anything"*, and *"Does career-ops auto-apply to jobs for me? No."* We drive a
+real browser, fill the live form, and screenshot it. Their handoff is text;
+ours is a filled form plus a rendered PDF. This is the one axis where we are
+clearly ahead, and it is worth stating because the numbers — 65k stars, ~400
+contributors — invite the opposite assumption.
+
+**Their VC-portfolio seeding does not port to us, and the blocker is §2.6.**
+`seeds/vc-portfolios.mjs` walks `api.ycombinator.com/v0.1/companies` (248
+pages × 25 = ~6,200 companies) and the a16z portfolio page, then probes each
+company's ATS. It is the single biggest coverage idea in the project — ours
+seeds 29 companies. It is also unusable here:
+
+| Host | `/robots.txt` | Verdict |
+|---|---|---|
+| `api.ycombinator.com` | `User-Agent: * / Disallow: /` | refused |
+| `www.ycombinator.com` | `Disallow: /companies?*` | refused |
+| `www.workatastartup.com` | `Disallow:` (open) | allowed, but 302s to a login |
+| `a16z.com` | 404 — no file | permitted; HTML scrape of one VC |
+| `api.smartrecruiters.com` | `LinkedInBot Allow: /v1/companies/`, then `* Disallow: /` | refused |
+| `api.recruitee.com` | `Disallow: /` | refused |
+
+So the compliant remainder is a16z alone, by HTML scrape. §2.6 is a
+non-negotiable and their project does not carry the equivalent rule, which is
+why the same code is fine there and not here. Worth knowing when comparing the
+two CLIs side by side: theirs will surface YC companies and ours will not, and
+that gap is a rule, not a missing feature.
+
+**Reading their robots handling sent us to check our own, and ours was
+wrong.** Not wrong in their direction — wrong in the strict direction.
+`api.ashbyhq.com` answers **401** for `/robots.txt`, and this project treated
+every non-404 4xx as unreadable and refused. One of four extractors was
+crawling nothing, silently, and it read as an ordinary skip in the crawl
+report. RFC 9309 §2.3.1.3 makes any 4xx "unavailable" — the crawler "MAY
+access any resources" — and reserves the MUST-disallow for 5xx (§2.3.1.4).
+Fixed; a live re-check returned 137 open postings from a board that had been
+returning `Blocked`. The 5xx half is unchanged, which is the half that
+matters.
+
 Not taken: the AI-coding-CLI-as-runtime architecture, the Go/Bubble Tea TUI,
 and markdown/YAML/TSV as the datastore. Their archetype routing (role-specific
 scoring weights) is interesting and was left alone as complexity a single
