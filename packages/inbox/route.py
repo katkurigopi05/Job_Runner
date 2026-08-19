@@ -9,12 +9,30 @@ break the terminality the queue relies on to be safely retryable.
 The exception is an OTP. A verification code is not the employer's decision —
 it is the thing a parked run was waiting for, so it legitimately drives
 `needs_otp -> running`, which is an edge the machine already has.
+
+## Two ways a message finds its application
+
+An **alias** is an exact key — the `+app{id}` tag we applied with, echoed back
+in a header. Certain, and the only link allowed to conclude anything.
+
+An **inferred** link (`match.py`) is for mail carrying no tag of ours: replies
+to applications the owner finished by hand after a §2.5 manual completion, to
+aggregator leads we could not resolve to a form, or to anything applied for
+outside Jobrunner. Those replies would otherwise never reach the pipeline
+board at all.
+
+An inferred link attaches the message and stops. No outcome, no transition,
+not even an OTP. The asymmetry is deliberate: a reply attached to the wrong
+application is untidy and the owner sees it, while a *rejection* recorded on
+the wrong one is silent and wrong — the application reads as dead, the owner
+stops chasing it, and nothing ever contradicts the record.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import structlog
@@ -29,6 +47,7 @@ from packages.core.models import Application, InboundMessage
 from packages.core.state import transition
 from packages.inbox.alias import find_alias
 from packages.inbox.classify import ClassificationResult, classify
+from packages.inbox.match import infer
 
 log = structlog.get_logger(__name__)
 
@@ -58,6 +77,16 @@ class RoutingResult:
     status_changed: bool = False
     #: Why it went nowhere, when it did.
     unrouted_reason: str | None = None
+    #: "alias" when an exact tag identified the application, "inferred" when
+    #: it was matched on sender and content, "unlinked" when neither.
+    link_method: str = "unlinked"
+    link_confidence: float | None = None
+    #: Signals behind an inferred link, for the owner to sanity-check.
+    link_signals: list[str] = field(default_factory=list)
+
+    @property
+    def inferred(self) -> bool:
+        return self.link_method == "inferred"
 
     @property
     def routed(self) -> bool:
@@ -75,6 +104,7 @@ async def route_message(
     email: InboundEmail,
     *,
     result: ClassificationResult | None = None,
+    candidate_id: uuid.UUID | None = None,
 ) -> RoutingResult:
     """Store, classify, and act on one message. Does not commit.
 
@@ -85,14 +115,40 @@ async def route_message(
     routing = RoutingResult(message_id=email.message_id, classification=verdict.classification)
 
     alias = find_alias(email.to_addr, email.cc_addr, email.delivered_to)
-    if alias is None:
-        routing.unrouted_reason = "no application alias in To/Cc/Delivered-To"
-        log.info("inbound_unrouted", message_id=email.message_id, reason=routing.unrouted_reason)
-        return routing
+    application: Application | None = None
 
-    application = await session.get(Application, alias.application_id)
+    if alias is not None:
+        application = await session.get(Application, alias.application_id)
+        if application is None:
+            routing.unrouted_reason = f"alias names unknown application {alias.application_id}"
+            return routing
+        routing.link_method = "alias"
+
+    elif candidate_id is not None:
+        # No tag of ours, so this is mail for something applied to by hand —
+        # a §2.5 manual completion, an unresolved aggregator lead, or an
+        # application made outside Jobrunner entirely. Guess, carefully.
+        link = await infer(
+            session,
+            candidate_id=candidate_id,
+            from_addr=email.from_addr,
+            subject=email.subject,
+            body=email.body,
+        )
+        if link is not None:
+            application = await session.get(Application, uuid.UUID(link.application_id))
+            if application is not None:
+                routing.link_method = "inferred"
+                routing.link_confidence = link.confidence
+                routing.link_signals = link.signals
+
     if application is None:
-        routing.unrouted_reason = f"alias names unknown application {alias.application_id}"
+        routing.unrouted_reason = (
+            "no application alias in To/Cc/Delivered-To, and no confident match"
+            if candidate_id is not None
+            else "no application alias in To/Cc/Delivered-To"
+        )
+        log.info("inbound_unrouted", message_id=email.message_id, reason=routing.unrouted_reason)
         return routing
 
     routing.application_id = str(application.id)
@@ -117,9 +173,26 @@ async def route_message(
             subject=email.subject,
             body=email.body,
             classification=verdict.classification.value,
+            link_method=routing.link_method,
+            link_confidence=routing.link_confidence,
             at=email.received_at or datetime.now(UTC),
         )
     )
+
+    # An inferred link attaches the message and stops there — no outcome, and
+    # no state transition either. Attaching a reply to the wrong application
+    # is untidy and the owner can see it; recording a rejection on the wrong
+    # one is silent and wrong, and an OTP on the wrong one resumes a run that
+    # was not waiting for it. Only an exact alias may conclude anything.
+    if routing.link_method != "alias":
+        await session.flush()
+        log.info(
+            "inbound_attached_without_conclusion",
+            application_id=routing.application_id,
+            confidence=routing.link_confidence,
+            signals=routing.link_signals,
+        )
+        return routing
 
     # An OTP is the one inbound message that drives the state machine, and
     # only from the state that was waiting for it.

@@ -268,6 +268,15 @@ class InboundMessage(Base):
     subject: Mapped[str | None] = mapped_column(Text)
     body: Mapped[str | None] = mapped_column(Text)
     classification: Mapped[str | None] = mapped_column(String(50))
+    #: How this message was tied to its application: "alias" (exact, from the
+    #: +app tag we issued), "inferred" (matched on sender and content), or
+    #: "unlinked". The record says how it knows, because an inferred link is
+    #: a guess and must never be read as an exact one.
+    link_method: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'unlinked'")
+    )
+    #: 0..1 for an inferred link; NULL when the link was exact or absent.
+    link_confidence: Mapped[float | None] = mapped_column(Float)
     at: Mapped[datetime] = _created_at()
 
 
