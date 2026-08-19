@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -28,9 +29,35 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from packages.core.models import Application, Base, Candidate, Match, Posting, Profile, User
 
-TEST_DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://jobrunner:jobrunner@localhost:5432/jobrunner_test",
+
+def _from_env_file(key: str) -> str | None:
+    """Read one key out of `.env`, the way the app's Settings already does.
+
+    Without this the tests were the only part of the project that ignored
+    `.env`. On a machine where port 5432 is taken by something else — which is
+    why `docker-compose.override.yml` exists — `.env` holds the real URL, the
+    app reads it, and `make gate-0` still errored on 196 tests unless the
+    variable happened to be exported in that shell. A gate whose result
+    depends on shell history is not a gate.
+
+    Deliberately not a dotenv dependency: one key, one file, no interpolation.
+    """
+    path = Path(__file__).resolve().parent.parent / ".env"
+    if not path.is_file():
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name.strip() == key:
+            return value.strip().strip('"').strip("'") or None
+    return None
+
+
+#: A real environment variable still wins — that is how CI and one-off runs
+#: point somewhere else without editing a file that is not theirs.
+TEST_DATABASE_URL = (
+    os.environ.get("TEST_DATABASE_URL")
+    or _from_env_file("TEST_DATABASE_URL")
+    or "postgresql+asyncpg://jobrunner:jobrunner@localhost:5432/jobrunner_test"
 )
 
 #: Truncated between committing tests, children first is handled by CASCADE.

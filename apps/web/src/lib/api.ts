@@ -8,6 +8,15 @@
 
 const API = process.env.JOBRUNNER_API ?? "http://127.0.0.1:8000";
 
+/**
+ * Where the API lives, for the one case the browser must call it directly.
+ *
+ * Downloads are that case: streaming a PDF through the Next server to hand
+ * it back unchanged would buy nothing, and the browser is already on
+ * loopback so the API accepts it.
+ */
+export const API_BASE = API;
+
 export type ApplicationStatus =
   | "queued"
   | "running"
@@ -188,6 +197,56 @@ export interface Candidate {
   email: string;
 }
 
+/** The posting, as much of it as the handoff screen shows. */
+export interface PacketPosting {
+  title: string | null;
+  company: string | null;
+  location: string | null;
+  url: string | null;
+  description: string | null;
+}
+
+/** The file to upload, and whether tailoring actually produced it. */
+export interface PacketResume {
+  resume_id: string;
+  download_path: string;
+  is_tailored: boolean;
+  rewritten_bullets: number;
+  rejected_rewrites: number;
+}
+
+export interface PacketAnswer {
+  question: string;
+  value: string;
+}
+
+export interface PacketQuestion {
+  question: string;
+  kind: string | null;
+  required: boolean;
+}
+
+/**
+ * Everything needed to finish one application by hand.
+ *
+ * Exists because the run stops at the captcha every supported ATS mounts on
+ * the apply form. The work up to that point is real, and this is how it gets
+ * handed over instead of thrown away.
+ */
+export interface ApplicationPacket {
+  application_id: string;
+  status: ApplicationStatus;
+  failure_reason: FailureReason | null;
+  ats: string | null;
+  apply_url: string;
+  posting: PacketPosting | null;
+  resume: PacketResume | null;
+  answers: PacketAnswer[];
+  unanswered: PacketQuestion[];
+  screenshot_path: string | null;
+  ready_to_submit: boolean;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -239,6 +298,7 @@ export const api = {
   applications: () => request<Application[]>("/applications"),
   application: (id: string) => request<Application>(`/applications/${id}`),
   events: (id: string) => request<ApplicationEvent[]>(`/applications/${id}/events`),
+  packet: (id: string) => request<ApplicationPacket>(`/applications/${id}/packet`),
   candidates: () => request<Candidate[]>("/candidates"),
   // Scoped to a candidate by the API, not optional. Single-user or not,
   // the route requires it.

@@ -379,3 +379,68 @@ class MatchOut(BaseModel):
     body_similarity: float = 0.0
     #: Hard filters that ruled it out — location, seniority, sponsorship.
     excluded_by: list[str] = Field(default_factory=list)
+
+
+class PacketPosting(BaseModel):
+    """What the owner needs to see to recognize the job they are applying to."""
+
+    title: str | None = None
+    company: str | None = None
+    location: str | None = None
+    url: str | None = None
+    #: Truncated. The full text is on the posting record; this is for reading
+    #: on the handoff screen, not for archival.
+    description: str | None = None
+
+
+class PacketResume(BaseModel):
+    """The document to upload, and whether tailoring actually produced it."""
+
+    resume_id: uuid.UUID
+    download_path: str
+    #: False means this is the profile's base résumé — tailoring produced
+    #: nothing, and the owner should know that rather than assume otherwise.
+    is_tailored: bool
+    rewritten_bullets: int = 0
+    rejected_rewrites: int = 0
+
+
+class PacketAnswer(BaseModel):
+    """One field we filled, in the employer's own wording."""
+
+    question: str
+    value: str
+
+
+class PacketQuestion(BaseModel):
+    """One field we could not fill, in the employer's exact wording (§2.4)."""
+
+    question: str
+    kind: str | None = None
+    required: bool = False
+
+
+class ApplicationPacketOut(BaseModel):
+    """Everything needed to finish one application by hand.
+
+    This exists because of where the pipeline actually stops. Every ATS we
+    support mounts a captcha at the fill stage, and §2.5 forbids working
+    around one, so the last step belongs to the owner. That is only a
+    reasonable ask if the handoff is complete: the posting to confirm, the
+    file to upload, the answers to copy, and the questions nobody could
+    answer. Sending someone back to a bare URL wastes everything the run did.
+    """
+
+    application_id: uuid.UUID
+    status: ApplicationStatus
+    failure_reason: FailureReason | None = None
+    ats: str | None = None
+    apply_url: str
+    posting: PacketPosting | None = None
+    resume: PacketResume | None = None
+    answers: list[PacketAnswer] = Field(default_factory=list)
+    unanswered: list[PacketQuestion] = Field(default_factory=list)
+    #: Path to the screenshot of the form as we left it filled.
+    screenshot_path: str | None = None
+    #: True when the form was filled and only submission remains.
+    ready_to_submit: bool = False

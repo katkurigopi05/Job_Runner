@@ -152,8 +152,10 @@ async def _run_pipeline(
         report.screenshot_ref = await _capture(page, application, "filled-form.png")
 
         # §9 Phase 3 — the diff has to be on the screen before the owner
-        # approves, not after. Computed here so the review record carries it.
-        diff = await _resume_diff(session, profile, posting.description_raw or "")
+        # approves, not after. Computed here so the review record carries it,
+        # and the tailored PDF is rendered from the same vetted result so the
+        # file the owner uploads is the document the diff described.
+        diff = await _tailor(session, application, profile, posting.description_raw or "")
 
         await _decide(
             session, application, profile, report, adapter, page, diff, screening=screening
@@ -181,15 +183,23 @@ async def _resume_path(session: AsyncSession, profile: Profile) -> str | None:
     return str(path)
 
 
-async def _resume_diff(
-    session: AsyncSession, profile: Profile, posting_text: str
+async def _tailor(
+    session: AsyncSession,
+    application: Application,
+    profile: Profile,
+    posting_text: str,
 ) -> dict[str, Any] | None:
-    """Tailor the base résumé for this posting and return the diff.
+    """Tailor the base résumé for this posting, render it, and return the diff.
 
     Phase 3 built the rewriter, the fabrication guard, and the diff, and
     nothing ever called them — tailored_resume_id was always null, so the
     review screen had nothing to show. This is the call that makes a diff
     exist.
+
+    Rendering happens here, off the same `TailorResult` the diff is computed
+    from, because those two must not be able to disagree. Tailoring twice
+    would be non-deterministic on any real provider, and the owner would be
+    reading one document and uploading another.
 
     §2.1 is enforced inside tailor_bullets: every rewrite is guard-checked
     against the source, and one that introduces an unsupported entity falls
@@ -225,6 +235,22 @@ async def _resume_diff(
         provider = llm_router.tailor_resume()
         result = await tailor_bullets(provider, bullets, posting_text, corpus)
         summary = summarize(result)
+
+        # The file the owner uploads. Rendered even when every rewrite was
+        # rejected: that document is the source résumé with the current
+        # Projects section rebuilt into it, which is still the right thing to
+        # send and is not what sits in storage as the base.
+        from packages.tailor.publish import publish_tailored
+
+        published = await publish_tailored(
+            session,
+            candidate_id=resume.candidate_id,
+            parsed=parsed,
+            result=result,
+        )
+        if published is not None:
+            application.tailored_resume_id = published.id
+
         return {
             "changed": summary.changed,
             "unchanged": summary.unchanged,
