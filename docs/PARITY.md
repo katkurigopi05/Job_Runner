@@ -88,10 +88,10 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 | Status normalize/dedup/merge | **HAVE** | state machine + `UNIQUE(candidate_id, url)` |
 | Inbound reply matching | **HAVE** | `packages/inbox/` |
 | Interview invite detection | **HAVE** | inbox classification |
-| **Funnel analysis** (`patterns`) | **BUILD** | we hold score and outcome and never ask if they correlate |
-| **Follow-up cadence** | **BUILD** | nothing says "applied 14 days ago, silent" |
-| **Rejection latency** | **BUILD** | `outcome_at - created_at` is derivable and never derived |
-| **Weekly digest** | **BUILD** | no summary of a week's activity |
+| **Funnel analysis** (`patterns`) | **HAVE** | `packages/analytics/funnel.py` |
+| **Follow-up cadence** | **HAVE** | `packages/analytics/cadence.py` — reports, never sends |
+| **Rejection latency** | **HAVE** | `cadence.latency()`, split by outcome kind |
+| **Weekly digest** | **HAVE** | `packages/analytics/digest.py` |
 | Recruiter contacts | **BUILD** | no contact record |
 | Interview prep / story bank | **BUILD** | answers are stored, never accumulated into reusable material |
 | Assessment log | **BUILD** | no record of take-homes |
@@ -104,7 +104,7 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 | Web dashboard | **HAVE** | `apps/web/` |
 | MCP / CLI-native | **HAVE** | `apps/mcp/` |
 | Golden-set evals (`eval:golden`) | **BUILD** | §15 says our gate fixtures are not real material |
-| **Health check** (`doctor`) | **BUILD** | nothing verifies the machine before a run |
+| **Health check** (`doctor`) | **HAVE** | `make doctor` — found a broken `VAULT_KEY` on its first run |
 | Pipeline verify | **PARTIAL** | gates cover it; no single command |
 | Go TUI dashboard | **DECLINED** | the web app is the surface |
 | Self-updater, plugin registry | **DECLINED** | single-user local tool |
@@ -117,13 +117,12 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 Grouped so each block ships something usable rather than a scatter of
 half-features.
 
-1. **Tracking intelligence** — funnel analysis, follow-up cadence, rejection
-   latency, weekly digest. All four read data already in the database. This is
-   the feedback loop REFERENCE.md §3.5 named as missing, and nothing new has
-   to be fetched to build it.
-2. **`doctor`** — one command that checks Postgres, migrations, Ollama,
-   WeasyPrint's native libraries, Playwright's browser, and the vault key.
-   Every one of those has already cost a debugging session here.
+1. ~~**Tracking intelligence**~~ — **done**. `packages/analytics/`, three
+   endpoints, 13 tests. The feedback loop REFERENCE.md §3.5 named as missing.
+2. ~~**`doctor`**~~ — **done**. `make doctor`. It earned itself on the first
+   run by finding a `VAULT_KEY` that was 91 characters where Fernet needs 44 —
+   every credential write would have raised, and nothing had noticed because
+   nothing had ever tried to store one.
 3. **Explainable scoring** — the A–G rubric, salary gap, star.
 4. **Reach** — company→board resolver, more extractors, board health re-checks.
 5. **Documents** — cover letter (finish #32), tailoring cache, visual
