@@ -332,10 +332,57 @@ Ordered by value, all independent of each other:
 
 ---
 
+## 7. santifer/career-ops
+
+A second peer project, reviewed 2026-08-19: <https://github.com/santifer/career-ops>
+(MIT), by Santiago Fernández de Valderrama, who used it across 740+ listings.
+Same three ATSes as us, ~100 pre-configured companies, and — like Job Scout
+and Talvora — it evaluates and drafts but never submits. That is now four
+independent projects landing on §2.3's approval gate.
+
+Taken:
+
+- **Block G — legitimacy, kept out of the score.** Their strongest structural
+  idea: the numeric score measures *fit*, a separate tier measures whether the
+  posting is real. Mixing them lets a well-written ghost job rank highly
+  *because* it is well written. This matters more here than there: they only
+  draft, so a human reads every posting before anything is disclosed, while we
+  auto-fill a real phone number and work-authorization answers into forms.
+  `packages/matching/legitimacy.py` implements the six of their fourteen
+  signals that are computable without an LLM or a web lookup.
+- **Liveness verification** (their `scan.mjs --verify`), which named a gap
+  discovery had just created — registry postings close by absence when the
+  board is re-read, aggregator postings had nothing checking them ever.
+  `packages/crawler/liveness.py`, and `UNKNOWN` never closes anything.
+- **Untrusted-input discipline.** They treat imperative language in a JD aimed
+  at the model as an anomaly to quote and continue past. We pass
+  `description_raw` straight into the tailoring prompt and anyone can post a
+  job; the guard already defends against it structurally, since output must
+  trace to the résumé. That held by construction rather than by intent, so it
+  is now pinned by tests in `tests/test_no_fabrication.py`.
+
+Still open from this source:
+
+- **Funnel analysis** (their `analyze-patterns.mjs`). We hold
+  `ApplicationEvent`, `outcome`, `outcome_at` and `Match.score` and never ask
+  whether a higher score actually correlates with a reply. That is the
+  feedback loop §3.5 says is missing.
+- **Their ~100-company portal list**, MIT and reusable with attribution,
+  against our 29.
+- **Follow-up cadence** — nothing currently says "applied 14 days ago, silent".
+
+Not taken: the AI-coding-CLI-as-runtime architecture, the Go/Bubble Tea TUI,
+and markdown/YAML/TSV as the datastore. Their archetype routing (role-specific
+scoring weights) is interesting and was left alone as complexity a single
+owner with one profile does not need yet.
+
+---
+
 ## Credits
 
-Everything in this document that is worth anything came from **Shirin Khosravi
-Jam** and her *Observable Job Agent* project.
+The bulk of this document came from **Shirin Khosravi Jam** and her
+*Observable Job Agent* project, and §7 from **Santiago Fernández de
+Valderrama**'s *career-ops*.
 
 - Repository: <https://github.com/jamwithai/observable-job-agent> (MIT)
 - Write-up: *Build your own Job Agent*, parts 1–4 —
@@ -355,7 +402,12 @@ a defect in ours rather than merely suggesting an improvement:
   the opposite direction. She reported both, and that is the single most useful
   paragraph either of us will read this year.
 
-No code was copied from her repository into this one. What was taken is design
-reasoning, which is credited here rather than absorbed silently. Her project is
-MIT-licensed and worth reading in full — it is a better piece of engineering
-than this summary of it.
+**Santiago Fernández de Valderrama** — *career-ops*,
+<https://github.com/santifer/career-ops> (MIT). §7 above. His Block G is the
+fuller version of `packages/matching/legitimacy.py`, and his `--verify` flag
+named a gap we had just built into discovery ourselves.
+
+No code was copied from either repository into this one. What was taken is
+design reasoning, credited here rather than absorbed silently. Both projects
+are MIT-licensed and worth reading in full — each is a better piece of
+engineering than this summary of it.
