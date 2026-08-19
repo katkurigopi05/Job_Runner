@@ -195,6 +195,33 @@ async def test_server_error_on_robots_blocks() -> None:
     assert not (await cache.check("https://example.com/jobs")).allowed
 
 
+@pytest.mark.parametrize("status", [401, 403, 410, 451])
+async def test_any_4xx_on_robots_means_no_rules_were_published(status: int) -> None:
+    """RFC 9309 §2.3.1.3 — a 4xx is "unavailable", and the crawler MAY proceed.
+
+    This was 404-only, which is stricter than the standard and cost real
+    coverage: api.ashbyhq.com answers 401 for /robots.txt, so every Ashby
+    board was refused at this gate and that extractor crawled nothing at all.
+    Being stricter than the standard is not more respectful when the site
+    published no rules to respect.
+    """
+    cache = RobotsCache(transport=_robots_transport("", status=status))
+
+    decision = await cache.check("https://example.com/jobs")
+
+    assert decision.allowed
+    assert "no robots.txt" in decision.reason
+
+
+@pytest.mark.parametrize("status", [500, 502, 503])
+async def test_any_5xx_on_robots_still_blocks(status: int) -> None:
+    """RFC 9309 §2.3.1.4 — a 5xx means undefined, and "MUST assume complete
+    disallow". A site having a bad day is not a site granting permission."""
+    cache = RobotsCache(transport=_robots_transport("", status=status))
+
+    assert not (await cache.check("https://example.com/jobs")).allowed
+
+
 async def test_crawl_delay_is_read() -> None:
     cache = RobotsCache(transport=_robots_transport("User-agent: *\nCrawl-delay: 120\nDisallow:"))
     decision = await cache.check("https://example.com/jobs")
