@@ -13,12 +13,17 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Match, Posting, Profile, Project, Resume
+
+if TYPE_CHECKING:
+    from packages.matching.legitimacy import Assessment
+
 from packages.matching.embed import Embedder, cosine, get_embedder, tokenize
 from packages.matching.filters import apply_filters
 
@@ -41,6 +46,11 @@ class ScoredPosting:
     matched_terms: list[str] = field(default_factory=list)
     #: What the posting asks for that the profile does not evidence.
     missing_terms: list[str] = field(default_factory=list)
+    #: Legitimacy, from packages/matching/legitimacy.py. Reported beside the
+    #: score and never folded into it — "does this fit" and "is this real"
+    #: are different questions, and a ghost job written well would otherwise
+    #: rank highly *because* it is written well.
+    legitimacy: dict[str, object] = field(default_factory=dict)
 
     @property
     def excluded(self) -> bool:
@@ -53,6 +63,7 @@ class ScoredPosting:
             "excluded_by": self.excluded_by,
             "matched_terms": self.matched_terms,
             "missing_terms": self.missing_terms,
+            "legitimacy": self.legitimacy,
         }
 
 
@@ -89,6 +100,19 @@ async def profile_text(session: AsyncSession, profile: Profile) -> str:
     return "\n".join(parts)
 
 
+def _assess(posting: Posting, *, siblings: list[Posting] | None) -> Assessment:
+    """Imported here rather than at module scope.
+
+    `legitimacy` reads `_BOILERPLATE` and `_proper_nouns` from this module, so
+    a top-level import would be a cycle. The dependency runs one way — the
+    legitimacy tier uses scoring's vocabulary, and scoring never uses the
+    tier — and this keeps it that way.
+    """
+    from packages.matching.legitimacy import assess
+
+    return assess(posting, siblings=siblings)
+
+
 def score_posting(
     posting: Posting,
     profile: Profile,
@@ -97,6 +121,7 @@ def score_posting(
     *,
     target_seniority: str | None = None,
     profile_text_value: str = "",
+    siblings: list[Posting] | None = None,
 ) -> ScoredPosting:
     """Score one posting. Filtered-out postings score exactly 0.0.
 
@@ -123,6 +148,7 @@ def score_posting(
         body_similarity=body_similarity,
         matched_terms=keyword_overlap(profile_text_value, posting) if profile_text_value else [],
         missing_terms=missing_terms(profile_text_value, posting) if profile_text_value else [],
+        legitimacy=_assess(posting, siblings=siblings).as_dict(),
     )
 
 
@@ -164,6 +190,7 @@ async def score_and_store(
             active,
             target_seniority=target_seniority,
             profile_text_value=text,
+            siblings=postings,
         )
         scored.append(result)
 
