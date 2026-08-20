@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
-import type { Application, ResumeParsed } from "@/lib/api";
+import type { Application, ResumeParsed, Screening } from "@/lib/api";
 import { ResumePreview } from "@/components/resume-preview";
 import { ResumeDiffView } from "@/components/resume-diff";
 import { FillRate, StatusPill } from "@/components/status";
@@ -74,6 +74,8 @@ export function ReviewCard({
           <FillRate rate={review.fill_rate} />
         </div>
       </header>
+
+      <ScreeningPanel screening={review.screening} />
 
       {application.status === "needs_otp" ? (
         <form action={runOtp} className="border-b border-rule px-6 py-5">
@@ -250,5 +252,58 @@ function AttachedResume({ resume, tailored }: { resume: ResumeParsed | null; tai
         <ResumePreview parsed={resume} />
       </div>
     </details>
+  );
+}
+
+
+/**
+ * Questions read off the form before anything was answered.
+ *
+ * A knock-out is one this profile visibly fails — worth seeing before you
+ * spend the effort. A caution is a question restricted in some jurisdictions;
+ * it changes nothing on its own, and you may well decide it is just badly
+ * worded.
+ */
+function ScreeningPanel({ screening }: { screening?: Screening | null }) {
+  if (!screening) return null;
+  const { knock_outs: knockOuts, cautions } = screening;
+  if (knockOuts.length === 0 && cautions.length === 0) return null;
+
+  return (
+    <section className="border-b border-rule px-6 py-5">
+      {knockOuts.length > 0 ? (
+        <div className="rounded-[var(--radius)] border border-stop/40 bg-stop-soft px-3 py-2">
+          <p className="font-mono text-xs text-stop">
+            {knockOuts.length === 1
+              ? "this form asks a question your profile likely fails"
+              : `this form asks ${knockOuts.length} questions your profile likely fails`}
+          </p>
+          <ul className="mt-2 space-y-1">
+            {knockOuts.map((question) => (
+              <li key={question.key} className="font-mono text-xs text-stop/80">
+                “{question.label}” — {question.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {cautions.length > 0 ? (
+        <div
+          className={`rounded-[var(--radius)] border border-attn/40 bg-attn-soft px-3 py-2 ${
+            knockOuts.length > 0 ? "mt-3" : ""
+          }`}
+        >
+          <p className="font-mono text-xs text-attn">worth knowing before you answer</p>
+          <ul className="mt-2 space-y-1">
+            {cautions.map((question) => (
+              <li key={question.key} className="font-mono text-xs text-attn/80">
+                “{question.label}” — {question.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </section>
   );
 }

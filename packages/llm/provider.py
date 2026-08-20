@@ -3,6 +3,22 @@
 Every model call in the project goes through this Protocol. `StubProvider` is
 what tests use: deterministic, offline, and the reason no test can quietly
 start depending on a network model.
+
+## Temperature
+
+Every call carries one, and it is a per-task decision made in `router.py`
+rather than a global setting, for the same reason the provider is: the tasks
+want opposite things.
+
+Classifying an email is picking one word from a fixed set, where variance is
+pure downside. Tailoring a bullet is bounded by the fabrication guard, which
+throws away anything inventive — a creative model there does not produce
+better résumés, it produces a higher rejection rate and a fallback to the
+original text, which looks like the tailorer doing nothing. A cover letter is
+the one place variance buys something.
+
+Left to the vendors these would all run at whatever each defaults to, which is
+around 1.0 for most of them and far too high for the first two.
 """
 
 from __future__ import annotations
@@ -21,6 +37,15 @@ log = structlog.get_logger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+#: Used when a caller does not say. Low, because most calls in this project
+#: are extraction or classification, and the ones that are not ask explicitly.
+DEFAULT_TEMPERATURE = 0.2
+
+#: Structured output is never a creative task. `complete_json` pins this
+#: regardless of what the caller asked for: the answer has to parse against a
+#: schema, and sampling widely only produces more ways to fail that.
+JSON_TEMPERATURE = 0.0
+
 
 class LLMError(Exception):
     """The provider could not produce a usable answer."""
@@ -29,7 +54,14 @@ class LLMError(Exception):
 class LLMProvider(Protocol):
     name: str
 
-    async def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str: ...
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int = 1024,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> str: ...
 
     async def complete_json(self, system: str, user: str, schema: type[T]) -> T: ...
 
@@ -52,9 +84,25 @@ class StubProvider:
         self.responses = responses or {}
         #: Every call, for assertions and for the audit trail (CLAUDE.md §2.8).
         self.calls: list[tuple[str, str]] = []
+        #: What each call asked for. A stub cannot vary its output by
+        #: temperature, but a test can still assert the router passed the
+        #: right one — which is the part that would break silently.
+        self.temperatures: list[float] = []
 
-    async def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int = 1024,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> str:
         self.calls.append((system, user))
+        self.temperatures.append(temperature)
+        # `model=` is load-bearing, not decoration: audit.is_local() reads it
+        # to tell `llama3.1` from `kimi-k2.6:cloud`. Dropping it records a
+        # cloud call as local, which is the §2.8 trail asserting the opposite
+        # of what happened.
         record(self.name, system, user, model=getattr(self, "model", None))
         for needle, response in self.responses.items():
             if needle in user or needle in system:
@@ -83,7 +131,14 @@ class OllamaProvider:
         ).rstrip("/")
         self.model = model
 
-    async def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int = 1024,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> str:
         record(self.name, system, user, model=getattr(self, "model", None))
         async with httpx.AsyncClient() as client:
             try:
@@ -96,7 +151,7 @@ class OllamaProvider:
                             {"role": "user", "content": user},
                         ],
                         "stream": False,
-                        "options": {"num_predict": max_tokens},
+                        "options": {"num_predict": max_tokens, "temperature": temperature},
                     },
                     timeout=120.0,
                 )
@@ -120,7 +175,7 @@ class OllamaProvider:
                         ],
                         "stream": False,
                         "format": "json",
-                        "options": {"num_predict": 1024},
+                        "options": {"num_predict": 1024, "temperature": JSON_TEMPERATURE},
                     },
                     timeout=120.0,
                 )
@@ -141,7 +196,14 @@ class GeminiProvider:
         self.model = model
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    async def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int = 1024,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> str:
         record(self.name, system, user, model=getattr(self, "model", None))
         async with httpx.AsyncClient() as client:
             try:
@@ -150,7 +212,10 @@ class GeminiProvider:
                     json={
                         "systemInstruction": {"parts": [{"text": system}]},
                         "contents": [{"parts": [{"text": user}]}],
-                        "generationConfig": {"maxOutputTokens": max_tokens},
+                        "generationConfig": {
+                            "maxOutputTokens": max_tokens,
+                            "temperature": temperature,
+                        },
                     },
                     timeout=60.0,
                 )
@@ -171,6 +236,7 @@ class GeminiProvider:
                         "generationConfig": {
                             "responseMimeType": "application/json",
                             "responseSchema": schema.model_json_schema(),
+                            "temperature": JSON_TEMPERATURE,
                         },
                     },
                     timeout=60.0,
@@ -192,7 +258,14 @@ class AnthropicProvider:
         self.api_key: str = api_key
         self.model = model
 
-    async def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int = 1024,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> str:
         record(self.name, system, user, model=getattr(self, "model", None))
         async with httpx.AsyncClient() as client:
             try:
@@ -208,6 +281,7 @@ class AnthropicProvider:
                         "system": system,
                         "messages": [{"role": "user", "content": user}],
                         "max_tokens": max_tokens,
+                        "temperature": temperature,
                     },
                     timeout=60.0,
                 )
@@ -233,6 +307,7 @@ class AnthropicProvider:
                         "system": system_with_json,
                         "messages": [{"role": "user", "content": user}],
                         "max_tokens": 1024,
+                        "temperature": JSON_TEMPERATURE,
                     },
                     timeout=60.0,
                 )

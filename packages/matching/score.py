@@ -51,6 +51,9 @@ class ScoredPosting:
     #: are different questions, and a ghost job written well would otherwise
     #: rank highly *because* it is written well.
     legitimacy: dict[str, object] = field(default_factory=dict)
+    #: The score broken into dimensions — packages/matching/rubric.py. An
+    #: explanation of the ranking, never an input to it.
+    rubric: dict[str, object] = field(default_factory=dict)
 
     @property
     def excluded(self) -> bool:
@@ -64,6 +67,7 @@ class ScoredPosting:
             "matched_terms": self.matched_terms,
             "missing_terms": self.missing_terms,
             "legitimacy": self.legitimacy,
+            "rubric": self.rubric,
         }
 
 
@@ -100,6 +104,20 @@ async def profile_text(session: AsyncSession, profile: Profile) -> str:
     return "\n".join(parts)
 
 
+def _rubric(
+    posting: Posting,
+    profile: Profile,
+    scored: ScoredPosting,
+    *,
+    target_seniority: str | None,
+) -> dict[str, object]:
+    """Lazy for the same reason `_assess` is: rubric reads this module's
+    ScoredPosting, so a top-level import would be a cycle."""
+    from packages.matching.rubric import evaluate
+
+    return evaluate(posting, profile, scored, target_seniority=target_seniority).as_dict()
+
+
 def _assess(posting: Posting, *, siblings: list[Posting] | None) -> Assessment:
     """Imported here rather than at module scope.
 
@@ -131,7 +149,12 @@ def score_posting(
     """
     verdict = apply_filters(profile, posting, target_seniority=target_seniority)
     if not verdict.passed:
-        return ScoredPosting(posting_id=str(posting.id), score=0.0, excluded_by=verdict.reasons)
+        # An excluded posting still gets a rubric. This is the case where the
+        # owner most wants to know *why* — a bare 0.0 with no reason reads as
+        # a bad match rather than a filtered one.
+        excluded = ScoredPosting(posting_id=str(posting.id), score=0.0, excluded_by=verdict.reasons)
+        excluded.rubric = _rubric(posting, profile, excluded, target_seniority=target_seniority)
+        return excluded
 
     title_vector = embedder.encode([posting.title or ""])[0]
     body_vector = embedder.encode([posting.description_raw or ""])[0]
@@ -141,7 +164,7 @@ def score_posting(
 
     combined = TITLE_WEIGHT * title_similarity + BODY_WEIGHT * body_similarity
 
-    return ScoredPosting(
+    result = ScoredPosting(
         posting_id=str(posting.id),
         score=round(combined, 6),
         title_similarity=title_similarity,
@@ -150,6 +173,10 @@ def score_posting(
         missing_terms=missing_terms(profile_text_value, posting) if profile_text_value else [],
         legitimacy=_assess(posting, siblings=siblings).as_dict(),
     )
+    # Built from the result rather than inside it: every dimension reads
+    # fields the scoring above has already filled in.
+    result.rubric = _rubric(posting, profile, result, target_seniority=target_seniority)
+    return result
 
 
 async def score_and_store(

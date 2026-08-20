@@ -404,12 +404,22 @@ def test_seed_registry_loads() -> None:
     """
     seeds = load_seed()
 
+    from packages.crawler.extract import extractor_for
+
     assert len(seeds) >= 20, "the registry should be hand-picked, not empty"
     assert all(s.slug for s in seeds)
-    assert all(s.ats == "greenhouse" for s in seeds), "no adapter for other ATSes yet"
 
-    slugs = [s.slug for s in seeds]
-    assert len(slugs) == len(set(slugs)), "a duplicate slug polls the same board twice"
+    # Every entry must be an ATS we can actually read. This used to assert
+    # "greenhouse", which stopped being the invariant the moment the Lever and
+    # Ashby extractors landed — the real rule was always "there is an
+    # extractor for this", and that is what an import can violate.
+    unreadable = [s.name for s in seeds if extractor_for(s.ats) is None]
+    assert not unreadable, f"no extractor for: {unreadable}"
+
+    # Keyed on the pair: "acme" on Greenhouse and "acme" on Lever are two
+    # different boards, and deduplicating on the slug alone would drop one.
+    pairs = [(s.ats, s.slug) for s in seeds]
+    assert len(pairs) == len(set(pairs)), "a duplicate entry polls the same board twice"
 
 
 async def test_seed_validation_checks_rendered_board_after_api_404() -> None:

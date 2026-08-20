@@ -318,6 +318,11 @@ class InboundMessageOut(BaseModel):
     candidate_id: uuid.UUID
     application_id: uuid.UUID | None
     from_addr: str
+    #: How the message was tied to its application: "alias" (exact, from the
+    #: +app tag we issued), "inferred" (matched on sender and content), or
+    #: "unlinked". An inferred link is a guess and must never read as exact.
+    link_method: str = "unlinked"
+    link_confidence: float | None = None
     subject: str | None
     body: str | None
     classification: str | None
@@ -377,6 +382,19 @@ class MatchOut(BaseModel):
     closed: bool
     title_similarity: float = 0.0
     body_similarity: float = 0.0
+    #: Terms the posting emphasizes that the profile evidences, and does not.
+    #: The second list is the actionable one: §2.1 stops the tailorer adding a
+    #: skill the résumé lacks, so this is where the owner learns what is
+    #: missing and decides whether it is true of them.
+    matched_terms: list[str] = Field(default_factory=list)
+    missing_terms: list[str] = Field(default_factory=list)
+    #: Whether the posting looks real and open — a tier and findings, never a
+    #: number, and deliberately not folded into `score`. See
+    #: packages/matching/legitimacy.py.
+    legitimacy: dict[str, Any] = Field(default_factory=dict)
+    #: The score broken into dimensions. Explains the ranking, never produces
+    #: it — packages/matching/rubric.py.
+    rubric: dict[str, Any] = Field(default_factory=dict)
     #: Hard filters that ruled it out — location, seniority, sponsorship.
     excluded_by: list[str] = Field(default_factory=list)
 

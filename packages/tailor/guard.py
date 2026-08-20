@@ -20,6 +20,13 @@ claim, then require each to trace back to the source corpus:
 Ordinary English words, however rearranged, are free. That is exactly the
 latitude §2.1 grants: rephrasing is allowed, inventing is not.
 
+The word list started out sized for résumé bullets, which are terse and
+third-person. A cover letter is first-person prose, so "My", "We" and "Please"
+arrive capitalized at the start of sentences and were being read as proper
+nouns — enough to reject nearly every letter for saying "My". Those words
+carry no factual claim in any position, so they belong here regardless of
+which surface is being checked.
+
 ## Why it is deliberately strict
 
 A guard that misses a fabrication puts a false claim on a real application in
@@ -103,6 +110,9 @@ type under until up upon use used user users using value version very via
 was week well were what when where whether which while who will with within
 without work worked workflow working works would wrote year years yet you
 your
+
+my me we us those whose another still why though hire hiring company letter
+dear sincerely regards please thank thanks
 """
 
 _COMMON_WORDS: frozenset[str] = frozenset(_COMMON_WORDS_TEXT.split())
