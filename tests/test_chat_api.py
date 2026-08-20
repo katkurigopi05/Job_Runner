@@ -64,7 +64,14 @@ async def test_the_answer_is_grounded_in_real_counts(client: AsyncClient, monkey
     seen: dict[str, str] = {}
 
     class Recorder(StubProvider):
-        async def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        async def complete(
+            self,
+            system: str,
+            user: str,
+            *,
+            max_tokens: int = 1024,
+            temperature: float = 0.2,
+        ) -> str:
             seen["user"] = user
             return "three are waiting"
 

@@ -143,6 +143,17 @@ export default async function TrackerPage() {
                                 ? ` · read as ${CLASSIFICATION_LABEL[latest.classification]}`
                                 : null}
                             </p>
+                            {/* An inferred link is a guess — it is why this
+                                message did not move the application's
+                                outcome, and the owner should be able to see
+                                that rather than wonder. */}
+                            {latest.link_method === "inferred" ? (
+                              <p className="mt-1 font-mono text-xs text-attn">
+                                matched to this application by sender and content, not by
+                                our reply address — check it belongs here. Nothing was
+                                recorded against the application on this basis.
+                              </p>
+                            ) : null}
                             {/* Their words, not a summary of them. The
                                 classification above is a guess, and this is
                                 what you check it against. */}

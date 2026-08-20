@@ -77,6 +77,7 @@ export interface ReviewRecord {
   questions?: string[];
   score?: number | null;
   min_match_score?: number;
+  screening?: Screening | null;
 }
 
 export interface Application {
@@ -166,6 +167,13 @@ export interface InboundMessage {
   subject: string | null;
   body: string | null;
   classification: Classification | null;
+  /**
+   * "alias" means the +app tag we applied with came back in a header — an
+   * exact key. "inferred" means it was matched on sender and content, which
+   * is a guess: those never move an application's outcome.
+   */
+  link_method: "alias" | "inferred" | "unlinked";
+  link_confidence: number | null;
   at: string;
 }
 
@@ -187,8 +195,60 @@ export interface Match {
   closed: boolean;
   title_similarity: number;
   body_similarity: number;
+  /** Terms the posting emphasizes and the profile evidences. */
+  matched_terms: string[];
+  /**
+   * What the posting wants that your résumé does not show. The tailorer is
+   * forbidden from inventing these, so this is where you decide whether one
+   * is true of you and worth writing in.
+   */
+  missing_terms: string[];
+  legitimacy: Legitimacy | null;
+  rubric: Rubric | null;
   /** Hard filters that ruled it out — location, seniority, sponsorship. */
   excluded_by: string[];
+}
+
+/** Whether the posting looks real and open. Never folded into the score. */
+export interface Legitimacy {
+  tier: "high_confidence" | "caution" | "suspicious";
+  signals: LegitimacySignal[];
+  /** True of real postings too — contract wording, a benefits mismatch. */
+  advisories: LegitimacySignal[];
+}
+
+export interface LegitimacySignal {
+  name: string;
+  weight: "positive" | "neutral" | "concerning";
+  finding: string;
+}
+
+/** The score broken down. Explains the ranking; does not produce it. */
+export interface Rubric {
+  overall: number;
+  dimensions: RubricDimension[];
+  /** The dimension dragging it down — the one worth reading first. */
+  weakest: string | null;
+}
+
+export interface RubricDimension {
+  name: string;
+  score: number;
+  weight: number;
+  finding: string;
+}
+
+/** Questions read off the form before anything was answered. */
+export interface Screening {
+  knock_outs: ScreenedQuestion[];
+  cautions: ScreenedQuestion[];
+}
+
+export interface ScreenedQuestion {
+  key: string;
+  label: string;
+  reason: string;
+  finding: "knock_out" | "caution";
 }
 
 export interface Candidate {

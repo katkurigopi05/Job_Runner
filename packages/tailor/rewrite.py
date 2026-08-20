@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from packages.llm.prompts import TAILOR_SYSTEM
 from packages.llm.provider import LLMProvider
+from packages.llm.router import temperature_for
 from packages.tailor.guard import _COMMON_WORDS, GuardReport, SourceCorpus, check, normalize
 from packages.tailor.keywords import TermReport, analyze
 
@@ -211,7 +212,14 @@ async def tailor_bullet(
     """Rewrite one bullet, falling back to the original if it does not vet."""
     try:
         raw = await provider.complete(
-            SYSTEM_PROMPT, _user_prompt(bullet, job_description, terms), max_tokens=300
+            SYSTEM_PROMPT,
+            # `terms` is the supported/off-limits split from keywords.py —
+            # main's work. `temperature` is the per-task setting — mobile's.
+            # Both belong: one shapes what the model may say, the other how
+            # much latitude it takes while saying it.
+            _user_prompt(bullet, job_description, terms),
+            max_tokens=300,
+            temperature=temperature_for("tailor_resume"),
         )
     except Exception as exc:  # noqa: BLE001 - a provider failure is a fallback
         log.warning("tailor_provider_failed", error=type(exc).__name__)

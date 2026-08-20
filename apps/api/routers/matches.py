@@ -139,6 +139,10 @@ async def list_matches(
                 closed=posting.closed_at is not None,
                 title_similarity=float(reasons.get("title_similarity") or 0.0),
                 body_similarity=float(reasons.get("body_similarity") or 0.0),
+                matched_terms=list(reasons.get("matched_terms") or []),
+                missing_terms=list(reasons.get("missing_terms") or []),
+                legitimacy=dict(reasons.get("legitimacy") or {}),
+                rubric=dict(reasons.get("rubric") or {}),
                 excluded_by=list(reasons.get("excluded_by") or []),
             )
         )

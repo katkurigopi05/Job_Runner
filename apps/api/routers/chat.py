@@ -130,7 +130,10 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
 
     try:
         provider = llm_router.build_provider(LOCAL_PROVIDER)
-        answer = await provider.complete(SYSTEM, prompt, max_tokens=600)
+        # The assistant answers from context it was handed and is told to say
+        # when it does not know. Inventing an application status is the exact
+        # failure §14 names, so this is the low end deliberately.
+        answer = await provider.complete(SYSTEM, prompt, max_tokens=600, temperature=0.2)
     except LLMError as exc:
         # Deliberately not falling back to a configured cloud provider: chat
         # context is the owner's own data and §2.8 does not cover it.

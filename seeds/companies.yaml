@@ -1,196 +1,357 @@
-# Hand-picked company registry — CLAUDE.md §9, Phase 5.
-#
-# Not a mass crawl. `slug` is the company's identifier on its ATS board, which
-# is what the extractor requests.
-#
-# poll_interval_s is per company and is only ever an *upper* bound on
-# frequency: the 60s per-host floor in packages/crawler/ratelimit.py applies
-# regardless of what is written here.
-#
-# Every entry below was verified live on 2026-08-17 with `make validate-seeds`:
-# the board API answered 200 and returned a job list.
-#
-# 21 companies were removed in that pass. They are listed at the
-# bottom with the evidence rather than deleted outright, so nobody re-adds them
-# from memory. A 404 board is worse than an absent one: it yields zero postings,
-# which reads identically to "nothing new since the last poll", so discovery
-# silently covered a fraction of the registry it claimed to.
-
 companies:
-  - name: "Stripe"
-    slug: "stripe"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Airbnb"
-    slug: "airbnb"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Databricks"
-    slug: "databricks"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Cloudflare"
-    slug: "cloudflare"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Figma"
-    slug: "figma"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Vercel"
-    slug: "vercel"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "PlanetScale"
-    slug: "planetscale"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Temporal"
-    slug: "temporaltechnologies"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Fivetran"
-    slug: "fivetran"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Grafana Labs"
-    slug: "grafanalabs"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Datadog"
-    slug: "datadog"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Elastic"
-    slug: "elastic"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "MongoDB"
-    slug: "mongodb"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Instacart"
-    slug: "instacart"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Robinhood"
-    slug: "robinhood"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Coinbase"
-    slug: "coinbase"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Affirm"
-    slug: "affirm"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Brex"
-    slug: "brex"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Gusto"
-    slug: "gusto"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Asana"
-    slug: "asana"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Discord"
-    slug: "discord"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Reddit"
-    slug: "reddit"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Pinterest"
-    slug: "pinterest"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Duolingo"
-    slug: "duolingo"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Chime"
-    slug: "chime"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Faire"
-    slug: "faire"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Webflow"
-    slug: "webflow"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Amplitude"
-    slug: "amplitude"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-  - name: "Mixpanel"
-    slug: "mixpanel"
-    ats: "greenhouse"
-    poll_interval_s: 21600
-
-
-
-# ---------------------------------------------------------------------------
-# Removed 2026-08-17 — no Greenhouse board.
-#
-# Each returned 404 from both boards-api.greenhouse.io and the rendered
-# job-boards.greenhouse.io page, so this is not the API-not-published case.
-# Most have moved to another ATS. Re-adding one needs its current slug
-# verified, and an adapter for whatever ATS it moved to — this project only
-# speaks Greenhouse today (CLAUDE.md §8).
-#
-#   Notion (notion) — api=404 rendered=404
-#   Linear (linear) — api=404 rendered=404
-#   Ramp (ramp) — api=404 rendered=404
-#   Plaid (plaid) — api=404 rendered=404
-#   Retool (retool) — api=404 rendered=404
-#   Render (render) — api=404 rendered=404
-#   Supabase (supabase) — api=404 rendered=404
-#   dbt Labs (dbtlabs) — api=404 rendered=404
-#   Airbyte (airbyte) — api=404 rendered=404
-#   Astronomer (astronomer) — api=404 rendered=404
-#   HashiCorp (hashicorp) — api=404 rendered=404
-#   Sentry (sentry) — api=404 rendered=404
-#   Redis (redislabs) — api=404 rendered=404
-#   Confluent (confluent) — api=404 rendered=404
-#   Snowflake (snowflakecomputing) — api=404 rendered=404
-#   DoorDash (doordash) — api=404 rendered=404
-#   Rippling (rippling) — api=404 rendered=404
-#   Deel (deel) — api=404 rendered=404
-#   Miro (miro) — api=404 rendered=404
-#   Loom (loom) — api=404 rendered=404
-#   Segment (segment) — api=404 rendered=404
+- name: Stripe
+  slug: stripe
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Airbnb
+  slug: airbnb
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Databricks
+  slug: databricks
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Cloudflare
+  slug: cloudflare
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Figma
+  slug: figma
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Vercel
+  slug: vercel
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: PlanetScale
+  slug: planetscale
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Temporal
+  slug: temporaltechnologies
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Fivetran
+  slug: fivetran
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Grafana Labs
+  slug: grafanalabs
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Datadog
+  slug: datadog
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Elastic
+  slug: elastic
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: MongoDB
+  slug: mongodb
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Instacart
+  slug: instacart
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Robinhood
+  slug: robinhood
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Coinbase
+  slug: coinbase
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Affirm
+  slug: affirm
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Brex
+  slug: brex
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Gusto
+  slug: gusto
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Asana
+  slug: asana
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Discord
+  slug: discord
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Reddit
+  slug: reddit
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Pinterest
+  slug: pinterest
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Duolingo
+  slug: duolingo
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Chime
+  slug: chime
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Faire
+  slug: faire
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Webflow
+  slug: webflow
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Amplitude
+  slug: amplitude
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Mixpanel
+  slug: mixpanel
+  ats: greenhouse
+  poll_interval_s: 21600
+- name: Anthropic
+  slug: anthropic
+  ats: greenhouse
+- name: PolyAI
+  slug: polyai
+  ats: greenhouse
+- name: Parloa
+  slug: parloa
+  ats: greenhouse
+- name: Intercom
+  slug: intercom
+  ats: greenhouse
+- name: Hume AI
+  slug: humeai
+  ats: greenhouse
+- name: ElevenLabs
+  slug: elevenlabs
+  ats: ashby
+- name: Deepgram
+  slug: deepgram
+  ats: ashby
+- name: Vapi
+  slug: vapi
+  ats: ashby
+- name: Bland AI
+  slug: bland
+  ats: ashby
+- name: Airtable
+  slug: airtable
+  ats: greenhouse
+- name: Arize AI
+  slug: arizeai
+  ats: greenhouse
+- name: RunPod
+  slug: runpod
+  ats: greenhouse
+- name: Weights & Biases (CoreWeave)
+  slug: coreweave
+  ats: greenhouse
+- name: Glean
+  slug: gleanwork
+  ats: greenhouse
+- name: Ada
+  slug: ada
+  ats: greenhouse
+- name: Sierra
+  slug: sierra
+  ats: ashby
+- name: Decagon
+  slug: decagon
+  ats: ashby
+- name: Lindy
+  slug: lindy
+  ats: ashby
+- name: Speechmatics
+  slug: speechmatics
+  ats: greenhouse
+- name: n8n
+  slug: n8n
+  ats: ashby
+- name: Zapier
+  slug: zapier
+  ats: ashby
+- name: Boomi
+  slug: boomilp
+  ats: greenhouse
+- name: Cohere
+  slug: cohere
+  ats: ashby
+- name: LangChain
+  slug: langchain
+  ats: ashby
+- name: Pinecone
+  slug: pinecone
+  ats: ashby
+- name: Mistral AI
+  slug: mistral
+  ats: lever
+- name: Palantir
+  slug: palantir
+  ats: lever
+- name: Later
+  slug: later
+  ats: greenhouse
+- name: Safari AI
+  slug: safariai
+  ats: greenhouse
+- name: Hootsuite
+  slug: hootsuite
+  ats: greenhouse
+- name: Klue
+  slug: klue
+  ats: ashby
+- name: Glacis AI
+  slug: glacis-ai
+  ats: ashby
+- name: Sanctuary AI
+  slug: sanctuary
+  ats: lever
+- name: Factorial
+  slug: factorial
+  ats: greenhouse
+- name: Attio
+  slug: attio
+  ats: ashby
+- name: Tinybird
+  slug: tinybird
+  ats: ashby
+- name: Clarity AI
+  slug: clarity-ai
+  ats: lever
+- name: Travelperk
+  slug: travelperk
+  ats: ashby
+- name: Aleph Alpha
+  slug: AlephAlpha
+  ats: ashby
+- name: DeepL
+  slug: DeepL
+  ats: ashby
+- name: Black Forest Labs
+  slug: blackforestlabs
+  ats: greenhouse
+- name: Helsing
+  slug: helsing
+  ats: greenhouse
+- name: Celonis
+  slug: celonis
+  ats: greenhouse
+- name: Contentful
+  slug: contentful
+  ats: greenhouse
+- name: GetYourGuide
+  slug: getyourguide
+  ats: greenhouse
+- name: HelloFresh
+  slug: hellofresh
+  ats: greenhouse
+- name: N26
+  slug: n26
+  ats: greenhouse
+- name: Trade Republic
+  slug: traderepublicbank
+  ats: greenhouse
+- name: SumUp
+  slug: sumup
+  ats: greenhouse
+- name: Qonto
+  slug: qonto
+  ats: lever
+- name: Forto
+  slug: forto
+  ats: lever
+- name: Lakera
+  slug: lakera.ai
+  ats: ashby
+- name: Scandit
+  slug: scandit
+  ats: greenhouse
+- name: Cradle
+  slug: cradlebio
+  ats: ashby
+- name: Photoroom
+  slug: photoroom
+  ats: ashby
+- name: Pigment
+  slug: pigment
+  ats: lever
+- name: Wayve
+  slug: wayve
+  ats: greenhouse
+- name: Isomorphic Labs
+  slug: isomorphiclabs
+  ats: greenhouse
+- name: PhysicsX
+  slug: physicsx
+  ats: greenhouse
+- name: Stability AI
+  slug: stabilityai
+  ats: greenhouse
+- name: Synthesia
+  slug: synthesia
+  ats: ashby
+- name: Faculty
+  slug: faculty
+  ats: ashby
+- name: Causaly
+  slug: causaly
+  ats: ashby
+- name: Lovable
+  slug: lovable
+  ats: ashby
+- name: Legora
+  slug: legora
+  ats: ashby
+- name: Spotify
+  slug: spotify
+  ats: lever
+- name: Vinted
+  slug: vinted
+  ats: lever
+- name: Corti
+  slug: corti
+  ats: ashby
+- name: Pleo
+  slug: pleo
+  ats: ashby
+- name: Templafy
+  slug: templafy
+  ats: greenhouse
+- name: Amplemarket
+  slug: amplemarket
+  ats: greenhouse
+- name: Perplexity
+  slug: perplexity
+  ats: ashby
+- name: Clay Labs
+  slug: claylabs
+  ats: ashby
+- name: Runway
+  slug: runwayml
+  ats: greenhouse
+- name: Hightouch
+  slug: hightouch
+  ats: greenhouse
+- name: WorkOS
+  slug: workos
+  ats: ashby
+- name: Supabase
+  slug: supabase
+  ats: ashby
+- name: Resend
+  slug: resend
+  ats: ashby
+- name: Clerk
+  slug: clerk
+  ats: ashby
+- name: Inngest
+  slug: inngest
+  ats: ashby

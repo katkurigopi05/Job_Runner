@@ -1,5 +1,12 @@
 import Link from "next/link";
-import { ApiError, api, type Match, type Profile } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  type Legitimacy,
+  type Match,
+  type Profile,
+  type Rubric,
+} from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
 import { FilterBar } from "./filter-bar";
 import { Suspense } from "react";
@@ -118,6 +125,36 @@ export default async function MatchesPage({
                   </div>
                 </dl>
 
+                {match.rubric && match.rubric.dimensions.length > 0 ? (
+                  <RubricBars rubric={match.rubric} />
+                ) : null}
+
+                {match.missing_terms.length > 0 ? (
+                  <div className="mt-4">
+                    <p className="font-mono text-xs text-ink-faint">
+                      this posting asks for, and your résumé does not show
+                    </p>
+                    <ul className="mt-2 flex flex-wrap gap-2">
+                      {match.missing_terms.map((term) => (
+                        <li
+                          key={term}
+                          className="rounded-[var(--radius)] border border-attn/40 bg-attn-soft px-2 py-1 font-mono text-xs text-attn"
+                        >
+                          {term}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 font-mono text-xs text-ink-faint">
+                      the tailorer will not add these — it can only use what your résumé
+                      already supports. Add one yourself if it is true of you.
+                    </p>
+                  </div>
+                ) : null}
+
+                {match.legitimacy && match.legitimacy.tier !== "high_confidence" ? (
+                  <LegitimacyPanel legitimacy={match.legitimacy} />
+                ) : null}
+
                 {match.excluded_by.length > 0 ? (
                   <p className="mt-3 rounded-[var(--radius)] border border-stop/40 bg-stop-soft px-3 py-2 font-mono text-xs text-stop">
                     ruled out by {match.excluded_by.join(", ")} — a hard filter, not a low score
@@ -145,6 +182,72 @@ export default async function MatchesPage({
           })}
         </ul>
       )}
+    </div>
+  );
+}
+
+
+/** The score, broken into the parts that produced it. */
+function RubricBars({ rubric }: { rubric: Rubric }) {
+  const scored = rubric.dimensions.filter((d) => d.weight > 0);
+  if (scored.length === 0) return null;
+
+  return (
+    <div className="mt-4 space-y-2">
+      {scored.map((dimension) => {
+        const isWeakest = dimension.name === rubric.weakest;
+        return (
+          <div key={dimension.name} className="flex items-center gap-3">
+            <span className="w-32 shrink-0 font-mono text-xs text-ink-faint">
+              {dimension.name.replace(/_/g, " ")}
+            </span>
+            <span className="h-1.5 w-24 shrink-0 rounded-full bg-line">
+              <span
+                className={`block h-full rounded-full ${isWeakest ? "bg-attn" : "bg-ink-faint"}`}
+                style={{ width: `${(dimension.score / 5) * 100}%` }}
+              />
+            </span>
+            <span className="font-mono text-xs tabular-nums text-ink-soft">
+              {dimension.score.toFixed(1)}
+            </span>
+            <span className="font-mono text-xs text-ink-faint">{dimension.finding}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Whether the posting looks real. Shown only when it is not
+ * high_confidence — a warning on every card is one nobody reads.
+ */
+function LegitimacyPanel({ legitimacy }: { legitimacy: Legitimacy }) {
+  const concerning = legitimacy.signals.filter((s) => s.weight === "concerning");
+  const tone =
+    legitimacy.tier === "suspicious"
+      ? "border-stop/40 bg-stop-soft text-stop"
+      : "border-attn/40 bg-attn-soft text-attn";
+
+  return (
+    <div className={`mt-3 rounded-[var(--radius)] border px-3 py-2 ${tone}`}>
+      <p className="font-mono text-xs">
+        {legitimacy.tier === "suspicious"
+          ? "several ghost-job signals — worth checking before you spend time on it"
+          : "mixed signals on whether this posting is live"}
+      </p>
+      <ul className="mt-1 space-y-0.5">
+        {concerning.map((signal) => (
+          <li key={signal.name} className="font-mono text-xs opacity-80">
+            {signal.name.replace(/_/g, " ")}: {signal.finding}
+          </li>
+        ))}
+        {legitimacy.advisories.map((signal) => (
+          <li key={signal.name} className="font-mono text-xs opacity-80">
+            {signal.finding}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
