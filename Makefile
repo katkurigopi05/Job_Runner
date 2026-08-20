@@ -69,6 +69,9 @@ mcp:
 
 # Sequential live validation. A Greenhouse API 404 is checked against the
 # rendered board before the slug is reported missing. Expect ~50 minutes.
+eval-tailor:
+	$(PY)/python -m scripts.eval_tailor
+
 doctor:
 	$(PY)/python -m scripts.doctor
 
