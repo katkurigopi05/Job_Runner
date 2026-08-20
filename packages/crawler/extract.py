@@ -100,16 +100,49 @@ class _TextExtractor(HTMLParser):
         return "".join(self._parts)
 
 
-def strip_html(raw: str | None) -> str | None:
-    """Plain text from an HTML fragment, whitespace normalized."""
-    if not raw:
-        return None
+#: A second pass is needed because some boards send HTML that is *escaped*.
+#: Greenhouse's `content` field is the common case: it arrives as
+#: `&lt;p&gt;...`, and `convert_charrefs=True` turns those entities into real
+#: tags while emitting them as text — so one pass converts entities into
+#: markup instead of into prose, and returns `<p>...` looking like a job
+#: description. That is what 8,427 Greenhouse postings were stored as, and it
+#: reached the embeddings, the matched/missing term lists, and the job
+#: description handed to the tailoring model.
+#:
+#: Bounded rather than `while`: a pathological input must not spin, and no
+#: real posting is encoded more than twice.
+MAX_STRIP_PASSES = 3
 
+#: Cheap "does this still look like markup" test. Only decides whether to run
+#: another pass — the parser does the actual work.
+_TAGGISH_RE = re.compile(r"<\s*/?\s*[a-zA-Z][^>]*>")
+
+
+def _one_pass(raw: str) -> str:
     parser = _TextExtractor()
     parser.feed(raw)
     parser.close()
+    return parser.text
 
-    text = _WS_RE.sub(" ", parser.text)
+
+def strip_html(raw: str | None) -> str | None:
+    """Plain text from an HTML fragment, whitespace normalized.
+
+    Runs until the text stops looking like markup, because escaped HTML needs
+    two passes: one to turn entities into tags, one to turn tags into prose.
+    """
+    if not raw:
+        return None
+
+    text = raw
+    for _ in range(MAX_STRIP_PASSES):
+        extracted = _one_pass(text)
+        if extracted == text or not _TAGGISH_RE.search(extracted):
+            text = extracted
+            break
+        text = extracted
+
+    text = _WS_RE.sub(" ", text)
     lines = [line.strip() for line in text.splitlines()]
     cleaned = "\n".join(line for line in lines if line)
     return cleaned or None

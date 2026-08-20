@@ -1069,3 +1069,37 @@ def test_workable_shares_one_api_host_with_every_other_customer() -> None:
     from packages.crawler.ratelimit import MIN_SHARED_API_DELAY_SECONDS, floor_for
 
     assert floor_for("apply.workable.com") == MIN_SHARED_API_DELAY_SECONDS
+
+
+def test_escaped_html_is_stripped_to_prose() -> None:
+    """Greenhouse sends its `content` field HTML-escaped.
+
+    `convert_charrefs=True` turns `&lt;p&gt;` into a real tag while emitting
+    it as *text*, so a single pass converts entities into markup rather than
+    into prose. 8,427 Greenhouse postings were stored as `<h2><strong>Who we
+    are</strong></h2>...`, and that text reached the embeddings, the
+    matched/missing term lists, and the job description handed to the
+    tailoring model — where `span`, `style` and `helvetica` read as skills the
+    posting wanted.
+    """
+    escaped = (
+        "&lt;h2&gt;&lt;strong&gt;About&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;We build things.&lt;/p&gt;"
+    )
+
+    assert strip_html(escaped) == "About\nWe build things."
+
+
+def test_ordinary_html_still_takes_one_pass() -> None:
+    assert strip_html("<h2>About</h2><p>We build things.</p>") == "About\nWe build things."
+
+
+def test_prose_containing_an_angle_bracket_survives() -> None:
+    """The repeat pass must not eat text that merely looks like markup."""
+    assert strip_html("Latency 3 < 5 ms, and a &lt; sign.") == "Latency 3 < 5 ms, and a < sign."
+
+
+def test_stripping_is_bounded() -> None:
+    """A pathological input must not spin."""
+    nested = "&amp;lt;p&amp;gt;" * 50 + "text"
+
+    assert strip_html(nested) is not None

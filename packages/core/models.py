@@ -197,9 +197,32 @@ class Match(Base):
     )
     score: Mapped[float] = mapped_column(Float, nullable=False)
     reasons_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    #: What the owner did with this posting: `interested`, `skipped`, or NULL
+    #: for not yet seen. Kept beside the score rather than in its own table
+    #: because it is the same fact from the other side — the score is what the
+    #: machine thinks of this posting for this profile, and this is what the
+    #: owner thinks. Storing them together is what lets one be checked against
+    #: the other.
+    decision: Mapped[str | None] = mapped_column(String(20))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _created_at()
 
-    __table_args__ = (Index("ix_matches_profile_score", "profile_id", text("score DESC")),)
+    __table_args__ = (
+        Index("ix_matches_profile_score", "profile_id", text("score DESC")),
+        # The swipe feed's only query: undecided matches for one profile. A
+        # partial index because decided rows are the ones that accumulate, and
+        # the feed never looks at them.
+        Index(
+            "ix_matches_profile_undecided",
+            "profile_id",
+            postgresql_where=text("decision IS NULL"),
+        ),
+        # Re-scoring looks up existing rows in memory and updates them; without
+        # this a concurrent run could insert a second row for the same pair and
+        # the owner's decision would silently attach to whichever copy the
+        # query happened to return.
+        UniqueConstraint("profile_id", "posting_id", name="uq_matches_profile_posting"),
+    )
 
 
 class Application(Base):

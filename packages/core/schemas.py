@@ -370,6 +370,10 @@ class MatchOut(BaseModel):
     profile_id: uuid.UUID
     posting_id: uuid.UUID
     score: float
+    #: `interested`, `skipped`, or null for not yet seen. A verdict on the
+    #: posting — never an instruction to apply (§2.3).
+    decision: str | None = None
+    decided_at: datetime | None = None
     title: str | None
     location: str | None
     url: str
@@ -525,3 +529,25 @@ class DigestOut(BaseModel):
     quiet_week: bool = False
     funnel: FunnelOut = Field(default_factory=FunnelOut)
     latency: LatencyOut = Field(default_factory=LatencyOut)
+
+
+class MatchDecision(BaseModel):
+    """Right or left. A verdict on the posting, never an instruction to apply."""
+
+    decision: str
+
+
+class CalibrationOut(BaseModel):
+    """What the owner's swipes say the score threshold should be."""
+
+    decided: int = 0
+    interested: int = 0
+    skipped: int = 0
+    interested_mean: float | None = None
+    skipped_mean: float | None = None
+    #: Positive means the scorer ranks kept postings above discarded ones.
+    #: Zero or negative means it is not measuring what the owner wants, and no
+    #: threshold repairs that.
+    separation: float | None = None
+    suggested_min_score: float | None = None
+    enough_data: bool = False

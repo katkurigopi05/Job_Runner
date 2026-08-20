@@ -178,11 +178,29 @@ export interface InboundMessage {
 }
 
 /** A scored posting, with the breakdown that produced the score. */
+export type Decision = "interested" | "skipped";
+
+/** What the owner's swipes say the score threshold should be. */
+export interface Calibration {
+  decided: number;
+  interested: number;
+  skipped: number;
+  interested_mean: number | null;
+  skipped_mean: number | null;
+  separation: number | null;
+  suggested_min_score: number | null;
+  enough_data: boolean;
+}
+
 export interface Match {
   id: string;
   profile_id: string;
   posting_id: string;
   score: number;
+  /** `interested`, `skipped`, or null for not yet seen. A verdict on the
+   *  posting — never an instruction to apply. */
+  decision: Decision | null;
+  decided_at: string | null;
   title: string | null;
   location: string | null;
   url: string;
@@ -371,6 +389,12 @@ export const api = {
     request<Match[]>(`/matches?include_applied=${includeApplied}`),
   /** Filters are the owner's search, passed straight through as query params. */
   matchesFiltered: (query: URLSearchParams) => request<Match[]>(`/matches?${query}`),
+  calibration: () => request<Calibration>("/matches/calibration"),
+  decide: (matchId: string, decision: Decision) =>
+    request<Match>(`/matches/${matchId}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
+    }),
   unrouted: () => request<InboundMessage[]>("/inbox/unrouted"),
 
   review: (id: string, body: { approve: boolean; answers?: Record<string, unknown>; note?: string }) =>
