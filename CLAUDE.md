@@ -198,13 +198,28 @@ is what tests use — no test may hit a network LLM.
 
 Task routing (`packages/llm/router.py`):
 
-| Task | Default provider | Why |
-|---|---|---|
-| classify inbound email | Ollama | cheap, local, easy |
-| map form field to profile key | Ollama | structured, low creativity |
-| tailor résumé | best available | quality matters most here |
-| write cover letter | best available | |
-| answer open-ended question | best available | goes on a real application |
+| Task | Default provider | Temp | Why |
+|---|---|---|---|
+| classify inbound email | Ollama | 0.0 | cheap, local, easy; one word from a fixed set |
+| map form field to profile key | Ollama | 0.0 | structured, low creativity |
+| tailor résumé | best available | 0.3 | quality matters most here |
+| write cover letter | best available | 0.7 | the one task where variance buys something |
+| answer open-ended question | best available | 0.3 | goes on a real application |
+
+Temperature is routed per task for the same reason the provider is — these
+tasks want opposite things from a model. Left unset they run at each vendor's
+default, around 1.0, which is wrong for nearly all of them. Tailoring in
+particular is bounded by the fabrication guard: a creative model there does
+not write better résumés, it raises the rejection rate and falls back to the
+original bullet, which looks like the tailorer doing nothing.
+
+The table lives in `packages/llm/router.py::TEMPERATURES`. `complete_json` is
+pinned to 0.0 regardless — the answer has to parse against a schema.
+
+Tuning any of these against the guard's own pass rate is the trap in
+`docs/REFERENCE.md` §3.6: it optimises the one referee we control, and a
+rewrite can satisfy the guard while reading worse. Change one only with a
+second measure reported beside it.
 
 ---
 

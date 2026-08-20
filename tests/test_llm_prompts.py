@@ -145,3 +145,72 @@ def test_remaining_counts_down(tmp_path, monkeypatch) -> None:
 
     assert quota.remaining("gemini") == 6
     assert quota.remaining("gemini") != 0
+
+
+# --------------------------------------------------------------------------
+# Temperature — routed per task, not set globally
+# --------------------------------------------------------------------------
+
+
+def test_classification_runs_deterministically() -> None:
+    """Picking one word from a fixed set. There is no creative version of
+    "rejection", so variance here is pure downside."""
+    from packages.llm.router import temperature_for
+
+    assert temperature_for("classify_inbound_email") == 0.0
+    assert temperature_for("map_form_field") == 0.0
+
+
+def test_tailoring_is_lower_than_the_cover_letter() -> None:
+    """Tailoring is bounded by the fabrication guard, which discards anything
+    inventive — a creative model there raises the rejection rate and falls
+    back to the original bullet, which reads as the tailorer doing nothing."""
+    from packages.llm.router import temperature_for
+
+    assert temperature_for("tailor_resume") < temperature_for("write_cover_letter")
+
+
+def test_an_unknown_task_gets_our_default_not_a_vendor_s() -> None:
+    """Vendor defaults sit near 1.0, which is wrong for nearly everything
+    this project asks a model to do."""
+    from packages.llm.provider import DEFAULT_TEMPERATURE
+    from packages.llm.router import temperature_for
+
+    assert temperature_for("some_task_added_later") == DEFAULT_TEMPERATURE
+    assert DEFAULT_TEMPERATURE <= 0.3
+
+
+def test_every_routed_task_has_a_temperature() -> None:
+    """A task added to §7's table without one silently takes the default."""
+    from packages.llm.router import TEMPERATURES
+
+    expected = {
+        "classify_inbound_email",
+        "map_form_field",
+        "tailor_resume",
+        "write_cover_letter",
+        "answer_open_ended_question",
+    }
+    assert expected <= set(TEMPERATURES)
+
+
+async def test_the_tailorer_actually_passes_its_temperature() -> None:
+    """A routing table nothing reads is decoration."""
+    from packages.llm.router import temperature_for
+    from packages.tailor.guard import SourceCorpus
+    from packages.tailor.rewrite import tailor_bullet
+
+    provider = StubProvider()
+    await tailor_bullet(
+        provider, "Maintained the billing service.", "Backend role.", SourceCorpus.from_texts("")
+    )
+
+    assert provider.temperatures == [temperature_for("tailor_resume")]
+
+
+def test_structured_output_is_pinned_to_zero() -> None:
+    """The answer has to parse against a schema; sampling widely only
+    produces more ways to fail that."""
+    from packages.llm.provider import JSON_TEMPERATURE
+
+    assert JSON_TEMPERATURE == 0.0

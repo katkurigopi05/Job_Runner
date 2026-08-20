@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from packages.llm.prompts import TAILOR_SYSTEM
 from packages.llm.provider import LLMProvider
+from packages.llm.router import temperature_for
 from packages.tailor.guard import _COMMON_WORDS, GuardReport, SourceCorpus, check, normalize
 
 log = structlog.get_logger(__name__)
@@ -148,7 +149,10 @@ async def tailor_bullet(
     """Rewrite one bullet, falling back to the original if it does not vet."""
     try:
         raw = await provider.complete(
-            SYSTEM_PROMPT, _user_prompt(bullet, job_description), max_tokens=300
+            SYSTEM_PROMPT,
+            _user_prompt(bullet, job_description),
+            max_tokens=300,
+            temperature=temperature_for("tailor_resume"),
         )
     except Exception as exc:  # noqa: BLE001 - a provider failure is a fallback
         log.warning("tailor_provider_failed", error=type(exc).__name__)

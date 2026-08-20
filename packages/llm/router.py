@@ -14,11 +14,20 @@ was written to prevent.
 unreachable is an error. Quietly substituting canned output would put
 stub-generated text on a real job application, and the whole point of
 StubProvider returning an obvious marker is that fabrication stays visible.
+
+**Temperature is routed here too**, and for the same reason the provider is:
+§7's tasks want opposite things from a model, so a single global setting is
+wrong for most of them. See `TEMPERATURES` below.
 """
 
 from __future__ import annotations
 
-from packages.llm.provider import LLMError, LLMProvider, build_provider
+from packages.llm.provider import (
+    DEFAULT_TEMPERATURE,
+    LLMError,
+    LLMProvider,
+    build_provider,
+)
 
 #: Fields whose answers are copied from the profile, never generated. §2.2
 #: names work authorization and employment history; salary sits alongside them
@@ -38,6 +47,37 @@ PROTECTED_FIELDS = frozenset(
 
 class ProtectedFieldError(LLMError):
     """An LLM was asked to answer something that must come from the profile."""
+
+
+#: Temperature per §7 task. The numbers are less interesting than the reasons.
+#:
+#: - **classify_inbound_email** picks one word from a fixed set. Variance here
+#:   is pure downside; there is no creative version of "rejection".
+#: - **map_form_field** matches a question to a profile key. Same shape.
+#: - **tailor_resume** is bounded by the fabrication guard, which discards
+#:   anything inventive. A creative model does not produce better résumés
+#:   here, it produces a higher rejection rate and a silent fallback to the
+#:   original bullet — the tailorer appearing to do nothing.
+#: - **write_cover_letter** is the one task where variance buys something, and
+#:   the guard still checks the result.
+#: - **answer_open_ended_question** goes on a real application under the
+#:   owner's name, so it stays close to the evidence.
+TEMPERATURES: dict[str, float] = {
+    "classify_inbound_email": 0.0,
+    "map_form_field": 0.0,
+    "tailor_resume": 0.3,
+    "write_cover_letter": 0.7,
+    "answer_open_ended_question": 0.3,
+}
+
+
+def temperature_for(task: str) -> float:
+    """The temperature this task should run at.
+
+    An unknown task gets the conservative default rather than a vendor's,
+    which is around 1.0 for most of them and wrong for nearly everything here.
+    """
+    return TEMPERATURES.get(task, DEFAULT_TEMPERATURE)
 
 
 def _for_task(task: str, preferred: str | None = None) -> LLMProvider:
