@@ -2,11 +2,17 @@
 
 Two decisions worth stating, because both cut against convenience:
 
-- **Unreachable robots.txt means do not crawl.** The permissive reading is
-  that an error means no rules, so everything is allowed. This does the
-  opposite: if we cannot read the rules, we do not get to assume they favour
-  us. A 404 is different — that genuinely means no file exists, which the
-  standard treats as unrestricted.
+- **An unreachable robots.txt means do not crawl; an unavailable one does
+  not.** RFC 9309 draws the line at the status class, and so does this. A 5xx
+  or a network failure is "unreachable" (§2.3.1.4) — the file is undefined and
+  the crawler "MUST assume complete disallow", because a site having a bad day
+  is not a site granting permission. Any 4xx is "unavailable" (§2.3.1.3): the
+  server is telling us there is no rules file, and the crawler "MAY access any
+  resources on the server".
+
+  This distinction was 404-only once, which is stricter than the standard and
+  cost real coverage: `api.ashbyhq.com` answers 401 for `/robots.txt`, so
+  every Ashby board was refused here and that extractor crawled nothing.
 - **Crawl-delay is honoured when it is longer than ours.** A site asking for
   more space gets it. A site asking for less does not, because §2.6's floor
   is configurable upward only.
@@ -83,16 +89,30 @@ class RobotsCache:
             self._cache[host] = entry
             return entry
 
-        if response.status_code == 404:
-            # No robots.txt is a real answer: the standard reads it as
-            # unrestricted.
+        if 400 <= response.status_code < 500:
+            # RFC 9309 §2.3.1.3 "Unavailable": any 4xx means the file is
+            # unavailable, and "the crawler MAY access any resources on the
+            # server". 404 is the common case; 401 and 403 say the same thing
+            # about the *rules file*, not about the content.
+            #
+            # This was 404-only, and the difference was not theoretical:
+            # api.ashbyhq.com answers 401 for /robots.txt, so every Ashby board
+            # was refused at this gate and one of four extractors crawled
+            # nothing at all. Being stricter than the standard is not more
+            # respectful when the site published no rules to respect.
+            if response.status_code != 404:
+                log.info("robots_unavailable", host=host, status=response.status_code)
             entry = _CachedRobots(
                 parser=None, fetched_at=time.monotonic(), reachable=True, missing=True
             )
             self._cache[host] = entry
             return entry
 
-        if response.status_code >= 400:
+        if response.status_code >= 500:
+            # RFC 9309 §2.3.1.4 "Unreachable": a server error means the file is
+            # undefined and the crawler "MUST assume complete disallow". This
+            # is the case the permissive reading gets wrong — a site having a
+            # bad day is not a site granting permission.
             log.warning("robots_error_status", host=host, status=response.status_code)
             entry = _CachedRobots(parser=None, fetched_at=time.monotonic(), reachable=False)
             self._cache[host] = entry

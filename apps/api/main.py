@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from apps.api.errors import register_error_handlers
 from apps.api.middleware import LocalhostOnlyMiddleware
 from apps.api.routers import (
+    analytics,
     applications,
     candidates,
     chat,
@@ -40,6 +41,7 @@ app.include_router(postings.router)
 app.include_router(inbox.router)
 app.include_router(chat.router)
 app.include_router(matches.router)
+app.include_router(analytics.router)
 
 
 @app.get("/health", tags=["meta"])

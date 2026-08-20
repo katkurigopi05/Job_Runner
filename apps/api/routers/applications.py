@@ -7,21 +7,36 @@ import uuid
 from fastapi import APIRouter, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.completeness import missing_requirements
 from packages.core.enums import ApplicationStatus, ErrorCode, FailureReason
-from packages.core.models import Application, ApplicationEvent, Candidate, Profile
+from packages.core.models import (
+    Application,
+    ApplicationEvent,
+    Candidate,
+    Company,
+    Posting,
+    Profile,
+    Resume,
+)
 from packages.core.queue import enqueue
 from packages.core.schemas import (
     ApplicationCreate,
     ApplicationEventOut,
     ApplicationOut,
+    ApplicationPacketOut,
     OtpSubmission,
+    PacketAnswer,
+    PacketPosting,
+    PacketQuestion,
+    PacketResume,
     ReviewDecision,
 )
 from packages.core.state import transition
+from packages.core.storage import get_storage
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -211,3 +226,121 @@ async def submit_otp(
     await session.commit()
     await session.refresh(application)
     return application
+
+
+#: How much of the job description the handoff screen carries. The full text
+#: stays on the posting record; this is what a person reads before deciding
+#: they recognize the job.
+DESCRIPTION_PREVIEW_CHARS = 4000
+
+
+@router.get("/{application_id}/packet", response_model=ApplicationPacketOut)
+async def application_packet(
+    application_id: uuid.UUID, session: SessionDep
+) -> ApplicationPacketOut:
+    """Everything needed to finish this application by hand.
+
+    Every ATS this project supports mounts a captcha at the fill stage, and
+    §2.5 rules out working around one, so submission is the owner's step. The
+    run still did the expensive parts — it found the posting, scored it,
+    tailored the résumé, and answered the form — and this is where that work
+    is handed over: the posting to confirm, the file to upload, the answers to
+    copy in the employer's own wording, and the questions nobody could answer.
+    """
+    application = await session.get(Application, application_id)
+    if application is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+
+    review = application.review_json or {}
+
+    posting_out: PacketPosting | None = None
+    if application.posting_id is not None:
+        posting = await session.get(Posting, application.posting_id)
+        if posting is not None:
+            company = (
+                await session.get(Company, posting.company_id)
+                if posting.company_id is not None
+                else None
+            )
+            description = posting.description_raw or ""
+            posting_out = PacketPosting(
+                title=posting.title,
+                company=company.name if company else None,
+                location=posting.location,
+                url=posting.url,
+                description=description[:DESCRIPTION_PREVIEW_CHARS] or None,
+            )
+
+    resume_out = await _packet_resume(session, application, review)
+
+    # `value` is None for file uploads and anything the adapter redacted, and
+    # a blank row on the handoff screen is worse than no row.
+    answers = [
+        PacketAnswer(question=field["label"], value=str(field["value"]))
+        for field in review.get("filled") or []
+        if field.get("label") and field.get("value") is not None
+    ]
+
+    unanswered = [
+        PacketQuestion(
+            question=item["question"],
+            kind=item.get("kind"),
+            required=bool(item.get("required")),
+        )
+        for item in review.get("unanswered") or []
+        if item.get("question")
+    ]
+
+    screenshot_ref = review.get("screenshot_ref")
+    screenshot_path = None
+    if screenshot_ref:
+        path = get_storage().path_for(screenshot_ref)
+        screenshot_path = str(path) if path.is_file() else None
+
+    return ApplicationPacketOut(
+        application_id=application.id,
+        status=application.status,
+        failure_reason=application.failure_reason,
+        ats=application.ats,
+        apply_url=application.url,
+        posting=posting_out,
+        resume=resume_out,
+        answers=answers,
+        unanswered=unanswered,
+        screenshot_path=screenshot_path,
+        ready_to_submit=bool(screenshot_ref)
+        and not any(question.required for question in unanswered),
+    )
+
+
+async def _packet_resume(
+    session: AsyncSession, application: Application, review: dict[str, object]
+) -> PacketResume | None:
+    """The document to upload — tailored if one was rendered, base otherwise.
+
+    Falling back to the base résumé matters more than it looks. Tailoring is
+    an enhancement that is allowed to fail, and when it does the owner still
+    needs a file; handing back nothing would turn a degraded run into a
+    useless one. `is_tailored` says which they got.
+    """
+    diff = review.get("resume_diff") or {}
+    resume_id = application.tailored_resume_id
+    is_tailored = resume_id is not None
+
+    if resume_id is None:
+        profile = await session.get(Profile, application.profile_id)
+        if profile is None or profile.base_resume_id is None:
+            return None
+        resume_id = profile.base_resume_id
+
+    resume = await session.get(Resume, resume_id)
+    if resume is None:
+        return None
+
+    return PacketResume(
+        resume_id=resume.id,
+        download_path=f"/resumes/{resume.id}/file",
+        is_tailored=is_tailored,
+        rewritten_bullets=int(diff.get("changed", 0)) if isinstance(diff, dict) else 0,
+        rejected_rewrites=int(diff.get("rejected", 0)) if isinstance(diff, dict) else 0,
+    )

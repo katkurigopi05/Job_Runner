@@ -379,3 +379,131 @@ class MatchOut(BaseModel):
     body_similarity: float = 0.0
     #: Hard filters that ruled it out — location, seniority, sponsorship.
     excluded_by: list[str] = Field(default_factory=list)
+
+
+class PacketPosting(BaseModel):
+    """What the owner needs to see to recognize the job they are applying to."""
+
+    title: str | None = None
+    company: str | None = None
+    location: str | None = None
+    url: str | None = None
+    #: Truncated. The full text is on the posting record; this is for reading
+    #: on the handoff screen, not for archival.
+    description: str | None = None
+
+
+class PacketResume(BaseModel):
+    """The document to upload, and whether tailoring actually produced it."""
+
+    resume_id: uuid.UUID
+    download_path: str
+    #: False means this is the profile's base résumé — tailoring produced
+    #: nothing, and the owner should know that rather than assume otherwise.
+    is_tailored: bool
+    rewritten_bullets: int = 0
+    rejected_rewrites: int = 0
+
+
+class PacketAnswer(BaseModel):
+    """One field we filled, in the employer's own wording."""
+
+    question: str
+    value: str
+
+
+class PacketQuestion(BaseModel):
+    """One field we could not fill, in the employer's exact wording (§2.4)."""
+
+    question: str
+    kind: str | None = None
+    required: bool = False
+
+
+class ApplicationPacketOut(BaseModel):
+    """Everything needed to finish one application by hand.
+
+    This exists because of where the pipeline actually stops. Every ATS we
+    support mounts a captcha at the fill stage, and §2.5 forbids working
+    around one, so the last step belongs to the owner. That is only a
+    reasonable ask if the handoff is complete: the posting to confirm, the
+    file to upload, the answers to copy, and the questions nobody could
+    answer. Sending someone back to a bare URL wastes everything the run did.
+    """
+
+    application_id: uuid.UUID
+    status: ApplicationStatus
+    failure_reason: FailureReason | None = None
+    ats: str | None = None
+    apply_url: str
+    posting: PacketPosting | None = None
+    resume: PacketResume | None = None
+    answers: list[PacketAnswer] = Field(default_factory=list)
+    unanswered: list[PacketQuestion] = Field(default_factory=list)
+    #: Path to the screenshot of the form as we left it filled.
+    screenshot_path: str | None = None
+    #: True when the form was filled and only submission remains.
+    ready_to_submit: bool = False
+
+
+class FunnelOut(BaseModel):
+    """Where applications stop, and whether the score predicts anything."""
+
+    total: int = 0
+    submitted: int = 0
+    needs_review: int = 0
+    failed: int = 0
+    answered: int = 0
+    engaged: int = 0
+    #: Null rather than 0.0 when nothing has been submitted. An empty
+    #: denominator is unknown, and 0% reads as "every employer ignored you".
+    answer_rate: float | None = None
+    engagement_rate: float | None = None
+    unscored: int = 0
+    #: Null until at least two score bands hold enough applications to read a
+    #: rate from — which is the honest answer for most of this tool's life.
+    score_tracks_outcome: bool | None = None
+    buckets: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class LatencyOut(BaseModel):
+    """How long employers took to answer, from the owner's own history."""
+
+    samples: int = 0
+    median_days: float | None = None
+    fastest_days: int | None = None
+    slowest_days: int | None = None
+    #: Split because a rejection and an interview invitation travel at very
+    #: different speeds, and averaging them describes neither.
+    median_rejection_days: float | None = None
+    median_engagement_days: float | None = None
+    suggested_silent_after_days: int | None = None
+
+
+class SilentOut(BaseModel):
+    application_id: str
+    url: str
+    days_since: int
+    stale: bool
+
+
+class CadenceOut(BaseModel):
+    silent: list[SilentOut] = Field(default_factory=list)
+    due: int = 0
+    stale: int = 0
+    latency: LatencyOut = Field(default_factory=LatencyOut)
+
+
+class DigestOut(BaseModel):
+    window_days: int = 7
+    postings_seen: int = 0
+    applications_created: int = 0
+    applications_submitted: int = 0
+    replies_received: int = 0
+    awaiting_review: int = 0
+    follow_ups_due: int = 0
+    #: Named rather than left as six zeroes: a quiet week usually means the
+    #: crawler stopped, not that the market did.
+    quiet_week: bool = False
+    funnel: FunnelOut = Field(default_factory=FunnelOut)
+    latency: LatencyOut = Field(default_factory=LatencyOut)
