@@ -4,10 +4,17 @@
     python -m scripts.find_boards bay-area.csv --append        # write to seeds
     python -m scripts.find_boards bay-area.csv --limit 20      # try a few first
 
-The CSV needs a column of company names. A header called `name`, `company`, or
-`company_name` is used when present; otherwise the first column is taken and
-the first row is treated as data, since a headerless list of names is the
-likeliest thing to have lying around.
+The CSV needs a column of company names, and a column of URLs helps a great
+deal. Headers `name`/`company`/`company_name` and `url`/`careers_url`/`website`
+are recognised; with no recognised header the first column is taken as names
+and row one is treated as data, since a headerless list is the likeliest thing
+to have lying around.
+
+**Bring the URLs if you have them.** A name is a guess — `acme.com` might be
+`acmecorp`, `acme-inc`, or `getacme` on Greenhouse, and only the page knows
+which. A careers URL is evidence: if it is already a board the slug is read
+straight off it, and if it is the company's own page it is fetched once and
+read for the ATS behind it.
 
 **This is slow, and it is supposed to be.** Every request goes through the
 polite fetcher, so robots.txt and the per-host floor apply — 2s between hits
@@ -27,10 +34,17 @@ from pathlib import Path
 from packages.crawler.find_boards import Resolved, ResolveReport, resolve_all
 
 NAME_COLUMNS = ("name", "company", "company_name", "companies", "employer")
+URL_COLUMNS = ("url", "careers_url", "website", "link", "careers", "site", "homepage")
 
 
-def read_names(path: Path) -> list[str]:
-    """Company names from a CSV, with or without a header."""
+def read_companies(path: Path) -> list[tuple[str, str | None]]:
+    """`(name, url)` pairs from a CSV, with or without a header.
+
+    The URL half is optional and worth a great deal when present: it is
+    evidence about which board a company uses, where the name is only a guess.
+    A row with a URL and no name still counts — the name is used for display
+    and for the fallback guess, nothing else.
+    """
     with path.open(newline="", encoding="utf-8-sig") as handle:
         rows = list(csv.reader(handle))
 
@@ -38,16 +52,27 @@ def read_names(path: Path) -> list[str]:
         return []
 
     header = [cell.strip().lower() for cell in rows[0]]
-    for candidate in NAME_COLUMNS:
-        if candidate in header:
-            index = header.index(candidate)
-            return [
-                row[index].strip() for row in rows[1:] if len(row) > index and row[index].strip()
-            ]
+    name_index = next((header.index(c) for c in NAME_COLUMNS if c in header), None)
+    url_index = next((header.index(c) for c in URL_COLUMNS if c in header), None)
 
-    # No recognised header: first column, and row one is data. Guessing that a
-    # header exists would silently drop a real company from the list.
-    return [row[0].strip() for row in rows if row and row[0].strip()]
+    if name_index is None and url_index is None:
+        # No recognised header: first column is names, and row one is data.
+        # Assuming a header exists would silently drop a real company.
+        return [(row[0].strip(), None) for row in rows if row and row[0].strip()]
+
+    def cell(row: list[str], index: int | None) -> str | None:
+        if index is None or len(row) <= index:
+            return None
+        return row[index].strip() or None
+
+    out: list[tuple[str, str | None]] = []
+    for row in rows[1:]:
+        name = cell(row, name_index)
+        url = cell(row, url_index)
+        if not name and not url:
+            continue
+        out.append((name or (url or ""), url))
+    return out
 
 
 def as_seed_entry(found: Resolved) -> str:
@@ -94,21 +119,24 @@ async def main() -> int:
         print(f"no such file: {args.csv_path}", file=sys.stderr)
         return 1
 
-    names = read_names(args.csv_path)
+    companies = read_companies(args.csv_path)
     if args.limit:
-        names = names[: args.limit]
-    if not names:
+        companies = companies[: args.limit]
+    if not companies:
         print("no company names found in that file", file=sys.stderr)
         return 1
 
-    print(f"probing {len(names)} companies across greenhouse, lever, ashby, workable")
+    with_urls = sum(1 for _, url in companies if url)
+    print(f"probing {len(companies)} companies across greenhouse, lever, ashby, workable")
+    if with_urls:
+        print(f"{with_urls} have a URL — resolved from evidence, not a guess")
     print("(2s per request per host — this takes a while)\n")
 
     def progress(name: str, outcome: object) -> None:
         mark = "hit " if isinstance(outcome, Resolved) else "  . "
         print(f"  {mark} {name}", flush=True)
 
-    report = await resolve_all(names, on_result=progress)
+    report = await resolve_all(companies, on_result=progress)
     print()
     print(render(report))
 

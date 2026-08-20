@@ -43,8 +43,11 @@ from dataclasses import dataclass, field
 
 import structlog
 
+from packages.ats.registry import detect_ats
+from packages.crawler.discover import slug_from_ats_url
 from packages.crawler.extract import extractor_for
 from packages.crawler.fetch import Blocked, PoliteFetcher
+from packages.crawler.resolve import find_embedded
 
 log = structlog.get_logger(__name__)
 
@@ -170,18 +173,155 @@ async def _probe(
     return len(postings), url, None
 
 
+#: Board *roots*, as they appear in a company list. Deliberately separate
+#: from `detect_ats` and `slug_from_ats_url`, which match a **posting** URL —
+#: they need the `/jobs/{id}` tail and return None for a bare board. That is
+#: right for their job (classifying a posting) and useless for this one: a
+#: careers column holds `jobs.ashbyhq.com/ramp` far more often than it holds a
+#: link to one specific role.
+_BOARD_ROOT_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "greenhouse",
+        re.compile(
+            r"^https?://(?:www\.)?(?:job-)?boards\.greenhouse\.io/(?P<slug>[A-Za-z0-9._-]+)/?$",
+            re.I,
+        ),
+    ),
+    (
+        # The embed form, which is what a company's own page usually iframes.
+        "greenhouse",
+        re.compile(
+            r"^https?://boards\.greenhouse\.io/embed/job_board\?for=(?P<slug>[A-Za-z0-9._-]+)",
+            re.I,
+        ),
+    ),
+    (
+        "lever",
+        re.compile(
+            r"^https?://jobs\.(?:eu\.)?lever\.co/(?P<slug>[A-Za-z0-9._-]+)/?$",
+            re.I,
+        ),
+    ),
+    (
+        "ashby",
+        re.compile(
+            r"^https?://jobs\.ashbyhq\.com/(?P<slug>[A-Za-z0-9._-]+)/?$",
+            re.I,
+        ),
+    ),
+    (
+        "workable",
+        re.compile(
+            r"^https?://(?:apply|jobs)\.workable\.com/(?P<slug>[A-Za-z0-9._-]+)/?$",
+            re.I,
+        ),
+    ),
+)
+
+
+def board_root(url: str) -> tuple[str, str] | None:
+    """`(vendor, slug)` when the URL is a board's front page."""
+    for vendor, pattern in _BOARD_ROOT_RES:
+        match = pattern.match(url.strip())
+        if match:
+            slug = match.group("slug")
+            if SLUG_RE.match(slug):
+                return vendor, slug
+    return None
+
+
+async def from_url(url: str, fetcher: PoliteFetcher) -> tuple[str, str] | None:
+    """`(vendor, slug)` for a URL the owner supplied, or None.
+
+    Two shapes arrive in a company list, and they need different handling.
+
+    **The URL is already a board** — `job-boards.greenhouse.io/acme`. The slug
+    is right there, so nothing is guessed and nothing is fetched.
+
+    **The URL is the company's own careers page** — `acme.com/careers`. Those
+    pages are overwhelmingly a wrapper around a supported ATS, with the real
+    form linked or embedded, so the page is fetched once and read for one.
+    `find_embedded` already does exactly this for aggregator links; the
+    problem is the same one, arriving from a spreadsheet instead.
+
+    This is strictly better than guessing a slug from the name: `acme.com`
+    might be `acmecorp`, `acme-inc`, or `getacme` on Greenhouse, and only the
+    page knows which.
+    """
+    root = board_root(url)
+    if root:
+        return root
+
+    # A link to one specific posting also names the board.
+    if detect_ats(url):
+        slug = slug_from_ats_url(url)
+        vendor = detect_ats(url)
+        if slug and vendor and SLUG_RE.match(slug):
+            return vendor, slug
+
+    try:
+        response = await fetcher.fetch(url)
+    except Blocked as exc:
+        log.info("careers_page_blocked", url=url, reason=str(exc))
+        return None
+    except Exception as exc:  # noqa: BLE001 - a careers page is a hint, not a dependency
+        log.debug("careers_page_failed", url=url, error=type(exc).__name__)
+        return None
+
+    if not response.ok:
+        return None
+
+    embedded = find_embedded(response.text)
+    if not embedded:
+        return None
+
+    vendor = detect_ats(embedded)
+    slug = slug_from_ats_url(embedded)
+    if vendor and slug and SLUG_RE.match(slug):
+        return vendor, slug
+    return None
+
+
 async def resolve_one(
     name: str,
     fetcher: PoliteFetcher,
     *,
+    url: str | None = None,
     vendors: tuple[str, ...] = VENDORS,
 ) -> Resolved | tuple[str, str]:
-    """Find one company's board. Returns a Resolved, or (name, reason)."""
+    """Find one company's board. Returns a Resolved, or (name, reason).
+
+    A `url` from the company list is tried first and, when it yields a vendor
+    and slug, is the only thing tried. That is the point: the URL is evidence
+    and the name is a guess, so falling back to guessing after the evidence
+    said something would be choosing the worse answer.
+
+    It falls through to name-guessing only when the URL yields nothing at all
+    — a dead link, a page with no ATS behind it, a robots refusal.
+    """
+    blocked_reason: str | None = None
+
+    if url:
+        known = await from_url(url, fetcher)
+        if known:
+            vendor, slug = known
+            count, board_url, blocked = await _probe(fetcher, vendor, slug)
+            if count:
+                return Resolved(
+                    name=name, ats=vendor, slug=slug, board_url=board_url, open_jobs=count
+                )
+            if blocked:
+                blocked_reason = blocked
+            # A board named by the company's own page but listing nothing is
+            # the clearest "not hiring" this tool can produce. Reported as
+            # such rather than sending the name-guesser looking for a
+            # different company that happens to share a word.
+            elif count == 0:
+                return name, f"board found ({vendor}/{slug}) but it lists no open roles"
+
     candidates = slug_candidates(name)
     if not candidates:
         return name, "no usable slug could be derived from the name"
-
-    blocked_reason: str | None = None
 
     for vendor in vendors:
         for slug in candidates:
@@ -198,13 +338,17 @@ async def resolve_one(
 
 
 async def resolve_all(
-    names: list[str],
+    names: list[str] | list[tuple[str, str | None]],
     fetcher: PoliteFetcher | None = None,
     *,
     vendors: tuple[str, ...] = VENDORS,
     on_result: object = None,
 ) -> ResolveReport:
-    """Resolve a list of company names.
+    """Resolve a list of company names, or (name, url) pairs.
+
+    Accepts both shapes because a company list arrives either way: a bare
+    column of names, or names beside the careers URLs someone already
+    collected. The pair form resolves far more of them — see `from_url`.
 
     Sequential on purpose. The rate limiter is per host and every candidate
     for a given vendor hits the same host, so concurrency would spend its time
@@ -214,11 +358,12 @@ async def resolve_all(
     active = fetcher or PoliteFetcher()
     report = ResolveReport()
 
-    for name in names:
-        stripped = name.strip()
+    for entry in names:
+        stripped, url = (entry, None) if isinstance(entry, str) else entry
+        stripped = stripped.strip()
         if not stripped:
             continue
-        outcome = await resolve_one(stripped, active, vendors=vendors)
+        outcome = await resolve_one(stripped, active, url=url, vendors=vendors)
         report.probes += 1
         if isinstance(outcome, Resolved):
             report.resolved.append(outcome)

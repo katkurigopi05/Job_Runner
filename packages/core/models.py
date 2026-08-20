@@ -154,8 +154,15 @@ class Posting(Base):
     ats_type: Mapped[str | None] = mapped_column(String(50))
     external_id: Mapped[str | None] = mapped_column(String(200))
     url: Mapped[str] = mapped_column(Text, nullable=False)
-    title: Mapped[str | None] = mapped_column(String(500))
-    location: Mapped[str | None] = mapped_column(String(300))
+    #: Text, not String(n). Both are typed by an employer into a form with no
+    #: length limit, and the first real crawl proved the guess wrong: a
+    #: Greenhouse posting at SumUp lists every US state it hires in, 561
+    #: characters of location against a 300-character column. That did not
+    #: truncate — asyncpg raised StringDataRightTruncationError and the whole
+    #: cycle aborted, losing 108 other companies' postings to one row.
+    #: There is no correct maximum here, so there is no maximum.
+    title: Mapped[str | None] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(Text)
     description_raw: Mapped[str | None] = mapped_column(Text)
     description_embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
     #: Change detection — an unchanged hash means the crawler emits nothing.

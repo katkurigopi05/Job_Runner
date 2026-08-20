@@ -156,3 +156,72 @@ async def test_blank_rows_in_the_csv_are_skipped_silently() -> None:
 
     assert report.probes == 0
     assert report.summary().startswith("0 resolved")
+
+
+# --------------------------------------------------------------------------
+# Resolving from a URL the company list supplied
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_board_url_is_read_not_guessed() -> None:
+    """The slug is in the URL. Guessing from the name would be choosing worse.
+
+    Verified live against `jobs.ashbyhq.com/ramp`, which name-guessing also
+    finds — and against `linear.app/careers`, whose slug is `Linear` with a
+    capital L, which name-guessing does not.
+    """
+    body = '{"jobs": [{"id": 1, "title": "Engineer", "absolute_url": "https://x/1"}]}'
+    fetcher = PoliteFetcher(transport=_transport({"greenhouse": body}))
+
+    outcome = await resolve_one(
+        "Whatever They Are Called", fetcher, url="https://job-boards.greenhouse.io/acmeco"
+    )
+
+    assert isinstance(outcome, Resolved)
+    assert outcome.slug == "acmeco"
+    assert outcome.ats == "greenhouse"
+
+
+@pytest.mark.asyncio
+async def test_a_careers_page_is_read_for_the_board_behind_it() -> None:
+    """`vercel.com/careers` is a wrapper around Greenhouse. Verified live."""
+    page = "<html><a href='https://boards.greenhouse.io/acmeco/jobs/4001'>Apply</a></html>"
+    body = '{"jobs": [{"id": 1, "title": "Engineer", "absolute_url": "https://x/1"}]}'
+    fetcher = PoliteFetcher(
+        transport=_transport({"careers": page, "boards-api.greenhouse.io": body})
+    )
+
+    outcome = await resolve_one("Acme", fetcher, url="https://acme.com/careers")
+
+    assert isinstance(outcome, Resolved)
+    assert outcome.slug == "acmeco"
+
+
+@pytest.mark.asyncio
+async def test_a_named_board_with_no_roles_does_not_fall_back_to_guessing() -> None:
+    """The company's own page named this board. Empty means not hiring.
+
+    Falling through to the name-guesser here would go looking for a *different*
+    company that happens to share a word, and report its jobs under this
+    company's name. A wrong hit is worse than an honest miss.
+    """
+    fetcher = PoliteFetcher(transport=_transport({"greenhouse": '{"jobs": []}'}))
+
+    outcome = await resolve_one("Acme", fetcher, url="https://job-boards.greenhouse.io/acmeco")
+
+    assert not isinstance(outcome, Resolved)
+    assert "lists no open roles" in outcome[1]
+
+
+@pytest.mark.asyncio
+async def test_a_dead_url_falls_back_to_the_name() -> None:
+    """A URL that yields nothing is not evidence, so the guess is still worth
+    making. Only a URL that *answered* suppresses the fallback."""
+    body = '{"jobs": [{"id": 1, "title": "Engineer", "absolute_url": "https://x/1"}]}'
+    fetcher = PoliteFetcher(transport=_transport({"greenhouse": body}))
+
+    outcome = await resolve_one("Acme", fetcher, url="https://dead.example.com/careers")
+
+    assert isinstance(outcome, Resolved)
+    assert outcome.slug == "acme"
