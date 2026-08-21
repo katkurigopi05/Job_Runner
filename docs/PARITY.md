@@ -67,7 +67,7 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 | Cover letter (`cover-letter`) | **PARTIAL** | PR #32 — sentence guard rejects salutations, emits a stub |
 | Voice/style capture (`voice-dna`) | **BUILD** | nothing models the owner's writing voice |
 | CV visual regression (`test:cv-visual`) | **BUILD** | we test the parse round-trip, never how it *looks* |
-| Per-company tailoring cache | **BUILD** | §15 already records this gap |
+| Tailoring done ahead of time | **HAVE** | `make tailor-batch` — per *posting*, not per company; see below |
 | Image → PDF (`img-to-pdf`) | **DECLINED** | narrow utility |
 
 ## Applying
@@ -133,6 +133,14 @@ half-features.
    Stripping the HTML out of the postings moved the maximum only to 0.282, so
    the 0.1–0.3 band is what this embedding does, not a bug to fix.
 4. **Reach** — company→board resolver, more extractors, board health re-checks.
-5. **Documents** — cover letter (finish #32), tailoring cache, visual
-   regression, voice capture.
+5. **Documents** — cover letter (finish #32), visual regression, voice
+   capture.
+
+   **A note on "per-company caching", which CLAUDE.md §15 lists as a gap.**
+   Measured against the real feed, only **5%** of matched postings share an
+   identical job description — different roles at one company have different
+   descriptions, so reusing a Fivetran backend tailoring for a Fivetran sales
+   role would attach a mismatched résumé. The safe unit is the posting, which
+   is what `packages/tailor/batch.py` keys on. The §15 entry is worth
+   rewording rather than implementing.
 6. **Interview material** — story bank, contacts, assessment log.

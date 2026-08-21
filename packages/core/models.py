@@ -205,6 +205,13 @@ class Match(Base):
     #: the other.
     decision: Mapped[str | None] = mapped_column(String(20))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: A résumé tailored for this posting ahead of time, so the apply pipeline
+    #: does not wait on a model. Keyed here rather than on Application because
+    #: tailoring depends on the job description, and a Match is exactly one
+    #: (profile, posting) pair — the same key the work is done against.
+    tailored_resume_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("resumes.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = _created_at()
 
     __table_args__ = (

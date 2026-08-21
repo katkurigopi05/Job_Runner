@@ -183,6 +183,36 @@ async def _resume_path(session: AsyncSession, profile: Profile) -> str | None:
     return str(path)
 
 
+async def _prepared_resume(
+    session: AsyncSession, application: Application, profile: Profile
+) -> Any | None:
+    """The résumé a batch already tailored for this posting, if there is one.
+
+    Returns None rather than raising when the stored file has gone missing —
+    the run then tailors normally, which is slower and correct.
+    """
+    if application.posting_id is None:
+        return None
+
+    match = await session.scalar(
+        select(Match).where(
+            Match.profile_id == profile.id,
+            Match.posting_id == application.posting_id,
+            Match.tailored_resume_id.is_not(None),
+        )
+    )
+    if match is None or match.tailored_resume_id is None:
+        return None
+
+    resume = await session.get(Resume, match.tailored_resume_id)
+    if resume is None:
+        return None
+    if not get_storage().path_for(resume.storage_ref).is_file():
+        log.warning("prepared_resume_missing", storage_ref=resume.storage_ref)
+        return None
+    return resume.id
+
+
 async def _tailor(
     session: AsyncSession,
     application: Application,
@@ -212,6 +242,16 @@ async def _tailor(
     """
     if profile.base_resume_id is None or not posting_text.strip():
         return None
+
+    # A batch run may already have tailored this posting overnight
+    # (packages/tailor/batch.py). Reusing it is the whole point: it takes the
+    # slowest step out of the critical path, and re-tailoring would spend a
+    # second set of provider calls to produce a *different* document from the
+    # one the owner may already have reviewed.
+    prepared = await _prepared_resume(session, application, profile)
+    if prepared is not None:
+        application.tailored_resume_id = prepared
+        return {"reused": True}
 
     resume = await session.get(Resume, profile.base_resume_id)
     if resume is None or not resume.parsed_json:
