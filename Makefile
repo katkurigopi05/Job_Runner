@@ -1,5 +1,5 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
-        check-migrations api worker workers mcp web web-install validate-seeds discover import-portals \
+        check-migrations api worker workers mcp web web-install validate-seeds discover rescore import-portals \
         gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
@@ -177,6 +177,14 @@ gate-1-live:
 # seeds/companies.yaml. Broad and slow; the crawl is narrow and fast.
 discover:
 	$(PY)/python -m scripts.discover
+
+# make rescore — re-score every open posting against the profiles as they are
+# now. Crawling already re-scores, but returns early when the sweep emitted
+# nothing, so a résumé change on its own never reaches the feed without this.
+#   make rescore p=backend   one profile
+#   make rescore dry=1       report the change, write nothing
+rescore:
+	$(PY)/python -m scripts.rescore $(if $(p),--profile $(p),) $(if $(dry),--dry-run,)
 
 # make import-portals f=../career-ops/templates/portals.example.yml
 # Pulls their maintained company list into seeds/companies.yaml. Appends
