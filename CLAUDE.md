@@ -132,12 +132,17 @@ jobrunner/
 │   ├── tailor/                   résumé rewrite, diff, PDF render, fabrication guard
 │   ├── matching/                 embeddings, hard filters, scoring
 │   ├── inbox/                    IMAP ingest, classification, routing
-│   └── llm/                      provider abstraction, task router, audit trail
+│   ├── llm/                      provider abstraction, task router, audit trail
+│   ├── analytics/                funnel, cadence, weekly digest — reads only, never writes
+│   └── github/                   the owner's own repos, behind /projects
 ├── migrations/                   alembic
 ├── storage/                      gitignored — resumes, PDFs, screenshots, browser profiles
 ├── tests/
 └── docs/
-    └── TSENTA_ARCHITECTURE.md
+    ├── TSENTA_ARCHITECTURE.md    teardown of the commercial reference
+    ├── REFERENCE.md              what the teardown implies for this build
+    ├── PARITY.md                 capability map against career-ops
+    └── PARALLEL_WORK.md
 ```
 
 ---
@@ -162,20 +167,26 @@ Company(id, name, domain, careers_url, ats_type, poll_interval_s, last_polled_at
 
 Posting(id, company_id, ats_type, external_id, url, title, location,
         description_raw, description_embedding vector(384),
-        content_hash, first_seen_at, closed_at)
+        content_hash, published_at, first_seen_at, closed_at)
 
-Match(id, profile_id, posting_id, score, reasons_json, created_at)
+Match(id, profile_id, posting_id, score, reasons_json,
+      decision, decided_at, tailored_resume_id, created_at)
 
 Application(id, candidate_id, profile_id, posting_id, url, ats,
             status, failure_reason, review_json,
             tailored_resume_id, cover_letter_ref, receipt_json,
-            created_at, updated_at)
+            outcome, outcome_at, created_at, updated_at)
         UNIQUE(candidate_id, url)
 
 ApplicationEvent(id, application_id, type, payload_json, at)   -- append-only
 
 InboundMessage(id, candidate_id, application_id, from_addr, subject,
-               body, classification, at)
+               body, classification, link_method, link_confidence, at)
+
+Project(id, candidate_id, source, external_id, name, full_name, url,
+        homepage, description, language, topics_json, stars, forks,
+        is_fork, is_archived, is_private, pushed_at,
+        include, pinned, synced_at, created_at)
 
 QueueTask(id, kind, payload_json, status, attempts, run_after,
           locked_at, locked_by)
@@ -549,10 +560,14 @@ before trusting either number.
 
 ### Phase 3 scope that is not built
 
-§9 Phase 3 lists two things that do not exist and are not covered by Gate 3:
+§9 Phase 3 lists two things Gate 3 does not cover:
 
-- **Cover letter.** No module writes one. `answer_open_ended_question` in the
-  LLM router would be the seam.
+- **Cover letter.** A module writes one — `packages/tailor/cover.py`, which
+  vets every letter against the fabrication guard, refuses one that raises a
+  §2.2 topic, and never falls back to an unvetted draft. Nothing calls it. The
+  apply pipeline never asks for a letter, `Application.cover_letter_ref` is
+  never written, and so no application has carried one. The tests exercise the
+  module, not the feature. `docs/PARITY.md` tracks the remaining gap.
 - **Per-company caching of tailored versions.** Every apply re-tailors from
   scratch. Harmless today because tailoring is cheap and local; it becomes a
   cost the moment a remote provider is used for it.
