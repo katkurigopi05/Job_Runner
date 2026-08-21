@@ -24,6 +24,7 @@ from packages.crawler.extract import (
     CompanySeed,
     GreenhouseExtractor,
     LeverExtractor,
+    _lever_location,
     load_seed,
     posting_hash,
     strip_html,
@@ -1103,3 +1104,26 @@ def test_stripping_is_bounded() -> None:
     nested = "&amp;lt;p&amp;gt;" * 50 + "text"
 
     assert strip_html(nested) is not None
+
+
+def test_lever_keeps_every_location_a_posting_is_open_in() -> None:
+    """Lever puts one city in `location` and the full set in `allLocations`.
+
+    Reading only the first hides the rest from the hard filters — and filters
+    *exclude*, so the mistake is silent: a role open in Paris and Milan looks
+    Paris-only and a Milan search drops it without reporting a reason. Real on
+    this registry: six of Qonto's 38 postings carry a second location.
+    """
+    assert _lever_location({"location": "Paris", "allLocations": ["Paris", "Milan"]}) == (
+        "Paris; Milan"
+    )
+
+
+def test_lever_does_not_repeat_the_primary_location() -> None:
+    """`allLocations` includes the primary. "Paris; Paris" reads as a data error."""
+    assert _lever_location({"location": "Paris", "allLocations": ["paris"]}) == "Paris"
+
+
+def test_lever_survives_a_posting_with_no_categories() -> None:
+    for payload in (None, "not a dict", {}, {"location": "   ", "allLocations": []}):
+        assert _lever_location(payload) is None

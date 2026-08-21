@@ -31,7 +31,7 @@ from packages.tailor.guard import (
     extract_entities,
     normalize,
 )
-from packages.tailor.parse import parse_text
+from packages.tailor.parse import Contact, ParsedResume, parse_text
 from packages.tailor.rewrite import tailor_bullet, tailor_bullets, vet
 
 # --------------------------------------------------------------------------
@@ -571,3 +571,43 @@ async def test_the_injected_text_is_never_echoed_into_the_resume() -> None:
 
     assert rewrite.used_fallback
     assert "Ignore all previous instructions" not in rewrite.tailored
+
+
+def test_a_spelled_out_number_is_a_claim_like_any_other() -> None:
+    """ "nine facilities" against a source reading "four" is a fabrication.
+
+    `normalize` has mapped number words to digits since this module was
+    written, but `_classify` tested for a digit in the *raw* token — so a
+    spelled number was never classified as an entity and was therefore never
+    checked at all. Digits were caught; their English spellings walked through.
+    """
+    source = ["Built out four facilities.", "Managed 20 staff."]
+    corpus = SourceCorpus.from_resume(
+        ParsedResume(
+            contact=Contact(name="Owner"),
+            sections={"experience": source},
+            raw_lines=source,
+        )
+    )
+
+    assert not check("Built out nine facilities.", corpus, scope=None).ok
+    assert not check("Managed thirty staff.", corpus, scope=None).ok
+
+
+def test_the_two_numerals_are_the_same_claim() -> None:
+    """ "twenty" restating a source's "20" is a paraphrase, not an invention.
+
+    §2.1 permits rephrasing. Refusing this would make the guard fire on style
+    and push every rewrite back to the original bullet.
+    """
+    source = ["Built out four facilities.", "Managed 20 staff."]
+    corpus = SourceCorpus.from_resume(
+        ParsedResume(
+            contact=Contact(name="Owner"),
+            sections={"experience": source},
+            raw_lines=source,
+        )
+    )
+
+    assert check("Managed twenty staff.", corpus, scope=None).ok
+    assert check("Built out 4 facilities.", corpus, scope=None).ok

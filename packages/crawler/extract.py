@@ -243,6 +243,41 @@ class GreenhouseExtractor:
         return postings
 
 
+def _lever_location(categories: object) -> str | None:
+    """Every location a Lever posting is open in, not just the first.
+
+    Lever puts a single primary city in `categories.location` and the full set
+    in `categories.allLocations`. Reading only the former hides every other
+    eligible location from the hard filters — and hard filters *exclude*, so
+    the mistake is silent: a role open in Paris and Milan looks Paris-only, and
+    a Milan search drops it without ever reporting a reason.
+
+    Real on this registry, not hypothetical: six of Qonto's 38 postings carry a
+    second location our filters could not see.
+
+    Found in `santifer/career-ops` (MIT), `providers/lever.mjs` — see
+    docs/REFERENCE.md §7.
+    """
+    if not isinstance(categories, dict):
+        return None
+
+    primary = categories.get("location")
+    extra = categories.get("allLocations")
+
+    found: list[str] = []
+    candidates = [primary, *(extra if isinstance(extra, list) else [])]
+    for value in candidates:
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        # Case-insensitive dedupe: Lever repeats the primary inside
+        # allLocations, and "Paris; Paris" reads as a data error.
+        if cleaned and not any(cleaned.lower() == seen.lower() for seen in found):
+            found.append(cleaned)
+
+    return "; ".join(found) or None
+
+
 class LeverExtractor:
     """Reads the public Lever postings API.
 
@@ -277,10 +312,7 @@ class LeverExtractor:
             if not job_id:
                 continue
 
-            categories = job.get("categories")
-            location = None
-            if isinstance(categories, dict):
-                location = categories.get("location") or None
+            location = _lever_location(job.get("categories"))
 
             # `description` is the opening blurb; `lists` carries the bullets
             # and `additional` the closing. Dropping the last two would hand

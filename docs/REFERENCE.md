@@ -379,6 +379,52 @@ Still open from this source:
   against our 29.
 - **Follow-up cadence** — nothing currently says "applied 14 days ago, silent".
 
+### Synced again 2026-08-21 — 70 commits in two days
+
+Read at `051059d`. The project moves fast; most of the traffic is theirs alone
+(i18n READMEs, their web dashboard, their updater). Four commits pointed at
+code we also have, and checking each against ours found two real defects here.
+
+**`fix(providers/lever): fold categories.allLocations into location`** — taken.
+Lever puts one city in `categories.location` and the full set in
+`allLocations`, and we read only the first. Hard filters *exclude*, so the
+mistake is silent: a role open in Paris and Milan looks Paris-only and a Milan
+search drops it without reporting a reason. Confirmed live before fixing —
+**six of Qonto's 38 postings** carry a second location our filters could not
+see. Palantir's 308 carry none, which is why it had never surfaced.
+
+**`fix(verify-cv-facts): catch fabricated headcounts outside software`** —
+their bug was a noun list that only counted software things, so "Managed 45
+staff" against a source saying 20 passed. Ours is built differently and does
+check numbers, so the same test found a *different* hole in the same place:
+`normalize` has mapped "nine" to "9" since the guard was written, but
+`_classify` looked for a digit in the raw token, so a spelled-out number was
+never classified as an entity and was never checked at all. Digits were
+caught; their English spellings walked through. "nine facilities" against a
+source reading "four" passed the fabrication guard.
+
+Worth noting what the same test showed working: cross-entry number reuse
+("Managed 45 staff" borrowing the 45 from a different employer's "45 hectares")
+is already refused on the résumé path, because that path scopes the check to
+the entry the bullet came from. It passes document-wide, which is the cover
+letter's path — a narrower hole, recorded rather than fixed.
+
+**`fix(liveness): a dead third-party host must not poison the whole verdict`**
+— does not apply. Theirs is a Playwright check whose subresource DNS failures
+reached the verdict; 78 live postings came back `uncertain` because an
+analytics host had died. Ours is an HTTP fetch of the posting URL and loads no
+subresources, so the failure mode cannot occur.
+
+**`fix(ashby): stop retrying a permanent failure, and honour a clamped
+Retry-After`** — convergent, arrived at independently the same day.
+`packages/llm/pacing.py` retries only 429, obeys `Retry-After`, and caps the
+wait so a provider asking for an hour surfaces instead of hanging.
+
+Not taken: their web dashboard fixes, the i18n work, `story-provenance-check`
+(it depends on their Story Bank, which we do not have), and the same-origin
+API restriction — `apps/api/middleware.py` already refuses non-loopback
+callers.
+
 ### Reviewed again 2026-08-19, against the owner's auto-apply goal
 
 The repository was cloned and read directly this time — 464 `.mjs` files, 79
