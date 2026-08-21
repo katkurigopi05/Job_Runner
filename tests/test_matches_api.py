@@ -127,6 +127,11 @@ async def varied(client: AsyncClient, worker_session: AsyncSession, complete_can
 
 
 async def _titles(client: AsyncClient, profile_id: str, **params) -> list[str]:
+    # `us_only` is on by standing preference (Settings.search_us_only), and the
+    # `varied` fixture carries a "Remote — EU" row on purpose so the remote and
+    # seniority axes have something to cut. These tests are about those axes,
+    # so they opt out; the US filter has its own tests below.
+    params.setdefault("us_only", "false")
     response = await client.get("/matches", params={"profile_id": profile_id, **params})
     assert response.status_code == 200, response.text
     return [row["title"] for row in response.json()]
@@ -265,3 +270,104 @@ async def test_an_unknown_decision_is_refused(
 
     assert response.status_code == 400
     assert "interested" in response.json()["error"]["message"]
+
+
+# --------------------------------------------------------------------------
+# United States only, California first
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def spread(client: AsyncClient, worker_session: AsyncSession, complete_candidate) -> str:
+    """One posting per tier, scored so that score and locality disagree.
+
+    The Texan role is the best match and the Bay Area one the worst, which is
+    the only arrangement that can tell "California first" apart from "the
+    ordering happened to already be right".
+    """
+    profile_id = uuid.UUID(complete_candidate["profile_id"])
+
+    rows = [
+        ("Austin Engineer", "Austin, TX", 0.95),
+        ("Bangalore Engineer", "Bengaluru, India", 0.93),
+        ("LA Engineer", "Los Angeles, CA", 0.60),
+        ("SF Engineer", "San Francisco, CA", 0.40),
+    ]
+    for index, (title, location, score) in enumerate(rows):
+        posting = Posting(
+            url=f"https://boards.greenhouse.io/spread/jobs/{index}",
+            title=title,
+            location=location,
+            description_raw="Python.",
+        )
+        worker_session.add(posting)
+        await worker_session.flush()
+        worker_session.add(
+            Match(profile_id=profile_id, posting_id=posting.id, score=score, reasons_json={})
+        )
+    await worker_session.commit()
+    return str(profile_id)
+
+
+async def _feed(client: AsyncClient, profile_id: str, **params) -> list[str]:
+    response = await client.get("/matches", params={"profile_id": profile_id, **params})
+    assert response.status_code == 200, response.text
+    return [row["title"] for row in response.json()]
+
+
+async def test_the_feed_is_united_states_only_without_being_asked(
+    client: AsyncClient, spread
+) -> None:
+    """§1: the owner's standing filter, applied without retyping it each time."""
+    assert "Bangalore Engineer" not in await _feed(client, spread)
+
+
+async def test_california_outranks_a_better_scoring_posting_elsewhere(
+    client: AsyncClient, spread
+) -> None:
+    """The Texan role scores highest and still sorts below both Californian ones."""
+    assert await _feed(client, spread) == [
+        "SF Engineer",
+        "LA Engineer",
+        "Austin Engineer",
+    ]
+
+
+async def test_score_still_orders_within_a_tier(client: AsyncClient, spread) -> None:
+    """Locality tiers the feed; it does not replace the score inside a tier."""
+    feed = await _feed(client, spread)
+    assert feed.index("SF Engineer") < feed.index("LA Engineer")
+
+
+async def test_the_ordering_happens_before_the_limit(client: AsyncClient, spread) -> None:
+    """The regression this rewrite exists to avoid.
+
+    Rows arrive score-ordered, so truncating while iterating would take the
+    top `limit` by score and only then sort those — the Bay Area posting,
+    worst-scoring of the four, would never survive a limit of one.
+    """
+    assert await _feed(client, spread, limit=1) == ["SF Engineer"]
+
+
+async def test_the_filter_can_be_turned_off_for_one_call(client: AsyncClient, spread) -> None:
+    assert "Bangalore Engineer" in await _feed(client, spread, us_only="false")
+
+
+async def test_a_posting_with_no_location_is_kept_but_ranks_last(
+    client: AsyncClient, worker_session: AsyncSession, complete_candidate
+) -> None:
+    """Silence is not evidence of a foreign office."""
+    profile_id = uuid.UUID(complete_candidate["profile_id"])
+    for index, (title, location) in enumerate([("Placed", "Austin, TX"), ("Unsaid", None)]):
+        posting = Posting(
+            url=f"https://boards.greenhouse.io/blank/jobs/{index}", title=title, location=location
+        )
+        worker_session.add(posting)
+        await worker_session.flush()
+        worker_session.add(
+            Match(profile_id=profile_id, posting_id=posting.id, score=0.9, reasons_json={})
+        )
+    await worker_session.commit()
+
+    assert await _feed(client, str(profile_id)) == ["Placed", "Unsaid"]
+    assert await _feed(client, str(profile_id), allow_unknown_location="false") == ["Placed"]

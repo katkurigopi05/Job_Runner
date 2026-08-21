@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from packages.core.models import Posting
+from packages.matching.locality import Locality, is_domestic, locality_of
 
 #: Seniority ladder, low to high. Matching is by position so "senior or above"
 #: is expressible without enumerating every title an employer might invent.
@@ -53,6 +54,16 @@ class SearchFilters:
     #: Drops anything first seen longer ago than this.
     posted_within_days: int | None = None
     include_closed: bool = False
+    #: Hard cut to the United States, and the reason the feed is ordered
+    #: California-first. The owner's standing preference rather than a
+    #: per-search whim, so `Settings.search_us_only` supplies the default —
+    #: but it stays a *filter* (§1), never a term in the score.
+    us_only: bool = False
+    #: A posting with no location at all is kept by default: silence is not
+    #: evidence of a foreign office, and dropping it loses real US jobs. An
+    #: unrecognized place *name* is dropped regardless — that is where foreign
+    #: postings land. See `Locality.UNPLACED`.
+    allow_unknown_location: bool = True
 
     #: Every reason a posting was dropped, for the feed to explain itself.
     def describe(self) -> list[str]:
@@ -73,6 +84,11 @@ class SearchFilters:
             parts.append(f"seen in the last {self.posted_within_days} days")
         if self.include_closed:
             parts.append("including closed")
+        if self.us_only:
+            parts.append(
+                "United States only, California first"
+                + ("" if self.allow_unknown_location else ", located postings only")
+            )
         return parts
 
     @property
@@ -128,6 +144,14 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
         location = (posting.location or "").lower()
         if not any(wanted.lower() in location for wanted in filters.locations):
             reasons.append("location does not match")
+
+    if filters.us_only:
+        where = locality_of(posting.location)
+        if where is Locality.UNKNOWN:
+            if not filters.allow_unknown_location:
+                reasons.append("no location given")
+        elif not is_domestic(where):
+            reasons.append(f"location {posting.location!r} is outside the United States")
 
     if filters.remote is not None and is_remote(posting) is not filters.remote:
         reasons.append("remote only" if filters.remote else "on-site only")
