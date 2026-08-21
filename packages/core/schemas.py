@@ -559,6 +559,24 @@ class ManualSubmission(BaseModel):
     note: str | None = None
 
 
+class MatchDecisionOut(BaseModel):
+    """Confirmation that a verdict was recorded.
+
+    Deliberately not `MatchOut`. That model carries the posting's title, url
+    and dates, which live on `Posting` and not on `Match` — declaring it here
+    made the route fail response validation on every single call, a 500 that
+    stayed invisible because a CORS preflight was rejecting the request one
+    step earlier. A response model should describe what the handler actually
+    has in its hand.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    decision: str | None = None
+    decided_at: datetime | None = None
+
+
 class MatchSummaryOut(BaseModel):
     """Counts, not a page. `GET /matches` returns at most 200 rows."""
 

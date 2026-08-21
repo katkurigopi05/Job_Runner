@@ -210,3 +210,58 @@ async def test_the_summary_counts_rather_than_measuring_a_page(
     assert body["undecided"] == 57
     # The feed still returns a page, which is the distinction being drawn.
     assert len((await client.get("/matches?limit=50")).json()) == 50
+
+
+async def test_a_decision_is_recorded_by_a_plain_post(
+    client: AsyncClient, complete_candidate: dict[str, str], worker_session
+) -> None:
+    """The route the swipe deck reaches, via a Server Action.
+
+    Calling it from the browser instead sent a CORS preflight the API answers
+    with 405, so every swipe failed and the page reported the API unreachable.
+    The API is deliberately loopback-only and unauthenticated — widening it to
+    a browser origin would open exactly what that rule protects — so the
+    request belongs on the Next server.
+    """
+    import uuid as _uuid
+
+    from packages.core.models import Match, Posting
+
+    posting = Posting(url="https://example.com/decide/1", title="Engineer")
+    worker_session.add(posting)
+    await worker_session.flush()
+    match = Match(
+        profile_id=_uuid.UUID(complete_candidate["profile_id"]),
+        posting_id=posting.id,
+        score=0.4,
+    )
+    worker_session.add(match)
+    await worker_session.commit()
+
+    response = await client.post(f"/matches/{match.id}/decision", json={"decision": "interested"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"] == "interested"
+    assert (await client.get("/matches/summary")).json()["interested"] == 1
+
+
+async def test_an_unknown_decision_is_refused(
+    client: AsyncClient, complete_candidate: dict[str, str], worker_session
+) -> None:
+    import uuid as _uuid
+
+    from packages.core.models import Match, Posting
+
+    posting = Posting(url="https://example.com/decide/2", title="Engineer")
+    worker_session.add(posting)
+    await worker_session.flush()
+    match = Match(
+        profile_id=_uuid.UUID(complete_candidate["profile_id"]), posting_id=posting.id, score=0.4
+    )
+    worker_session.add(match)
+    await worker_session.commit()
+
+    response = await client.post(f"/matches/{match.id}/decision", json={"decision": "maybe"})
+
+    assert response.status_code == 400
+    assert "interested" in response.json()["error"]["message"]

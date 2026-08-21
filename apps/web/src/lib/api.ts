@@ -425,11 +425,12 @@ export const api = {
   calibration: () => request<Calibration>("/matches/calibration"),
   digest: () => request<Digest>("/analytics/digest"),
   matchSummary: () => request<MatchSummary>("/matches/summary"),
+  /** Returns a confirmation, not a full Match — the handler has no posting. */
   decide: (matchId: string, decision: Decision) =>
-    request<Match>(`/matches/${matchId}/decision`, {
-      method: "POST",
-      body: JSON.stringify({ decision }),
-    }),
+    request<{ id: string; decision: Decision | null; decided_at: string | null }>(
+      `/matches/${matchId}/decision`,
+      { method: "POST", body: JSON.stringify({ decision }) },
+    ),
   unrouted: () => request<InboundMessage[]>("/inbox/unrouted"),
 
   review: (id: string, body: { approve: boolean; answers?: Record<string, unknown>; note?: string }) =>

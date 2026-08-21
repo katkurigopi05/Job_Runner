@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { API_BASE, api, type ApplicationPacket } from "@/lib/api";
+import { API_BASE, type ApplicationPacket } from "@/lib/api";
+import { recordSubmitted } from "@/app/finish/actions";
 import { DOC_WINDOW, openExternal } from "@/lib/external";
 
 /**
@@ -70,7 +71,11 @@ export function FinishQueue({ initial }: { initial: ApplicationPacket[] }) {
     setBusy(true);
     setError(null);
     try {
-      await api.markSubmitted(current.application_id);
+      const result = await recordSubmitted(current.application_id);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
       setDone((n) => n + 1);
       // Advance only after the write lands. Losing a recorded submission is
       // worse than a slow queue: the funnel would undercount and the owner

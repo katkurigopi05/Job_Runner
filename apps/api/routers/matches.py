@@ -21,7 +21,13 @@ from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.enums import ErrorCode
 from packages.core.models import Application, Match, Posting, Profile
-from packages.core.schemas import CalibrationOut, MatchDecision, MatchOut, MatchSummaryOut
+from packages.core.schemas import (
+    CalibrationOut,
+    MatchDecision,
+    MatchDecisionOut,
+    MatchOut,
+    MatchSummaryOut,
+)
 from packages.matching.search import (
     SENIORITY_ORDER,
     SearchFilters,
@@ -182,7 +188,7 @@ async def summary(session: SessionDep, profile_id: uuid.UUID | None = None) -> M
 DECISIONS = ("interested", "skipped")
 
 
-@router.post("/{match_id}/decision", response_model=MatchOut)
+@router.post("/{match_id}/decision", response_model=MatchDecisionOut)
 async def decide(match_id: uuid.UUID, body: MatchDecision, session: SessionDep) -> Match:
     """Record what the owner thinks of a posting.
 

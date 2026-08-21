@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, type Decision, type Match } from "@/lib/api";
+import { type Decision, type Match } from "@/lib/api";
+import { recordDecision } from "@/app/swipe/actions";
 
 /**
  * One posting at a time, kept or discarded.
@@ -31,7 +32,13 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
       setPending(decision);
       setError(null);
       try {
-        await api.decide(current.id, decision);
+        // A Server Action, not a browser fetch: the API refuses non-loopback
+        // callers, so the request has to originate on the Next server.
+        const result = await recordDecision(current.id, decision);
+        if (!result.ok) {
+          setError(result.message);
+          return;
+        }
         setDecided((d) => ({ ...d, [decision]: d[decision] + 1 }));
         // Drop the card only once the write succeeded. Removing it first
         // would lose the verdict silently whenever the API is down, and the
