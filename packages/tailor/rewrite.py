@@ -12,8 +12,6 @@ prompts are advisory and models disregard them.
 
 from __future__ import annotations
 
-import re
-
 import structlog
 from pydantic import BaseModel, Field
 
@@ -21,7 +19,7 @@ from packages.llm.prompts import TAILOR_SYSTEM
 from packages.llm.provider import LLMProvider
 from packages.llm.router import temperature_for
 from packages.tailor.guard import _COMMON_WORDS, GuardReport, SourceCorpus, check, normalize
-from packages.tailor.keywords import TermReport, analyze
+from packages.tailor.keywords import TermReport, analyze, borrowed_terms
 
 log = structlog.get_logger(__name__)
 
@@ -95,29 +93,6 @@ def _user_prompt(bullet: str, job_description: str, terms: TermReport | None = N
     return "\n\n".join(parts)
 
 
-def _borrowed_terms(original: str, candidate: str, forbidden: tuple[str, ...]) -> list[str]:
-    """Posting terms the rewrite introduced that the source did not have."""
-    if not forbidden:
-        return []
-
-    from packages.tailor.guard import _TOKEN_RE, stem
-
-    had_stems = {stem(w) for w in _TOKEN_RE.findall(original)}
-    has_stems = {stem(w) for w in _TOKEN_RE.findall(candidate)}
-
-    borrowed = []
-    for term in forbidden:
-        term_stems = {stem(w) for w in _TOKEN_RE.findall(term)}
-        if not term_stems:
-            continue
-        # Only consider it borrowed if ALL words in the term are present in candidate
-        # and NOT all words were present in the original.
-        if term_stems.issubset(has_stems) and not term_stems.issubset(had_stems):
-            borrowed.append(term)
-
-    return borrowed
-
-
 def _clean(candidate: str) -> str:
     """Strip the wrappers models add despite being told not to."""
     text = candidate.strip()
@@ -178,7 +153,7 @@ def vet(
     if not candidate:
         return False, "model returned nothing", report
 
-    borrowed = _borrowed_terms(original, candidate, forbidden)
+    borrowed = borrowed_terms(original, candidate, forbidden)
     if borrowed:
         return (
             False,
@@ -272,139 +247,3 @@ async def tailor_bullets(
         bullets=rewrites,
         rejected=sum(1 for r in rewrites if r.used_fallback),
     )
-
-
-class CoverLetterResult(BaseModel):
-    text: str
-    rejected_reason: str | None = None
-    entities_checked: int = 0
-
-    @property
-    def used_fallback(self) -> bool:
-        return self.rejected_reason is not None
-
-
-async def tailor_cover_letter(
-    provider: LLMProvider,
-    job_description: str,
-    corpus: SourceCorpus,
-) -> CoverLetterResult:
-    """Write a cover letter. Every output is guard-checked against the entire corpus."""
-    system_prompt = (
-        "Write a brief cover letter for the following job description, based entirely "
-        "on the provided resume. Do not invent any claims, metrics, or experiences.\n"
-        "ABSOLUTE RULE: Do not write any sentence about work authorization, sponsorship, "
-        "employment history, or salary. Those topics are strictly forbidden."
-    )
-    user_prompt = f"Job description:\n{job_description.strip()[:4000]}\n\nResume:\n{corpus.text}"
-
-    try:
-        raw = await provider.complete(system_prompt, user_prompt, max_tokens=600)
-    except Exception as exc:
-        log.warning("cover_letter_provider_failed", error=type(exc).__name__)
-        return CoverLetterResult(text="", rejected_reason=f"provider error: {type(exc).__name__}")
-
-    candidate = raw.strip()
-
-    # §2.2 check: no work authorization, sponsorship, employment history, or salary
-    lower_candidate = candidate.lower()
-    for topic in (
-        "authorization",
-        "sponsorship",
-        "salary",
-        "visa",
-        "citizen",
-        "compensation",
-        "employment history",
-    ):
-        if topic in lower_candidate:
-            reason = f"mentions forbidden topic: {topic}"
-            log.info("cover_letter_rejected", reason=reason)
-            return CoverLetterResult(text="", rejected_reason=reason, entities_checked=0)
-
-    terms = analyze(job_description, corpus)
-    forbidden = tuple(terms.missing)
-
-    # Split into sentences keeping delimiters
-    # regex: match non-greedy up to a sentence terminator (.!? followed by space or end) or newline
-    sentence_pattern = re.compile(r"(.*?(?:[.!?](?:\s+|$)|(?:\n\s*)+)|.+$)")
-    sentences = [s for s in sentence_pattern.findall(candidate) if s]
-
-    naming_phrases = {
-        "apply",
-        "applying",
-        "application",
-        "position",
-        "role",
-        "opportunity",
-        "opening",
-        "writing to",
-        "excited to",
-        "interested in",
-    }
-    claim_words = {
-        "experience",
-        "skill",
-        "ability",
-        "proven",
-        "track",
-        "background",
-        "knowledge",
-        "expert",
-        "worked",
-        "built",
-        "designed",
-        "led",
-        "managed",
-        "own",
-    }
-
-    filtered_sentences = []
-    total_checked = 0
-
-    for sentence_raw in sentences:
-        sentence_text = sentence_raw.strip()
-        if not sentence_text:
-            filtered_sentences.append(sentence_raw)
-            continue
-
-        lower_s = sentence_text.lower()
-
-        # Is it a naming sentence?
-        has_naming = any(p in lower_s for p in naming_phrases)
-        has_claim = any(c in lower_s for c in claim_words)
-
-        # We exempt sentences that name the target from the strict claiming rules
-        if has_naming and not has_claim:
-            filtered_sentences.append(sentence_raw)
-            continue
-
-        # Check for missing terms
-        borrowed = _borrowed_terms(corpus.text, sentence_text, forbidden)
-        if borrowed:
-            log.info(
-                "cover_letter_sentence_rejected",
-                reason="borrowed missing term",
-                terms=borrowed,
-                sentence=sentence_text,
-            )
-            continue
-
-        # Fabrication check
-        report = check(sentence_text, corpus, scope=None)
-        total_checked += report.checked
-        if not report.ok:
-            log.info(
-                "cover_letter_sentence_rejected", reason=report.summary(), sentence=sentence_text
-            )
-            continue
-
-        filtered_sentences.append(sentence_raw)
-
-    final_text = "".join(filtered_sentences).strip()
-
-    if not final_text:
-        reason = "all meaningful sentences were rejected for fabrication or missing terms"
-        return CoverLetterResult(text="", rejected_reason=reason, entities_checked=total_checked)
-
-    return CoverLetterResult(text=final_text, entities_checked=total_checked)

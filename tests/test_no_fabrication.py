@@ -21,6 +21,7 @@ from __future__ import annotations
 import pytest
 
 from packages.llm.provider import StubProvider
+from packages.tailor.cover import mentions_protected, sift
 from packages.tailor.diff import render_html, summarize, unified
 from packages.tailor.guard import (
     EntityKind,
@@ -31,6 +32,7 @@ from packages.tailor.guard import (
     extract_entities,
     normalize,
 )
+from packages.tailor.keywords import analyze
 from packages.tailor.parse import Contact, ParsedResume, parse_text
 from packages.tailor.rewrite import tailor_bullet, tailor_bullets, vet
 
@@ -614,109 +616,110 @@ def test_the_two_numerals_are_the_same_claim() -> None:
 
 
 # --------------------------------------------------------------------------
-# Cover Letter
+# Cover letters
 # --------------------------------------------------------------------------
+#
+# Ported from PR #32, which built these against `rewrite.tailor_cover_letter`.
+# That writer was superseded by `packages/tailor/cover.py` and has been
+# deleted, so the cases are re-pointed at `sift` — the sentence-level pass
+# that replaced PR #32's word-list classifier.
+#
+# `sift` rather than `write` on purpose: `write` also enforces MIN_WORDS, and
+# every fixture here is a few sentences long, so testing through `write` would
+# only ever prove that a short letter is short.
 
 
-async def test_cover_letter_rejects_missing_keywords() -> None:
-    from packages.tailor.rewrite import tailor_cover_letter
+COVER_JOB_REACT = "Senior Engineer. Must know React and Next.js."
 
+
+def _missing(job: str, corpus: SourceCorpus) -> tuple[str, ...]:
+    return tuple(analyze(job, corpus).missing)
+
+
+def test_a_sentence_reaching_for_a_missing_term_is_dropped() -> None:
+    """§2.1 permits posting vocabulary the résumé supports. React is not that."""
     corpus = SourceCorpus.from_texts(RESUME_BACKEND)
-    # The job asks for React, but the resume only has Python/Backend
-    job_desc = "Senior Engineer. Must know React and Next.js."
-
-    provider = StubProvider(
-        {"brief cover letter": "I am a Senior Engineer with React and Next.js experience."}
+    report = sift(
+        "I am a Senior Engineer with React and Next.js experience.",
+        corpus,
+        forbidden=_missing(COVER_JOB_REACT, corpus),
     )
-    result = await tailor_cover_letter(provider, job_desc, corpus)
 
-    assert result.used_fallback
-    assert "rejected" in result.rejected_reason.lower()
+    assert report.kept == 0
+    assert report.dropped == 1
+    assert report.text == ""
 
 
-async def test_cover_letter_rejects_fabrication() -> None:
-    from packages.tailor.rewrite import tailor_cover_letter
+def test_a_dotted_token_is_not_a_sentence_boundary() -> None:
+    """Regression: splitting on the period alone cut "Next.js" in half.
 
+    The tail became a sentence of its own — "js experience." — which the guard
+    had no reason to object to, so a letter that claimed React survived as
+    fragments of itself.
+    """
     corpus = SourceCorpus.from_texts(RESUME_BACKEND)
-    job_desc = "Senior Engineer."
-
-    provider = StubProvider(
-        {"brief cover letter": "I worked at Google and scaled systems to 50TB."}
+    report = sift(
+        "I am a Senior Engineer with React and Next.js experience.",
+        corpus,
+        forbidden=_missing(COVER_JOB_REACT, corpus),
     )
-    result = await tailor_cover_letter(provider, job_desc, corpus)
 
-    assert result.used_fallback
-    assert "rejected" in result.rejected_reason.lower()
+    assert "js experience" not in report.text
 
 
-async def test_cover_letter_rejects_forbidden_topics() -> None:
-    from packages.tailor.rewrite import tailor_cover_letter
+def test_a_fabricated_credential_ends_the_letter() -> None:
+    """A bullet falls back to its original. A letter has no original.
 
+    Google and 50TB are a fabricated employer and a fabricated metric, and the
+    letter is refused rather than quietly relieved of the sentence.
+    """
     corpus = SourceCorpus.from_texts(RESUME_BACKEND)
-    job_desc = "Senior Engineer."
+    report = sift("I worked at Google and scaled systems to 50TB.", corpus)
 
-    provider = StubProvider(
-        {
-            "brief cover letter": (
-                "I am a citizen and do not need visa sponsorship. My salary requirement is 100k."
-            )
-        }
-    )
-    result = await tailor_cover_letter(provider, job_desc, corpus)
-
-    assert result.used_fallback
-    assert (
-        "mentions forbidden topic: sponsorship" in result.rejected_reason
-        or "mentions forbidden topic: visa" in result.rejected_reason
-        or "mentions forbidden topic: citizen" in result.rejected_reason
-        or "mentions forbidden topic: salary" in result.rejected_reason
-    )
+    assert report.fatal_reason is not None
+    assert report.text == ""
 
 
-async def test_cover_letter_keeps_naming_rejects_claiming() -> None:
-    from packages.tailor.rewrite import tailor_cover_letter
+def test_over_naming_costs_the_sentence_but_not_the_letter() -> None:
+    """The line PR #32 drew with word lists, drawn with the guard's own kinds.
 
+    PR #32 asserted the naming sentence *survives*. It does not here, and the
+    divergence is deliberate: `cover._DEAD_OPENERS` already refuses a letter
+    that opens "I am excited to apply", so keeping that sentence would satisfy
+    one rule by breaking another. What both agree on is the third sentence —
+    an unsupported claim about payment services — costing only itself.
+    """
     corpus = SourceCorpus.from_texts(RESUME_BACKEND)
-    job_desc = "Senior Backend Engineer, Payments. Must have payment services experience."
+    job = "Senior Backend Engineer, Payments. Must have payment services experience."
 
-    provider = StubProvider(
-        {
-            "brief cover letter": (
-                "I am excited to apply for the Senior Backend Engineer, Payments position. "
-                "I am a Staff Engineer with Python and PostgreSQL experience. "
-                "I am confident in my ability to own high-throughput payment services."
-            )
-        }
+    report = sift(
+        "I am excited to apply for the Senior Backend Engineer, Payments position. "
+        "I am a Staff Engineer with Python and PostgreSQL experience. "
+        "I am confident in my ability to own high-throughput payment services.",
+        corpus,
+        forbidden=_missing(job, corpus),
     )
-    result = await tailor_cover_letter(provider, job_desc, corpus)
 
-    assert not result.used_fallback
-    assert (
-        "I am excited to apply for the Senior Backend Engineer, Payments position." in result.text
-    )
-    assert "I am a Staff Engineer with Python and PostgreSQL experience." in result.text
-    assert "high-throughput payment services" not in result.text
+    assert report.fatal_reason is None, "over-naming is not a fabrication"
+    assert report.text == "I am a Staff Engineer with Python and PostgreSQL experience."
+    assert "payment services" not in report.text
 
 
-async def test_cover_letter_clean_output() -> None:
-    from packages.tailor.rewrite import tailor_cover_letter
-
+def test_a_fully_supported_letter_passes_through_unchanged() -> None:
     corpus = SourceCorpus.from_texts(RESUME_BACKEND)
-    job_desc = "Backend Engineer."
-
-    # Text completely supported by RESUME_BACKEND
-    provider = StubProvider(
-        {
-            "brief cover letter": (
-                "I am a Staff Engineer with Python and PostgreSQL experience. "
-                "I migrated a billing service."
-            )
-        }
+    letter = (
+        "I am a Staff Engineer with Python and PostgreSQL experience. I migrated a billing service."
     )
-    result = await tailor_cover_letter(provider, job_desc, corpus)
 
-    assert not result.used_fallback
-    assert (
-        result.text == "I am a Staff Engineer with Python and PostgreSQL experience. "
-        "I migrated a billing service."
-    )
+    report = sift(letter, corpus, forbidden=_missing("Backend Engineer.", corpus))
+
+    assert report.dropped == 0
+    assert report.text == letter
+
+
+def test_section_2_2_topics_are_refused_before_the_guard_is_reached() -> None:
+    """Work authorization and salary are copied from the profile, never written."""
+    assert mentions_protected("I am a citizen and need no sponsorship") is not None
+    assert mentions_protected("My salary requirement is 100k") == "salary"
+    assert mentions_protected("I do not require visa sponsorship") == "visa"
+    assert mentions_protected("I migrated the billing service") is None
