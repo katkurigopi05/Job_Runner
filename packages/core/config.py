@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     #: environment variable still wins, which is how CI and one-off runs
     #: override without editing a file.
     gemini_api_key: str | None = None
+    #: Overrides GeminiProvider.DEFAULT_MODEL. Models retire — when one
+    #: does, every call 404s and this is the one-line fix.
+    gemini_model: str | None = None
+    #: Seconds between calls to one remote provider. Sized for a free tier;
+    #: set to 0 in tests, where the sleeps are pure wall clock.
+    llm_call_interval_s: float = 4.0
     anthropic_api_key: str | None = None
 
     #: Stable across restarts so a worker recognizes its own abandoned lease.

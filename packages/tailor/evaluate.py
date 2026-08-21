@@ -78,6 +78,13 @@ class Quality:
     rejected: int = 0
     #: Accepted, and identical to the source. The silent no-op.
     unchanged_accepted: int = 0
+    #: Rewrites the *provider* never returned — a timeout, a 404, an
+    #: exhausted quota. `tailor_bullet` turns those into the same fallback
+    #: a guard refusal produces, so without counting them separately a dead
+    #: API reads as a model with poor judgement. That is not hypothetical:
+    #: a Gemini run scored 100% refused on every posting, and the cause was
+    #: a 404 on every call.
+    provider_errors: int = 0
     #: Supported posting terms present in the output but not in the source.
     terms_taken_up: int = 0
     #: Supported posting terms that were available to take up.
@@ -107,6 +114,13 @@ class Quality:
     def problems(self) -> list[str]:
         """Named failures, empty when the run was healthy."""
         found: list[str] = []
+        if self.provider_errors:
+            # Reported first and alone: nothing else measured here means
+            # anything when the model never answered.
+            return [
+                f"{self.provider_errors}/{self.bullets} calls never reached the model — "
+                "this measures the provider, not the tailoring"
+            ]
         if self.bullets and self.change_rate < MIN_CHANGE_RATE:
             found.append(
                 f"only {self.change_rate:.0%} of bullets changed — tailoring is close to a no-op"
@@ -165,10 +179,19 @@ class GoldenReport:
         return taken / available if available else 0.0
 
     @property
+    def provider_errors(self) -> int:
+        return sum(q.provider_errors for _, q in self.per_posting)
+
+    @property
     def unhealthy(self) -> list[tuple[str, list[str]]]:
         return [(name, q.problems) for name, q in self.per_posting if q.problems]
 
     def summary(self) -> str:
+        if self.provider_errors:
+            return (
+                f"{self.provider_errors}/{self.bullets} calls failed at the provider — "
+                "no tailoring was measured"
+            )
         return (
             f"{len(self.per_posting)} postings, {self.bullets} bullets: "
             f"{self.change_rate:.0%} changed, {self.rejection_rate:.0%} refused, "
@@ -205,6 +228,11 @@ def measure(result: TailorResult, job_description: str, corpus: SourceCorpus) ->
         bullets=len(result.bullets),
         changed=sum(1 for b in result.bullets if b.changed),
         rejected=sum(1 for b in result.bullets if b.used_fallback),
+        provider_errors=sum(
+            1
+            for b in result.bullets
+            if b.rejected_reason and b.rejected_reason.startswith("provider error")
+        ),
         unchanged_accepted=sum(1 for b in result.bullets if not b.used_fallback and not b.changed),
         terms_taken_up=len(taken_up),
         terms_available=len(supported),
