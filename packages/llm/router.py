@@ -79,10 +79,15 @@ def _configured(name: str) -> bool:
         # configured. Whether it is *running* is a separate question, and one
         # that should surface as an error rather than a silent downgrade.
         return True
+    # Same source the providers themselves read, including `.env` — a key
+    # the owner put in the documented place must not read as unconfigured.
+    from packages.core.config import get_settings
+
+    settings = get_settings()
     if name == "gemini":
-        return bool(os.environ.get("GEMINI_API_KEY"))
+        return bool(os.environ.get("GEMINI_API_KEY") or settings.gemini_api_key)
     if name == "anthropic":
-        return bool(os.environ.get("ANTHROPIC_API_KEY"))
+        return bool(os.environ.get("ANTHROPIC_API_KEY") or settings.anthropic_api_key)
     return False
 
 

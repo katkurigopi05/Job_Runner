@@ -355,3 +355,33 @@ companies:
 - name: Inngest
   slug: inngest
   ats: ashby
+- name: 15Five
+  slug: 15five
+  ats: lever
+- name: 5AM Ventures
+  slug: 5amventures
+  ats: lever
+- name: Abacus.AI
+  slug: abacus
+  ats: greenhouse
+- name: Abnormal Security
+  slug: abnormalsecurity
+  ats: greenhouse
+- name: Accela
+  slug: accela
+  ats: greenhouse
+- name: Achievers
+  slug: achievers
+  ats: lever
+- name: Acquia
+  slug: acquia
+  ats: greenhouse
+- name: Admios
+  slug: admios
+  ats: greenhouse
+- name: Adyen
+  slug: adyen
+  ats: greenhouse
+- name: Afresh
+  slug: afresh
+  ats: greenhouse

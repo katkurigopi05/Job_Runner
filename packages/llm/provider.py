@@ -190,7 +190,9 @@ class GeminiProvider:
     name = "gemini"
 
     def __init__(self, model: str = "gemini-2.5-flash") -> None:
-        self.api_key = os.environ.get("GEMINI_API_KEY")
+        from packages.core.config import get_settings
+
+        self.api_key = os.environ.get("GEMINI_API_KEY") or get_settings().gemini_api_key
         if not self.api_key:
             raise LLMError("GEMINI_API_KEY environment variable is not set")
         self.model = model
@@ -252,7 +254,9 @@ class AnthropicProvider:
     name = "anthropic"
 
     def __init__(self, model: str = "claude-3-5-sonnet-20241022") -> None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        from packages.core.config import get_settings
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY") or get_settings().anthropic_api_key
         if not api_key:
             raise LLMError("ANTHROPIC_API_KEY environment variable is not set")
         self.api_key: str = api_key

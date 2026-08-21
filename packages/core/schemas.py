@@ -551,3 +551,9 @@ class CalibrationOut(BaseModel):
     separation: float | None = None
     suggested_min_score: float | None = None
     enough_data: bool = False
+
+
+class ManualSubmission(BaseModel):
+    """The owner recording that they sent this application themselves."""
+
+    note: str | None = None

@@ -377,6 +377,13 @@ export const api = {
   application: (id: string) => request<Application>(`/applications/${id}`),
   events: (id: string) => request<ApplicationEvent[]>(`/applications/${id}/events`),
   packet: (id: string) => request<ApplicationPacket>(`/applications/${id}/packet`),
+  manualQueue: (limit = 25) =>
+    request<ApplicationPacket[]>(`/applications/queue/manual?limit=${limit}`),
+  markSubmitted: (id: string, note?: string) =>
+    request<Application>(`/applications/${id}/submitted`, {
+      method: "POST",
+      body: JSON.stringify({ note: note ?? null }),
+    }),
   candidates: () => request<Candidate[]>("/candidates"),
   // Scoped to a candidate by the API, not optional. Single-user or not,
   // the route requires it.

@@ -84,7 +84,7 @@ async def supported_ats() -> dict[str, Any]:
 
 @server.tool()
 async def search_postings(
-    query: str = "", ats: str | None = None, limit: int = 20
+    query: str = "", location: str | None = None, ats: str | None = None, limit: int = 20
 ) -> dict[str, Any]:
     """Search postings Jobrunner has indexed.
 
@@ -92,6 +92,8 @@ async def search_postings(
     this returns nothing and says so. Apply to a URL directly in the meantime.
     """
     params: dict[str, Any] = {"q": query, "limit": limit}
+    if location:
+        params["location"] = location
     if ats:
         params["ats"] = ats
     return await _call("GET", "/postings", params=params)
