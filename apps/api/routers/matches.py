@@ -12,16 +12,22 @@ the score decides what gets applied to.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.enums import ErrorCode
 from packages.core.models import Application, Match, Posting, Profile
-from packages.core.schemas import MatchOut
+from packages.core.schemas import (
+    CalibrationOut,
+    MatchDecision,
+    MatchDecisionOut,
+    MatchOut,
+    MatchSummaryOut,
+)
 from packages.matching.search import (
     SENIORITY_ORDER,
     SearchFilters,
@@ -52,6 +58,10 @@ def _lag_hours(posting: Posting) -> float | None:
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 
+#: Below this many kept postings, a suggested threshold would be noise
+#: dressed as a measurement.
+MIN_DECISIONS_TO_SUGGEST = 10
+
 
 @router.get("", response_model=list[MatchOut])
 async def list_matches(
@@ -59,6 +69,8 @@ async def list_matches(
     profile_id: uuid.UUID | None = None,
     min_score: float = Query(default=0.0, ge=0.0, le=1.0),
     include_applied: bool = True,
+    #: The swipe feed's filter: only what the owner has not ruled on yet.
+    undecided_only: bool = False,
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     # Search filters — what the owner asked to see. Deliberately not read from
     # the profile: narrowing a search must not change what goes on a form.
@@ -107,6 +119,8 @@ async def list_matches(
     )
     if profile_id is not None:
         stmt = stmt.where(Match.profile_id == profile_id)
+    if undecided_only:
+        stmt = stmt.where(Match.decision.is_(None))
 
     rows = (await session.execute(stmt)).all()
 
@@ -129,6 +143,8 @@ async def list_matches(
                 profile_id=match.profile_id,
                 posting_id=posting.id,
                 score=match.score,
+                decision=match.decision,
+                decided_at=match.decided_at,
                 title=posting.title,
                 location=posting.location,
                 url=posting.url,
@@ -139,7 +155,108 @@ async def list_matches(
                 closed=posting.closed_at is not None,
                 title_similarity=float(reasons.get("title_similarity") or 0.0),
                 body_similarity=float(reasons.get("body_similarity") or 0.0),
+                matched_terms=list(reasons.get("matched_terms") or []),
+                missing_terms=list(reasons.get("missing_terms") or []),
+                legitimacy=dict(reasons.get("legitimacy") or {}),
+                rubric=dict(reasons.get("rubric") or {}),
                 excluded_by=list(reasons.get("excluded_by") or []),
             )
         )
     return feed
+
+
+@router.get("/summary", response_model=MatchSummaryOut)
+async def summary(session: SessionDep, profile_id: uuid.UUID | None = None) -> MatchSummaryOut:
+    """How many matches exist, and how many are still unrated.
+
+    A separate route because `GET /matches` is a *page* — it caps at 200 and
+    defaults to 50. The dashboard read that page length as a total and
+    reported "50 matches" against a database holding 1,853. A count has to
+    come from a count.
+    """
+    scoped = select(func.count()).select_from(Match)
+    if profile_id is not None:
+        scoped = scoped.where(Match.profile_id == profile_id)
+
+    total = await session.scalar(scoped) or 0
+    undecided = await session.scalar(scoped.where(Match.decision.is_(None))) or 0
+    interested = await session.scalar(scoped.where(Match.decision == "interested")) or 0
+
+    return MatchSummaryOut(total=total, undecided=undecided, interested=interested)
+
+
+DECISIONS = ("interested", "skipped")
+
+
+@router.post("/{match_id}/decision", response_model=MatchDecisionOut)
+async def decide(match_id: uuid.UUID, body: MatchDecision, session: SessionDep) -> Match:
+    """Record what the owner thinks of a posting.
+
+    Right is `interested`, left is `skipped`, and neither applies to anything
+    — this is a verdict on the posting, not an instruction to the worker.
+    Keeping it that way is what makes a fast feed safe to use: §2.3 says
+    nothing submits without explicit approval, and a swipe is not that.
+
+    Re-deciding is allowed and overwrites. A feed you cannot correct is one
+    you use carefully and slowly, which defeats the point.
+    """
+    match = await session.get(Match, match_id)
+    if match is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "match not found")
+
+    if body.decision not in DECISIONS:
+        raise ApiError(ErrorCode.INVALID_REQUEST, f"decision must be one of {', '.join(DECISIONS)}")
+
+    match.decision = body.decision
+    match.decided_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(match)
+    return match
+
+
+@router.get("/calibration", response_model=CalibrationOut)
+async def calibration(session: SessionDep, profile_id: uuid.UUID | None = None) -> CalibrationOut:
+    """What the owner's swipes say the threshold should be.
+
+    This is the point of recording decisions. `min_match_score` ships at 0.75,
+    and the first real scoring run over 10,922 postings produced a **maximum**
+    of 0.271 — a threshold the metric cannot reach, so nothing would ever
+    clear it. A number that cannot be met is not a safety setting, it is a
+    silent off switch.
+
+    Rather than picking a new constant by eye, this reads it off the swipes:
+    the suggested threshold is the score below which the owner has skipped
+    almost everything. Until there are enough decisions to say that, it
+    returns null and says so — §15's whole complaint about Gate 5 is that a
+    number derived from fixtures answers a question nobody asked.
+    """
+    query = select(Match).where(Match.decision.is_not(None))
+    if profile_id is not None:
+        query = query.where(Match.profile_id == profile_id)
+    decided = list((await session.scalars(query)).all())
+
+    interested = sorted(m.score for m in decided if m.decision == "interested")
+    skipped = [m.score for m in decided if m.decision == "skipped"]
+
+    suggested: float | None = None
+    separation: float | None = None
+    if len(interested) >= MIN_DECISIONS_TO_SUGGEST and skipped:
+        # The 10th percentile of what was kept: low enough to admit most of
+        # what the owner wants, and derived rather than chosen.
+        index = max(int(len(interested) * 0.1) - 1, 0)
+        suggested = round(interested[index], 3)
+        separation = round((sum(interested) / len(interested)) - (sum(skipped) / len(skipped)), 3)
+
+    return CalibrationOut(
+        decided=len(decided),
+        interested=len(interested),
+        skipped=len(skipped),
+        interested_mean=round(sum(interested) / len(interested), 3) if interested else None,
+        skipped_mean=round(sum(skipped) / len(skipped), 3) if skipped else None,
+        #: Positive means the scorer ranks what the owner keeps above what they
+        #: discard. Zero or negative means it is not measuring what they want,
+        #: which no threshold can fix.
+        separation=separation,
+        suggested_min_score=suggested,
+        enough_data=suggested is not None,
+    )

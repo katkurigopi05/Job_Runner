@@ -28,6 +28,7 @@ import structlog
 
 from packages.core.enums import Classification
 from packages.llm.prompts import CLASSIFY_SYSTEM
+from packages.llm.router import temperature_for
 
 log = structlog.get_logger(__name__)
 
@@ -166,7 +167,10 @@ class LLMClassifier:
         prompt = f"Subject: {subject}\n\n{body[:4000]}"
         try:
             raw = await self.provider.complete(  # type: ignore[attr-defined]
-                CLASSIFY_SYSTEM_PROMPT, prompt, max_tokens=10
+                CLASSIFY_SYSTEM_PROMPT,
+                prompt,
+                max_tokens=10,
+                temperature=temperature_for("classify_inbound_email"),
             )
         except Exception as exc:  # noqa: BLE001 - a model outage is not fatal
             log.warning("classifier_provider_failed", error=type(exc).__name__)

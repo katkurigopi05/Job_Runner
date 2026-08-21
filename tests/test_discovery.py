@@ -8,6 +8,7 @@ is open at a company nobody thought to list.
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
 import httpx
 
@@ -346,3 +347,79 @@ def test_discovery_is_a_registered_task_kind() -> None:
     from apps.worker.run import HANDLERS
 
     assert DISCOVER_TASK_KIND in HANDLERS
+
+
+# --------------------------------------------------------------------------
+# Liveness — the gap discovery created
+# --------------------------------------------------------------------------
+
+
+async def test_a_closed_aggregator_posting_is_retired(db_session) -> None:
+    """Registry postings close by absence when the board is re-read. An
+    aggregator posting has no board, so without this it stays in the feed
+    forever regardless of whether the job still exists."""
+    from packages.crawler.discover import verify_open
+
+    fetcher = PoliteFetcher(
+        transport=transport(
+            {
+                "remotive.com/api": _feed(),
+                "remotive.com/j/42": httpx.Response(404, text="not found"),
+            }
+        ),
+        rate_limiter=limiter(),
+    )
+    await ingest(db_session, fetcher, sources=(RemotiveSource(),), resolve_ats=False)
+
+    checked, closed = await verify_open(db_session, fetcher, older_than=timedelta(seconds=0))
+
+    assert checked == 1
+    assert closed == 1
+
+
+async def test_an_unreachable_posting_is_not_retired(db_session) -> None:
+    """A fetch we could not read is not evidence of a closure — the lesson
+    _close_missing learned in crawl.py, applied here before it costs anything."""
+    from packages.crawler.discover import verify_open
+
+    fetcher = PoliteFetcher(
+        transport=transport({"remotive.com/api": _feed()}),
+        rate_limiter=limiter(),
+    )
+    await ingest(db_session, fetcher, sources=(RemotiveSource(),), resolve_ats=False)
+
+    rate_limited = PoliteFetcher(
+        transport=transport({"remotive.com/j/42": httpx.Response(429, text="slow down")}),
+        rate_limiter=limiter(),
+    )
+    checked, closed = await verify_open(db_session, rate_limited, older_than=timedelta(seconds=0))
+
+    assert checked == 1
+    assert closed == 0
+
+
+async def test_board_postings_are_left_to_the_crawler(db_session) -> None:
+    """Re-fetching them one at a time would duplicate what a board read
+    already does for free, and spend the rate limiter doing it."""
+    from packages.core.models import Company, Posting
+    from packages.crawler.discover import verify_open
+
+    company = Company(name="Acme")
+    db_session.add(company)
+    await db_session.flush()
+    db_session.add(
+        Posting(
+            company_id=company.id,
+            ats_type="greenhouse",
+            external_id="12345",  # no source prefix: this came from a board
+            url="https://boards.greenhouse.io/acme/jobs/12345",
+            title="Engineer",
+            content_hash="abc",
+        )
+    )
+    await db_session.flush()
+
+    fetcher = PoliteFetcher(transport=transport({}), rate_limiter=limiter())
+    checked, _ = await verify_open(db_session, fetcher, older_than=timedelta(seconds=0))
+
+    assert checked == 0

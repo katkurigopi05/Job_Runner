@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import structlog
@@ -39,6 +40,7 @@ from packages.core.models import Company, Posting
 from packages.crawler.aggregators import SOURCES, AggregatorSource, SourceResult, fetch_all
 from packages.crawler.extract import CompanySeed, load_seed
 from packages.crawler.fetch import PoliteFetcher
+from packages.crawler.liveness import check
 from packages.crawler.resolve import Resolution, resolve
 
 log = structlog.get_logger(__name__)
@@ -57,6 +59,9 @@ class DiscoveryReport:
     new_postings: int = 0
     resolved: int = 0
     promoted: list[CompanySeed] = field(default_factory=list)
+    #: Aggregator postings re-checked, and how many turned out to be gone.
+    verified: int = 0
+    closed_stale: int = 0
 
     @property
     def seen(self) -> int:
@@ -72,6 +77,8 @@ class DiscoveryReport:
             f"/{len(self.sources)} sources, {self.new_postings} new, "
             f"{self.resolved} resolved to an ATS, {len(self.promoted)} companies promoted"
         )
+        if self.verified:
+            text += f", {self.verified} re-checked ({self.closed_stale} closed)"
         failures = [f"{r.source}: {r.failure}" for r in self.sources if not r.ok]
         return f"{text} [{'; '.join(failures)}]" if failures else text
 
@@ -206,3 +213,54 @@ def _append_seeds(additions: list[CompanySeed], seed_path: str | None) -> None:
     rows.extend({"name": seed.name, "slug": seed.slug, "ats": seed.ats} for seed in additions)
 
     path.write_text(yaml.safe_dump(document, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+async def verify_open(
+    session: AsyncSession,
+    fetcher: PoliteFetcher,
+    *,
+    limit: int = 50,
+    older_than: timedelta = timedelta(days=7),
+) -> tuple[int, int]:
+    """Re-check aggregator postings, closing the ones that are gone.
+
+    Returns `(checked, closed)`.
+
+    Registry postings do not need this — the crawler re-reads their whole
+    board every cycle, so a vanished posting is detected by absence. An
+    aggregator posting has no board behind it, so without this it stays in the
+    match feed forever regardless of whether the job still exists.
+
+    Only `UNKNOWN` is ever ignored: a posting we could not fetch is not a
+    posting that closed. Same rule as `_close_missing` in `crawl.py`, arrived
+    at the same expensive way.
+    """
+    cutoff = datetime.now(UTC) - older_than
+
+    stale = list(
+        (
+            await session.scalars(
+                select(Posting)
+                .where(
+                    Posting.closed_at.is_(None),
+                    # Aggregator postings carry a source-namespaced id; a
+                    # board posting's id comes from the ATS.
+                    Posting.external_id.contains(":"),
+                    Posting.first_seen_at < cutoff,
+                )
+                .order_by(Posting.first_seen_at)
+                .limit(limit)
+            )
+        ).all()
+    )
+
+    closed = 0
+    for posting in stale:
+        verdict = await check(posting.url, fetcher)
+        if verdict.is_closed:
+            posting.closed_at = datetime.now(UTC)
+            closed += 1
+            log.info("posting_closed_on_recheck", url=posting.url, reason=verdict.reason)
+
+    await session.flush()
+    return len(stale), closed

@@ -318,6 +318,11 @@ class InboundMessageOut(BaseModel):
     candidate_id: uuid.UUID
     application_id: uuid.UUID | None
     from_addr: str
+    #: How the message was tied to its application: "alias" (exact, from the
+    #: +app tag we issued), "inferred" (matched on sender and content), or
+    #: "unlinked". An inferred link is a guess and must never read as exact.
+    link_method: str = "unlinked"
+    link_confidence: float | None = None
     subject: str | None
     body: str | None
     classification: str | None
@@ -365,6 +370,10 @@ class MatchOut(BaseModel):
     profile_id: uuid.UUID
     posting_id: uuid.UUID
     score: float
+    #: `interested`, `skipped`, or null for not yet seen. A verdict on the
+    #: posting — never an instruction to apply (§2.3).
+    decision: str | None = None
+    decided_at: datetime | None = None
     title: str | None
     location: str | None
     url: str
@@ -377,5 +386,200 @@ class MatchOut(BaseModel):
     closed: bool
     title_similarity: float = 0.0
     body_similarity: float = 0.0
+    #: Terms the posting emphasizes that the profile evidences, and does not.
+    #: The second list is the actionable one: §2.1 stops the tailorer adding a
+    #: skill the résumé lacks, so this is where the owner learns what is
+    #: missing and decides whether it is true of them.
+    matched_terms: list[str] = Field(default_factory=list)
+    missing_terms: list[str] = Field(default_factory=list)
+    #: Whether the posting looks real and open — a tier and findings, never a
+    #: number, and deliberately not folded into `score`. See
+    #: packages/matching/legitimacy.py.
+    legitimacy: dict[str, Any] = Field(default_factory=dict)
+    #: The score broken into dimensions. Explains the ranking, never produces
+    #: it — packages/matching/rubric.py.
+    rubric: dict[str, Any] = Field(default_factory=dict)
     #: Hard filters that ruled it out — location, seniority, sponsorship.
     excluded_by: list[str] = Field(default_factory=list)
+
+
+class PacketPosting(BaseModel):
+    """What the owner needs to see to recognize the job they are applying to."""
+
+    title: str | None = None
+    company: str | None = None
+    location: str | None = None
+    url: str | None = None
+    #: Truncated. The full text is on the posting record; this is for reading
+    #: on the handoff screen, not for archival.
+    description: str | None = None
+
+
+class PacketResume(BaseModel):
+    """The document to upload, and whether tailoring actually produced it."""
+
+    resume_id: uuid.UUID
+    download_path: str
+    #: False means this is the profile's base résumé — tailoring produced
+    #: nothing, and the owner should know that rather than assume otherwise.
+    is_tailored: bool
+    rewritten_bullets: int = 0
+    rejected_rewrites: int = 0
+
+
+class PacketAnswer(BaseModel):
+    """One field we filled, in the employer's own wording."""
+
+    question: str
+    value: str
+
+
+class PacketQuestion(BaseModel):
+    """One field we could not fill, in the employer's exact wording (§2.4)."""
+
+    question: str
+    kind: str | None = None
+    required: bool = False
+
+
+class ApplicationPacketOut(BaseModel):
+    """Everything needed to finish one application by hand.
+
+    This exists because of where the pipeline actually stops. Every ATS we
+    support mounts a captcha at the fill stage, and §2.5 forbids working
+    around one, so the last step belongs to the owner. That is only a
+    reasonable ask if the handoff is complete: the posting to confirm, the
+    file to upload, the answers to copy, and the questions nobody could
+    answer. Sending someone back to a bare URL wastes everything the run did.
+    """
+
+    application_id: uuid.UUID
+    status: ApplicationStatus
+    failure_reason: FailureReason | None = None
+    ats: str | None = None
+    apply_url: str
+    posting: PacketPosting | None = None
+    resume: PacketResume | None = None
+    answers: list[PacketAnswer] = Field(default_factory=list)
+    unanswered: list[PacketQuestion] = Field(default_factory=list)
+    #: Path to the screenshot of the form as we left it filled.
+    screenshot_path: str | None = None
+    #: True when the form was filled and only submission remains.
+    ready_to_submit: bool = False
+
+
+class FunnelOut(BaseModel):
+    """Where applications stop, and whether the score predicts anything."""
+
+    total: int = 0
+    submitted: int = 0
+    needs_review: int = 0
+    failed: int = 0
+    answered: int = 0
+    engaged: int = 0
+    #: Null rather than 0.0 when nothing has been submitted. An empty
+    #: denominator is unknown, and 0% reads as "every employer ignored you".
+    answer_rate: float | None = None
+    engagement_rate: float | None = None
+    unscored: int = 0
+    #: Null until at least two score bands hold enough applications to read a
+    #: rate from — which is the honest answer for most of this tool's life.
+    score_tracks_outcome: bool | None = None
+    buckets: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class LatencyOut(BaseModel):
+    """How long employers took to answer, from the owner's own history."""
+
+    samples: int = 0
+    median_days: float | None = None
+    fastest_days: int | None = None
+    slowest_days: int | None = None
+    #: Split because a rejection and an interview invitation travel at very
+    #: different speeds, and averaging them describes neither.
+    median_rejection_days: float | None = None
+    median_engagement_days: float | None = None
+    suggested_silent_after_days: int | None = None
+
+
+class SilentOut(BaseModel):
+    application_id: str
+    url: str
+    days_since: int
+    stale: bool
+
+
+class CadenceOut(BaseModel):
+    silent: list[SilentOut] = Field(default_factory=list)
+    due: int = 0
+    stale: int = 0
+    latency: LatencyOut = Field(default_factory=LatencyOut)
+
+
+class DigestOut(BaseModel):
+    window_days: int = 7
+    postings_seen: int = 0
+    applications_created: int = 0
+    applications_submitted: int = 0
+    replies_received: int = 0
+    awaiting_review: int = 0
+    follow_ups_due: int = 0
+    #: Named rather than left as six zeroes: a quiet week usually means the
+    #: crawler stopped, not that the market did.
+    quiet_week: bool = False
+    funnel: FunnelOut = Field(default_factory=FunnelOut)
+    latency: LatencyOut = Field(default_factory=LatencyOut)
+
+
+class MatchDecision(BaseModel):
+    """Right or left. A verdict on the posting, never an instruction to apply."""
+
+    decision: str
+
+
+class CalibrationOut(BaseModel):
+    """What the owner's swipes say the score threshold should be."""
+
+    decided: int = 0
+    interested: int = 0
+    skipped: int = 0
+    interested_mean: float | None = None
+    skipped_mean: float | None = None
+    #: Positive means the scorer ranks kept postings above discarded ones.
+    #: Zero or negative means it is not measuring what the owner wants, and no
+    #: threshold repairs that.
+    separation: float | None = None
+    suggested_min_score: float | None = None
+    enough_data: bool = False
+
+
+class ManualSubmission(BaseModel):
+    """The owner recording that they sent this application themselves."""
+
+    note: str | None = None
+
+
+class MatchDecisionOut(BaseModel):
+    """Confirmation that a verdict was recorded.
+
+    Deliberately not `MatchOut`. That model carries the posting's title, url
+    and dates, which live on `Posting` and not on `Match` — declaring it here
+    made the route fail response validation on every single call, a 500 that
+    stayed invisible because a CORS preflight was rejecting the request one
+    step earlier. A response model should describe what the handler actually
+    has in its hand.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    decision: str | None = None
+    decided_at: datetime | None = None
+
+
+class MatchSummaryOut(BaseModel):
+    """Counts, not a page. `GET /matches` returns at most 200 rows."""
+
+    total: int = 0
+    undecided: int = 0
+    interested: int = 0

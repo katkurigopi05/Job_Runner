@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -28,9 +29,35 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from packages.core.models import Application, Base, Candidate, Match, Posting, Profile, User
 
-TEST_DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://jobrunner:jobrunner@localhost:5432/jobrunner_test",
+
+def _from_env_file(key: str) -> str | None:
+    """Read one key out of `.env`, the way the app's Settings already does.
+
+    Without this the tests were the only part of the project that ignored
+    `.env`. On a machine where port 5432 is taken by something else — which is
+    why `docker-compose.override.yml` exists — `.env` holds the real URL, the
+    app reads it, and `make gate-0` still errored on 196 tests unless the
+    variable happened to be exported in that shell. A gate whose result
+    depends on shell history is not a gate.
+
+    Deliberately not a dotenv dependency: one key, one file, no interpolation.
+    """
+    path = Path(__file__).resolve().parent.parent / ".env"
+    if not path.is_file():
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name.strip() == key:
+            return value.strip().strip('"').strip("'") or None
+    return None
+
+
+#: A real environment variable still wins — that is how CI and one-off runs
+#: point somewhere else without editing a file that is not theirs.
+TEST_DATABASE_URL = (
+    os.environ.get("TEST_DATABASE_URL")
+    or _from_env_file("TEST_DATABASE_URL")
+    or "postgresql+asyncpg://jobrunner:jobrunner@localhost:5432/jobrunner_test"
 )
 
 #: Truncated between committing tests, children first is handled by CASCADE.
@@ -197,6 +224,76 @@ def _tmp_storage(tmp_path):
     set_storage(LocalStorage(tmp_path / "storage"))
     yield
     set_storage(None)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_network_llm():
+    """§7: "no test may hit a network LLM". Enforced, not assumed.
+
+    It held for free while nothing cleared the settings cache. The moment
+    something did, the developer's own `LLM_PROVIDER=gemini` reached the
+    tests, a run made real API calls, hit 429s and slept through 20s/40s/80s
+    of backoff — spending the owner's daily quota to do it.
+
+    Session-scoped on purpose: this sets the variable once. Clearing the
+    settings cache per test made pydantic re-read and re-validate `.env` on
+    every access and took the suite from 90 seconds to over five minutes.
+    """
+    import os
+
+    from packages.core.config import get_settings
+
+    previous = os.environ.get("LLM_PROVIDER")
+    os.environ["LLM_PROVIDER"] = "stub"
+    os.environ["LLM_CALL_INTERVAL_S"] = "0"
+    get_settings.cache_clear()
+
+    # Setting LLM_PROVIDER is not sufficient, and finding that out cost an
+    # afternoon. §7 routes tailoring, cover letters and open-ended answers to
+    # "best available", and `best_available()` deliberately ignores
+    # LLM_PROVIDER — it picks the strongest *configured* provider. So once a
+    # GEMINI_API_KEY existed in `.env`, the apply-pipeline tests started making
+    # real API calls, hit 429s, and slept through 20s/40s/80s of backoff. The
+    # suite went from 90 seconds to over eight minutes and was spending the
+    # owner's daily quota while it did.
+    #
+    # Patched here rather than by unsetting the keys, because Ollama counts as
+    # configured unconditionally and the fallback would still leave the tests
+    # talking to a socket.
+    from packages.llm import router
+
+    original_best = router.best_available
+    router.best_available = lambda: "stub"  # type: ignore[assignment]
+    yield
+    router.best_available = original_best  # type: ignore[assignment]
+    if previous is None:
+        os.environ.pop("LLM_PROVIDER", None)
+    else:
+        os.environ["LLM_PROVIDER"] = previous
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _tmp_audit_trail(tmp_path, monkeypatch):
+    """The LLM audit trail lives in its own directory per test.
+
+    The daily quota is derived from that trail — deliberately, so there is one
+    authority rather than a counter that can disagree with the record. The
+    consequence is that a real day's API usage changes what the tests see:
+    after an evaluation run spent the 200-call allowance, a *unit* test that
+    mocks its HTTP call still failed with QuotaExceeded, because the quota it
+    consulted was the real one.
+
+    The path is patched directly rather than by redirecting `VAULT_ROOT` and
+    clearing the settings cache, because that clearing is what made the suite
+    slow. One function, one patch, no revalidation.
+    """
+    from packages.llm import audit
+
+    trail = tmp_path / "secrets" / "llm-audit.jsonl"
+    trail.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(audit, "audit_path", lambda: trail)
+    yield
 
 
 @pytest_asyncio.fixture

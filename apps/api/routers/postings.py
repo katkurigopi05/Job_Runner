@@ -25,6 +25,7 @@ router = APIRouter(prefix="/postings", tags=["postings"])
 async def search_postings(
     session: SessionDep,
     q: str = "",
+    location: str | None = None,
     ats: str | None = None,
     limit: int = 20,
     include_closed: bool = False,
@@ -43,6 +44,9 @@ async def search_postings(
         stmt = stmt.where(Posting.closed_at.is_(None))
     if ats:
         stmt = stmt.where(Posting.ats_type == ats)
+    if location:
+        loc_pattern = f"%{location.strip()}%"
+        stmt = stmt.where(Posting.location.ilike(loc_pattern))
     if q.strip():
         pattern = f"%{q.strip()}%"
         stmt = stmt.where(

@@ -1,5 +1,5 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
-        check-migrations api worker workers mcp web web-install validate-seeds discover \
+        check-migrations api worker workers mcp web web-install validate-seeds discover import-portals \
         gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
@@ -69,6 +69,15 @@ mcp:
 
 # Sequential live validation. A Greenhouse API 404 is checked against the
 # rendered board before the slug is reported missing. Expect ~50 minutes.
+tailor-batch:
+	$(PY)/python -m scripts.batch_tailor
+
+eval-tailor:
+	$(PY)/python -m scripts.eval_tailor
+
+doctor:
+	$(PY)/python -m scripts.doctor
+
 validate-seeds:
 	$(PY)/python -m packages.crawler.validate seeds/companies.yaml
 
@@ -168,3 +177,10 @@ gate-1-live:
 # seeds/companies.yaml. Broad and slow; the crawl is narrow and fast.
 discover:
 	$(PY)/python -m scripts.discover
+
+# make import-portals f=../career-ops/templates/portals.example.yml
+# Pulls their maintained company list into seeds/companies.yaml. Appends
+# only; nothing you wrote by hand is touched. Add --dry-run to look first.
+import-portals:
+	@test -n "$(f)" || (echo "set f=<path to career-ops portals.yml>" && exit 1)
+	$(PY)/python -m scripts.import_portals "$(f)" $(ARGS)

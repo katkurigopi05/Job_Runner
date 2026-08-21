@@ -14,6 +14,7 @@ from packages.core.enums import ApplicationStatus, FailureReason
 from packages.core.models import Application, ApplicationEvent
 from packages.core.state import (
     ALLOWED_TRANSITIONS,
+    OWNER_ONLY_TRANSITIONS,
     InvalidTransitionError,
     can_transition,
     is_terminal,
@@ -36,6 +37,13 @@ LEGAL_EDGES = [
     (S.NEEDS_REVIEW, S.RUNNING),
     (S.NEEDS_REVIEW, S.FAILED),
     (S.NEEDS_OTP, S.RUNNING),
+    # Owner-only. Every supported ATS captchas the apply form and §2.5
+    # rules out working around one, so the owner finishes by hand — and
+    # that has to be recordable or the pipeline shows a sent application
+    # as failed forever. The worker never takes these; see
+    # OWNER_ONLY_TRANSITIONS.
+    (S.NEEDS_REVIEW, S.SUBMITTED),
+    (S.FAILED, S.SUBMITTED),
 ]
 
 
@@ -50,11 +58,23 @@ def test_edge_table_contains_exactly_the_documented_edges() -> None:
 
 
 @pytest.mark.parametrize("status", [S.SUBMITTED, S.FAILED])
-def test_terminal_statuses_have_no_outgoing_edges(status: ApplicationStatus) -> None:
+def test_the_worker_cannot_leave_a_terminal_status(status: ApplicationStatus) -> None:
+    """Terminality means the worker is done, not that no edge exists.
+
+    `claim_work` returns ALREADY_DONE for these, which is what stops a
+    redelivered queue task from re-running finished work. `failed` also has
+    one outgoing edge — the owner recording an application they completed by
+    hand — and that edge is in OWNER_ONLY_TRANSITIONS, which the worker never
+    consults. Both properties matter, so this pins the machine-reachable set
+    rather than the whole table.
+    """
     assert is_terminal(status)
-    assert ALLOWED_TRANSITIONS[status] == frozenset()
-    for to in S:
-        assert not can_transition(status, to)
+
+    machine_reachable = {
+        to for to in ALLOWED_TRANSITIONS[status] if (status, to) not in OWNER_ONLY_TRANSITIONS
+    }
+
+    assert machine_reachable == set()
 
 
 @pytest.mark.parametrize(
@@ -65,9 +85,8 @@ def test_terminal_statuses_have_no_outgoing_edges(status: ApplicationStatus) -> 
         (S.QUEUED, S.QUEUED),  # self-edges are not transitions
         (S.RUNNING, S.RUNNING),
         (S.NEEDS_OTP, S.SUBMITTED),  # otp resumes work, it does not finish it
-        (S.NEEDS_REVIEW, S.SUBMITTED),
         (S.SUBMITTED, S.RUNNING),  # terminal
-        (S.FAILED, S.RUNNING),
+        (S.FAILED, S.RUNNING),  # the machine does not get to retry it
     ],
 )
 def test_illegal_edges_are_rejected(frm: ApplicationStatus, to: ApplicationStatus) -> None:

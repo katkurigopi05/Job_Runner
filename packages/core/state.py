@@ -40,12 +40,31 @@ ALLOWED_TRANSITIONS: dict[ApplicationStatus, frozenset[ApplicationStatus]] = {
         }
     ),
     ApplicationStatus.NEEDS_REVIEW: frozenset(
-        {ApplicationStatus.RUNNING, ApplicationStatus.FAILED}
+        {ApplicationStatus.RUNNING, ApplicationStatus.FAILED, ApplicationStatus.SUBMITTED}
     ),
     ApplicationStatus.NEEDS_OTP: frozenset({ApplicationStatus.RUNNING}),
     ApplicationStatus.SUBMITTED: frozenset(),
-    ApplicationStatus.FAILED: frozenset(),
+    # `failed` is where the *machine* gives up, not where the application
+    # ends. Every supported ATS mounts a captcha on the apply form and §2.5
+    # rules out working around one, so the common failure is
+    # `manual_completion_required` — an application the owner then finishes by
+    # hand. Without this edge that work could never be recorded, and the
+    # pipeline board would show a submitted application as failed forever.
+    ApplicationStatus.FAILED: frozenset({ApplicationStatus.SUBMITTED}),
 }
+
+#: Edges only an explicit owner action may take. The worker drives
+#: queued -> running -> {submitted, needs_review, needs_otp, failed} and never
+#: touches these, so a redelivered task still cannot resurrect a terminal row —
+#: which is the property that made `submitted` and `failed` terminal in the
+#: first place. A person saying "I sent this myself" is a different thing from
+#: a retry.
+OWNER_ONLY_TRANSITIONS: frozenset[tuple[ApplicationStatus, ApplicationStatus]] = frozenset(
+    {
+        (ApplicationStatus.NEEDS_REVIEW, ApplicationStatus.SUBMITTED),
+        (ApplicationStatus.FAILED, ApplicationStatus.SUBMITTED),
+    }
+)
 
 
 class InvalidTransitionError(Exception):
@@ -71,6 +90,24 @@ class InvalidTransitionError(Exception):
 
 
 def is_terminal(status: ApplicationStatus) -> bool:
+    """Whether the *worker* is finished with this application.
+
+    Deliberately not "has no outgoing edges" any more, and the difference is
+    load-bearing in both directions:
+
+    - `claim_work` returns ALREADY_DONE for a terminal status, which is what
+      stops a redelivered queue task from re-running finished work. That must
+      keep covering `failed`.
+    - `failed -> submitted` exists so the owner can record an application they
+      completed by hand after a captcha stopped the machine (§2.5).
+
+    So `failed` is terminal *and* has an outgoing edge, and both are correct
+    because they answer different questions. The edge is listed in
+    `OWNER_ONLY_TRANSITIONS`, which the worker never consults. Do not "fix"
+    this by emptying one to match the other: emptying the edge makes
+    hand-finished applications unrecordable, and clearing the terminal flag
+    lets the queue resurrect them.
+    """
     return status in TERMINAL_STATUSES
 
 

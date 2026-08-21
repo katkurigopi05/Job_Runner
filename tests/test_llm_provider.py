@@ -114,6 +114,11 @@ async def test_audit_logging_in_gemini(capsys, monkeypatch):
     import httpx
 
     class MockResponse:
+        # status_code and headers exist because the provider now checks for a
+        # 429 before reading the body, and reads Retry-After when it finds one.
+        status_code = 200
+        headers: dict[str, str] = {}
+
         def raise_for_status(self):
             pass
 

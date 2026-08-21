@@ -47,6 +47,10 @@ support supported supporting create created creating
 design designed designing develop developed developing
 deliver delivered delivering
 """
+# The verbs above arrived from PR #32. They are the ordinary vocabulary of any
+# engineering posting, and leaving them in the "missing" set meant a rewrite
+# that said "improved" was rejected for taking a term from the posting — the
+# guard firing on grammar rather than on a claim.
 
 _STOPWORDS: frozenset[str] = frozenset(_STOPWORDS_TEXT.split())
 

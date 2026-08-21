@@ -4,24 +4,40 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.completeness import missing_requirements
 from packages.core.enums import ApplicationStatus, ErrorCode, FailureReason
-from packages.core.models import Application, ApplicationEvent, Candidate, Profile
+from packages.core.models import (
+    Application,
+    ApplicationEvent,
+    Candidate,
+    Company,
+    Posting,
+    Profile,
+    Resume,
+)
 from packages.core.queue import enqueue
 from packages.core.schemas import (
     ApplicationCreate,
     ApplicationEventOut,
     ApplicationOut,
+    ApplicationPacketOut,
+    ManualSubmission,
     OtpSubmission,
+    PacketAnswer,
+    PacketPosting,
+    PacketQuestion,
+    PacketResume,
     ReviewDecision,
 )
 from packages.core.state import transition
+from packages.core.storage import get_storage
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -211,3 +227,204 @@ async def submit_otp(
     await session.commit()
     await session.refresh(application)
     return application
+
+
+#: How much of the job description the handoff screen carries. The full text
+#: stays on the posting record; this is what a person reads before deciding
+#: they recognize the job.
+DESCRIPTION_PREVIEW_CHARS = 4000
+
+
+@router.get("/{application_id}/packet", response_model=ApplicationPacketOut)
+async def application_packet(
+    application_id: uuid.UUID, session: SessionDep
+) -> ApplicationPacketOut:
+    """Everything needed to finish this application by hand.
+
+    Every ATS this project supports mounts a captcha at the fill stage, and
+    §2.5 rules out working around one, so submission is the owner's step. The
+    run still did the expensive parts — it found the posting, scored it,
+    tailored the résumé, and answered the form — and this is where that work
+    is handed over: the posting to confirm, the file to upload, the answers to
+    copy in the employer's own wording, and the questions nobody could answer.
+    """
+    application = await session.get(Application, application_id)
+    if application is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+
+    review = application.review_json or {}
+
+    posting_out: PacketPosting | None = None
+    if application.posting_id is not None:
+        posting = await session.get(Posting, application.posting_id)
+        if posting is not None:
+            company = (
+                await session.get(Company, posting.company_id)
+                if posting.company_id is not None
+                else None
+            )
+            description = posting.description_raw or ""
+            posting_out = PacketPosting(
+                title=posting.title,
+                company=company.name if company else None,
+                location=posting.location,
+                url=posting.url,
+                description=description[:DESCRIPTION_PREVIEW_CHARS] or None,
+            )
+
+    resume_out = await _packet_resume(session, application, review)
+
+    # `value` is None for file uploads and anything the adapter redacted, and
+    # a blank row on the handoff screen is worse than no row.
+    answers = [
+        PacketAnswer(question=field["label"], value=str(field["value"]))
+        for field in review.get("filled") or []
+        if field.get("label") and field.get("value") is not None
+    ]
+
+    unanswered = [
+        PacketQuestion(
+            question=item["question"],
+            kind=item.get("kind"),
+            required=bool(item.get("required")),
+        )
+        for item in review.get("unanswered") or []
+        if item.get("question")
+    ]
+
+    screenshot_ref = review.get("screenshot_ref")
+    screenshot_path = None
+    if screenshot_ref:
+        path = get_storage().path_for(screenshot_ref)
+        screenshot_path = str(path) if path.is_file() else None
+
+    return ApplicationPacketOut(
+        application_id=application.id,
+        status=application.status,
+        failure_reason=application.failure_reason,
+        ats=application.ats,
+        apply_url=application.url,
+        posting=posting_out,
+        resume=resume_out,
+        answers=answers,
+        unanswered=unanswered,
+        screenshot_path=screenshot_path,
+        ready_to_submit=bool(screenshot_ref)
+        and not any(question.required for question in unanswered),
+    )
+
+
+async def _packet_resume(
+    session: AsyncSession, application: Application, review: dict[str, object]
+) -> PacketResume | None:
+    """The document to upload — tailored if one was rendered, base otherwise.
+
+    Falling back to the base résumé matters more than it looks. Tailoring is
+    an enhancement that is allowed to fail, and when it does the owner still
+    needs a file; handing back nothing would turn a degraded run into a
+    useless one. `is_tailored` says which they got.
+    """
+    diff = review.get("resume_diff") or {}
+    resume_id = application.tailored_resume_id
+    is_tailored = resume_id is not None
+
+    if resume_id is None:
+        profile = await session.get(Profile, application.profile_id)
+        if profile is None or profile.base_resume_id is None:
+            return None
+        resume_id = profile.base_resume_id
+
+    resume = await session.get(Resume, resume_id)
+    if resume is None:
+        return None
+
+    return PacketResume(
+        resume_id=resume.id,
+        download_path=f"/resumes/{resume.id}/file",
+        is_tailored=is_tailored,
+        rewritten_bullets=int(diff.get("changed", 0)) if isinstance(diff, dict) else 0,
+        rejected_rewrites=int(diff.get("rejected", 0)) if isinstance(diff, dict) else 0,
+    )
+
+
+@router.post("/{application_id}/submitted", response_model=ApplicationOut)
+async def mark_submitted(
+    application_id: uuid.UUID, body: ManualSubmission, session: SessionDep
+) -> Application:
+    """Record that the owner submitted this application by hand.
+
+    The end of the path §2.5 forces. Every supported ATS mounts a captcha on
+    the apply form, this project will not work around one, so the last click
+    is the owner's — and until now there was nowhere to put the fact that they
+    made it. A finished application sat on the board as `needs_review` or
+    `failed[manual_completion_required]` forever, which makes the pipeline
+    lie and makes the funnel report meaningless.
+
+    This is the only route that may move a terminal row, and only to
+    `submitted`. The worker cannot reach it, so redelivery still cannot
+    resurrect anything — a person saying "I sent this myself" is a different
+    thing from a retry.
+    """
+    application = await session.get(Application, application_id)
+    if application is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+
+    if application.status == ApplicationStatus.SUBMITTED.value:
+        # Already recorded. Idempotent rather than an error: at a hundred a
+        # day the owner will double-tap, and a queue that punishes that is a
+        # queue that gets used slowly.
+        return application
+
+    await transition(
+        session,
+        application,
+        ApplicationStatus.SUBMITTED,
+        payload={
+            "by": "owner",
+            "note": body.note,
+            # Kept because it says *why* this needed a person: a captcha, an
+            # unsupported site, a question nobody could answer.
+            "was": application.status,
+            "failure_reason": application.failure_reason,
+        },
+    )
+    # The reason it could not be automated is history now, not current state.
+    application.failure_reason = None
+    await session.commit()
+    await session.refresh(application)
+    return application
+
+
+@router.get("/queue/manual", response_model=list[ApplicationPacketOut])
+async def manual_queue(
+    session: SessionDep,
+    limit: int = Query(default=25, ge=1, le=100),
+) -> list[ApplicationPacketOut]:
+    """Everything waiting on the owner, as complete handoff packets.
+
+    One request rather than one per application. At a hundred a day the round
+    trips are the difference between a queue that flows and one that stutters,
+    and every packet is needed anyway the moment its card is shown.
+    """
+    stmt = (
+        select(Application)
+        .where(
+            Application.status.in_(
+                [ApplicationStatus.NEEDS_REVIEW.value, ApplicationStatus.FAILED.value]
+            )
+        )
+        .order_by(Application.updated_at.asc())
+        .limit(limit)
+    )
+    waiting = (await session.scalars(stmt)).all()
+
+    packets: list[ApplicationPacketOut] = []
+    for application in waiting:
+        # A failed application only belongs here if a person could finish it.
+        if (
+            application.status == ApplicationStatus.FAILED.value
+            and application.failure_reason != FailureReason.MANUAL_COMPLETION_REQUIRED.value
+        ):
+            continue
+        packets.append(await application_packet(application.id, session))
+    return packets

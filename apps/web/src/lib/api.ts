@@ -8,6 +8,15 @@
 
 const API = process.env.JOBRUNNER_API ?? "http://127.0.0.1:8000";
 
+/**
+ * Where the API lives, for the one case the browser must call it directly.
+ *
+ * Downloads are that case: streaming a PDF through the Next server to hand
+ * it back unchanged would buy nothing, and the browser is already on
+ * loopback so the API accepts it.
+ */
+export const API_BASE = API;
+
 export type ApplicationStatus =
   | "queued"
   | "running"
@@ -68,6 +77,7 @@ export interface ReviewRecord {
   questions?: string[];
   score?: number | null;
   min_match_score?: number;
+  screening?: Screening | null;
 }
 
 export interface Application {
@@ -157,15 +167,66 @@ export interface InboundMessage {
   subject: string | null;
   body: string | null;
   classification: Classification | null;
+  /**
+   * "alias" means the +app tag we applied with came back in a header — an
+   * exact key. "inferred" means it was matched on sender and content, which
+   * is a guess: those never move an application's outcome.
+   */
+  link_method: "alias" | "inferred" | "unlinked";
+  link_confidence: number | null;
   at: string;
 }
 
 /** A scored posting, with the breakdown that produced the score. */
+/** A week's activity, composed from the funnel and cadence reports. */
+export interface Digest {
+  window_days: number;
+  postings_seen: number;
+  applications_created: number;
+  applications_submitted: number;
+  replies_received: number;
+  awaiting_review: number;
+  follow_ups_due: number;
+  /** Named rather than left as six zeroes: a quiet week usually means the
+   *  crawler stopped, not that the market did. */
+  quiet_week: boolean;
+}
+
+/** Counts, not a page — `GET /matches` caps at 200. */
+export interface MatchSummary {
+  total: number;
+  undecided: number;
+  interested: number;
+}
+
+export interface PostingSearch {
+  results: { id: string; title: string | null; ats_type: string | null }[];
+  total?: number;
+}
+
+export type Decision = "interested" | "skipped";
+
+/** What the owner's swipes say the score threshold should be. */
+export interface Calibration {
+  decided: number;
+  interested: number;
+  skipped: number;
+  interested_mean: number | null;
+  skipped_mean: number | null;
+  separation: number | null;
+  suggested_min_score: number | null;
+  enough_data: boolean;
+}
+
 export interface Match {
   id: string;
   profile_id: string;
   posting_id: string;
   score: number;
+  /** `interested`, `skipped`, or null for not yet seen. A verdict on the
+   *  posting — never an instruction to apply. */
+  decision: Decision | null;
+  decided_at: string | null;
   title: string | null;
   location: string | null;
   url: string;
@@ -178,14 +239,116 @@ export interface Match {
   closed: boolean;
   title_similarity: number;
   body_similarity: number;
+  /** Terms the posting emphasizes and the profile evidences. */
+  matched_terms: string[];
+  /**
+   * What the posting wants that your résumé does not show. The tailorer is
+   * forbidden from inventing these, so this is where you decide whether one
+   * is true of you and worth writing in.
+   */
+  missing_terms: string[];
+  legitimacy: Legitimacy | null;
+  rubric: Rubric | null;
   /** Hard filters that ruled it out — location, seniority, sponsorship. */
   excluded_by: string[];
+}
+
+/** Whether the posting looks real and open. Never folded into the score. */
+export interface Legitimacy {
+  tier: "high_confidence" | "caution" | "suspicious";
+  signals: LegitimacySignal[];
+  /** True of real postings too — contract wording, a benefits mismatch. */
+  advisories: LegitimacySignal[];
+}
+
+export interface LegitimacySignal {
+  name: string;
+  weight: "positive" | "neutral" | "concerning";
+  finding: string;
+}
+
+/** The score broken down. Explains the ranking; does not produce it. */
+export interface Rubric {
+  overall: number;
+  dimensions: RubricDimension[];
+  /** The dimension dragging it down — the one worth reading first. */
+  weakest: string | null;
+}
+
+export interface RubricDimension {
+  name: string;
+  score: number;
+  weight: number;
+  finding: string;
+}
+
+/** Questions read off the form before anything was answered. */
+export interface Screening {
+  knock_outs: ScreenedQuestion[];
+  cautions: ScreenedQuestion[];
+}
+
+export interface ScreenedQuestion {
+  key: string;
+  label: string;
+  reason: string;
+  finding: "knock_out" | "caution";
 }
 
 export interface Candidate {
   id: string;
   name: string;
   email: string;
+}
+
+/** The posting, as much of it as the handoff screen shows. */
+export interface PacketPosting {
+  title: string | null;
+  company: string | null;
+  location: string | null;
+  url: string | null;
+  description: string | null;
+}
+
+/** The file to upload, and whether tailoring actually produced it. */
+export interface PacketResume {
+  resume_id: string;
+  download_path: string;
+  is_tailored: boolean;
+  rewritten_bullets: number;
+  rejected_rewrites: number;
+}
+
+export interface PacketAnswer {
+  question: string;
+  value: string;
+}
+
+export interface PacketQuestion {
+  question: string;
+  kind: string | null;
+  required: boolean;
+}
+
+/**
+ * Everything needed to finish one application by hand.
+ *
+ * Exists because the run stops at the captcha every supported ATS mounts on
+ * the apply form. The work up to that point is real, and this is how it gets
+ * handed over instead of thrown away.
+ */
+export interface ApplicationPacket {
+  application_id: string;
+  status: ApplicationStatus;
+  failure_reason: FailureReason | null;
+  ats: string | null;
+  apply_url: string;
+  posting: PacketPosting | null;
+  resume: PacketResume | null;
+  answers: PacketAnswer[];
+  unanswered: PacketQuestion[];
+  screenshot_path: string | null;
+  ready_to_submit: boolean;
 }
 
 export class ApiError extends Error {
@@ -239,6 +402,14 @@ export const api = {
   applications: () => request<Application[]>("/applications"),
   application: (id: string) => request<Application>(`/applications/${id}`),
   events: (id: string) => request<ApplicationEvent[]>(`/applications/${id}/events`),
+  packet: (id: string) => request<ApplicationPacket>(`/applications/${id}/packet`),
+  manualQueue: (limit = 25) =>
+    request<ApplicationPacket[]>(`/applications/queue/manual?limit=${limit}`),
+  markSubmitted: (id: string, note?: string) =>
+    request<Application>(`/applications/${id}/submitted`, {
+      method: "POST",
+      body: JSON.stringify({ note: note ?? null }),
+    }),
   candidates: () => request<Candidate[]>("/candidates"),
   // Scoped to a candidate by the API, not optional. Single-user or not,
   // the route requires it.
@@ -251,6 +422,15 @@ export const api = {
     request<Match[]>(`/matches?include_applied=${includeApplied}`),
   /** Filters are the owner's search, passed straight through as query params. */
   matchesFiltered: (query: URLSearchParams) => request<Match[]>(`/matches?${query}`),
+  calibration: () => request<Calibration>("/matches/calibration"),
+  digest: () => request<Digest>("/analytics/digest"),
+  matchSummary: () => request<MatchSummary>("/matches/summary"),
+  /** Returns a confirmation, not a full Match — the handler has no posting. */
+  decide: (matchId: string, decision: Decision) =>
+    request<{ id: string; decision: Decision | null; decided_at: string | null }>(
+      `/matches/${matchId}/decision`,
+      { method: "POST", body: JSON.stringify({ decision }) },
+    ),
   unrouted: () => request<InboundMessage[]>("/inbox/unrouted"),
 
   review: (id: string, body: { approve: boolean; answers?: Record<string, unknown>; note?: string }) =>

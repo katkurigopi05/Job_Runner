@@ -340,10 +340,171 @@ Ordered by value, all independent of each other:
 
 ---
 
+## 7. santifer/career-ops
+
+A second peer project, reviewed 2026-08-19: <https://github.com/santifer/career-ops>
+(MIT), by Santiago Fernández de Valderrama, who used it across 740+ listings.
+Same three ATSes as us, ~100 pre-configured companies, and — like Job Scout
+and Talvora — it evaluates and drafts but never submits. That is now four
+independent projects landing on §2.3's approval gate.
+
+Taken:
+
+- **Block G — legitimacy, kept out of the score.** Their strongest structural
+  idea: the numeric score measures *fit*, a separate tier measures whether the
+  posting is real. Mixing them lets a well-written ghost job rank highly
+  *because* it is well written. This matters more here than there: they only
+  draft, so a human reads every posting before anything is disclosed, while we
+  auto-fill a real phone number and work-authorization answers into forms.
+  `packages/matching/legitimacy.py` implements the six of their fourteen
+  signals that are computable without an LLM or a web lookup.
+- **Liveness verification** (their `scan.mjs --verify`), which named a gap
+  discovery had just created — registry postings close by absence when the
+  board is re-read, aggregator postings had nothing checking them ever.
+  `packages/crawler/liveness.py`, and `UNKNOWN` never closes anything.
+- **Untrusted-input discipline.** They treat imperative language in a JD aimed
+  at the model as an anomaly to quote and continue past. We pass
+  `description_raw` straight into the tailoring prompt and anyone can post a
+  job; the guard already defends against it structurally, since output must
+  trace to the résumé. That held by construction rather than by intent, so it
+  is now pinned by tests in `tests/test_no_fabrication.py`.
+
+Still open from this source:
+
+- **Funnel analysis** (their `analyze-patterns.mjs`). We hold
+  `ApplicationEvent`, `outcome`, `outcome_at` and `Match.score` and never ask
+  whether a higher score actually correlates with a reply. That is the
+  feedback loop §3.5 says is missing.
+- **Their ~100-company portal list**, MIT and reusable with attribution,
+  against our 29.
+- **Follow-up cadence** — nothing currently says "applied 14 days ago, silent".
+
+### Synced again 2026-08-21 — 70 commits in two days
+
+Read at `051059d`. The project moves fast; most of the traffic is theirs alone
+(i18n READMEs, their web dashboard, their updater). Four commits pointed at
+code we also have, and checking each against ours found two real defects here.
+
+**`fix(providers/lever): fold categories.allLocations into location`** — taken.
+Lever puts one city in `categories.location` and the full set in
+`allLocations`, and we read only the first. Hard filters *exclude*, so the
+mistake is silent: a role open in Paris and Milan looks Paris-only and a Milan
+search drops it without reporting a reason. Confirmed live before fixing —
+**six of Qonto's 38 postings** carry a second location our filters could not
+see. Palantir's 308 carry none, which is why it had never surfaced.
+
+**`fix(verify-cv-facts): catch fabricated headcounts outside software`** —
+their bug was a noun list that only counted software things, so "Managed 45
+staff" against a source saying 20 passed. Ours is built differently and does
+check numbers, so the same test found a *different* hole in the same place:
+`normalize` has mapped "nine" to "9" since the guard was written, but
+`_classify` looked for a digit in the raw token, so a spelled-out number was
+never classified as an entity and was never checked at all. Digits were
+caught; their English spellings walked through. "nine facilities" against a
+source reading "four" passed the fabrication guard.
+
+Worth noting what the same test showed working: cross-entry number reuse
+("Managed 45 staff" borrowing the 45 from a different employer's "45 hectares")
+is already refused on the résumé path, because that path scopes the check to
+the entry the bullet came from. It passes document-wide, which is the cover
+letter's path — a narrower hole, recorded rather than fixed.
+
+**`fix(liveness): a dead third-party host must not poison the whole verdict`**
+— does not apply. Theirs is a Playwright check whose subresource DNS failures
+reached the verdict; 78 live postings came back `uncertain` because an
+analytics host had died. Ours is an HTTP fetch of the posting URL and loads no
+subresources, so the failure mode cannot occur.
+
+**`fix(ashby): stop retrying a permanent failure, and honour a clamped
+Retry-After`** — convergent, arrived at independently the same day.
+`packages/llm/pacing.py` retries only 429, obeys `Retry-After`, and caps the
+wait so a provider asking for an hour surfaces instead of hanging.
+
+**`feat(verify-pipeline): flag a malformed follow-ups.md instead of reading it
+as empty`** — the bug class transferred even though the file did not.
+`load_seed` did `data.get("companies", [])`, so a mistyped top-level key, a
+file written as a bare list, and a genuinely empty registry all answered zero.
+A crawl then reported "0 boards fetched, 0 postings emitted" — indistinguishable
+from "nothing new since the last poll". The registry could go dark and the only
+symptom would be a quiet match feed. Malformed now raises and names the key it
+actually found; `companies: []` stays legal, because present-and-empty is a
+decision and absent is a mistake.
+
+**`fix(pipeline-lock): a vanished lock is not a lock you may delete`** — does
+not apply, and the reason is worth recording. Their insight is that
+"recoverable" hid two answers: STALE (the lock is there, its holder is gone —
+deleting it *is* the recovery) and VANISHED (nothing was there when we looked —
+also unblocked, but not a licence to delete, because the path may be owned by
+a process that created it in the microseconds since). Our claim is a single
+statement: an inner `SELECT … FOR UPDATE SKIP LOCKED` feeding the `UPDATE`, so
+Postgres holds the row lock across the check and the write. There is no window
+between observing a task is free and taking it, and we never delete a lock.
+
+Not taken: their web dashboard fixes, the i18n work, `story-provenance-check`
+(it depends on their Story Bank, which we do not have), and the same-origin
+API restriction — `apps/api/middleware.py` already refuses non-loopback
+callers.
+
+### Reviewed again 2026-08-19, against the owner's auto-apply goal
+
+The repository was cloned and read directly this time — 464 `.mjs` files, 79
+providers under `providers/`, MIT. Three findings, all checked rather than
+inferred.
+
+**Their apply step is weaker than ours, and deliberately so.**
+`prepare-application.mjs` says it "prints a prefill summary to stdout. Never
+POSTs anything — the user reviews the output, opens the apply URL, and submits
+themselves." The README is blunter: *"It never submits, sends, or clicks
+anything"*, and *"Does career-ops auto-apply to jobs for me? No."* We drive a
+real browser, fill the live form, and screenshot it. Their handoff is text;
+ours is a filled form plus a rendered PDF. This is the one axis where we are
+clearly ahead, and it is worth stating because the numbers — 65k stars, ~400
+contributors — invite the opposite assumption.
+
+**Their VC-portfolio seeding does not port to us, and the blocker is §2.6.**
+`seeds/vc-portfolios.mjs` walks `api.ycombinator.com/v0.1/companies` (248
+pages × 25 = ~6,200 companies) and the a16z portfolio page, then probes each
+company's ATS. It is the single biggest coverage idea in the project — ours
+seeds 29 companies. It is also unusable here:
+
+| Host | `/robots.txt` | Verdict |
+|---|---|---|
+| `api.ycombinator.com` | `User-Agent: * / Disallow: /` | refused |
+| `www.ycombinator.com` | `Disallow: /companies?*` | refused |
+| `www.workatastartup.com` | `Disallow:` (open) | allowed, but 302s to a login |
+| `a16z.com` | 404 — no file | permitted; HTML scrape of one VC |
+| `api.smartrecruiters.com` | `LinkedInBot Allow: /v1/companies/`, then `* Disallow: /` | refused |
+| `api.recruitee.com` | `Disallow: /` | refused |
+
+So the compliant remainder is a16z alone, by HTML scrape. §2.6 is a
+non-negotiable and their project does not carry the equivalent rule, which is
+why the same code is fine there and not here. Worth knowing when comparing the
+two CLIs side by side: theirs will surface YC companies and ours will not, and
+that gap is a rule, not a missing feature.
+
+**Reading their robots handling sent us to check our own, and ours was
+wrong.** Not wrong in their direction — wrong in the strict direction.
+`api.ashbyhq.com` answers **401** for `/robots.txt`, and this project treated
+every non-404 4xx as unreadable and refused. One of four extractors was
+crawling nothing, silently, and it read as an ordinary skip in the crawl
+report. RFC 9309 §2.3.1.3 makes any 4xx "unavailable" — the crawler "MAY
+access any resources" — and reserves the MUST-disallow for 5xx (§2.3.1.4).
+Fixed; a live re-check returned 137 open postings from a board that had been
+returning `Blocked`. The 5xx half is unchanged, which is the half that
+matters.
+
+Not taken: the AI-coding-CLI-as-runtime architecture, the Go/Bubble Tea TUI,
+and markdown/YAML/TSV as the datastore. Their archetype routing (role-specific
+scoring weights) is interesting and was left alone as complexity a single
+owner with one profile does not need yet.
+
+---
+
 ## Credits
 
-Everything in this document that is worth anything came from **Shirin Khosravi
-Jam** and her *Observable Job Agent* project.
+The bulk of this document came from **Shirin Khosravi Jam** and her
+*Observable Job Agent* project, and §7 from **Santiago Fernández de
+Valderrama**'s *career-ops*.
 
 - Repository: <https://github.com/jamwithai/observable-job-agent> (MIT)
 - Write-up: *Build your own Job Agent*, parts 1–4 —
@@ -529,8 +690,23 @@ Ordered by value:
 
 ---
 
+---
+
 ## Credits
 
-GiraffyReach is a commercial product; nothing was copied from it. What is
-recorded here is what reading a competitor's marketing honestly suggests about
+**Shirin Khosravi Jam** — *Observable Job Agent* / "Job Scout",
+<https://github.com/jamwithai/observable-job-agent> (MIT). §1–§6 above.
+
+**Santiago Fernández de Valderrama** — *career-ops*,
+<https://github.com/santifer/career-ops> (MIT). §7 above. His Block G is the
+fuller version of `packages/matching/legitimacy.py`, and his `--verify` flag
+named a gap we had just built into discovery ourselves.
+
+No code was copied from either repository into this one. What was taken is
+design reasoning, credited here rather than absorbed silently. Both projects
+are MIT-licensed and worth reading in full — each is a better piece of
+engineering than this summary of it.
+
+GiraffyReach is a commercial product with no public source. Nothing was taken
+from it but the reading — what a competitor's marketing honestly suggests about
 our own architecture, including the parts we will not build.

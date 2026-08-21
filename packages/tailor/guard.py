@@ -20,6 +20,13 @@ claim, then require each to trace back to the source corpus:
 Ordinary English words, however rearranged, are free. That is exactly the
 latitude §2.1 grants: rephrasing is allowed, inventing is not.
 
+The word list started out sized for résumé bullets, which are terse and
+third-person. A cover letter is first-person prose, so "My", "We" and "Please"
+arrive capitalized at the start of sentences and were being read as proper
+nouns — enough to reject nearly every letter for saying "My". Those words
+carry no factual claim in any position, so they belong here regardless of
+which surface is being checked.
+
 ## Why it is deliberately strict
 
 A guard that misses a fabrication puts a false claim on a real application in
@@ -103,6 +110,9 @@ type under until up upon use used user users using value version very via
 was week well were what when where whether which while who will with within
 without work worked workflow working works would wrote year years yet you
 your
+
+my me we us those whose another still why though hire hiring company letter
+dear sincerely regards please thank thanks
 """
 
 _COMMON_WORDS: frozenset[str] = frozenset(_COMMON_WORDS_TEXT.split())
@@ -179,7 +189,26 @@ def _strip(token: str) -> str:
 
 
 def stem(word: str) -> str:
-    """Naive stemmer for morphological variants (e.g. scale vs scalability)."""
+    """Fold common suffixes, so `reliability` and `reliable` compare equal.
+
+    Deliberately naive, and narrower than it looks. Suffix stripping cannot
+    reach irregular forms or heavy derivations, and several pairs that matter
+    here do not fold together:
+
+        scale / scalability   -> scale, scalable      no match
+        scale / scaled        -> scale, scal          no match
+        lead / led            -> lead, led            no match
+        async / asynchronous  -> async, asynchronou   no match
+
+    Every one of those is caught by the explicit `_SCOPE_CLAIMS` list instead,
+    which is why that list enumerates variants rather than relying on this.
+
+    This docstring previously named `scale vs scalability` as the example it
+    handles. It does not, and the blocking that looked like proof of the
+    stemmer working was the word list doing it. Do not assume a variant is
+    covered because a stemmer exists — check that it is either listed or
+    genuinely folds.
+    """
     w = word.lower()
     if len(w) <= 3:
         return w
@@ -264,6 +293,19 @@ def _classify(token: str) -> EntityKind | None:
 
     if _NUMERIC_RE.search(bare):
         # A bare ordinal or list marker is not a metric.
+        return EntityKind.NUMBER
+
+    # A spelled-out number is the same claim as its digits. `normalize` has
+    # mapped "nine" to "9" since this module was written, but the test above
+    # looks for a digit in the *raw* token — so "nine" was never classified as
+    # anything and was therefore never checked at all. A rewrite could say
+    # "nine facilities" against a source reading "four" and pass the guard,
+    # which is exactly the fabrication class §2.1 exists to stop.
+    #
+    # Found by the same defect surfacing in `santifer/career-ops`
+    # (fix(verify-cv-facts): catch fabricated headcounts outside software).
+    # Theirs was a missing noun; ours was a missing numeral form.
+    if normalized_bare in _NUMBER_WORDS.values() and bare.isalpha():
         return EntityKind.NUMBER
 
     if len(bare) >= 2 and bare.isupper() and bare.isalpha():
