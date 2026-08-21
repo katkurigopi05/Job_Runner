@@ -178,6 +178,32 @@ export interface InboundMessage {
 }
 
 /** A scored posting, with the breakdown that produced the score. */
+/** A week's activity, composed from the funnel and cadence reports. */
+export interface Digest {
+  window_days: number;
+  postings_seen: number;
+  applications_created: number;
+  applications_submitted: number;
+  replies_received: number;
+  awaiting_review: number;
+  follow_ups_due: number;
+  /** Named rather than left as six zeroes: a quiet week usually means the
+   *  crawler stopped, not that the market did. */
+  quiet_week: boolean;
+}
+
+/** Counts, not a page — `GET /matches` caps at 200. */
+export interface MatchSummary {
+  total: number;
+  undecided: number;
+  interested: number;
+}
+
+export interface PostingSearch {
+  results: { id: string; title: string | null; ats_type: string | null }[];
+  total?: number;
+}
+
 export type Decision = "interested" | "skipped";
 
 /** What the owner's swipes say the score threshold should be. */
@@ -397,6 +423,8 @@ export const api = {
   /** Filters are the owner's search, passed straight through as query params. */
   matchesFiltered: (query: URLSearchParams) => request<Match[]>(`/matches?${query}`),
   calibration: () => request<Calibration>("/matches/calibration"),
+  digest: () => request<Digest>("/analytics/digest"),
+  matchSummary: () => request<MatchSummary>("/matches/summary"),
   decide: (matchId: string, decision: Decision) =>
     request<Match>(`/matches/${matchId}/decision`, {
       method: "POST",

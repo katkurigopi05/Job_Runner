@@ -127,8 +127,7 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
 
         <a
           href={current.url}
-          target="_blank"
-          rel="noreferrer noopener"
+          target="jobrunner-form"
           className="mt-7 inline-block font-mono text-xs text-ink-soft underline decoration-rule underline-offset-4 hover:text-ink"
         >
           read the posting ↗

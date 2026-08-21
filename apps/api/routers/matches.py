@@ -15,13 +15,13 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.enums import ErrorCode
 from packages.core.models import Application, Match, Posting, Profile
-from packages.core.schemas import CalibrationOut, MatchDecision, MatchOut
+from packages.core.schemas import CalibrationOut, MatchDecision, MatchOut, MatchSummaryOut
 from packages.matching.search import (
     SENIORITY_ORDER,
     SearchFilters,
@@ -157,6 +157,26 @@ async def list_matches(
             )
         )
     return feed
+
+
+@router.get("/summary", response_model=MatchSummaryOut)
+async def summary(session: SessionDep, profile_id: uuid.UUID | None = None) -> MatchSummaryOut:
+    """How many matches exist, and how many are still unrated.
+
+    A separate route because `GET /matches` is a *page* — it caps at 200 and
+    defaults to 50. The dashboard read that page length as a total and
+    reported "50 matches" against a database holding 1,853. A count has to
+    come from a count.
+    """
+    scoped = select(func.count()).select_from(Match)
+    if profile_id is not None:
+        scoped = scoped.where(Match.profile_id == profile_id)
+
+    total = await session.scalar(scoped) or 0
+    undecided = await session.scalar(scoped.where(Match.decision.is_(None))) or 0
+    interested = await session.scalar(scoped.where(Match.decision == "interested")) or 0
+
+    return MatchSummaryOut(total=total, undecided=undecided, interested=interested)
 
 
 DECISIONS = ("interested", "skipped")

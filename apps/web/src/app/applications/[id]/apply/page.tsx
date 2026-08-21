@@ -79,8 +79,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
 
           <a
             href={packet.apply_url}
-            target="_blank"
-            rel="noreferrer noopener"
+            target="jobrunner-form"
             className="mt-6 inline-block rounded-[var(--radius)] bg-go px-5 py-2.5 font-mono text-sm text-on-accent transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-go"
           >
             Open the application form ↗

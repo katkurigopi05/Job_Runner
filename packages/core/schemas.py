@@ -557,3 +557,11 @@ class ManualSubmission(BaseModel):
     """The owner recording that they sent this application themselves."""
 
     note: str | None = None
+
+
+class MatchSummaryOut(BaseModel):
+    """Counts, not a page. `GET /matches` returns at most 200 rows."""
+
+    total: int = 0
+    undecided: int = 0
+    interested: int = 0

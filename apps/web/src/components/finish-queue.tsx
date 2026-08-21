@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { API_BASE, api, type ApplicationPacket } from "@/lib/api";
+import { DOC_WINDOW, openExternal } from "@/lib/external";
 
 /**
  * The manual-completion queue, built for volume.
@@ -41,7 +42,9 @@ export function FinishQueue({ initial }: { initial: ApplicationPacket[] }) {
 
   const openForm = useCallback(() => {
     if (!current) return;
-    window.open(current.apply_url, "_blank", "noopener,noreferrer");
+    // One reused window, not a new tab per card. Fifty applications used to
+    // mean fifty tabs.
+    openExternal(current.apply_url);
   }, [current]);
 
   const copyAnswers = useCallback(async () => {
@@ -59,7 +62,7 @@ export function FinishQueue({ initial }: { initial: ApplicationPacket[] }) {
 
   const downloadResume = useCallback(() => {
     if (!current?.resume) return;
-    window.open(`${API_BASE}${current.resume.download_path}`, "_blank", "noopener,noreferrer");
+    openExternal(`${API_BASE}${current.resume.download_path}`, DOC_WINDOW);
   }, [current]);
 
   const submitted = useCallback(async () => {
