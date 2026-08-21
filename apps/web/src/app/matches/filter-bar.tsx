@@ -54,7 +54,7 @@ export function FilterBar({ resultCount }: { resultCount: number }) {
             onKeyDown={(event) => {
               if (event.key === "Enter") set("locations", event.currentTarget.value.trim());
             }}
-            placeholder="austin, berlin"
+            placeholder="austin, san jose"
             className="w-44 rounded-[var(--radius)] border border-rule bg-paper px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
           />
         </label>

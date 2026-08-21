@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     #: Floor, not a default — the crawler refuses to go below this.
     crawler_min_delay_s: int = 60
 
+    #: The owner's search is United States only, California first. On by
+    #: default because it is a standing preference rather than a per-search
+    #: one — §1 calls filters the owner's input, and this is that input stated
+    #: once instead of retyped on every request. `?us_only=false` overrides it
+    #: for a single call, which is how you look outside without editing a file.
+    search_us_only: bool = True
+
     storage_root: str = "./storage"
 
     #: Read-only token. Raises the API limit from 60/hour to 5000/hour and

@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
+from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
 from packages.core.models import Application, Match, Posting, Profile
 from packages.core.schemas import (
@@ -28,6 +29,8 @@ from packages.core.schemas import (
     MatchOut,
     MatchSummaryOut,
 )
+from packages.matching.locality import locality_of
+from packages.matching.locality import rank as locality_rank
 from packages.matching.search import (
     SENIORITY_ORDER,
     SearchFilters,
@@ -81,6 +84,10 @@ async def list_matches(
     max_seniority: str | None = None,
     posted_within_days: int | None = Query(default=None, ge=1, le=3650),
     include_closed: bool = False,
+    #: None means "use the standing preference" (Settings.search_us_only).
+    #: Pass false to look outside the US for one call.
+    us_only: bool | None = None,
+    allow_unknown_location: bool = True,
 ) -> list[MatchOut]:
     """Scored postings, best first.
 
@@ -99,6 +106,8 @@ async def list_matches(
         max_seniority=max_seniority,
         posted_within_days=posted_within_days,
         include_closed=include_closed,
+        us_only=get_settings().search_us_only if us_only is None else us_only,
+        allow_unknown_location=allow_unknown_location,
     )
 
     for level in (min_seniority, max_seniority):
@@ -128,14 +137,21 @@ async def list_matches(
         (await session.scalars(select(Application.url))).all() if not include_applied else []
     )
 
+    # Ordering happens before the limit, not during it. The SQL is ordered by
+    # score, so truncating inside the loop would take the top `limit` by score
+    # and only then sort those — a Bay Area posting at rank 51 would never be
+    # seen, which is the opposite of what "California first" is for.
+    kept = [
+        (match, posting)
+        for match, posting in rows
+        if (include_applied or posting.url not in applied_urls)
+        and filter_matches(posting, filters).kept
+    ]
+    if filters.us_only:
+        kept.sort(key=lambda row: (locality_rank(locality_of(row[1].location)), -row[0].score))
+
     feed: list[MatchOut] = []
-    for match, posting in rows:
-        if len(feed) >= limit:
-            break
-        if not include_applied and posting.url in applied_urls:
-            continue
-        if not filter_matches(posting, filters).kept:
-            continue
+    for match, posting in kept[:limit]:
         reasons = match.reasons_json or {}
         feed.append(
             MatchOut(
