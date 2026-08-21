@@ -168,8 +168,20 @@ async def test_stub_json_fails_loudly_without_a_canned_answer() -> None:
         await StubProvider().complete_json("sys", "unknown", _Answer)
 
 
-def test_build_provider_defaults_to_stub(monkeypatch) -> None:
+def test_build_provider_defaults_to_stub(monkeypatch, tmp_path) -> None:
+    """The shipped default, independent of whatever this machine is configured for.
+
+    This asserted a default while reading the developer's own `.env`, so the
+    moment the owner set `LLM_PROVIDER=gemini` — the documented way to enable
+    real tailoring — the suite went red on an unrelated file. A test whose
+    result depends on local configuration is not testing the default.
+    """
     from packages.core.config import get_settings
+
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    # Settings reads `.env` relative to the working directory, so moving out of
+    # the repo is what makes "no configuration at all" reachable.
+    monkeypatch.chdir(tmp_path)
 
     get_settings.cache_clear()
     try:

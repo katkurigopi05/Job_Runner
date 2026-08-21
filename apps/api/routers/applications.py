@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,7 @@ from packages.core.schemas import (
     ApplicationEventOut,
     ApplicationOut,
     ApplicationPacketOut,
+    ManualSubmission,
     OtpSubmission,
     PacketAnswer,
     PacketPosting,
@@ -344,3 +345,86 @@ async def _packet_resume(
         rewritten_bullets=int(diff.get("changed", 0)) if isinstance(diff, dict) else 0,
         rejected_rewrites=int(diff.get("rejected", 0)) if isinstance(diff, dict) else 0,
     )
+
+
+@router.post("/{application_id}/submitted", response_model=ApplicationOut)
+async def mark_submitted(
+    application_id: uuid.UUID, body: ManualSubmission, session: SessionDep
+) -> Application:
+    """Record that the owner submitted this application by hand.
+
+    The end of the path §2.5 forces. Every supported ATS mounts a captcha on
+    the apply form, this project will not work around one, so the last click
+    is the owner's — and until now there was nowhere to put the fact that they
+    made it. A finished application sat on the board as `needs_review` or
+    `failed[manual_completion_required]` forever, which makes the pipeline
+    lie and makes the funnel report meaningless.
+
+    This is the only route that may move a terminal row, and only to
+    `submitted`. The worker cannot reach it, so redelivery still cannot
+    resurrect anything — a person saying "I sent this myself" is a different
+    thing from a retry.
+    """
+    application = await session.get(Application, application_id)
+    if application is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+
+    if application.status == ApplicationStatus.SUBMITTED.value:
+        # Already recorded. Idempotent rather than an error: at a hundred a
+        # day the owner will double-tap, and a queue that punishes that is a
+        # queue that gets used slowly.
+        return application
+
+    await transition(
+        session,
+        application,
+        ApplicationStatus.SUBMITTED,
+        payload={
+            "by": "owner",
+            "note": body.note,
+            # Kept because it says *why* this needed a person: a captcha, an
+            # unsupported site, a question nobody could answer.
+            "was": application.status,
+            "failure_reason": application.failure_reason,
+        },
+    )
+    # The reason it could not be automated is history now, not current state.
+    application.failure_reason = None
+    await session.commit()
+    await session.refresh(application)
+    return application
+
+
+@router.get("/queue/manual", response_model=list[ApplicationPacketOut])
+async def manual_queue(
+    session: SessionDep,
+    limit: int = Query(default=25, ge=1, le=100),
+) -> list[ApplicationPacketOut]:
+    """Everything waiting on the owner, as complete handoff packets.
+
+    One request rather than one per application. At a hundred a day the round
+    trips are the difference between a queue that flows and one that stutters,
+    and every packet is needed anyway the moment its card is shown.
+    """
+    stmt = (
+        select(Application)
+        .where(
+            Application.status.in_(
+                [ApplicationStatus.NEEDS_REVIEW.value, ApplicationStatus.FAILED.value]
+            )
+        )
+        .order_by(Application.updated_at.asc())
+        .limit(limit)
+    )
+    waiting = (await session.scalars(stmt)).all()
+
+    packets: list[ApplicationPacketOut] = []
+    for application in waiting:
+        # A failed application only belongs here if a person could finish it.
+        if (
+            application.status == ApplicationStatus.FAILED.value
+            and application.failure_reason != FailureReason.MANUAL_COMPLETION_REQUIRED.value
+        ):
+            continue
+        packets.append(await application_packet(application.id, session))
+    return packets

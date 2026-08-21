@@ -173,3 +173,95 @@ async def test_the_limit_applies_after_filtering(client: AsyncClient, varied) ->
     an unfiltered slice."""
     titles = await _titles(client, varied, remote="true", limit=2)
     assert len(titles) == 2
+
+
+async def test_the_summary_counts_rather_than_measuring_a_page(
+    client: AsyncClient, complete_candidate: dict[str, str], worker_session
+) -> None:
+    """`GET /matches` is a page — it caps at 200 and defaults to 50.
+
+    The dashboard read that page length as a total and reported "50 matches"
+    against a database holding 1,853. A count has to come from a count, so
+    this route exists and the feed route is not asked to be one.
+    """
+    import uuid as _uuid
+
+    from packages.core.models import Match, Posting
+
+    profile_id = _uuid.UUID(complete_candidate["profile_id"])
+    for index in range(60):
+        posting = Posting(url=f"https://example.com/summary/{index}", title=f"Role {index}")
+        worker_session.add(posting)
+        await worker_session.flush()
+        worker_session.add(
+            Match(
+                profile_id=profile_id,
+                posting_id=posting.id,
+                score=0.5,
+                decision="interested" if index < 3 else None,
+            )
+        )
+    await worker_session.commit()
+
+    body = (await client.get("/matches/summary")).json()
+
+    assert body["total"] == 60
+    assert body["interested"] == 3
+    assert body["undecided"] == 57
+    # The feed still returns a page, which is the distinction being drawn.
+    assert len((await client.get("/matches?limit=50")).json()) == 50
+
+
+async def test_a_decision_is_recorded_by_a_plain_post(
+    client: AsyncClient, complete_candidate: dict[str, str], worker_session
+) -> None:
+    """The route the swipe deck reaches, via a Server Action.
+
+    Calling it from the browser instead sent a CORS preflight the API answers
+    with 405, so every swipe failed and the page reported the API unreachable.
+    The API is deliberately loopback-only and unauthenticated — widening it to
+    a browser origin would open exactly what that rule protects — so the
+    request belongs on the Next server.
+    """
+    import uuid as _uuid
+
+    from packages.core.models import Match, Posting
+
+    posting = Posting(url="https://example.com/decide/1", title="Engineer")
+    worker_session.add(posting)
+    await worker_session.flush()
+    match = Match(
+        profile_id=_uuid.UUID(complete_candidate["profile_id"]),
+        posting_id=posting.id,
+        score=0.4,
+    )
+    worker_session.add(match)
+    await worker_session.commit()
+
+    response = await client.post(f"/matches/{match.id}/decision", json={"decision": "interested"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"] == "interested"
+    assert (await client.get("/matches/summary")).json()["interested"] == 1
+
+
+async def test_an_unknown_decision_is_refused(
+    client: AsyncClient, complete_candidate: dict[str, str], worker_session
+) -> None:
+    import uuid as _uuid
+
+    from packages.core.models import Match, Posting
+
+    posting = Posting(url="https://example.com/decide/2", title="Engineer")
+    worker_session.add(posting)
+    await worker_session.flush()
+    match = Match(
+        profile_id=_uuid.UUID(complete_candidate["profile_id"]), posting_id=posting.id, score=0.4
+    )
+    worker_session.add(match)
+    await worker_session.commit()
+
+    response = await client.post(f"/matches/{match.id}/decision", json={"decision": "maybe"})
+
+    assert response.status_code == 400
+    assert "interested" in response.json()["error"]["message"]

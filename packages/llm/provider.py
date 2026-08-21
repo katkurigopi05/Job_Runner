@@ -25,13 +25,15 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Protocol, TypeVar
+import re
+from typing import Any, Protocol, TypeVar
 
 import httpx
 import structlog
 from pydantic import BaseModel
 
 from packages.llm.audit import record
+from packages.llm.pacing import MAX_RETRIES, pacer_for, retry_after_seconds
 
 log = structlog.get_logger(__name__)
 
@@ -158,7 +160,7 @@ class OllamaProvider:
                 resp.raise_for_status()
                 return str(resp.json()["message"]["content"])
             except Exception as exc:
-                raise LLMError(f"Ollama call failed: {exc}") from exc
+                raise LLMError(f"Ollama call failed: {_scrubbed(exc)}") from exc
 
     async def complete_json(self, system: str, user: str, schema: type[T]) -> T:
         record(self.name, system, user, model=getattr(self, "model", None))
@@ -183,17 +185,46 @@ class OllamaProvider:
                 content = resp.json()["message"]["content"]
                 return schema.model_validate_json(content)
             except Exception as exc:
-                raise LLMError(f"Ollama JSON call failed: {exc}") from exc
+                raise LLMError(f"Ollama JSON call failed: {_scrubbed(exc)}") from exc
+
+
+#: Gemini authenticates with the key as a *query parameter*, so the key is part
+#: of every request URL — and httpx puts the URL into the text of any transport
+#: exception it raises. Re-raising that verbatim writes the key into the error,
+#: the log, and whatever the owner pastes into an issue. §2.7 says secrets never
+#: appear in logs and has no exception for error paths.
+#:
+#: Found by a real 404: the message carried the full key.
+_KEY_QUERY_RE = re.compile(r"([?&](?:key|api_key|access_token)=)[^&\s\'\"]+")
+
+#: Header-style credentials, for providers that authenticate that way.
+_KEY_HEADER_RE = re.compile(r"((?i:x-api-key|authorization|bearer)[\"\' :=]+)[A-Za-z0-9._\-]{8,}")
+
+
+def _scrubbed(exc: Exception) -> str:
+    """An exception's text with any `key=` query value removed."""
+    scrubbed = _KEY_QUERY_RE.sub(r"\1***", str(exc))
+    return _KEY_HEADER_RE.sub(r"\1***", scrubbed)
 
 
 class GeminiProvider:
     name = "gemini"
 
-    def __init__(self, model: str = "gemini-2.5-flash") -> None:
-        self.api_key = os.environ.get("GEMINI_API_KEY")
+    #: Pinned, not an alias. `gemini-flash-latest` never 404s but changes the
+    #: model under you, and the audit trail would record the alias rather than
+    #: what actually ran — §2.8 wants proof of what left the machine, and
+    #: "whatever Google was serving that day" is not proof. The cost of pinning
+    #: is that models retire: `gemini-2.5-flash` did, and every call returned
+    #: 404 with a message this code then swallowed into a generic failure.
+    DEFAULT_MODEL = "gemini-3.6-flash"
+
+    def __init__(self, model: str | None = None) -> None:
+        from packages.core.config import get_settings
+
+        self.api_key = os.environ.get("GEMINI_API_KEY") or get_settings().gemini_api_key
         if not self.api_key:
             raise LLMError("GEMINI_API_KEY environment variable is not set")
-        self.model = model
+        self.model = model or get_settings().gemini_model or self.DEFAULT_MODEL
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
 
     async def complete(
@@ -205,24 +236,56 @@ class GeminiProvider:
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> str:
         record(self.name, system, user, model=getattr(self, "model", None))
-        async with httpx.AsyncClient() as client:
-            try:
-                resp = await client.post(
-                    f"{self.base_url}/{self.model}:generateContent?key={self.api_key}",
-                    json={
-                        "systemInstruction": {"parts": [{"text": system}]},
-                        "contents": [{"parts": [{"text": user}]}],
-                        "generationConfig": {
-                            "maxOutputTokens": max_tokens,
-                            "temperature": temperature,
-                        },
-                    },
-                    timeout=60.0,
-                )
-                resp.raise_for_status()
-                return str(resp.json()["candidates"][0]["content"]["parts"][0]["text"])
-            except Exception as exc:
-                raise LLMError(f"Gemini call failed: {exc}") from exc
+        body = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"parts": [{"text": user}]}],
+            "generationConfig": {
+                "maxOutputTokens": max_tokens,
+                "temperature": temperature,
+            },
+        }
+        payload = await self._post(body)
+        try:
+            return str(payload["candidates"][0]["content"]["parts"][0]["text"])
+        except (KeyError, IndexError) as exc:
+            # A 200 with no candidate is usually a safety block. Saying so
+            # beats an IndexError from four frames down.
+            raise LLMError(f"Gemini returned no text: {_scrubbed(exc)}") from exc
+
+    async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
+        """One request, paced and retried on 429.
+
+        The tailorer makes a call per bullet, so a résumé is five in a row and
+        a batch is hundreds. Gemini's free tier limits per minute as well as
+        per day, and a tight loop trips the per-minute one — 39 of 60 calls in
+        the first real run. Pacing keeps us under it; `Retry-After` is obeyed
+        when we still go over.
+        """
+        pacer = pacer_for(self.name)
+        url = f"{self.base_url}/{self.model}:generateContent?key={self.api_key}"
+
+        for attempt in range(MAX_RETRIES + 1):
+            await pacer.wait_turn()
+            async with httpx.AsyncClient() as client:
+                try:
+                    resp = await client.post(url, json=body, timeout=60.0)
+                except Exception as exc:
+                    raise LLMError(f"Gemini call failed: {_scrubbed(exc)}") from exc
+
+                if resp.status_code == 429 and attempt < MAX_RETRIES:
+                    await pacer.back_off(attempt, retry_after_seconds(resp.headers))
+                    continue
+
+                try:
+                    resp.raise_for_status()
+                except Exception as exc:
+                    raise LLMError(f"Gemini call failed: {_scrubbed(exc)}") from exc
+                return dict(resp.json())
+
+        raise LLMError(
+            f"Gemini refused {MAX_RETRIES + 1} times with 429 — the account's rate limit is "
+            "lower than this workload. Raise LLM_CALL_INTERVAL_S, or run a smaller batch."
+        )
 
     async def complete_json(self, system: str, user: str, schema: type[T]) -> T:
         record(self.name, system, user, model=getattr(self, "model", None))
@@ -245,14 +308,16 @@ class GeminiProvider:
                 content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
                 return schema.model_validate_json(content)
             except Exception as exc:
-                raise LLMError(f"Gemini JSON call failed: {exc}") from exc
+                raise LLMError(f"Gemini JSON call failed: {_scrubbed(exc)}") from exc
 
 
 class AnthropicProvider:
     name = "anthropic"
 
     def __init__(self, model: str = "claude-3-5-sonnet-20241022") -> None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        from packages.core.config import get_settings
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY") or get_settings().anthropic_api_key
         if not api_key:
             raise LLMError("ANTHROPIC_API_KEY environment variable is not set")
         self.api_key: str = api_key
@@ -288,7 +353,7 @@ class AnthropicProvider:
                 resp.raise_for_status()
                 return str(resp.json()["content"][0]["text"])
             except Exception as exc:
-                raise LLMError(f"Anthropic call failed: {exc}") from exc
+                raise LLMError(f"Anthropic call failed: {_scrubbed(exc)}") from exc
 
     async def complete_json(self, system: str, user: str, schema: type[T]) -> T:
         record(self.name, system, user, model=getattr(self, "model", None))
@@ -315,7 +380,7 @@ class AnthropicProvider:
                 content = resp.json()["content"][0]["text"]
                 return schema.model_validate_json(content)
             except Exception as exc:
-                raise LLMError(f"Anthropic JSON call failed: {exc}") from exc
+                raise LLMError(f"Anthropic JSON call failed: {_scrubbed(exc)}") from exc
 
 
 def build_provider(name: str | None = None) -> LLMProvider:

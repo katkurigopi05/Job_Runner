@@ -24,6 +24,8 @@ from packages.crawler.extract import (
     CompanySeed,
     GreenhouseExtractor,
     LeverExtractor,
+    SeedFileError,
+    _lever_location,
     load_seed,
     posting_hash,
     strip_html,
@@ -1069,3 +1071,100 @@ def test_workable_shares_one_api_host_with_every_other_customer() -> None:
     from packages.crawler.ratelimit import MIN_SHARED_API_DELAY_SECONDS, floor_for
 
     assert floor_for("apply.workable.com") == MIN_SHARED_API_DELAY_SECONDS
+
+
+def test_escaped_html_is_stripped_to_prose() -> None:
+    """Greenhouse sends its `content` field HTML-escaped.
+
+    `convert_charrefs=True` turns `&lt;p&gt;` into a real tag while emitting
+    it as *text*, so a single pass converts entities into markup rather than
+    into prose. 8,427 Greenhouse postings were stored as `<h2><strong>Who we
+    are</strong></h2>...`, and that text reached the embeddings, the
+    matched/missing term lists, and the job description handed to the
+    tailoring model — where `span`, `style` and `helvetica` read as skills the
+    posting wanted.
+    """
+    escaped = (
+        "&lt;h2&gt;&lt;strong&gt;About&lt;/strong&gt;&lt;/h2&gt;&lt;p&gt;We build things.&lt;/p&gt;"
+    )
+
+    assert strip_html(escaped) == "About\nWe build things."
+
+
+def test_ordinary_html_still_takes_one_pass() -> None:
+    assert strip_html("<h2>About</h2><p>We build things.</p>") == "About\nWe build things."
+
+
+def test_prose_containing_an_angle_bracket_survives() -> None:
+    """The repeat pass must not eat text that merely looks like markup."""
+    assert strip_html("Latency 3 < 5 ms, and a &lt; sign.") == "Latency 3 < 5 ms, and a < sign."
+
+
+def test_stripping_is_bounded() -> None:
+    """A pathological input must not spin."""
+    nested = "&amp;lt;p&amp;gt;" * 50 + "text"
+
+    assert strip_html(nested) is not None
+
+
+def test_lever_keeps_every_location_a_posting_is_open_in() -> None:
+    """Lever puts one city in `location` and the full set in `allLocations`.
+
+    Reading only the first hides the rest from the hard filters — and filters
+    *exclude*, so the mistake is silent: a role open in Paris and Milan looks
+    Paris-only and a Milan search drops it without reporting a reason. Real on
+    this registry: six of Qonto's 38 postings carry a second location.
+    """
+    assert _lever_location({"location": "Paris", "allLocations": ["Paris", "Milan"]}) == (
+        "Paris; Milan"
+    )
+
+
+def test_lever_does_not_repeat_the_primary_location() -> None:
+    """`allLocations` includes the primary. "Paris; Paris" reads as a data error."""
+    assert _lever_location({"location": "Paris", "allLocations": ["paris"]}) == "Paris"
+
+
+def test_lever_survives_a_posting_with_no_categories() -> None:
+    for payload in (None, "not a dict", {}, {"location": "   ", "allLocations": []}):
+        assert _lever_location(payload) is None
+
+
+def test_a_malformed_registry_refuses_rather_than_reading_as_empty(tmp_path) -> None:
+    """A typo'd key must not look like "no companies".
+
+    `data.get("companies", [])` gave the same answer for a mistyped top-level
+    key and a genuinely empty registry: zero. A crawl then reported "0 boards
+    fetched, 0 postings emitted", which is indistinguishable from "nothing new
+    since the last poll" — the registry could go dark and the only symptom
+    would be a quiet match feed.
+    """
+    path = tmp_path / "companies.yaml"
+    path.write_text("compnies:\n  - name: Acme\n", encoding="utf-8")
+
+    with pytest.raises(SeedFileError) as raised:
+        load_seed(str(path))
+
+    # The message names what was actually found, so the typo is the fix.
+    assert "compnies" in str(raised.value)
+
+
+def test_an_explicitly_empty_registry_is_allowed(tmp_path) -> None:
+    """Present and empty is a decision; absent is a mistake."""
+    path = tmp_path / "companies.yaml"
+    path.write_text("companies: []\n", encoding="utf-8")
+
+    assert load_seed(str(path)) == []
+
+
+def test_a_missing_registry_is_not_an_error(tmp_path) -> None:
+    """A fresh checkout has no registry yet. That is what the warning is for."""
+    assert load_seed(str(tmp_path / "absent.yaml")) == []
+
+
+def test_a_registry_written_as_a_bare_list_is_refused(tmp_path) -> None:
+    path = tmp_path / "companies.yaml"
+    path.write_text("- name: Acme\n", encoding="utf-8")
+
+    with pytest.raises(SeedFileError):
+        load_seed(str(path))

@@ -295,6 +295,19 @@ def _classify(token: str) -> EntityKind | None:
         # A bare ordinal or list marker is not a metric.
         return EntityKind.NUMBER
 
+    # A spelled-out number is the same claim as its digits. `normalize` has
+    # mapped "nine" to "9" since this module was written, but the test above
+    # looks for a digit in the *raw* token — so "nine" was never classified as
+    # anything and was therefore never checked at all. A rewrite could say
+    # "nine facilities" against a source reading "four" and pass the guard,
+    # which is exactly the fabrication class §2.1 exists to stop.
+    #
+    # Found by the same defect surfacing in `santifer/career-ops`
+    # (fix(verify-cv-facts): catch fabricated headcounts outside software).
+    # Theirs was a missing noun; ours was a missing numeral form.
+    if normalized_bare in _NUMBER_WORDS.values() and bare.isalpha():
+        return EntityKind.NUMBER
+
     if len(bare) >= 2 and bare.isupper() and bare.isalpha():
         return EntityKind.ACRONYM
 

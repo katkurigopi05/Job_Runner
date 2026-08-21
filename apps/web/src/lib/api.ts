@@ -178,11 +178,55 @@ export interface InboundMessage {
 }
 
 /** A scored posting, with the breakdown that produced the score. */
+/** A week's activity, composed from the funnel and cadence reports. */
+export interface Digest {
+  window_days: number;
+  postings_seen: number;
+  applications_created: number;
+  applications_submitted: number;
+  replies_received: number;
+  awaiting_review: number;
+  follow_ups_due: number;
+  /** Named rather than left as six zeroes: a quiet week usually means the
+   *  crawler stopped, not that the market did. */
+  quiet_week: boolean;
+}
+
+/** Counts, not a page — `GET /matches` caps at 200. */
+export interface MatchSummary {
+  total: number;
+  undecided: number;
+  interested: number;
+}
+
+export interface PostingSearch {
+  results: { id: string; title: string | null; ats_type: string | null }[];
+  total?: number;
+}
+
+export type Decision = "interested" | "skipped";
+
+/** What the owner's swipes say the score threshold should be. */
+export interface Calibration {
+  decided: number;
+  interested: number;
+  skipped: number;
+  interested_mean: number | null;
+  skipped_mean: number | null;
+  separation: number | null;
+  suggested_min_score: number | null;
+  enough_data: boolean;
+}
+
 export interface Match {
   id: string;
   profile_id: string;
   posting_id: string;
   score: number;
+  /** `interested`, `skipped`, or null for not yet seen. A verdict on the
+   *  posting — never an instruction to apply. */
+  decision: Decision | null;
+  decided_at: string | null;
   title: string | null;
   location: string | null;
   url: string;
@@ -359,6 +403,13 @@ export const api = {
   application: (id: string) => request<Application>(`/applications/${id}`),
   events: (id: string) => request<ApplicationEvent[]>(`/applications/${id}/events`),
   packet: (id: string) => request<ApplicationPacket>(`/applications/${id}/packet`),
+  manualQueue: (limit = 25) =>
+    request<ApplicationPacket[]>(`/applications/queue/manual?limit=${limit}`),
+  markSubmitted: (id: string, note?: string) =>
+    request<Application>(`/applications/${id}/submitted`, {
+      method: "POST",
+      body: JSON.stringify({ note: note ?? null }),
+    }),
   candidates: () => request<Candidate[]>("/candidates"),
   // Scoped to a candidate by the API, not optional. Single-user or not,
   // the route requires it.
@@ -371,6 +422,15 @@ export const api = {
     request<Match[]>(`/matches?include_applied=${includeApplied}`),
   /** Filters are the owner's search, passed straight through as query params. */
   matchesFiltered: (query: URLSearchParams) => request<Match[]>(`/matches?${query}`),
+  calibration: () => request<Calibration>("/matches/calibration"),
+  digest: () => request<Digest>("/analytics/digest"),
+  matchSummary: () => request<MatchSummary>("/matches/summary"),
+  /** Returns a confirmation, not a full Match — the handler has no posting. */
+  decide: (matchId: string, decision: Decision) =>
+    request<{ id: string; decision: Decision | null; decided_at: string | null }>(
+      `/matches/${matchId}/decision`,
+      { method: "POST", body: JSON.stringify({ decision }) },
+    ),
   unrouted: () => request<InboundMessage[]>("/inbox/unrouted"),
 
   review: (id: string, body: { approve: boolean; answers?: Record<string, unknown>; note?: string }) =>

@@ -50,8 +50,8 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 | Skill gap (`jd-skill-gap`) | **HAVE** | `score.py` — what the posting wants and the résumé lacks |
 | Legitimacy tiering (`classify-tier`) | **HAVE** | `packages/matching/legitimacy.py` |
 | Hard filters | **HAVE** | `packages/matching/filters.py` |
-| **A–G rubric → 1.0–5.0** | **BUILD** | ours is cosine + filters; theirs decomposes into named criteria you can argue with |
-| Star matching (`star`) | **BUILD** | manual pin/boost of a posting |
+| **A–G rubric → 1.0–5.0** | **HAVE** | `packages/matching/rubric.py`, from the mobile branch |
+| Swipe/rate feed | **HAVE** | `/swipe` — and the decisions are the labelled set §15 says is missing |
 | Salary gap (`salary-gap`) | **BUILD** | `Profile.salary_expectation` is held and never compared |
 | Upskill plan (`upskill`) | **BUILD** | gap is computed; nothing turns it into a plan |
 
@@ -67,7 +67,7 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 | Cover letter (`cover-letter`) | **PARTIAL** | PR #32 — sentence guard rejects salutations, emits a stub |
 | Voice/style capture (`voice-dna`) | **BUILD** | nothing models the owner's writing voice |
 | CV visual regression (`test:cv-visual`) | **BUILD** | we test the parse round-trip, never how it *looks* |
-| Per-company tailoring cache | **BUILD** | §15 already records this gap |
+| Tailoring done ahead of time | **HAVE** | `make tailor-batch` — per *posting*, not per company; see below |
 | Image → PDF (`img-to-pdf`) | **DECLINED** | narrow utility |
 
 ## Applying
@@ -103,7 +103,7 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 |---|---|---|
 | Web dashboard | **HAVE** | `apps/web/` |
 | MCP / CLI-native | **HAVE** | `apps/mcp/` |
-| Golden-set evals (`eval:golden`) | **BUILD** | §15 says our gate fixtures are not real material |
+| Golden-set evals (`eval:golden`) | **HAVE** | `make eval-tailor` — 12 real crawled postings; first run: 57% refused, 11% uptake |
 | **Health check** (`doctor`) | **HAVE** | `make doctor` — found a broken `VAULT_KEY` on its first run |
 | Pipeline verify | **PARTIAL** | gates cover it; no single command |
 | Go TUI dashboard | **DECLINED** | the web app is the surface |
@@ -123,8 +123,24 @@ half-features.
    run by finding a `VAULT_KEY` that was 91 characters where Fernet needs 44 —
    every credential write would have raised, and nothing had noticed because
    nothing had ever tried to store one.
-3. **Explainable scoring** — the A–G rubric, salary gap, star.
+3. **Explainable scoring** — rubric landed via mobile. Still open: salary gap,
+   and the calibration problem below.
+
+   **The threshold is the live defect.** The first real scoring run over 10,922
+   postings produced a maximum of **0.271** against a shipped
+   `min_match_score` of **0.75** — unreachable, so nothing ever clears it.
+   `/matches/calibration` now derives the number from the owner's own swipes.
+   Stripping the HTML out of the postings moved the maximum only to 0.282, so
+   the 0.1–0.3 band is what this embedding does, not a bug to fix.
 4. **Reach** — company→board resolver, more extractors, board health re-checks.
-5. **Documents** — cover letter (finish #32), tailoring cache, visual
-   regression, voice capture.
+5. **Documents** — cover letter (finish #32), visual regression, voice
+   capture.
+
+   **A note on "per-company caching", which CLAUDE.md §15 lists as a gap.**
+   Measured against the real feed, only **5%** of matched postings share an
+   identical job description — different roles at one company have different
+   descriptions, so reusing a Fivetran backend tailoring for a Fivetran sales
+   role would attach a mismatched résumé. The safe unit is the posting, which
+   is what `packages/tailor/batch.py` keys on. The §15 entry is worth
+   rewording rather than implementing.
 6. **Interview material** — story bank, contacts, assessment log.

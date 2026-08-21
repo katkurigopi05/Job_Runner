@@ -164,7 +164,7 @@ export default async function MatchesPage({
                 <div className="mt-4 flex flex-wrap items-center gap-4">
                   <a
                     href={match.url}
-                    target="_blank"
+                    target="jobrunner-form"
                     rel="noreferrer"
                     className="font-mono text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline"
                   >

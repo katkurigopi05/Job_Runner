@@ -64,7 +64,14 @@ line-length = 100
 target-version = "py312"
 # Reference docs are quoted verbatim — the formatter must not rewrite the code
 # blocks inside them.
-extend-exclude = ["docs", "*.md"]
+#
+# `scripts/adhoc/` is one-off analysis written in a parallel agent session:
+# hardcoded ids, absolute paths into another tool's directory, read-once input
+# files. It is kept because it records what was actually run, and excluded
+# because linting it means rewriting somebody's scratch work to satisfy rules
+# it was never written against. Project tooling lives in `scripts/` proper and
+# is linted normally.
+extend-exclude = ["docs", "*.md", "scripts/adhoc"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

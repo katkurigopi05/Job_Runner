@@ -41,7 +41,16 @@ job role position candidate applicant company team work working experience
 years year skills ability able strong excellent good great required requirement
 requirements responsibilities responsible qualifications preferred plus nice
 opportunity looking seeking join help build building including etc
+improve improved improving increase increased increasing
+scale scaled scaling manage managed managing lead led leading
+support supported supporting create created creating
+design designed designing develop developed developing
+deliver delivered delivering
 """
+# The verbs above arrived from PR #32. They are the ordinary vocabulary of any
+# engineering posting, and leaving them in the "missing" set meant a rewrite
+# that said "improved" was rejected for taking a term from the posting — the
+# guard firing on grammar rather than on a claim.
 
 _STOPWORDS: frozenset[str] = frozenset(_STOPWORDS_TEXT.split())
 

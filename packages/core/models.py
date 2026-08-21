@@ -154,8 +154,15 @@ class Posting(Base):
     ats_type: Mapped[str | None] = mapped_column(String(50))
     external_id: Mapped[str | None] = mapped_column(String(200))
     url: Mapped[str] = mapped_column(Text, nullable=False)
-    title: Mapped[str | None] = mapped_column(String(500))
-    location: Mapped[str | None] = mapped_column(String(300))
+    #: Text, not String(n). Both are typed by an employer into a form with no
+    #: length limit, and the first real crawl proved the guess wrong: a
+    #: Greenhouse posting at SumUp lists every US state it hires in, 561
+    #: characters of location against a 300-character column. That did not
+    #: truncate — asyncpg raised StringDataRightTruncationError and the whole
+    #: cycle aborted, losing 108 other companies' postings to one row.
+    #: There is no correct maximum here, so there is no maximum.
+    title: Mapped[str | None] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(Text)
     description_raw: Mapped[str | None] = mapped_column(Text)
     description_embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
     #: Change detection — an unchanged hash means the crawler emits nothing.
@@ -190,9 +197,39 @@ class Match(Base):
     )
     score: Mapped[float] = mapped_column(Float, nullable=False)
     reasons_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    #: What the owner did with this posting: `interested`, `skipped`, or NULL
+    #: for not yet seen. Kept beside the score rather than in its own table
+    #: because it is the same fact from the other side — the score is what the
+    #: machine thinks of this posting for this profile, and this is what the
+    #: owner thinks. Storing them together is what lets one be checked against
+    #: the other.
+    decision: Mapped[str | None] = mapped_column(String(20))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: A résumé tailored for this posting ahead of time, so the apply pipeline
+    #: does not wait on a model. Keyed here rather than on Application because
+    #: tailoring depends on the job description, and a Match is exactly one
+    #: (profile, posting) pair — the same key the work is done against.
+    tailored_resume_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("resumes.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = _created_at()
 
-    __table_args__ = (Index("ix_matches_profile_score", "profile_id", text("score DESC")),)
+    __table_args__ = (
+        Index("ix_matches_profile_score", "profile_id", text("score DESC")),
+        # The swipe feed's only query: undecided matches for one profile. A
+        # partial index because decided rows are the ones that accumulate, and
+        # the feed never looks at them.
+        Index(
+            "ix_matches_profile_undecided",
+            "profile_id",
+            postgresql_where=text("decision IS NULL"),
+        ),
+        # Re-scoring looks up existing rows in memory and updates them; without
+        # this a concurrent run could insert a second row for the same pair and
+        # the owner's decision would silently attach to whichever copy the
+        # query happened to return.
+        UniqueConstraint("profile_id", "posting_id", name="uq_matches_profile_posting"),
+    )
 
 
 class Application(Base):
