@@ -492,12 +492,53 @@ def default_seed_path() -> Path:
     return Path(__file__).resolve().parents[2] / "seeds" / "companies.yaml"
 
 
+class SeedFileError(ValueError):
+    """The registry file exists but is not a registry."""
+
+
 def load_seed(path: str | None = None) -> list[CompanySeed]:
-    """Read the company registry from YAML."""
+    """Read the company registry from YAML.
+
+    **A malformed file raises rather than reading as empty.** `data.get(
+    "companies", [])` treated a typo'd top-level key, a file written as a bare
+    list, and a genuinely empty registry as the same answer: zero companies.
+    A crawl then reported "0 boards fetched, 0 postings emitted", which is
+    indistinguishable from "nothing new since the last poll" — the registry
+    could go silently dark and the only symptom would be a quiet match feed.
+
+    `companies: []` is still legal and still returns nothing. The distinction
+    is whether the key is *there*: present and empty is a decision, absent is
+    a mistake.
+
+    A missing file is not an error — a fresh checkout has no registry yet, and
+    that is what the warning is for.
+
+    The failure mode is one career-ops fixed the same week in a different file
+    (`feat(verify-pipeline): flag a malformed follow-ups.md instead of reading
+    it as empty`). See docs/REFERENCE.md §7.
+    """
     location = Path(path) if path else default_seed_path()
     if not location.is_file():
         log.warning("company_seed_missing", path=str(location))
         return []
 
-    data = yaml.safe_load(location.read_text()) or {}
-    return [CompanySeed.model_validate(entry) for entry in data.get("companies", [])]
+    raw = yaml.safe_load(location.read_text())
+    if raw is None:
+        raise SeedFileError(f"{location} is empty — expected a `companies:` list")
+    if not isinstance(raw, dict):
+        raise SeedFileError(
+            f"{location} is a {type(raw).__name__}, not a mapping — "
+            "expected `companies:` at the top"
+        )
+    if "companies" not in raw:
+        raise SeedFileError(
+            f"{location} has no `companies:` key (found: {', '.join(sorted(raw)) or 'nothing'})"
+        )
+
+    entries = raw["companies"] or []
+    if not isinstance(entries, list):
+        raise SeedFileError(
+            f"{location}: `companies:` must be a list, not {type(entries).__name__}"
+        )
+
+    return [CompanySeed.model_validate(entry) for entry in entries]

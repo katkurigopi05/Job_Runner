@@ -420,6 +420,26 @@ Retry-After`** — convergent, arrived at independently the same day.
 `packages/llm/pacing.py` retries only 429, obeys `Retry-After`, and caps the
 wait so a provider asking for an hour surfaces instead of hanging.
 
+**`feat(verify-pipeline): flag a malformed follow-ups.md instead of reading it
+as empty`** — the bug class transferred even though the file did not.
+`load_seed` did `data.get("companies", [])`, so a mistyped top-level key, a
+file written as a bare list, and a genuinely empty registry all answered zero.
+A crawl then reported "0 boards fetched, 0 postings emitted" — indistinguishable
+from "nothing new since the last poll". The registry could go dark and the only
+symptom would be a quiet match feed. Malformed now raises and names the key it
+actually found; `companies: []` stays legal, because present-and-empty is a
+decision and absent is a mistake.
+
+**`fix(pipeline-lock): a vanished lock is not a lock you may delete`** — does
+not apply, and the reason is worth recording. Their insight is that
+"recoverable" hid two answers: STALE (the lock is there, its holder is gone —
+deleting it *is* the recovery) and VANISHED (nothing was there when we looked —
+also unblocked, but not a licence to delete, because the path may be owned by
+a process that created it in the microseconds since). Our claim is a single
+statement: an inner `SELECT … FOR UPDATE SKIP LOCKED` feeding the `UPDATE`, so
+Postgres holds the row lock across the check and the write. There is no window
+between observing a task is free and taking it, and we never delete a lock.
+
 Not taken: their web dashboard fixes, the i18n work, `story-provenance-check`
 (it depends on their Story Bank, which we do not have), and the same-origin
 API restriction — `apps/api/middleware.py` already refuses non-loopback

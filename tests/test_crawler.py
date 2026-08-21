@@ -24,6 +24,7 @@ from packages.crawler.extract import (
     CompanySeed,
     GreenhouseExtractor,
     LeverExtractor,
+    SeedFileError,
     _lever_location,
     load_seed,
     posting_hash,
@@ -1127,3 +1128,43 @@ def test_lever_does_not_repeat_the_primary_location() -> None:
 def test_lever_survives_a_posting_with_no_categories() -> None:
     for payload in (None, "not a dict", {}, {"location": "   ", "allLocations": []}):
         assert _lever_location(payload) is None
+
+
+def test_a_malformed_registry_refuses_rather_than_reading_as_empty(tmp_path) -> None:
+    """A typo'd key must not look like "no companies".
+
+    `data.get("companies", [])` gave the same answer for a mistyped top-level
+    key and a genuinely empty registry: zero. A crawl then reported "0 boards
+    fetched, 0 postings emitted", which is indistinguishable from "nothing new
+    since the last poll" — the registry could go dark and the only symptom
+    would be a quiet match feed.
+    """
+    path = tmp_path / "companies.yaml"
+    path.write_text("compnies:\n  - name: Acme\n", encoding="utf-8")
+
+    with pytest.raises(SeedFileError) as raised:
+        load_seed(str(path))
+
+    # The message names what was actually found, so the typo is the fix.
+    assert "compnies" in str(raised.value)
+
+
+def test_an_explicitly_empty_registry_is_allowed(tmp_path) -> None:
+    """Present and empty is a decision; absent is a mistake."""
+    path = tmp_path / "companies.yaml"
+    path.write_text("companies: []\n", encoding="utf-8")
+
+    assert load_seed(str(path)) == []
+
+
+def test_a_missing_registry_is_not_an_error(tmp_path) -> None:
+    """A fresh checkout has no registry yet. That is what the warning is for."""
+    assert load_seed(str(tmp_path / "absent.yaml")) == []
+
+
+def test_a_registry_written_as_a_bare_list_is_refused(tmp_path) -> None:
+    path = tmp_path / "companies.yaml"
+    path.write_text("- name: Acme\n", encoding="utf-8")
+
+    with pytest.raises(SeedFileError):
+        load_seed(str(path))
