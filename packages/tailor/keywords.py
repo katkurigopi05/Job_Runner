@@ -20,7 +20,10 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
-from packages.tailor.guard import SourceCorpus, normalize
+# Aliased: this module has its own `_TOKEN_RE` with a different pattern, and
+# `borrowed_terms` has to tokenize the way the guard does to agree with it.
+from packages.tailor.guard import _TOKEN_RE as _GUARD_TOKEN_RE
+from packages.tailor.guard import SourceCorpus, normalize, stem
 
 #: Grammatical words and posting boilerplate.
 #:
@@ -146,3 +149,28 @@ def analyze(job_description: str, corpus: SourceCorpus, *, limit: int = 40) -> T
             missing.append(term)
 
     return TermReport(supported=supported, missing=missing)
+
+
+def borrowed_terms(original: str, candidate: str, forbidden: tuple[str, ...]) -> list[str]:
+    """Posting terms the rewrite introduced that the source did not have.
+
+    The complement of `analyze`: that names the terms the résumé cannot back,
+    this catches the model reaching for one anyway. A term counts as borrowed
+    only when every word of it is present now and was not present before —
+    a partial overlap is ordinary vocabulary, not a claim.
+
+    Lives here rather than in `rewrite.py` because both the bullet rewriter
+    and the cover letter ask the same question of their output.
+    """
+    if not forbidden:
+        return []
+
+    had = {stem(word) for word in _GUARD_TOKEN_RE.findall(original)}
+    has = {stem(word) for word in _GUARD_TOKEN_RE.findall(candidate)}
+
+    borrowed = []
+    for term in forbidden:
+        term_stems = {stem(word) for word in _GUARD_TOKEN_RE.findall(term)}
+        if term_stems and term_stems <= has and not term_stems <= had:
+            borrowed.append(term)
+    return borrowed

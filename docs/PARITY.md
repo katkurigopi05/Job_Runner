@@ -64,7 +64,7 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 | PDF render (`pdf`) | **HAVE** | `assemble.py`, `publish.py` |
 | HTML CV (`build-cv-html`) | **HAVE** | `assemble_html` |
 | LaTeX CV (`build-cv-latex`) | **DECLINED** | WeasyPrint covers it; LaTeX is a second toolchain |
-| Cover letter (`cover-letter`) | **PARTIAL** | PR #32 — sentence guard rejects salutations, emits a stub |
+| Cover letter (`cover-letter`) | **PARTIAL** | writes and vets one; nothing in the apply pipeline calls it yet |
 | Voice/style capture (`voice-dna`) | **BUILD** | nothing models the owner's writing voice |
 | CV visual regression (`test:cv-visual`) | **BUILD** | we test the parse round-trip, never how it *looks* |
 | Tailoring done ahead of time | **HAVE** | `make tailor-batch` — per *posting*, not per company; see below |

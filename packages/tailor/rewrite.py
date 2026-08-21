@@ -19,7 +19,7 @@ from packages.llm.prompts import TAILOR_SYSTEM
 from packages.llm.provider import LLMProvider
 from packages.llm.router import temperature_for
 from packages.tailor.guard import _COMMON_WORDS, GuardReport, SourceCorpus, check, normalize
-from packages.tailor.keywords import TermReport, analyze
+from packages.tailor.keywords import TermReport, analyze, borrowed_terms
 
 log = structlog.get_logger(__name__)
 
@@ -93,29 +93,6 @@ def _user_prompt(bullet: str, job_description: str, terms: TermReport | None = N
     return "\n\n".join(parts)
 
 
-def _borrowed_terms(original: str, candidate: str, forbidden: tuple[str, ...]) -> list[str]:
-    """Posting terms the rewrite introduced that the source did not have."""
-    if not forbidden:
-        return []
-
-    from packages.tailor.guard import _TOKEN_RE, stem
-
-    had_stems = {stem(w) for w in _TOKEN_RE.findall(original)}
-    has_stems = {stem(w) for w in _TOKEN_RE.findall(candidate)}
-
-    borrowed = []
-    for term in forbidden:
-        term_stems = {stem(w) for w in _TOKEN_RE.findall(term)}
-        if not term_stems:
-            continue
-        # Only consider it borrowed if ALL words in the term are present in candidate
-        # and NOT all words were present in the original.
-        if term_stems.issubset(has_stems) and not term_stems.issubset(had_stems):
-            borrowed.append(term)
-
-    return borrowed
-
-
 def _clean(candidate: str) -> str:
     """Strip the wrappers models add despite being told not to."""
     text = candidate.strip()
@@ -176,7 +153,7 @@ def vet(
     if not candidate:
         return False, "model returned nothing", report
 
-    borrowed = _borrowed_terms(original, candidate, forbidden)
+    borrowed = borrowed_terms(original, candidate, forbidden)
     if borrowed:
         return (
             False,
@@ -270,45 +247,3 @@ async def tailor_bullets(
         bullets=rewrites,
         rejected=sum(1 for r in rewrites if r.used_fallback),
     )
-
-
-class CoverLetterResult(BaseModel):
-    text: str
-    rejected_reason: str | None = None
-    entities_checked: int = 0
-
-    @property
-    def used_fallback(self) -> bool:
-        return self.rejected_reason is not None
-
-
-async def tailor_cover_letter(
-    provider: LLMProvider,
-    job_description: str,
-    corpus: SourceCorpus,
-) -> CoverLetterResult:
-    """Write a cover letter. Every output is guard-checked against the entire corpus."""
-    system_prompt = (
-        "Write a brief cover letter for the following job description, based entirely "
-        "on the provided resume. Do not invent any claims, metrics, or experiences."
-    )
-    user_prompt = f"Job description:\n{job_description.strip()[:4000]}\n\nResume:\n{corpus.text}"
-
-    try:
-        raw = await provider.complete(system_prompt, user_prompt, max_tokens=600)
-    except Exception as exc:
-        log.warning("cover_letter_provider_failed", error=type(exc).__name__)
-        return CoverLetterResult(text="", rejected_reason=f"provider error: {type(exc).__name__}")
-
-    candidate = raw.strip()
-    # A cover letter is document-wide, so scope=None
-    from packages.tailor.guard import check
-
-    report = check(candidate, corpus, scope=None)
-
-    if not report.ok:
-        reason = report.summary()
-        log.info("cover_letter_rejected", reason=reason, violations=len(report.violations))
-        return CoverLetterResult(text="", rejected_reason=reason, entities_checked=report.checked)
-
-    return CoverLetterResult(text=candidate, entities_checked=report.checked)
