@@ -130,7 +130,15 @@ class SentenceTransformerEmbedder:
         from sentence_transformers import SentenceTransformer
 
         self._model = SentenceTransformer(model_name)
-        self.dim = int(self._model.get_sentence_embedding_dimension())
+        # Renamed in sentence-transformers 6; the old name still works but
+        # warns. Prefer the new one and fall back so older installs keep going.
+        measure = getattr(self._model, "get_embedding_dimension", None)
+        reported = (
+            measure() if measure is not None else self._model.get_sentence_embedding_dimension()
+        )
+        if reported is None:
+            raise ValueError(f"{model_name} did not report an embedding dimension")
+        self.dim = int(reported)
         if self.dim != EMBEDDING_DIM:
             raise ValueError(
                 f"{model_name} produces {self.dim}-dim vectors but the schema "

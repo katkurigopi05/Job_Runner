@@ -583,3 +583,48 @@ class MatchSummaryOut(BaseModel):
     total: int = 0
     undecided: int = 0
     interested: int = 0
+
+
+class AuditEntryOut(BaseModel):
+    """One recorded provider call.
+
+    Digests and sizes, never prompt text — `packages/llm/audit.py` does not
+    store any, and §10 forbids logging résumé contents. An endpoint able to
+    return the prompt would mean the trail had become a second copy of it.
+    """
+
+    at: str
+    provider: str
+    model: str | None = None
+    #: True when the text crossed the network to a third party. The §2.8
+    #: question.
+    left_machine: bool
+    task: str
+    prompt_name: str | None = None
+    prompt_version: int | None = None
+    user_chars: int
+    system_chars: int
+    user_sha256: str
+    system_sha256: str
+
+
+class AuditSummaryOut(BaseModel):
+    """How much has left this machine, and to whom."""
+
+    total_calls: int = 0
+    uploads: int = 0
+    uploaded_chars: int = 0
+    #: "provider/model" -> call count, uploads only.
+    by_provider: dict[str, int] = Field(default_factory=dict)
+    first_at: str | None = None
+    last_at: str | None = None
+
+
+class AuditVerifyRequest(BaseModel):
+    """Text to check against the trail.
+
+    Hashed and discarded. It is not persisted and not logged — verifying what
+    was sent must not become a way of recording it a second time.
+    """
+
+    text: str
