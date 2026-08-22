@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 from packages.matching.embed import Embedder, cosine, get_embedder, tokenize
 from packages.matching.filters import apply_filters
+from packages.matching.idf import DocumentFrequencies
 
 log = structlog.get_logger(__name__)
 
@@ -118,7 +119,12 @@ def _rubric(
     return evaluate(posting, profile, scored, target_seniority=target_seniority).as_dict()
 
 
-def _assess(posting: Posting, *, siblings: list[Posting] | None) -> Assessment:
+def _assess(
+    posting: Posting,
+    *,
+    siblings: list[Posting] | None,
+    frequencies: DocumentFrequencies | None = None,
+) -> Assessment:
     """Imported here rather than at module scope.
 
     `legitimacy` reads `_BOILERPLATE` and `_proper_nouns` from this module, so
@@ -128,7 +134,7 @@ def _assess(posting: Posting, *, siblings: list[Posting] | None) -> Assessment:
     """
     from packages.matching.legitimacy import assess
 
-    return assess(posting, siblings=siblings)
+    return assess(posting, siblings=siblings, frequencies=frequencies)
 
 
 def score_posting(
@@ -140,6 +146,7 @@ def score_posting(
     target_seniority: str | None = None,
     profile_text_value: str = "",
     siblings: list[Posting] | None = None,
+    frequencies: DocumentFrequencies | None = None,
 ) -> ScoredPosting:
     """Score one posting. Filtered-out postings score exactly 0.0.
 
@@ -170,8 +177,12 @@ def score_posting(
         title_similarity=title_similarity,
         body_similarity=body_similarity,
         matched_terms=keyword_overlap(profile_text_value, posting) if profile_text_value else [],
-        missing_terms=missing_terms(profile_text_value, posting) if profile_text_value else [],
-        legitimacy=_assess(posting, siblings=siblings).as_dict(),
+        missing_terms=(
+            missing_terms(profile_text_value, posting, frequencies=frequencies)
+            if profile_text_value
+            else []
+        ),
+        legitimacy=_assess(posting, siblings=siblings, frequencies=frequencies).as_dict(),
     )
     # Built from the result rather than inside it: every dimension reads
     # fields the scoring above has already filled in.
@@ -201,6 +212,13 @@ async def score_and_store(
     text = await profile_text(session, profile)
     profile_vector = active.encode([text])[0]
 
+    # One pass over the corpus, reused for every posting in it. Built here
+    # rather than cached anywhere because it is cheap at this size and a
+    # stale copy would silently describe a corpus that no longer exists.
+    frequencies = DocumentFrequencies.from_texts(
+        f"{p.title or ''}\n{p.description_raw or ''}" for p in postings
+    )
+
     existing = {
         str(match.posting_id): match
         for match in (
@@ -218,6 +236,7 @@ async def score_and_store(
             target_seniority=target_seniority,
             profile_text_value=text,
             siblings=postings,
+            frequencies=frequencies,
         )
         scored.append(result)
 
@@ -328,7 +347,13 @@ def _proper_nouns(text: str) -> set[str]:
     return {token for token, total in seen.items() if capitalized.get(token, 0) == total}
 
 
-def missing_terms(profile_text_value: str, posting: Posting, *, limit: int = 12) -> list[str]:
+def missing_terms(
+    profile_text_value: str,
+    posting: Posting,
+    *,
+    limit: int = 12,
+    frequencies: DocumentFrequencies | None = None,
+) -> list[str]:
     """What the posting emphasizes that the profile does not evidence.
 
     The complement of `keyword_overlap`, and the more actionable half. §2.1
@@ -338,6 +363,12 @@ def missing_terms(profile_text_value: str, posting: Posting, *, limit: int = 12)
     for *you* to decide whether it is true of you and worth writing in.
 
     Nothing here goes near the résumé. It is a report, not an edit.
+
+    With `frequencies`, boilerplate is *measured* rather than read off a hand
+    list, and terms are ranked by tf-idf — so a term this corpus puts in every
+    posting stops being reported as a gap, which a fixed list cannot know.
+    Without it, or when the corpus is too small to be a distribution rather
+    than a sample, the hand list stands in.
     """
     profile_tokens = set(tokenize(profile_text_value))
     title_tokens = set(tokenize(posting.title or ""))
@@ -359,16 +390,42 @@ def missing_terms(profile_text_value: str, posting: Posting, *, limit: int = 12)
     # needs the repetition to prove it was not an aside.
     proper = _proper_nouns(posting.description_raw or "")
 
+    measured = frequencies is not None and frequencies.usable
+
+    def is_furniture(token: str) -> bool:
+        if measured:
+            assert frequencies is not None
+            return frequencies.is_boilerplate(token)
+        return token in _BOILERPLATE
+
+    def is_worth_reporting(token: str) -> bool:
+        # Repetition and capitalization are proxies for "does this term carry
+        # weight". With a corpus that question is answered directly, so a rare
+        # term counts at one mention without needing to be shouted or
+        # capitalized — which is how a lowercase tool named once used to slip
+        # through unreported.
+        if measured:
+            assert frequencies is not None
+            if frequencies.is_distinguishing(token):
+                return True
+        return counts[token] >= _MIN_MENTIONS or token in title_tokens or token in proper
+
     candidates = [
         token
         for token in counts
-        if token not in profile_tokens
-        and token not in _BOILERPLATE
-        and (counts[token] >= _MIN_MENTIONS or token in title_tokens or token in proper)
+        if token not in profile_tokens and not is_furniture(token) and is_worth_reporting(token)
     ]
 
-    # Most-emphasized first; ties broken by where the posting first says it.
-    candidates.sort(key=lambda token: (-counts[token], order[token]))
+    if measured:
+        assert frequencies is not None
+        # tf-idf: emphasized *here* and rare across the corpus. A term the
+        # posting repeats but every other posting also repeats is not a gap.
+        candidates.sort(
+            key=lambda token: (-frequencies.weigh(token, max(counts[token], 1)), order[token])
+        )
+    else:
+        # Most-emphasized first; ties broken by where the posting first says it.
+        candidates.sort(key=lambda token: (-counts[token], order[token]))
     return candidates[:limit]
 
 
