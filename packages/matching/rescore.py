@@ -90,11 +90,16 @@ async def rescore(
     *,
     label: str | None = None,
     embedder: Embedder | None = None,
+    re_embed: bool = False,
 ) -> RescoreReport:
     """Re-score open postings for every profile, or just the one named.
 
     Does not commit — the caller decides, which is what makes a dry run
     possible without a second code path.
+
+    `re_embed=True` recomputes every posting vector instead of reusing the
+    stored one. Needed after an `EMBEDDING_BACKEND` change, and pointless
+    otherwise: it is the slow half of this function.
     """
     postings = list(
         (await session.scalars(select(Posting).where(Posting.closed_at.is_(None)))).all()
@@ -103,7 +108,7 @@ async def rescore(
     if not postings:
         return report
 
-    report.embedded = await embed_postings(session, postings, embedder=embedder)
+    report.embedded = await embed_postings(session, postings, embedder=embedder, force=re_embed)
 
     stmt = select(Profile)
     if label is not None:

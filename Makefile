@@ -183,8 +183,11 @@ discover:
 # nothing, so a résumé change on its own never reaches the feed without this.
 #   make rescore p=backend   one profile
 #   make rescore dry=1       report the change, write nothing
+#   make rescore re=1        re-encode every posting first — required after an
+#                            EMBEDDING_BACKEND change, since stored vectors are
+#                            otherwise reused and the two are not comparable
 rescore:
-	$(PY)/python -m scripts.rescore $(if $(p),--profile $(p),) $(if $(dry),--dry-run,)
+	$(PY)/python -m scripts.rescore $(if $(p),--profile $(p),) $(if $(dry),--dry-run,) $(if $(re),--re-embed,)
 
 # make import-portals f=../career-ops/templates/portals.example.yml
 # Pulls their maintained company list into seeds/companies.yaml. Appends

@@ -8,6 +8,11 @@ does not run at all.
     make rescore                  # every profile
     make rescore p=backend        # one
     make rescore dry=1            # show the change, write nothing
+    make rescore re=1             # re-encode every posting first
+
+Use `re=1` after changing EMBEDDING_BACKEND. Stored vectors are reused
+otherwise, so a backend switch would leave the old backend's vectors in the
+table and rank the new profile encoding against them.
 """
 
 from __future__ import annotations
@@ -34,10 +39,15 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", default=None, help="profile label; default is all of them")
     parser.add_argument("--dry-run", action="store_true", help="score and report, then roll back")
+    parser.add_argument(
+        "--re-embed",
+        action="store_true",
+        help="recompute every posting vector — required after an EMBEDDING_BACKEND change",
+    )
     args = parser.parse_args()
 
     async with core_db.get_sessionmaker()() as session:
-        report = await rescore(session, label=args.profile)
+        report = await rescore(session, label=args.profile, re_embed=args.re_embed)
         print(report.summary())
 
         for entry in report.profiles:

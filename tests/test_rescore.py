@@ -137,3 +137,42 @@ async def test_nothing_is_committed_so_a_dry_run_needs_no_second_path(db_session
 
     await rescore(db_session, label=profile.label)
     assert db_session.in_transaction()
+
+
+async def test_an_existing_vector_is_left_alone_by_default(db_session) -> None:
+    """The normal case: embedding is expensive and a stored vector is reused."""
+    profile, _ = await _owner(db_session, resume_lines=["Backend engineer."])
+    posting = await _posting(db_session, title="Backend Engineer", body="Python.")
+
+    first = await rescore(db_session, label=profile.label)
+    assert first.embedded == 1, "nothing was embedded on the first pass"
+
+    second = await rescore(db_session, label=profile.label)
+    assert second.embedded == 0, "a stored vector should be reused"
+    assert posting.description_embedding is not None
+
+
+async def test_re_embed_recomputes_a_vector_that_already_exists(db_session) -> None:
+    """Switching EMBEDDING_BACKEND is the reason this flag exists.
+
+    `embed_postings` fills in vectors that are NULL, so after a backend switch
+    every posting still carries the vector the *old* backend produced and is
+    silently skipped. The profile is then encoded by the new backend and
+    compared against them — and `embed.py` is explicit that vectors from two
+    backends are not comparable. Nothing errors; the feed just ranks on
+    nonsense. `re_embed=True` is what makes the switch real.
+    """
+    profile, _ = await _owner(db_session, resume_lines=["Backend engineer."])
+    posting = await _posting(db_session, title="Backend Engineer", body="Python.")
+
+    await rescore(db_session, label=profile.label)
+    original = list(posting.description_embedding)
+
+    # Stand in for a backend switch: same posting, different text to encode.
+    posting.description_raw = "Swift, UIKit and CoreData for iOS."
+    await db_session.flush()
+
+    report = await rescore(db_session, label=profile.label, re_embed=True)
+
+    assert report.embedded == 1, "the existing vector should have been recomputed"
+    assert list(posting.description_embedding) != original

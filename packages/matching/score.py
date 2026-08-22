@@ -251,11 +251,24 @@ async def score_and_store(
 
 
 async def embed_postings(
-    session: AsyncSession, postings: list[Posting], *, embedder: Embedder | None = None
+    session: AsyncSession,
+    postings: list[Posting],
+    *,
+    embedder: Embedder | None = None,
+    force: bool = False,
 ) -> int:
-    """Fill in `description_embedding` for postings that lack one."""
+    """Fill in `description_embedding` for postings that lack one.
+
+    `force=True` recomputes vectors that already exist. That is not an
+    optimisation switch — it is what makes an `EMBEDDING_BACKEND` change take
+    effect. Without it a switched backend leaves every stored vector as the
+    old backend wrote it, encodes the profile with the new one, and compares
+    the two. Nothing raises; the ranking is just meaningless.
+    """
     active = embedder or get_embedder()
-    pending = [p for p in postings if p.description_embedding is None and p.description_raw]
+    pending = [
+        p for p in postings if (force or p.description_embedding is None) and p.description_raw
+    ]
     if not pending:
         return 0
 
