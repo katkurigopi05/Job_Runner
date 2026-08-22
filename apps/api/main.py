@@ -9,6 +9,7 @@ from apps.api.middleware import LocalhostOnlyMiddleware
 from apps.api.routers import (
     analytics,
     applications,
+    audit,
     candidates,
     chat,
     detect,
@@ -42,6 +43,7 @@ app.include_router(inbox.router)
 app.include_router(chat.router)
 app.include_router(matches.router)
 app.include_router(analytics.router)
+app.include_router(audit.router)
 
 
 @app.get("/health", tags=["meta"])

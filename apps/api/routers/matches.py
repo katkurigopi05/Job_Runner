@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
+from sqlalchemy.orm import defer
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
@@ -123,6 +124,17 @@ async def list_matches(
     stmt = (
         select(Match, Posting)
         .join(Posting, Posting.id == Match.posting_id)
+        # The embedding is 384 floats per posting and this handler never reads
+        # one — `MatchOut` has no field for it and `filter_matches` works off
+        # title, location and description text. Left loaded, every request
+        # pulled the entire corpus's vectors out of Postgres to discard them,
+        # because the rows below are fetched unbounded (see the comment on
+        # `kept`) and so the cost scaled with the whole match table rather
+        # than with the page.
+        #
+        # `description_raw` stays loaded on purpose: the seniority and
+        # clearance filters read it.
+        .options(defer(Posting.description_embedding))
         .where(Match.score >= min_score)
         .order_by(Match.score.desc())
     )

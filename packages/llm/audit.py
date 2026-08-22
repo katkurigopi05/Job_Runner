@@ -105,6 +105,17 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def digest_of(text: str) -> str:
+    """The digest the trail would have recorded for `text`.
+
+    Public because verification is a caller's job, not this module's: holding
+    the résumé you believe was sent, you hash it and look for the entry. The
+    text itself is never stored, never logged, and never leaves the caller —
+    which is the entire reason the trail keeps digests instead of prompts.
+    """
+    return _digest(text)
+
+
 def record(
     provider: str,
     system: str,
