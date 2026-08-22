@@ -37,6 +37,7 @@ from packages.core.state import WorkClaim, begin_work, transition
 from packages.core.storage import get_storage, receipt_key
 from packages.github.select import relevant_for_posting
 from packages.llm import router as llm_router
+from packages.matching.embed import get_embedder
 
 log = structlog.get_logger(__name__)
 
@@ -229,7 +230,12 @@ async def _projects_for(
     inventory = list(
         (await session.scalars(select(Project).where(Project.candidate_id == candidate_id))).all()
     )
-    return relevant_for_posting(inventory, posting_text)
+    # The embedder is what lets a repository count when it describes the same
+    # work in different words. On the lexical default it cannot — that backend
+    # measures vocabulary overlap, so the second pass finds nothing and this
+    # degrades to shared-vocabulary matching. Set EMBEDDING_BACKEND to
+    # sentence-transformers for it to do anything.
+    return relevant_for_posting(inventory, posting_text, embedder=get_embedder())
 
 
 async def _tailor(
@@ -307,6 +313,7 @@ async def _tailor(
             parsed=parsed,
             result=result,
             projects=await _projects_for(session, resume.candidate_id, posting_text),
+            posting_text=posting_text,
         )
         if published is not None:
             application.tailored_resume_id = published.id
