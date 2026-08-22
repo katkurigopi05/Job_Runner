@@ -93,6 +93,7 @@ def build_answers(
     *,
     extra: dict[str, Any] | None = None,
     resume_path: str | None = None,
+    cover_letter: str | None = None,
 ) -> dict[str, Any]:
     """Answers keyed by `Question.key`, for `ATSAdapter.fill()`.
 
@@ -121,8 +122,12 @@ def build_answers(
             continue
 
         if attribute == "cover_letter":
-            # Generated in Phase 3. Until then it stays unanswered rather than
-            # being filled with something invented.
+            # Supplied by the caller when one was written and vetted. Absent,
+            # it stays unanswered rather than being filled with something
+            # invented — §2.4, and the reason this never became a required
+            # step: a letter the guard refused is no letter at all.
+            if cover_letter:
+                answers[question.key] = cover_letter
             continue
 
         value = values.get(attribute)

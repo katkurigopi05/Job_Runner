@@ -562,12 +562,14 @@ before trusting either number.
 
 §9 Phase 3 lists two things Gate 3 does not cover:
 
-- **Cover letter.** A module writes one — `packages/tailor/cover.py`, which
-  vets every letter against the fabrication guard, refuses one that raises a
-  §2.2 topic, and never falls back to an unvetted draft. Nothing calls it. The
-  apply pipeline never asks for a letter, `Application.cover_letter_ref` is
-  never written, and so no application has carried one. The tests exercise the
-  module, not the feature. `docs/PARITY.md` tracks the remaining gap.
+- ~~**Cover letter.**~~ **Now built.** `packages/tailor/cover.py` writes and
+  vets one; `apps/worker/apply_job.py::_cover_letter` calls it when — and only
+  when — the form has a cover-letter field, stores the result, writes
+  `Application.cover_letter_ref`, and puts the full text on the review screen
+  so §2.3's approval covers what actually gets sent. It declines quietly in
+  three cases: no such field, no parsed résumé to ground it in, or the guard
+  refused the draft. A missing letter is a smaller failure than an unsupported
+  one, and a letter is never worth failing an application for.
 - **Per-company caching of tailored versions.** Every apply re-tailors from
   scratch. Harmless today because tailoring is cheap and local; it becomes a
   cost the moment a remote provider is used for it.

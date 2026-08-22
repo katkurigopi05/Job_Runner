@@ -23,6 +23,7 @@ from packages.ats.answers import build_answers
 from packages.ats.base import (
     FillReport,
     ManualCompletionRequired,
+    QuestionKind,
     SiteError,
     UnsupportedSiteError,
 )
@@ -140,12 +141,18 @@ async def _run_pipeline(
         review = application.review_json or {}
         owner_answers = review.get("owner_answers") or {}
 
+        # A letter only when the form has somewhere to put one. Writing one
+        # unconditionally would spend a model call, and §2.8 an upload, on
+        # something no employer asked for.
+        letter = await _cover_letter(session, application, profile, posting, questions)
+
         answers = build_answers(
             questions,
             candidate,
             profile,
             extra=owner_answers,
             resume_path=await _resume_path(session, profile),
+            cover_letter=letter,
         )
         report = await adapter.fill(page, answers)
 
@@ -158,7 +165,15 @@ async def _run_pipeline(
         diff = await _tailor(session, application, profile, posting.description_raw or "")
 
         await _decide(
-            session, application, profile, report, adapter, page, diff, screening=screening
+            session,
+            application,
+            profile,
+            report,
+            adapter,
+            page,
+            diff,
+            screening=screening,
+            cover_letter=letter,
         )
 
 
@@ -342,6 +357,7 @@ async def _decide(
     page: Any,
     resume_diff: dict[str, Any] | None = None,
     screening: ScreenReport | None = None,
+    cover_letter: str | None = None,
 ) -> None:
     """Park for review, or submit — the approval gate.
 
@@ -365,6 +381,10 @@ async def _decide(
         "resume_diff": resume_diff,
         # Read off the form before anything was answered.
         "screening": screening.as_dict() if screening else None,
+        # The letter itself, not just a reference to it. §2.3 asks the owner
+        # to approve what gets sent, and a letter they cannot read before
+        # approving is one they are taking on trust.
+        "cover_letter": cover_letter,
     }
 
     if not report.is_complete:
@@ -486,3 +506,77 @@ async def park_failed(
     if status is not ApplicationStatus.RUNNING:
         await begin_work(session, application)
     await _fail(session, application, reason, message)
+
+
+async def _cover_letter(
+    session: AsyncSession,
+    application: Application,
+    profile: Profile,
+    posting: Any,
+    questions: list[Any],
+) -> str | None:
+    """Write a letter if the form has a field for one, else nothing.
+
+    This is the call CLAUDE.md §15 recorded as missing: `packages/tailor/cover.py`
+    wrote and vetted letters that nothing ever asked for, and
+    `Application.cover_letter_ref` was never written.
+
+    Three ways it declines, all of them fine:
+
+    - **No cover-letter field.** Most forms have none. Writing one anyway
+      spends a model call and, on a remote provider, a §2.8 upload of the
+      résumé, to produce something no employer asked for.
+    - **No résumé to draw on.** The letter is grounded in the same corpus the
+      tailorer uses; without one there is nothing to ground it in.
+    - **The guard refused it.** `write()` never falls back, so a refusal means
+      no letter, and the field goes to the owner unanswered under §2.4 exactly
+      as it did before. A missing letter is a smaller failure than an
+      unsupported one.
+
+    A stored letter is written to storage and referenced on the application,
+    so the review screen shows what would be sent rather than the owner having
+    to trust that something was.
+    """
+    wants_letter = any(
+        getattr(question, "kind", None) is QuestionKind.COVER_LETTER for question in questions
+    )
+    if not wants_letter:
+        return None
+
+    resume = await session.get(Resume, profile.base_resume_id) if profile.base_resume_id else None
+    if resume is None or not resume.parsed_json:
+        log.info("cover_letter_skipped", reason="no parsed résumé to ground it in")
+        return None
+
+    try:
+        from packages.tailor.cover import write
+        from packages.tailor.guard import SourceCorpus
+        from packages.tailor.parse import ParsedResume
+
+        parsed = ParsedResume.model_validate(resume.parsed_json)
+        corpus = SourceCorpus.from_resume(parsed)
+
+        result = await write(
+            llm_router.write_cover_letter(),
+            resume_text=parsed.text,
+            job_description=posting.description_raw or "",
+            corpus=corpus,
+            company=getattr(posting, "company_name", None),
+        )
+    except Exception as exc:  # noqa: BLE001 - a letter is never worth failing an apply for
+        log.warning("cover_letter_failed", error=type(exc).__name__)
+        return None
+
+    if not result.usable:
+        log.info("cover_letter_refused", reason=result.rejected_reason)
+        return None
+
+    key = f"letters/{application.id}.txt"
+    try:
+        get_storage().put(key, result.text.encode("utf-8"))
+        application.cover_letter_ref = key
+    except Exception as exc:  # noqa: BLE001 - the letter still gets filled
+        log.warning("cover_letter_not_stored", error=type(exc).__name__)
+
+    log.info("cover_letter_written", words=result.word_count)
+    return result.text

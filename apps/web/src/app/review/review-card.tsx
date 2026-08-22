@@ -77,6 +77,17 @@ export function ReviewCard({
 
       <ScreeningPanel screening={review.screening} />
 
+      {review.cover_letter ? (
+        <section className="border-b border-rule px-6 py-5">
+          <p className="font-mono text-xs text-ink-faint">
+            cover letter — every sentence traced back to your résumé before it got here
+          </p>
+          <p className="mt-2 whitespace-pre-wrap font-display leading-relaxed">
+            {review.cover_letter}
+          </p>
+        </section>
+      ) : null}
+
       {application.status === "needs_otp" ? (
         <form action={runOtp} className="border-b border-rule px-6 py-5">
           <label htmlFor={`otp-${application.id}`} className="font-mono text-xs text-ink-soft">
