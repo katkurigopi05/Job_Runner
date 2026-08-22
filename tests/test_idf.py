@@ -30,7 +30,16 @@ def _corpus(size: int = 120) -> list[str]:
 
 
 def _posting(text: str, title: str = "Machine Learning Engineer") -> Posting:
-    return Posting(id=uuid.uuid4(), company_id=uuid.uuid4(), title=title, description_raw=text)
+    identifier = uuid.uuid4()
+    return Posting(
+        id=identifier,
+        company_id=uuid.uuid4(),
+        title=title,
+        description_raw=text,
+        # NOT NULL, and these fixtures get inserted for the re-embed tests.
+        url=f"https://boards.greenhouse.io/acme/jobs/{identifier.hex[:8]}",
+        external_id=identifier.hex[:8],
+    )
 
 
 # --------------------------------------------------------------------------
@@ -143,3 +152,148 @@ def test_specificity_uses_the_corpus_when_it_has_one() -> None:
 
 def test_specificity_without_a_corpus_still_works() -> None:
     assert specificity(BOILERPLATE) > 0.0
+
+
+# --------------------------------------------------------------------------
+# Weighted vectors, and the stamp that keeps them comparable
+# --------------------------------------------------------------------------
+
+
+def test_weighting_changes_the_embedder_name() -> None:
+    """The name is stamped onto every vector. A tf vector compared against a
+    tf-idf one is noise wearing the shape of a similarity score, so the two
+    must not share an identity."""
+    from packages.matching.embed import LexicalEmbedder
+
+    frequencies = DocumentFrequencies.from_texts(_corpus())
+
+    assert LexicalEmbedder().name == "lexical"
+    assert LexicalEmbedder(frequencies=frequencies).name == "lexical-idf"
+
+
+def test_a_corpus_too_small_to_trust_leaves_the_embedder_unweighted() -> None:
+    from packages.matching.embed import LexicalEmbedder
+
+    tiny = DocumentFrequencies.from_texts(_corpus(5))
+
+    assert LexicalEmbedder(frequencies=tiny).name == "lexical"
+
+
+def test_idf_weighting_separates_postings_the_boilerplate_hid() -> None:
+    """Every posting shares the same filler. Unweighted, that filler is most
+    of each vector and they all look alike."""
+    from packages.matching.embed import LexicalEmbedder, cosine
+
+    corpus = _corpus()
+    frequencies = DocumentFrequencies.from_texts(corpus)
+
+    kubernetes = f"{BOILERPLATE} Machine learning role using Python. kubernetes experience."
+    terraform = f"{BOILERPLATE} Machine learning role using Python. terraform experience."
+
+    plain = LexicalEmbedder()
+    weighted = LexicalEmbedder(frequencies=frequencies)
+
+    plain_similarity = cosine(*plain.encode([kubernetes, terraform]))
+    weighted_similarity = cosine(*weighted.encode([kubernetes, terraform]))
+
+    assert weighted_similarity < plain_similarity
+
+
+async def test_statistics_hold_still_between_rebuilds(db_session) -> None:
+    """A table recomputed every pass would shift continuously and leave every
+    posting permanently stale against it."""
+    from packages.matching.idf import rebuild_if_stale
+
+    texts = _corpus(100)
+    _, first = await rebuild_if_stale(db_session, texts)
+    _, second = await rebuild_if_stale(db_session, texts + _corpus(5))
+
+    assert first == 1
+    assert second == first, "a 5% corpus increase must not force a rebuild"
+
+
+async def test_enough_growth_rebuilds(db_session) -> None:
+    from packages.matching.idf import rebuild_if_stale
+
+    _, first = await rebuild_if_stale(db_session, _corpus(100))
+    _, second = await rebuild_if_stale(db_session, _corpus(200))
+
+    assert second == first + 1
+
+
+async def test_a_corpus_below_the_floor_never_builds(db_session) -> None:
+    from packages.matching.idf import rebuild_if_stale
+
+    frequencies, revision = await rebuild_if_stale(db_session, _corpus(10))
+
+    assert revision is None
+    assert not frequencies.usable
+
+
+async def test_a_vector_from_another_model_is_re_embedded(db_session) -> None:
+    """The bug this whole mechanism exists for: switching embedders used to
+    leave old vectors in the old space forever, and cosine across spaces
+    returns a plausible number rather than an error."""
+    from packages.core.models import Company
+    from packages.matching.embed import LexicalEmbedder
+    from packages.matching.score import embed_postings
+
+    company = Company(name="Acme")
+    db_session.add(company)
+    await db_session.flush()
+
+    posting = _posting(_corpus()[0])
+    posting.company_id = company.id
+    db_session.add(posting)
+    await db_session.flush()
+
+    first = await embed_postings(db_session, [posting], embedder=LexicalEmbedder())
+    assert first == 1
+    assert posting.embedding_model == "lexical"
+
+    # Same postings, different model: every one has to be redone.
+    weighted = LexicalEmbedder(frequencies=DocumentFrequencies.from_texts(_corpus()))
+    second = await embed_postings(db_session, [posting], embedder=weighted, revision=1)
+
+    assert second == 1
+    assert posting.embedding_model == "lexical-idf"
+    assert posting.embedding_revision == 1
+
+
+async def test_an_unchanged_stamp_does_no_work(db_session) -> None:
+    from packages.core.models import Company
+    from packages.matching.embed import LexicalEmbedder
+    from packages.matching.score import embed_postings
+
+    company = Company(name="Acme")
+    db_session.add(company)
+    await db_session.flush()
+    posting = _posting(_corpus()[0])
+    posting.company_id = company.id
+    db_session.add(posting)
+    await db_session.flush()
+
+    await embed_postings(db_session, [posting], embedder=LexicalEmbedder())
+
+    assert await embed_postings(db_session, [posting], embedder=LexicalEmbedder()) == 0
+
+
+async def test_a_new_revision_invalidates_the_old_vectors(db_session) -> None:
+    """A rebuild changes what the weights mean, so everything weighted by the
+    old ones has to be redone. That cost is why rebuilds are on a threshold."""
+    from packages.core.models import Company
+    from packages.matching.embed import LexicalEmbedder
+    from packages.matching.score import embed_postings
+
+    company = Company(name="Acme")
+    db_session.add(company)
+    await db_session.flush()
+    posting = _posting(_corpus()[0])
+    posting.company_id = company.id
+    db_session.add(posting)
+    await db_session.flush()
+
+    weighted = LexicalEmbedder(frequencies=DocumentFrequencies.from_texts(_corpus()))
+    await embed_postings(db_session, [posting], embedder=weighted, revision=1)
+
+    assert await embed_postings(db_session, [posting], embedder=weighted, revision=2) == 1

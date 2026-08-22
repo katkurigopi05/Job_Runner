@@ -17,6 +17,8 @@ from packages.core.queue import ClaimedTask
 from packages.crawler.crawl import crawl_all
 from packages.crawler.extract import load_seed
 from packages.crawler.fetch import build_fetcher
+from packages.matching.embed import LexicalEmbedder
+from packages.matching.idf import rebuild_if_stale
 from packages.matching.score import embed_postings, score_and_store
 
 log = structlog.get_logger(__name__)
@@ -50,7 +52,12 @@ async def handle_crawl(session: AsyncSession, claimed: ClaimedTask) -> None:
     postings = list(
         (await session.scalars(select(Posting).where(Posting.closed_at.is_(None)))).all()
     )
-    embedded = await embed_postings(session, postings)
+    # Statistics first: the embedder is weighted by them, and a vector
+    # stamped with the wrong revision is one this pass has to redo.
+    texts = [f"{p.title or ''}\n{p.description_raw or ''}" for p in postings]
+    frequencies, revision = await rebuild_if_stale(session, texts)
+    embedder = LexicalEmbedder(frequencies=frequencies) if frequencies.usable else None
+    embedded = await embed_postings(session, postings, embedder=embedder, revision=revision)
     log.info("postings_embedded", count=embedded)
 
     profiles = list((await session.scalars(select(Profile))).all())

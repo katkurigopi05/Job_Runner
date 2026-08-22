@@ -24,11 +24,14 @@ import hashlib
 import math
 import re
 from collections import Counter
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
 log = structlog.get_logger(__name__)
+
+if TYPE_CHECKING:
+    from packages.matching.idf import DocumentFrequencies
 
 #: Matches the Vector(384) column and bge-small's output width.
 EMBEDDING_DIM = 384
@@ -91,12 +94,25 @@ class LexicalEmbedder:
     Deterministic across processes and machines — the hash is sha256, not
     Python's randomized `hash()`, so vectors written on one run still match on
     the next.
+
+    Given `frequencies`, terms are weighted tf-idf rather than tf alone: a word
+    in every posting stops dominating the vector it appears in, which is the
+    whole reason "collaborative" and "Kubernetes" should not count the same.
+
+    The name changes to `lexical-idf` when weighted, and that is load-bearing
+    rather than cosmetic. The name is stamped onto every vector this produces,
+    and a tf vector compared against a tf-idf one is noise wearing the shape of
+    a similarity score. Two embedders, two names.
     """
 
-    name = "lexical"
-
-    def __init__(self, dim: int = EMBEDDING_DIM) -> None:
+    def __init__(
+        self, dim: int = EMBEDDING_DIM, *, frequencies: DocumentFrequencies | None = None
+    ) -> None:
         self.dim = dim
+        #: Only used when the corpus is large enough to describe a
+        #: distribution — see idf.MIN_DOCUMENTS.
+        self.frequencies = frequencies if (frequencies and frequencies.usable) else None
+        self.name = "lexical-idf" if self.frequencies else "lexical"
 
     def _bucket(self, token: str) -> int:
         digest = hashlib.sha256(token.encode("utf-8")).digest()
@@ -109,8 +125,13 @@ class LexicalEmbedder:
 
         vector = [0.0] * self.dim
         for token, count in counts.items():
-            # Sublinear scaling: the tenth "Python" says little the first did not.
-            vector[self._bucket(token)] += 1.0 + math.log(count)
+            if self.frequencies is not None:
+                # tf-idf, with the same sublinear tf as the branch below.
+                weight = self.frequencies.weigh(token, count)
+            else:
+                # Sublinear scaling: the tenth "Python" says little the first did not.
+                weight = 1.0 + math.log(count)
+            vector[self._bucket(token)] += weight
 
         norm = math.sqrt(sum(v * v for v in vector))
         if norm > 0:

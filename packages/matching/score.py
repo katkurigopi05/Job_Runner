@@ -270,17 +270,55 @@ async def score_and_store(
 
 
 async def embed_postings(
-    session: AsyncSession, postings: list[Posting], *, embedder: Embedder | None = None
+    session: AsyncSession,
+    postings: list[Posting],
+    *,
+    embedder: Embedder | None = None,
+    revision: int | None = None,
 ) -> int:
-    """Fill in `description_embedding` for postings that lack one."""
+    """Embed postings that lack a vector, or whose vector is from elsewhere.
+
+    "Elsewhere" is the important half. A vector's identity is the embedder that
+    produced it *and* the corpus statistics it was weighted by, both recorded
+    on the row. A posting embedded by a different model, or under different IDF
+    weights, is not in the same space — and cosine across spaces does not fail,
+    it returns a plausible number that ranks the feed wrongly and reports
+    nothing.
+
+    So a stamp mismatch means re-embed, not compare. Switching
+    `EMBEDDING_BACKEND`, or rebuilding the corpus statistics, quietly costs one
+    pass over the postings rather than silently costing the ranking.
+    """
     active = embedder or get_embedder()
-    pending = [p for p in postings if p.description_embedding is None and p.description_raw]
+    stamp = getattr(active, "name", "unknown")
+
+    pending = [
+        p
+        for p in postings
+        if p.description_raw
+        and (
+            p.description_embedding is None
+            or p.embedding_model != stamp
+            or p.embedding_revision != revision
+        )
+    ]
     if not pending:
         return 0
+
+    restamped = sum(1 for p in pending if p.description_embedding is not None)
+    if restamped:
+        log.info(
+            "re_embedding_stale_vectors",
+            count=restamped,
+            model=stamp,
+            revision=revision,
+        )
 
     vectors = active.encode([f"{p.title or ''}\n{p.description_raw or ''}" for p in pending])
     for posting, vector in zip(pending, vectors, strict=True):
         posting.description_embedding = vector
+        posting.embedding_model = stamp
+        posting.embedding_revision = revision
 
     await session.flush()
     return len(pending)
