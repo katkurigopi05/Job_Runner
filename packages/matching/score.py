@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 from packages.matching.embed import Embedder, cosine, get_embedder, tokenize
 from packages.matching.filters import apply_filters
 from packages.matching.idf import DocumentFrequencies
+from packages.matching.salary import compare
 
 log = structlog.get_logger(__name__)
 
@@ -55,6 +56,9 @@ class ScoredPosting:
     #: The score broken into dimensions — packages/matching/rubric.py. An
     #: explanation of the ranking, never an input to it.
     rubric: dict[str, object] = field(default_factory=dict)
+    #: Advertised pay against the profile's expectation. A report, never an
+    #: answer — §2.2 keeps salary_expectation verbatim for forms.
+    salary: dict[str, object] = field(default_factory=dict)
 
     @property
     def excluded(self) -> bool:
@@ -69,6 +73,7 @@ class ScoredPosting:
             "missing_terms": self.missing_terms,
             "legitimacy": self.legitimacy,
             "rubric": self.rubric,
+            "salary": self.salary,
         }
 
 
@@ -187,6 +192,7 @@ def score_posting(
     # Built from the result rather than inside it: every dimension reads
     # fields the scoring above has already filled in.
     result.rubric = _rubric(posting, profile, result, target_seniority=target_seniority)
+    result.salary = compare(posting.description_raw or "", profile.salary_expectation).as_dict()
     return result
 
 

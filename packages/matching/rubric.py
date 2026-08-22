@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 
 from packages.core.models import Posting, Profile
 from packages.matching.filters import SENIORITY_LEVELS, detect_seniority
+from packages.matching.salary import Comparison, compare
 from packages.matching.score import ScoredPosting
 
 #: No signal. Distinct from a bad signal, which is 1 or 2.
@@ -175,6 +176,24 @@ def _eligibility(scored: ScoredPosting) -> Dimension:
     return Dimension("eligibility", 5.0, 0.15, "passes location, sponsorship and clearance")
 
 
+def _salary(posting: Posting, profile: Profile) -> Dimension:
+    """Where the advertised pay sits against the expectation on the profile.
+
+    Zero weight whenever either side is silent, which is most of the time.
+    A posting that declines to state a range is not a worse posting, and
+    scoring it as one would penalise employers for saying less.
+    """
+    finding = compare(posting.description_raw or "", profile.salary_expectation)
+
+    if finding.comparison is Comparison.UNKNOWN:
+        return Dimension("salary", NEUTRAL, 0.0, finding.finding)
+
+    score = {Comparison.ABOVE: 5.0, Comparison.WITHIN: 4.5, Comparison.BELOW: 1.5}[
+        finding.comparison
+    ]
+    return Dimension("salary", score, 0.15, finding.finding)
+
+
 def evaluate(
     posting: Posting,
     profile: Profile,
@@ -193,5 +212,6 @@ def evaluate(
             _skills_coverage(scored),
             _seniority(posting, target_seniority),
             _eligibility(scored),
+            _salary(posting, profile),
         ]
     )

@@ -52,7 +52,7 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 | Hard filters | **HAVE** | `packages/matching/filters.py` |
 | **A–G rubric → 1.0–5.0** | **HAVE** | `packages/matching/rubric.py`, from the mobile branch |
 | Swipe/rate feed | **HAVE** | `/swipe` — and the decisions are the labelled set §15 says is missing |
-| Salary gap (`salary-gap`) | **BUILD** | `Profile.salary_expectation` is held and never compared |
+| Salary gap (`salary-gap`) | **HAVE** | `packages/matching/salary.py` — a rubric dimension, never a form answer |
 | Upskill plan (`upskill`) | **BUILD** | gap is computed; nothing turns it into a plan |
 
 ## Résumé and documents
