@@ -167,8 +167,8 @@ def test_weighting_changes_the_embedder_name() -> None:
 
     frequencies = DocumentFrequencies.from_texts(_corpus())
 
-    assert LexicalEmbedder().name == "lexical"
-    assert LexicalEmbedder(frequencies=frequencies).name == "lexical-idf"
+    assert LexicalEmbedder().name.startswith("lexical@")
+    assert LexicalEmbedder(frequencies=frequencies).name.startswith("lexical-idf@")
 
 
 def test_a_corpus_too_small_to_trust_leaves_the_embedder_unweighted() -> None:
@@ -176,7 +176,7 @@ def test_a_corpus_too_small_to_trust_leaves_the_embedder_unweighted() -> None:
 
     tiny = DocumentFrequencies.from_texts(_corpus(5))
 
-    assert LexicalEmbedder(frequencies=tiny).name == "lexical"
+    assert LexicalEmbedder(frequencies=tiny).name.startswith("lexical@")
 
 
 def test_idf_weighting_separates_postings_the_boilerplate_hid() -> None:
@@ -249,14 +249,14 @@ async def test_a_vector_from_another_model_is_re_embedded(db_session) -> None:
 
     first = await embed_postings(db_session, [posting], embedder=LexicalEmbedder())
     assert first == 1
-    assert posting.embedding_model == "lexical"
+    assert posting.embedding_model.startswith("lexical@")
 
     # Same postings, different model: every one has to be redone.
     weighted = LexicalEmbedder(frequencies=DocumentFrequencies.from_texts(_corpus()))
     second = await embed_postings(db_session, [posting], embedder=weighted, revision=1)
 
     assert second == 1
-    assert posting.embedding_model == "lexical-idf"
+    assert posting.embedding_model.startswith("lexical-idf@")
     assert posting.embedding_revision == 1
 
 

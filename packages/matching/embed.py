@@ -58,6 +58,22 @@ class Embedder(Protocol):
     def encode(self, texts: list[str]) -> list[list[float]]: ...
 
 
+#: Bumped whenever `tokenize` changes what it produces.
+#:
+#: The tokenizer is part of the embedder's identity, not an implementation
+#: detail: change it and every stored vector was built from different terms,
+#: which is the same silent drift as swapping models. The name carries this so
+#: `embed_postings` re-embeds instead of comparing across the change.
+#:
+#: v2 — thousands separators. "150,000" tokenized as "150" and "000", so every
+#: posting stating a salary contributed a meaningless high-frequency "000" to
+#: its vector, and the gap report told owners they were missing "000".
+TOKENIZER_VERSION = 2
+
+#: Digit groups split by a comma are one number, not two tokens.
+_THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}(?:\D|$))")
+
+
 def tokenize(text: str) -> list[str]:
     """Words, lowercased, minus stopwords.
 
@@ -71,7 +87,7 @@ def tokenize(text: str) -> list[str]:
     """
     return [
         stripped
-        for token in _TOKEN_RE.findall(text.lower())
+        for token in _TOKEN_RE.findall(_THOUSANDS_RE.sub("", text.lower()))
         if (stripped := token.rstrip(".")) and len(stripped) > 1 and stripped not in _STOPWORDS
     ]
 
@@ -112,7 +128,8 @@ class LexicalEmbedder:
         #: Only used when the corpus is large enough to describe a
         #: distribution — see idf.MIN_DOCUMENTS.
         self.frequencies = frequencies if (frequencies and frequencies.usable) else None
-        self.name = "lexical-idf" if self.frequencies else "lexical"
+        base = "lexical-idf" if self.frequencies else "lexical"
+        self.name = f"{base}@{TOKENIZER_VERSION}"
 
     def _bucket(self, token: str) -> int:
         digest = hashlib.sha256(token.encode("utf-8")).digest()

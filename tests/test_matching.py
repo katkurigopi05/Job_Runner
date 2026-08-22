@@ -414,6 +414,23 @@ def test_matched_and_missing_are_disjoint() -> None:
     assert not set(keyword_overlap(profile, posting)) & set(missing_terms(profile, posting))
 
 
+def test_a_thousands_separator_does_not_split_a_number() -> None:
+    """ "150,000" tokenized as "150" and "000", so every posting stating a
+    salary put a meaningless high-frequency "000" into its vector — and the
+    gap report told owners they were missing "000"."""
+    assert tokenize("Compensation: $150,000 - $190,000") == ["compensation", "150000", "190000"]
+    assert "000" not in tokenize("1,200,000 rows")
+
+
+def test_the_tokenizer_version_is_part_of_the_embedder_name() -> None:
+    """Change what tokenize produces and every stored vector was built from
+    different terms. The name carries it so those get re-embedded rather than
+    compared across the change."""
+    from packages.matching.embed import TOKENIZER_VERSION, LexicalEmbedder
+
+    assert LexicalEmbedder().name.endswith(f"@{TOKENIZER_VERSION}")
+
+
 def test_a_trailing_full_stop_does_not_split_a_term() -> None:
     """'Go.' and 'Go' indexed as different tokens, which halved a term's count
     and put the same word in two buckets of the lexical embedding."""
