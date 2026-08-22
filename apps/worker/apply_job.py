@@ -12,6 +12,7 @@ The shape of the run is fixed by two rules:
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import structlog
@@ -30,10 +31,11 @@ from packages.ats.registry import adapter_for
 from packages.ats.screen import ScreenReport, screen
 from packages.core.config import get_settings
 from packages.core.enums import ApplicationStatus, FailureReason
-from packages.core.models import Application, Candidate, Match, Profile, Resume
+from packages.core.models import Application, Candidate, Match, Profile, Project, Resume
 from packages.core.queue import ClaimedTask
 from packages.core.state import WorkClaim, begin_work, transition
 from packages.core.storage import get_storage, receipt_key
+from packages.github.select import relevant_for_posting
 from packages.llm import router as llm_router
 
 log = structlog.get_logger(__name__)
@@ -213,6 +215,23 @@ async def _prepared_resume(
     return resume.id
 
 
+async def _projects_for(
+    session: AsyncSession, candidate_id: uuid.UUID, posting_text: str
+) -> list[Project]:
+    """GitHub projects that evidence this posting, for the résumé being sent.
+
+    The scorer has counted these all along — `matching.score.profile_text` is
+    résumé *plus* projects, which is why a posting whose skills live in the
+    owner's repositories still ranks and is never filtered out. The document
+    did not agree: this call passed no projects, so the PDF the employer
+    received omitted the very evidence that surfaced the job.
+    """
+    inventory = list(
+        (await session.scalars(select(Project).where(Project.candidate_id == candidate_id))).all()
+    )
+    return relevant_for_posting(inventory, posting_text)
+
+
 async def _tailor(
     session: AsyncSession,
     application: Application,
@@ -287,6 +306,7 @@ async def _tailor(
             candidate_id=resume.candidate_id,
             parsed=parsed,
             result=result,
+            projects=await _projects_for(session, resume.candidate_id, posting_text),
         )
         if published is not None:
             application.tailored_resume_id = published.id

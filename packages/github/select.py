@@ -142,3 +142,33 @@ def select_projects(
     rest.sort(key=lambda p: score(p, job_text, now=now), reverse=True)
 
     return (pinned + rest)[:limit]
+
+
+def relevant_for_posting(
+    projects: list[Project],
+    job_text: str,
+    *,
+    limit: int = DEFAULT_LIMIT,
+    now: datetime | None = None,
+) -> list[Project]:
+    """The projects worth putting on a résumé tailored to *this* posting.
+
+    `select_projects` ranks and then fills up to `limit`, which is right for a
+    general résumé and wrong for a targeted one: with a thin inventory it puts
+    an unrelated repository on the page purely because there was room. On a
+    résumé aimed at one job, a project that evidences nothing about that job
+    is worse than a shorter section — it spends the reader's attention and
+    says nothing.
+
+    So ranking still decides the order, and a project must additionally either
+    be pinned or share vocabulary with the posting. Pinning is the owner's
+    explicit "always show this" and outranks relevance, exactly as
+    `is_eligible` already treats `include`.
+
+    Only source-reported text is consulted — `relevance` reads name,
+    description, language and topics, all copied from GitHub. Nothing is
+    inferred about what a project does, which is what keeps a Projects section
+    inside §2.1.
+    """
+    ranked = select_projects(projects, job_text, limit=limit, now=now)
+    return [p for p in ranked if p.pinned or relevance(p, job_text) > 0]
