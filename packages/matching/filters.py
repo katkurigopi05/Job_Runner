@@ -20,7 +20,10 @@ from packages.core.models import Posting, Profile
 #: direction — an intern posting and a principal posting are both wrong for a
 #: mid-level candidate, for opposite reasons.
 SENIORITY_LEVELS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("intern", ("intern", "internship", "co-op", "coop")),
+    (
+        "intern",
+        ("intern", "internship", "co-op", "coop", "apprentice", "apprenticeship", "trainee"),
+    ),
     ("junior", ("junior", "entry level", "entry-level", "graduate", "new grad", "associate")),
     ("mid", ("mid-level", "mid level", "software engineer ii", "engineer ii")),
     ("senior", ("senior", "sr.", "sr ", "lead", "staff")),
@@ -46,13 +49,34 @@ class FilterResult:
         return self.passed
 
 
+#: Markers compiled with word boundaries. Plain substring matching read
+#: "Internal Tools Engineer" as an internship and "Cooperative Bank Analyst"
+#: as one too, because "intern" and "coop" sit inside both. A miscategorised
+#: level then feeds `seniority_ok`, which quietly drops the posting for an
+#: applicant it actually suited.
+#:
+#: Trailing punctuation is stripped before the boundary is applied so "sr."
+#: still matches "Sr. Engineer" — `\b` after a full stop matches nothing.
+_SENIORITY_RES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (
+        level,
+        re.compile(
+            r"\b(?:"
+            + "|".join(re.escape(marker.strip().rstrip(".")) for marker in markers)
+            + r")\b",
+            re.I,
+        ),
+    )
+    for level, markers in SENIORITY_LEVELS
+)
+
+
 def detect_seniority(text: str) -> str | None:
     """The seniority a posting advertises, or None if it does not say."""
-    lowered = f" {text.lower()} "
     # Highest match wins: "Senior Staff Engineer" is staff-senior, not mid.
     found: str | None = None
-    for level, markers in SENIORITY_LEVELS:
-        if any(marker in lowered for marker in markers):
+    for level, pattern in _SENIORITY_RES:
+        if pattern.search(text):
             found = level
     return found
 

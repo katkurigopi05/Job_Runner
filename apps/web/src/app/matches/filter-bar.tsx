@@ -7,7 +7,19 @@ import { useCallback } from "react";
    running twice is worth being able to bookmark, and the back button should
    undo a filter rather than leave the page. */
 
-const SENIORITY = ["intern", "junior", "mid", "senior", "staff", "principal"];
+/**
+ * The value is the API's rung name; the label is what that rung actually
+ * covers. "intern" also matches apprenticeships, co-ops and traineeships —
+ * one tier, several names an employer might use for it.
+ */
+const SENIORITY: Array<{ value: string; label: string }> = [
+  { value: "intern", label: "intern / apprentice" },
+  { value: "junior", label: "junior" },
+  { value: "mid", label: "mid" },
+  { value: "senior", label: "senior" },
+  { value: "staff", label: "staff" },
+  { value: "principal", label: "principal" },
+];
 
 export function FilterBar({ resultCount }: { resultCount: number }) {
   const router = useRouter();
@@ -85,8 +97,8 @@ export function FilterBar({ resultCount }: { resultCount: number }) {
           >
             <option value="">any level</option>
             {SENIORITY.map((level) => (
-              <option key={level} value={level}>
-                {level}
+              <option key={level.value} value={level.value}>
+                {level.label}
               </option>
             ))}
           </select>

@@ -288,7 +288,8 @@ within without would write familiarity plus bonus nice
 
 paid time off medical dental vision equity salary compensation
 
-senior junior staff principal mid entry intern internship
+senior junior staff principal mid entry intern internship apprentice
+apprenticeship trainee
 """
 
 _BOILERPLATE = frozenset(_BOILERPLATE_TEXT.split())

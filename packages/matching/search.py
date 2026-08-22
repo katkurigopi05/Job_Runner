@@ -26,8 +26,17 @@ from packages.matching.locality import Locality, is_domestic, locality_of
 SENIORITY_ORDER = ("intern", "junior", "mid", "senior", "staff", "principal")
 
 _SENIORITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("intern", re.compile(r"\bintern(ship)?\b", re.I)),
-    ("junior", re.compile(r"\b(junior|jr\.?|entry[- ]level|associate|new grad)\b", re.I)),
+    # One rung, several names. An apprenticeship, a co-op and a traineeship
+    # are the same tier as an internship — structured entry-level positions —
+    # and giving each its own rung would break "at least junior" for no gain.
+    (
+        "intern",
+        re.compile(r"\b(intern(ship)?s?|apprentice(ship)?s?|co[- ]?op|trainee(ship)?s?)\b", re.I),
+    ),
+    (
+        "junior",
+        re.compile(r"\b(junior|jr\.?|entry[- ]level|associate|new grad|graduate)\b", re.I),
+    ),
     ("principal", re.compile(r"\b(principal|distinguished|fellow)\b", re.I)),
     ("staff", re.compile(r"\b(staff|lead|architect)\b", re.I)),
     ("senior", re.compile(r"\b(senior|sr\.?)\b", re.I)),
