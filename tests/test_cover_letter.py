@@ -182,8 +182,12 @@ def test_first_person_prose_is_not_read_as_proper_nouns() -> None:
     """The guard's word list was sized for résumé bullets, which are terse
     and third-person. A letter says "My" and "We" at the start of sentences,
     and reading those as proper nouns rejected nearly every letter."""
-    from packages.tailor.guard import extract_entities
+    from packages.tailor.guard import EntityKind, extract_entities
 
-    found = {e.text for e in extract_entities("My work at Acme Corp. We shipped it. Please read.")}
+    found = {
+        e.text
+        for e in extract_entities("My work at Acme Corp. We shipped it. Please read.")
+        if e.kind is not EntityKind.NOUN
+    }
 
     assert found == {"Acme", "Corp"}

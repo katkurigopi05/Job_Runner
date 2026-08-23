@@ -543,6 +543,20 @@ question its gate was written to ask, which is whether the scoring and the
 classifier work on *this owner's* material. Swap the fixtures for real data
 before trusting either number.
 
+- **Gate 3 now checks what it says it checks.** The wording is "every
+  noun-phrase entity in output traces to the source résumé"; the guard matched
+  on capitalization, acronyms and digits instead, which is a proxy that cannot
+  see a lowercase claim. A rewrite adding "with machine learning" to a résumé
+  that never says it was accepted with **zero entities checked**.
+  `packages/tailor/chunk.py` POS-tags the output and extracts noun phrases, so
+  nouns and their adjectives are claims while verbs and adverbs stay free —
+  §2.1 permits rephrasing, and "oversaw" for "maintained" is rephrasing.
+
+  The tagger data is a download, not a package: `make nltk-data`. Without it
+  the guard falls back to the old proxy, `GuardReport.extractor` records which
+  one ran, and `make doctor` reports it. A guard that quietly loses a check is
+  worse than one that never had it, because nobody re-reads a green test.
+
 - **Gate 1's HAR replay** is now real. `tests/test_greenhouse_har.py` replays
   bytes Greenhouse actually served, offline, and runs in `make gate-1` and in
   CI. It exists because the hand-written fixture beside it had native
