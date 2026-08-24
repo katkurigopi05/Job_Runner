@@ -1,6 +1,17 @@
 # Secrets — never commit
+# `.env.*` and not just `.env.local`: a backup made before editing settings
+# (`.env.bak`, `.env.2026-08-24`, `.env.save`) is a full copy of the vault key
+# and every credential, and the old two-line form left it untracked-but-
+# visible, one `git add -A` from being committed. `.env.example` is the
+# documented template and carries no values, so it is exempted back in.
 .env
-.env.local
+.env.*
+# iCloud writes conflict copies as "name 2" with no extension, and it has
+# already reached inside .git here. The repo-wide `* [0-9].*` rule needs a
+# trailing extension, so it does not match `.env 2` — a verbatim copy of the
+# vault key that would otherwise sit untracked-but-visible.
+.env [0-9]*
+!.env.example
 *.pem
 *.key
 .secrets/
