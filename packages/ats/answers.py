@@ -86,6 +86,17 @@ def _match_attribute(question: Question) -> str | None:
     return None
 
 
+def asks_for_cover_letter(question: Question) -> bool:
+    """Does this field want a cover letter?
+
+    Exported so the apply pipeline can decide whether writing one is worth a
+    provider call, using the same rule that decides where to put it. Two
+    copies of this test would drift, and the direction it drifts matters: a
+    letter written and then not recognized is paid for and discarded.
+    """
+    return _match_attribute(question) == "cover_letter"
+
+
 def build_answers(
     questions: list[Question],
     candidate: Candidate,
@@ -93,11 +104,19 @@ def build_answers(
     *,
     extra: dict[str, Any] | None = None,
     resume_path: str | None = None,
+    cover_letter_text: str | None = None,
+    cover_letter_path: str | None = None,
 ) -> dict[str, Any]:
     """Answers keyed by `Question.key`, for `ATSAdapter.fill()`.
 
     `extra` carries answers the owner supplied at review; they win over
     anything derived from the profile.
+
+    The two cover-letter parameters are the same letter in the two shapes an
+    employer asks for it. Greenhouse offers "Attach" and "Enter manually" for
+    the same field, so both can appear on one form; each takes the shape it
+    can accept, and a form that offers neither gets nothing rather than a
+    path typed into a textarea.
     """
     values = profile_values(candidate, profile)
     owner_supplied = extra or {}
@@ -121,8 +140,16 @@ def build_answers(
             continue
 
         if attribute == "cover_letter":
-            # Generated in Phase 3. Until then it stays unanswered rather than
-            # being filled with something invented.
+            # Written by packages/tailor/cover.py and vetted by the fabrication
+            # guard before it reaches here. Still unanswered when there is no
+            # letter — the guard refuses rather than falling back, and an empty
+            # field the owner sees at review beats one filled with something
+            # invented (CLAUDE.md §2.4).
+            if question.kind is QuestionKind.FILE:
+                if cover_letter_path:
+                    answers[question.key] = cover_letter_path
+            elif cover_letter_text:
+                answers[question.key] = cover_letter_text
             continue
 
         value = values.get(attribute)

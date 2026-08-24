@@ -633,16 +633,41 @@ an honest untailored résumé beats an application with no résumé — but
 base while the application record claims a tailored one is exactly how this
 stayed invisible.
 
-### Phase 3 scope that is not built
+### Phase 3 scope Gate 3 does not cover
 
-§9 Phase 3 lists two things Gate 3 does not cover:
+§9 Phase 3 lists two things beyond what Gate 3 tests. Both are now built, and
+both stay recorded here rather than being deleted: the gate still does not
+cover either, so "Gate 3 passes" continues to mean less than "Phase 3 works".
 
-- **Cover letter.** A module writes one — `packages/tailor/cover.py`, which
-  vets every letter against the fabrication guard, refuses one that raises a
-  §2.2 topic, and never falls back to an unvetted draft. Nothing calls it. The
-  apply pipeline never asks for a letter, `Application.cover_letter_ref` is
-  never written, and so no application has carried one. The tests exercise the
-  module, not the feature. `docs/PARITY.md` tracks the remaining gap.
+- **Cover letter.** ~~Nothing calls it.~~ Wired. `apps/worker/apply_job.py::_cover_letter`
+  writes one, `Application.cover_letter_ref` is written, and
+  `tests/test_apply_cover_letter.py` asserts the wiring the module's own tests
+  could not: that the letter is written *before* `adapter.fill`, and that it
+  reaches the field. `tests/test_greenhouse.py` types it into the real fixture
+  textarea, because a letter written, vetted, stored and then not typed is the
+  same defect as the résumé that was never uploaded.
+
+  Three things are deliberate. **The form is read first** — the questions
+  decide whether a letter is written at all, because most postings never ask
+  for one and a provider call for a field that does not exist buys nothing.
+  **A refusal is recorded, not swallowed** — the guard offers no fallback
+  here, so `review_json["cover_letter"]` carries the reason; a form that asked
+  and got nothing otherwise looks identical to a form that never asked, and
+  writing it by hand is the owner's call. **A resumed run reuses the stored
+  letter** rather than writing a second one: any real provider returns
+  different prose the second time, and the owner approved a specific letter.
+
+  Wiring it surfaced a defect in the module that no test could see from
+  inside. `cover.py` strips the greeting before sifting — `_GREETING` exists
+  precisely so "Dear Hiring Manager," stops being read as a claim about a
+  `Manager` — and then `write` joined it back on before calling `vet`, which
+  runs the guard over the whole letter again. So the strip was undone one line
+  later and the refusal came back. Every test in `test_cover_letter.py` built
+  letters with no greeting, so all of them passed while the most common
+  opening a model produces was refused on its first four words. `vet` now
+  strips the addressing itself, which covers both callers. §2.2 and the length
+  bound still judge the whole letter: the scaffolding is exempt from tracing
+  to the résumé, not from the salary rule.
 - **Caching of tailored versions.** Built — `packages/tailor/cache.py`. The
   condition it was waiting for arrived: `LLM_PROVIDER=gemini` with a key set,
   and tailoring text now leaves the machine. Keyed on the source résumé, the
@@ -667,6 +692,8 @@ stayed invisible.
   does not touch it and should not; a cache there is the follow-up that matches
   the evidence.
 
-Gate 3 passes without them because it tests fabrication and the PDF round trip,
-which is the part with consequences. Recorded here so the gap is not mistaken
-for completion.
+Gate 3 passed without either of them for as long as neither existed, because
+it tests fabrication and the PDF round trip — the part with consequences — and
+it still does not test either now that both are built. The cover letter has
+its own tests rather than a gate. Recorded here so a green Gate 3 is not read
+as more than it checks.

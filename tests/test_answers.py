@@ -91,9 +91,45 @@ def test_unmatched_question_is_left_unanswered(candidate, profile) -> None:
 
 
 def test_cover_letter_is_not_invented(candidate, profile) -> None:
-    """Generated in Phase 3; until then it stays open rather than faked."""
+    """No letter written means the field stays open rather than faked.
+
+    The guard refuses a letter outright rather than falling back, so "there is
+    no letter" is a normal outcome and has to leave the owner the question.
+    """
     questions = [q("cover_letter", "Cover Letter", QuestionKind.COVER_LETTER)]
     assert build_answers(questions, candidate, profile) == {}
+
+
+def test_a_written_cover_letter_reaches_the_field(candidate, profile) -> None:
+    questions = [q("cover_letter", "Cover Letter", QuestionKind.COVER_LETTER)]
+
+    answers = build_answers(questions, candidate, profile, cover_letter_text="Dear...")
+
+    assert answers["cover_letter"] == "Dear..."
+
+
+def test_a_cover_letter_upload_field_gets_the_file(candidate, profile) -> None:
+    """Greenhouse offers "Attach" and "Enter manually" for the same letter."""
+    questions = [q("cover_letter", "Cover Letter", QuestionKind.FILE)]
+
+    answers = build_answers(
+        questions,
+        candidate,
+        profile,
+        cover_letter_text="Dear...",
+        cover_letter_path="/tmp/cover-letter.pdf",
+    )
+
+    assert answers["cover_letter"] == "/tmp/cover-letter.pdf"
+
+
+def test_a_cover_letter_upload_field_is_left_open_without_a_file(candidate, profile) -> None:
+    """A file input cannot take prose. Typing the letter into it uploads nothing."""
+    questions = [q("cover_letter", "Cover Letter", QuestionKind.FILE)]
+
+    answers = build_answers(questions, candidate, profile, cover_letter_text="Dear...")
+
+    assert answers == {}
 
 
 def test_select_matches_an_exact_option(candidate, profile) -> None:
