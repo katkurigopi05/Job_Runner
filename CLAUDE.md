@@ -269,6 +269,30 @@ original bullet, which looks like the tailorer doing nothing.
 The table lives in `packages/llm/router.py::TEMPERATURES`. `complete_json` is
 pinned to 0.0 regardless — the answer has to parse against a schema.
 
+**Local or cloud is now the owner's choice, per task.** The provider column
+above was not settable: `best_available()` walks a hardcoded `QUALITY_ORDER`
+and picks the strongest *configured* provider, so a Gemini key made every
+"best available" task remote and the only way to tailor locally was to delete
+the key that everything else wanted kept. `LLM_TASK_TAILOR`,
+`LLM_TASK_COVER_LETTER` and `LLM_TASK_OPEN_ENDED` take `auto` (the shipped
+behaviour) or a provider name.
+
+Only those three. Classification and the assistant read recruiter mail and
+chat context; §2.8 permits one third-party upload and neither is it, so both
+stay on Ollama in code and `CHOOSABLE_TASKS` does not list them — a setting
+able to move them would be a way to opt out of a non-negotiable by editing
+`.env`. `test_only_the_uploading_tasks_are_choosable` holds that.
+
+`LLM_FALLBACK_LOCAL` answers with the local model when the daily allowance is
+spent or the remote provider is unreachable, rather than refusing. This is not
+a softening of "nothing falls back to the stub" — that stands, and the stub is
+excluded explicitly. `QuotaExceeded` already told the owner to "raise the
+limit, wait for the reset, or run a local provider"; the third option was an
+instruction to a human, and this is it automated. Which model answered is
+recorded on the provider and in the trail, because a résumé tailored by
+llama3.1 after the allowance ran out is a different document from one tailored
+by Gemini and the owner approving it should be able to tell.
+
 Tuning any of these against the guard's own pass rate is the trap in
 `docs/REFERENCE.md` §3.6: it optimises the one referee we control, and a
 rewrite can satisfy the guard while reading worse. Change one only with a

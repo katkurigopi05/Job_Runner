@@ -58,6 +58,31 @@ class Settings(BaseSettings):
     #: written into three files and settable in none.
     ollama_model: str = "llama3.1"
 
+    #: Which provider answers each §7 task that is allowed a choice.
+    #:
+    #: "auto" keeps `router.best_available()` — the strongest configured
+    #: provider — which is what shipped. Naming one ("ollama", "gemini",
+    #: "anthropic") pins that task, so local tailoring no longer requires
+    #: deleting the API key that every other task wants kept.
+    #:
+    #: Only these three are settable, and that is a §2.8 boundary rather than
+    #: an oversight: inbound-email classification and the assistant read
+    #: recruiter mail and chat context, which §2.8 does not permit uploading
+    #: and §14 pins to Ollama in code. A setting that could send them to a
+    #: third party would be a way to opt out of a non-negotiable.
+    llm_task_tailor: str = "auto"
+    llm_task_cover_letter: str = "auto"
+    llm_task_open_ended: str = "auto"
+    #: On a spent quota or an unreachable remote provider, answer with the
+    #: local model instead of refusing.
+    #:
+    #: §7 says nothing falls back to the stub, and that still holds — the stub
+    #: returns canned text and putting that on a real application is the
+    #: failure it was written to make visible. A local model is a real answer,
+    #: and `QuotaExceeded` already tells the owner to "run a local provider",
+    #: which is this, automated. The audit trail records which one answered.
+    llm_fallback_local: bool = True
+
     #: Stable across restarts so a worker recognizes its own abandoned lease.
     #: Defaults to the hostname when unset.
     worker_id: str | None = None
