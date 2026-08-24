@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Protocol
 
 import structlog
 
@@ -226,12 +227,26 @@ def classify(subject: str, body: str) -> ClassificationResult:
 BAYES_MIN_MARGIN = 0.2
 
 
+class SupportsClassify(Protocol):
+    """Any tier that turns a message into a verdict.
+
+    Declared rather than typing the parameter `object` and silencing the
+    attribute error: `object` made the call return `Any`, and an `Any` flowing
+    out of a function annotated `-> ClassificationResult` is exactly the hole
+    mypy's `no-any-return` exists to catch. A Protocol keeps the tier
+    swappable — `train_from_corpus()` today, a model fitted on real mail later
+    — without giving up the return type on the way through.
+    """
+
+    def classify(self, subject: str, body: str) -> ClassificationResult: ...
+
+
 async def classify_message(
     subject: str,
     body: str,
     *,
     provider: object | None = None,
-    bayes: object | None = None,
+    bayes: SupportsClassify | None = None,
 ) -> ClassificationResult:
     """Rules, then Naive Bayes, then a model — first tier that commits wins.
 
@@ -263,7 +278,7 @@ async def classify_message(
     if bayes is None:
         bayes = _seed_bayes()
     if bayes is not None:
-        guess = bayes.classify(subject, body)  # type: ignore[attr-defined]
+        guess = bayes.classify(subject, body)
         if not guess.abstained and guess.margin >= BAYES_MIN_MARGIN:
             log.info("classified_by_bayes", margin=round(guess.margin, 3))
             return guess
@@ -276,11 +291,11 @@ async def classify_message(
     return rules_result
 
 
-_SEED_BAYES: object | None = None
+_SEED_BAYES: SupportsClassify | None = None
 _SEED_BAYES_FAILED = False
 
 
-def _seed_bayes() -> object | None:
+def _seed_bayes() -> SupportsClassify | None:
     """The corpus-trained classifier, fitted once.
 
     Training is pure CPU over a few dozen short emails, but it happens on every
