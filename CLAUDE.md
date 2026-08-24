@@ -527,6 +527,31 @@ third-party upload — the tailoring call — and a chat window is not it. So
 cloud provider that happens to be configured. Setting `LLM_PROVIDER=gemini`
 changes tailoring and leaves the assistant local.
 
+Asking for Ollama by name stopped being enough to know that. Ollama serves
+cloud-hosted models over the same localhost API — `kimi-k2.6:cloud` and
+`qwen3-coder:480b-cloud` are both in the owner's model list, neither runs on
+this machine, and the base URL is identical either way. So `/chat` checks the
+*model* through `audit.is_local` and refuses a remote one, which matters more
+now that `OLLAMA_MODEL` is a setting: one edit to `.env` could otherwise route
+applications and recruiter mail to a third party while the reply still read
+`provider="ollama"`.
+
+The model is **llama3.1**, chosen by benchmarking the six local models against
+this project's own tasks rather than by reputation. On the 30 labeled recruiter
+emails behind Gate 6 it classified 30/30 where the next best managed 28; it
+answers the assistant's probes from the context it was handed; and asked what
+salary to request it points at the profile, where `qwen2.5-coder` instead
+advised on how to research one — the §2.2 failure, from the model rather than
+the route. It is also the tersest of the six, and `CHAT_SYSTEM` asks for brief.
+
+Worth knowing what that benchmark did *not* prove. Of §7's five tasks only
+`tailor_resume` has a caller; `classify_inbound_email`, `map_form_field`,
+`write_cover_letter`, and `answer_open_ended_question` are defined in
+`packages/llm/router.py` and called from nowhere, and `LLMClassifier` is never
+constructed — the inbox is rules-only, deciding 29 of those 30 emails without
+a model at all. The assistant is the one live local-model path, so it is the
+one the choice was made on.
+
 **§2.2 is refused before the model is reached.** Asked what to put for work
 authorization, sponsorship, employment history, or salary, the route returns a
 refusal and points at the profile. The system prompt says the same thing, but
@@ -553,7 +578,16 @@ where the gates are defined rather than only in a test docstring.
   actually apply to". `tests/test_matching.py` has 20, written the way real
   postings read. They are not postings the owner labeled.
 - **Gate 6** asks for "30 hand-labeled **real** recruiter emails".
-  `tests/test_inbox.py` has 30 written to match. They are not real correspondence.
+  `tests/test_inbox.py` has 30 written to match. They are not real correspondence,
+  and the cost of that is now measured rather than suspected. The fixtures were
+  written beside the patterns that read them, so they use the phrasing the
+  patterns expect: the fixture says "with other candidates" and matches, while
+  "with another candidate" — the same sentence as recruiters write it — does
+  not. Six of seven realistic rejection phrasings miss. On a rejection shaped
+  like one that actually arrives, the rules abstain outright.
+
+  `inbound_messages` in the owner's database is **0**. Gate 6 has never seen a
+  real email.
 
 Both suites are worth having — they catch regressions. Neither answers the
 question its gate was written to ask, which is whether the scoring and the

@@ -616,3 +616,117 @@ async def test_llm_failure_falls_back_to_the_rule_verdict() -> None:
 
     result = await LLMClassifier(_Broken()).classify("Hello", "Just checking in.")
     assert result.classification is Classification.NOISE
+
+
+#: A rejection as one actually arrives: a req number in the subject, the refusal
+#: buried mid-paragraph in warm language, a signature block, the applicant's own
+#: optimistic reply quoted underneath, and an ATS footer. Every fixture above is
+#: two clean sentences, which is why the rules score 29/30 on them and abstain
+#: on this. CLAUDE.md §15 asks for real correspondence; this is not that either,
+#: but it is shaped like it, and it is the case the tiers exist for.
+REALISTIC_REJECTION = (
+    "Re: Your application for Senior Backend Engineer (R-4471) at Acme, Inc.",
+    """Hi Gopi,
+
+Thanks so much for taking the time to speak with our team last week. We were
+genuinely impressed by your background in distributed systems.
+
+After a lot of discussion, we've decided to move forward with another candidate
+whose experience lines up more directly with what this team needs right now.
+
+We'd love to stay in touch. Please do apply again down the road.
+
+Dana Whitfield, Technical Recruiter | Acme, Inc.
+
+> On Tue, Aug 12, 2026 Gopi wrote:
+> Hi Dana, I'm very excited about the platform team and wanted to follow up
+> on next steps and the interview panel.
+--
+Sent via Greenhouse. Unsubscribe: https://my.greenhouse.io/notifications/x
+""",
+)
+
+
+def test_the_rules_abstain_on_a_realistically_worded_rejection() -> None:
+    """One word, and the pattern misses.
+
+    The fixtures say "with other candidates" and the pattern matches. Recruiters
+    write "with another candidate", and it does not. Before the fallback chain
+    this abstention became `noise`, so the application's status never moved.
+    """
+    from packages.inbox.classify import RuleClassifier
+
+    verdict = RuleClassifier().classify(*REALISTIC_REJECTION)
+
+    assert verdict.abstained
+
+
+async def test_the_model_tier_catches_what_the_rules_and_bayes_miss() -> None:
+    """The whole point of the chain, on the message that motivated it."""
+    from packages.inbox.classify import classify_message
+
+    class SaysRejection:
+        async def complete(self, system, user, **kw):
+            return "rejection"
+
+    verdict = await classify_message(*REALISTIC_REJECTION, provider=SaysRejection())
+
+    assert verdict.classification is Classification.REJECTION
+
+
+async def test_an_unconfident_bayes_guess_is_never_adopted() -> None:
+    """It reads this rejection as `interview` at 0.073, below BAYES_MIN_MARGIN.
+
+    Filing a rejection as an interview is worse than filing nothing: the owner
+    believes they are waiting on a panel that will never be scheduled. With no
+    model to defer to, the honest answer is the rules' abstention.
+    """
+    from packages.inbox.bayes import train_from_corpus
+    from packages.inbox.classify import BAYES_MIN_MARGIN, classify_message
+
+    guess = train_from_corpus().classify(*REALISTIC_REJECTION)
+    assert guess.classification is Classification.INTERVIEW
+    assert guess.margin < BAYES_MIN_MARGIN
+
+    verdict = await classify_message(*REALISTIC_REJECTION, provider=None)
+
+    assert verdict.classification is not Classification.INTERVIEW
+
+
+async def test_a_confident_bayes_verdict_is_taken_without_a_model() -> None:
+    """Bayes is a real tier, not a formality — it resolves Gate 6's abstention."""
+    from packages.inbox.classify import BAYES_MIN_MARGIN, RuleClassifier, classify_message
+
+    abstained = [(w, s, b) for w, s, b in LABELED if RuleClassifier().classify(s, b).abstained]
+    assert abstained, "the rules abstain on at least one labeled message"
+
+    for want, subject, body in abstained:
+        verdict = await classify_message(subject, body, provider=None)
+        assert verdict.classification == want
+        assert verdict.margin >= BAYES_MIN_MARGIN
+
+
+async def test_the_rules_still_win_when_they_are_certain() -> None:
+    """Bayes scores 27/30 alone against the rules' 29/30. Order is load-bearing."""
+    from packages.inbox.classify import classify_message
+
+    class NeverAsked:
+        async def complete(self, system, user, **kw):  # pragma: no cover
+            raise AssertionError("the model must not be consulted")
+
+    for want, subject, body in LABELED[:8]:
+        verdict = await classify_message(subject, body, provider=NeverAsked())
+        assert verdict.classification == want
+
+
+async def test_a_model_outage_does_not_mis_file_a_message() -> None:
+    """An inbox poll must survive Ollama being down."""
+    from packages.inbox.classify import classify_message
+
+    class Down:
+        async def complete(self, system, user, **kw):
+            raise RuntimeError("connection refused")
+
+    verdict = await classify_message(*REALISTIC_REJECTION, provider=Down())
+
+    assert verdict.classification is Classification.NOISE

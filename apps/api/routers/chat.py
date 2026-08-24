@@ -29,10 +29,12 @@ from sqlalchemy import func, select
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
+from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
 from packages.core.models import Application, InboundMessage, Profile
 from packages.core.schemas import ChatReply, ChatRequest
 from packages.llm import router as llm_router
+from packages.llm.audit import is_local
 from packages.llm.prompts import CHAT_SYSTEM
 from packages.llm.provider import LLMError
 
@@ -130,6 +132,26 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
 
     try:
         provider = llm_router.build_provider(LOCAL_PROVIDER)
+        # Asking for "ollama" is no longer enough to know the answer stays
+        # here. Ollama serves cloud-hosted models over the same local API —
+        # `kimi-k2.6:cloud` and `qwen3-coder:480b-cloud` are both in this
+        # owner's model list, neither runs on this machine, and nothing in the
+        # URL says so. Since OLLAMA_MODEL became settable, one edit to `.env`
+        # could route the owner's applications and recruiter mail off the
+        # machine while `provider="ollama"` still read as local.
+        #
+        # §2.8 permits exactly one third-party upload and a chat window is not
+        # it. Refused in code for the same reason the §2.2 check above is: the
+        # system prompt is a request, and this is a rule.
+        model = getattr(provider, "model", None)
+        if not is_local(LOCAL_PROVIDER, model):
+            raise ApiError(
+                ErrorCode.INVALID_REQUEST,
+                f"OLLAMA_MODEL is set to {model!r}, which Ollama serves from its own "
+                "servers rather than this machine. The assistant reads your "
+                "applications and recruiter mail, so it runs locally only. Set "
+                "OLLAMA_MODEL to a model you have pulled — llama3.1 is the default.",
+            )
         # The assistant answers from context it was handed and is told to say
         # when it does not know. Inventing an application status is the exact
         # failure §14 names, so this is the low end deliberately.
@@ -140,7 +162,8 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
         raise ApiError(
             ErrorCode.INTERNAL_ERROR,
             f"The local model is not answering ({exc}). Start Ollama with "
-            "`ollama serve`, or pull a model with `ollama pull llama3.1`. "
+            f"`ollama serve`, or pull the configured model with "
+            f"`ollama pull {get_settings().ollama_model}`. "
             "The assistant runs locally on purpose and will not use a cloud provider.",
         ) from exc
 

@@ -327,7 +327,7 @@ async def check_ollama() -> Check:
     not-required so a crawl is not reported as blocked because a chat window
     would not work.
     """
-    base = os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434"
+    base = os.environ.get("OLLAMA_BASE_URL") or get_settings().ollama_base_url
     try:
         import httpx
 
@@ -349,7 +349,10 @@ async def check_ollama() -> Check:
             "ollama",
             Health.FAIL,
             "running, but no model is pulled",
-            fix="ollama pull llama3.1",
+            # The configured model, not a fixed name: a hint telling you to
+            # pull llama3.1 while OLLAMA_MODEL asks for something else sends
+            # you to fix the wrong thing.
+            fix=f"ollama pull {get_settings().ollama_model}",
             required=False,
         )
     return Check("ollama", Health.OK, f"{len(models)} model(s): {', '.join(models[:4])}")

@@ -38,6 +38,25 @@ class Settings(BaseSettings):
     #: set to 0 in tests, where the sleeps are pure wall clock.
     llm_call_interval_s: float = 4.0
     anthropic_api_key: str | None = None
+    #: Where Ollama listens. Same reason as the keys above: `.env.example`
+    #: documents this key, so reading it only from os.environ meant a `.env`
+    #: pointing at another host was ignored and the caller fell back to
+    #: localhost. It matters more here than for a credential — CLAUDE.md §14
+    #: pins the assistant to Ollama by name and refuses to fall back to a
+    #: cloud provider, so an unreadable base URL is an assistant that is down
+    #: rather than one that quietly costs money.
+    ollama_base_url: str = "http://localhost:11434"
+    #: Which local model answers. Benchmarked against this project's own
+    #: tasks rather than chosen by reputation: on the 30 labeled recruiter
+    #: emails behind Gate 6 it classified 30/30 where the next best managed
+    #: 28, it answers the assistant's probes from the context it was handed,
+    #: and it redirects a salary question to the profile instead of advising
+    #: on one — which `qwen2.5-coder` did not. It is also the most concise of
+    #: the six, and CHAT_SYSTEM asks for brief.
+    #:
+    #: A field rather than a Python default because the value was previously
+    #: written into three files and settable in none.
+    ollama_model: str = "llama3.1"
 
     #: Stable across restarts so a worker recognizes its own abandoned lease.
     #: Defaults to the hostname when unset.
@@ -66,6 +85,16 @@ class Settings(BaseSettings):
     #: once instead of retyped on every request. `?us_only=false` overrides it
     #: for a single call, which is how you look outside without editing a file.
     search_us_only: bool = True
+
+    #: Which embedder scores the feed — "lexical" or "sentence-transformers".
+    #: Read here rather than from os.environ for the same reason the provider
+    #: credentials above are: `.env` is loaded into *this object*, never into
+    #: the process environment, so `packages/matching/embed.py` calling
+    #: `os.environ.get` could not see a value the owner had put in the place
+    #: `.env.example` documents. It silently kept scoring lexically, which is
+    #: the failure this setting exists to end. A real environment variable
+    #: still wins.
+    embedding_backend: str = "lexical"
 
     storage_root: str = "./storage"
 

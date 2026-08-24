@@ -118,9 +118,16 @@ class NaiveBayesClassifier:
             scores[label] = prior + sum(likelihood.get(token, unseen) for token in tokens)
 
         best = max(scores, key=lambda label: scores[label])
+        ordered = sorted(scores.values(), reverse=True)
+        # Per-token so the number means the same thing for a two-line reply and
+        # a forwarded thread. `classify.py` gates on it: this classifier takes
+        # an argmax and so never abstains, and a tier that always answers is a
+        # tier nothing after it can ever correct.
+        gap = (ordered[0] - ordered[1]) / len(tokens) if len(ordered) > 1 else 0.0
         return ClassificationResult(
             classification=best,
             evidence=self._evidence(tokens, best),
+            margin=gap,
             # A posterior is a guess however peaked it is. `confident` is
             # reserved for the rule classifier, which is exact by construction.
             confident=False,
