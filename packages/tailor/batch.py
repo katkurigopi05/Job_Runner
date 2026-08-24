@@ -181,7 +181,7 @@ async def run(
         # the audit trail says it has.
         cache_key = tailoring_key(
             source_resume_id=resume.id,
-            posting=posting,
+            content_hash=posting.content_hash,
             projects=relevant_projects,
             provider=provider_name,
             model=getattr(provider, "model", None),

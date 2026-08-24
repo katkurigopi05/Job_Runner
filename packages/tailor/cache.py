@@ -45,7 +45,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.core.models import Posting, Project, Resume
+from packages.core.models import Project, Resume
 from packages.llm.prompts import TAILOR_SYSTEM
 
 #: Separator that cannot occur in an id, a hash, or a model name, so two
@@ -56,19 +56,26 @@ _SEP = "\x1f"
 def tailoring_key(
     *,
     source_resume_id: uuid.UUID,
-    posting: Posting,
+    content_hash: str | None,
     projects: list[Project] | None,
     provider: str,
     model: str | None,
 ) -> str | None:
     """The cache key for one tailoring, or None when it must not be cached.
 
-    None rather than a fabricated key when the posting carries no
-    `content_hash`: that field is what makes two postings the same posting, and
-    without it the only honest options are to key on something weaker or not to
-    cache. Guessing here would serve one posting's résumé for another.
+    Takes the hash rather than a posting on purpose. Two different things in
+    this codebase are called `posting`: the `Posting` row, which has a
+    `content_hash`, and `ats.base.ParsedPosting`, which the adapter reads off
+    the page and which has no such field. A parameter typed for one silently
+    accepts the other at runtime — asking for the hash makes the caller resolve
+    that question where it can be answered.
+
+    None rather than a fabricated key when there is no hash: it is what makes
+    two postings the same posting, and without it the only honest options are
+    to key on something weaker or not to cache. Guessing serves one posting's
+    résumé for another.
     """
-    content_hash = (posting.content_hash or "").strip()
+    content_hash = (content_hash or "").strip()
     if not content_hash:
         return None
 

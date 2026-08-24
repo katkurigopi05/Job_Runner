@@ -609,6 +609,30 @@ before trusting either number.
 - **Gate 2** needs a real posting and a real profile by definition.
   `make gate-2` checks the offline half; `make gate-2-live` is the other half.
 
+### The tailored résumé was not the one being sent
+
+Worth recording because every gate passed while it was true, and the code said
+otherwise in a comment.
+
+`apps/worker/apply_job.py` called `adapter.fill` — which uploads the file — and
+*then* called `_tailor`. `_resume_path` read `profile.base_resume_id` and never
+looked at `application.tailored_resume_id`. So Phase 3 ran in full on every
+application: the rewriter, the guard, the project selection, the PDF, the diff
+on the review screen — and the employer received the untailored base résumé.
+The comment above the call claimed "the file the owner uploads is the document
+the diff described", which is what a reader would have checked against.
+
+Nothing failed, because no test asserted which path reaches the file input.
+`tests/test_apply_uploads_tailored.py` now does, including the ordering itself:
+`_tailor` must precede `adapter.fill` or there is nothing tailored to upload.
+
+The fallback is deliberate and logged. If the tailored file is missing or
+tailoring refused every rewrite, the base résumé is uploaded rather than none —
+an honest untailored résumé beats an application with no résumé — but
+`uploading_base_resume_tailored_file_unusable` is emitted, because sending the
+base while the application record claims a tailored one is exactly how this
+stayed invisible.
+
 ### Phase 3 scope that is not built
 
 §9 Phase 3 lists two things Gate 3 does not cover:

@@ -15,20 +15,10 @@ from __future__ import annotations
 
 import uuid
 
-from packages.core.models import Candidate, Posting, Project, Resume, User
+from packages.core.models import Candidate, Project, Resume, User
 from packages.tailor.cache import find_cached, tailoring_key
 
 RESUME = {"raw_lines": ["Built backend services in Python."]}
-
-
-def _posting(content_hash: str = "hash-a", description: str = "Python and on-call.") -> Posting:
-    return Posting(
-        id=uuid.uuid4(),
-        url=f"https://example.com/{uuid.uuid4().hex[:6]}",
-        title="Backend Engineer",
-        description_raw=description,
-        content_hash=content_hash,
-    )
 
 
 def _project(name: str = "repo") -> Project:
@@ -38,7 +28,7 @@ def _project(name: str = "repo") -> Project:
 def _key(**over):
     base = dict(
         source_resume_id=uuid.UUID(int=1),
-        posting=_posting(),
+        content_hash="hash-a",
         projects=[],
         provider="gemini",
         model="gemini-2.0",
@@ -57,7 +47,7 @@ def test_the_same_inputs_produce_the_same_key() -> None:
 
 def test_an_edited_posting_is_a_different_key() -> None:
     """The failure that matters: serving a résumé written for another job."""
-    assert _key() != _key(posting=_posting(content_hash="hash-b"))
+    assert _key() != _key(content_hash="hash-b")
 
 
 def test_a_different_source_resume_is_a_different_key() -> None:
@@ -104,8 +94,9 @@ def test_a_posting_with_no_content_hash_is_not_cacheable() -> None:
     `content_hash` is what makes two postings the same posting. Substituting
     the URL or the title would let an edited description serve the old résumé.
     """
-    assert _key(posting=_posting(content_hash="")) is None
-    assert _key(posting=_posting(content_hash="   ")) is None
+    assert _key(content_hash="") is None
+    assert _key(content_hash="   ") is None
+    assert _key(content_hash=None) is None
 
 
 # --- the lookup ------------------------------------------------------------
