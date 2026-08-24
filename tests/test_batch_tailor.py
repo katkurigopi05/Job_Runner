@@ -342,3 +342,74 @@ async def test_a_posting_without_a_content_hash_is_tailored_every_time(
     resume = await db_session.get(Resume, match.tailored_resume_id)
     assert resume is not None
     assert resume.tailored_key is None
+
+
+async def test_a_tailored_resume_names_the_job_it_was_written_for(db_session, monkeypatch) -> None:
+    """Provenance on the row, not only in a join.
+
+    `tailored_key` is a sha256 over résumé, posting, prompt, projects and
+    model. It decides reuse and cannot be read back into a job, so naming the
+    posting a document was written for meant reverse-joining through
+    `applications` or `matches` — and a résumé attached to neither had no
+    answer at all.
+    """
+    from packages.llm.provider import StubProvider
+
+    profile = await _owner(db_session)
+    match = await _tailorable(db_session, profile)
+    posting = await db_session.get(Posting, match.posting_id)
+    posting.content_hash = "stable-hash"
+    await db_session.flush()
+
+    monkeypatch.setattr(batch.quota, "remaining", lambda provider: None)
+    captured: dict[str, object] = {}
+
+    async def fake_publish(session, **kwargs):
+        captured.update(kwargs)
+        resume = Resume(
+            candidate_id=kwargs["candidate_id"],
+            version=99,
+            storage_ref=f"r/{uuid.uuid4().hex[:8]}.pdf",
+            parsed_json=RESUME,
+            tailored_key=kwargs.get("tailored_key"),
+            tailored_for_posting_id=kwargs.get("posting_id"),
+        )
+        session.add(resume)
+        await session.flush()
+        return resume
+
+    monkeypatch.setattr(batch, "publish_tailored", fake_publish)
+
+    await batch.run(db_session, StubProvider(), profile_id=str(profile.id))
+
+    assert captured["posting_id"] == posting.id
+    stored = await db_session.get(Resume, match.tailored_resume_id)
+    assert stored is not None
+    assert stored.tailored_for_posting_id == posting.id
+
+
+async def test_an_uncacheable_posting_is_still_named(db_session, monkeypatch) -> None:
+    """The two fields answer different questions and must not share a fate.
+
+    A posting with no `content_hash` cannot be keyed for reuse — but it is
+    perfectly nameable, and a résumé that cannot say what it was written for is
+    the thing this column exists to prevent.
+    """
+    from packages.llm.provider import StubProvider
+
+    profile = await _owner(db_session)
+    match = await _tailorable(db_session, profile)  # no content_hash set
+
+    monkeypatch.setattr(batch.quota, "remaining", lambda provider: None)
+    captured: dict[str, object] = {}
+
+    async def fake_publish(session, **kwargs):
+        captured.update(kwargs)
+        return await session.get(Resume, profile.base_resume_id)
+
+    monkeypatch.setattr(batch, "publish_tailored", fake_publish)
+
+    await batch.run(db_session, StubProvider(), profile_id=str(profile.id))
+
+    assert captured["tailored_key"] is None, "no content hash — not reusable"
+    assert captured["posting_id"] == match.posting_id, "but still nameable"

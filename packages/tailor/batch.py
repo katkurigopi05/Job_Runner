@@ -223,6 +223,7 @@ async def run(
             result=rewrites,
             projects=relevant_projects,
             tailored_key=cache_key,
+            posting_id=posting.id,
         )
         if published is None:
             result.failed += 1

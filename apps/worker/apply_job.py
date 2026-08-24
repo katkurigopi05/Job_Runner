@@ -380,6 +380,9 @@ async def _tailor(
             projects=projects,
             posting_text=posting_text,
             tailored_key=cache_key,
+            # From the application, not from `posting`: the adapter's
+            # ParsedPosting is read off the page and has no row id.
+            posting_id=application.posting_id,
         )
         if published is not None:
             application.tailored_resume_id = published.id
