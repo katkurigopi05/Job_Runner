@@ -44,6 +44,7 @@ from packages.core.models import Match, Posting, Profile, Project, Resume
 from packages.github.select import select_projects
 from packages.llm import quota
 from packages.llm.provider import LLMProvider
+from packages.tailor.cache import find_cached, tailoring_key
 from packages.tailor.evidence import matched_job_terms
 from packages.tailor.guard import SourceCorpus
 from packages.tailor.parse import ParsedResume
@@ -65,6 +66,10 @@ DEFAULT_LIMIT = 50
 @dataclass
 class BatchResult:
     tailored: int = 0
+    #: Served from an earlier tailoring of the same posting. Counted apart from
+    #: `tailored` because the two cost different things: one spent model calls
+    #: and uploaded a résumé, the other sent nothing.
+    reused: int = 0
     skipped_existing: int = 0
     failed: int = 0
     #: Set when the run stopped early rather than finishing its list.
@@ -74,7 +79,8 @@ class BatchResult:
 
     def summary(self) -> str:
         base = (
-            f"{self.tailored} tailored, {self.skipped_existing} already done, "
+            f"{self.tailored} tailored, {self.reused} reused, "
+            f"{self.skipped_existing} already done, "
             f"{self.failed} failed, ~{self.calls_spent} calls"
         )
         return f"{base} — stopped: {self.stopped_reason}" if self.stopped_reason else base
@@ -170,6 +176,26 @@ async def run(
             if project.pinned or matched_job_terms(project, posting.description_raw or "")
         ]
 
+        # Before the model, not after: the point is to not make the call. §15
+        # predicted this would start costing once tailoring went remote, and
+        # the audit trail says it has.
+        cache_key = tailoring_key(
+            source_resume_id=resume.id,
+            content_hash=posting.content_hash,
+            projects=relevant_projects,
+            provider=provider_name,
+            model=getattr(provider, "model", None),
+        )
+        cached = await find_cached(session, candidate_id=profile.candidate_id, key=cache_key)
+        if cached is not None:
+            match.tailored_resume_id = cached.id
+            result.reused += 1
+            result.per_posting.append(
+                (posting.title or str(posting.id), "reused an earlier tailoring")
+            )
+            await session.flush()
+            continue
+
         try:
             rewrites = await tailor_bullets(
                 provider, bullets, posting.description_raw or "", SourceCorpus.from_resume(parsed)
@@ -196,6 +222,8 @@ async def run(
             parsed=parsed,
             result=rewrites,
             projects=relevant_projects,
+            tailored_key=cache_key,
+            posting_id=posting.id,
         )
         if published is None:
             result.failed += 1

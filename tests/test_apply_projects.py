@@ -20,7 +20,7 @@ import uuid
 
 import pytest
 
-from packages.core.models import Application, Candidate, Profile, Project, Resume, User
+from packages.core.models import Application, Candidate, Posting, Profile, Project, Resume, User
 from packages.github.select import relevant_for_posting, select_projects
 
 JOB = (
@@ -178,7 +178,15 @@ async def test_the_apply_pipeline_attaches_them(db_session, monkeypatch) -> None
 
     monkeypatch.setattr("packages.tailor.publish.publish_tailored", _capture)
 
-    await apply_job._tailor(db_session, application, profile, JOB)
+    # `_tailor` takes the Posting now, not just its text: the tailoring cache
+    # keys on `content_hash`, which the description alone cannot supply. Left
+    # unset here, so this posting is uncacheable and the run tailors for real —
+    # which is what this test is about.
+    posting = Posting(url=f"https://x.test/p/{uuid.uuid4().hex[:8]}", description_raw=JOB)
+    db_session.add(posting)
+    await db_session.flush()
+
+    await apply_job._tailor(db_session, application, profile, posting)
 
     assert "projects" in handed, "publish_tailored was called without `projects` again"
     assert [p.name for p in handed["projects"]] == ["k8s-homelab"]

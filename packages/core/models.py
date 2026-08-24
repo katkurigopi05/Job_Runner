@@ -122,6 +122,22 @@ class Resume(Base):
     storage_ref: Mapped[str] = mapped_column(String(500), nullable=False)
     parsed_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    #: Set only on tailored résumés — packages/tailor/cache.py. NULL on an
+    #: uploaded base résumé and on anything tailored for a posting that had no
+    #: content hash to key on, so a NULL here means "do not reuse this", never
+    #: "reusable for anything".
+    tailored_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    #: The posting this was written for. `tailored_key` already covers the same
+    #: posting, but it is a sha256 over five inputs and cannot be read back —
+    #: so given a PDF, the only way to name the job was to reverse-join through
+    #: `applications` or `matches`, and a résumé that was rendered but never
+    #: attached to either had no answer at all. A document that cannot say what
+    #: it was written for is hard to audit and easy to send to the wrong place.
+    #: SET NULL rather than CASCADE: losing the posting must not delete the
+    #: résumé that was actually sent to an employer.
+    tailored_for_posting_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("postings.id", ondelete="SET NULL"), index=True
+    )
     created_at: Mapped[datetime] = _created_at()
 
 

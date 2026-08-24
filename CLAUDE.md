@@ -609,6 +609,30 @@ before trusting either number.
 - **Gate 2** needs a real posting and a real profile by definition.
   `make gate-2` checks the offline half; `make gate-2-live` is the other half.
 
+### The tailored résumé was not the one being sent
+
+Worth recording because every gate passed while it was true, and the code said
+otherwise in a comment.
+
+`apps/worker/apply_job.py` called `adapter.fill` — which uploads the file — and
+*then* called `_tailor`. `_resume_path` read `profile.base_resume_id` and never
+looked at `application.tailored_resume_id`. So Phase 3 ran in full on every
+application: the rewriter, the guard, the project selection, the PDF, the diff
+on the review screen — and the employer received the untailored base résumé.
+The comment above the call claimed "the file the owner uploads is the document
+the diff described", which is what a reader would have checked against.
+
+Nothing failed, because no test asserted which path reaches the file input.
+`tests/test_apply_uploads_tailored.py` now does, including the ordering itself:
+`_tailor` must precede `adapter.fill` or there is nothing tailored to upload.
+
+The fallback is deliberate and logged. If the tailored file is missing or
+tailoring refused every rewrite, the base résumé is uploaded rather than none —
+an honest untailored résumé beats an application with no résumé — but
+`uploading_base_resume_tailored_file_unusable` is emitted, because sending the
+base while the application record claims a tailored one is exactly how this
+stayed invisible.
+
 ### Phase 3 scope that is not built
 
 §9 Phase 3 lists two things Gate 3 does not cover:
@@ -619,9 +643,29 @@ before trusting either number.
   apply pipeline never asks for a letter, `Application.cover_letter_ref` is
   never written, and so no application has carried one. The tests exercise the
   module, not the feature. `docs/PARITY.md` tracks the remaining gap.
-- **Per-company caching of tailored versions.** Every apply re-tailors from
-  scratch. Harmless today because tailoring is cheap and local; it becomes a
-  cost the moment a remote provider is used for it.
+- **Caching of tailored versions.** Built — `packages/tailor/cache.py`. The
+  condition it was waiting for arrived: `LLM_PROVIDER=gemini` with a key set,
+  and tailoring text now leaves the machine. Keyed on the source résumé, the
+  posting's `content_hash`, `TAILOR_SYSTEM.digest`, the attached project ids,
+  and the provider and model — everything that changes the output, because a
+  cache keyed on less serves a résumé written for a different job and nothing
+  about it looks wrong. A posting with no `content_hash` is not cached at all
+  rather than keyed on something weaker.
+
+  Worth being honest about how much it currently saves: **very little.** With
+  one profile, no two postings sharing a `content_hash`, `pending()` already
+  skipping tailored matches, and `_prepared_resume` already reusing within an
+  apply, there is no live path that re-tailors the same posting. It is
+  insurance for when there are several profiles, and for a re-run after a
+  partial failure.
+
+  The measured duplication is somewhere else. The audit trail's heaviest day —
+  204 uploads against a ceiling of 200 — carried only **69 distinct payloads**,
+  and 189 of the 204 were `tailor.system`. Nothing persisted: the database
+  holds one résumé and no tailored ones. That is `packages/tailor/evaluate.py`,
+  an offline harness with no session, re-run over the same fixtures. This cache
+  does not touch it and should not; a cache there is the follow-up that matches
+  the evidence.
 
 Gate 3 passes without them because it tests fabrication and the PDF round trip,
 which is the part with consequences. Recorded here so the gap is not mistaken

@@ -75,3 +75,35 @@ def test_it_never_changes_the_guard_verdict() -> None:
 
     assert check(text, corpus).ok
     assert find(text, corpus), "found something, and the verdict still stands"
+
+
+def test_the_rewrite_vetting_actually_refuses_a_recombined_claim() -> None:
+    """The wiring, not just the detector.
+
+    `find` was tested and correct and nothing in production called it, so the
+    guard shipped answering the weaker question its own docstring describes.
+    This holds the connection rather than the capability.
+    """
+    from packages.tailor.rewrite import vet
+
+    corpus = SourceCorpus.from_texts(RESUME)
+    original = "Responsible for cluster administration on bare metal."
+
+    accepted, reason, _ = vet(original, "Kubernetes cluster administration on bare metal.", corpus)
+
+    assert not accepted
+    assert reason is not None and "never together" in reason
+
+
+def test_an_honest_rewrite_of_the_same_bullet_still_passes() -> None:
+    """The cost side. Measured before wiring, per CLAUDE.md §7: across 180
+    bullets tailored by llama3.1 over Gate 3's fixtures, 106 passed the token
+    check and this refused none of them. Acceptance stayed at 59%."""
+    from packages.tailor.rewrite import vet
+
+    corpus = SourceCorpus.from_texts(RESUME)
+    original = "Responsible for cluster administration on bare metal."
+
+    accepted, reason, _ = vet(original, "Cluster administration on bare metal servers.", corpus)
+
+    assert accepted, reason

@@ -31,13 +31,22 @@ from packages.ats.registry import adapter_for
 from packages.ats.screen import ScreenReport, screen
 from packages.core.config import get_settings
 from packages.core.enums import ApplicationStatus, FailureReason
-from packages.core.models import Application, Candidate, Match, Profile, Project, Resume
+from packages.core.models import (
+    Application,
+    Candidate,
+    Match,
+    Posting,
+    Profile,
+    Project,
+    Resume,
+)
 from packages.core.queue import ClaimedTask
 from packages.core.state import WorkClaim, begin_work, transition
 from packages.core.storage import get_storage, receipt_key
 from packages.github.select import relevant_for_posting
 from packages.llm import router as llm_router
 from packages.matching.embed import get_embedder
+from packages.tailor.cache import find_cached, tailoring_key
 
 log = structlog.get_logger(__name__)
 
@@ -143,47 +152,79 @@ async def _run_pipeline(
         review = application.review_json or {}
         owner_answers = review.get("owner_answers") or {}
 
+        # §9 Phase 3 — before the fill, not after it. This ran after
+        # `adapter.fill` for as long as it existed, which meant the tailored
+        # PDF was written, linked to the application and rendered into the
+        # review diff *after* the form had already been handed the base
+        # résumé. Every application uploaded the untailored document while the
+        # comment here claimed the opposite and the review screen showed a diff
+        # of a file nobody sent. Tailoring has to finish before there is
+        # anything worth uploading.
+        diff = await _tailor(session, application, profile, posting)
+
         answers = build_answers(
             questions,
             candidate,
             profile,
             extra=owner_answers,
-            resume_path=await _resume_path(session, profile),
+            resume_path=await _resume_path(session, application, profile),
         )
         report = await adapter.fill(page, answers)
 
         report.screenshot_ref = await _capture(page, application, "filled-form.png")
-
-        # §9 Phase 3 — the diff has to be on the screen before the owner
-        # approves, not after. Computed here so the review record carries it,
-        # and the tailored PDF is rendered from the same vetted result so the
-        # file the owner uploads is the document the diff described.
-        diff = await _tailor(session, application, profile, posting.description_raw or "")
 
         await _decide(
             session, application, profile, report, adapter, page, diff, screening=screening
         )
 
 
-async def _resume_path(session: AsyncSession, profile: Profile) -> str | None:
-    """Absolute path of the profile's base résumé, for the file upload field.
+async def _posting_hash(session: AsyncSession, application: Application) -> str | None:
+    """The stored posting's content hash, when the application names one.
 
-    Returns None if there is no résumé or the stored file has gone missing —
-    the required résumé field then goes to the owner unanswered rather than
-    the run failing with a stack trace.
+    None for an application created straight from a URL, which never had a
+    `Posting` row. That is uncacheable rather than an error — see
+    `packages/tailor/cache.py` on why a missing hash must not be replaced by a
+    weaker identifier.
     """
-    if profile.base_resume_id is None:
+    if application.posting_id is None:
         return None
+    posting = await session.get(Posting, application.posting_id)
+    return posting.content_hash if posting is not None else None
 
-    resume = await session.get(Resume, profile.base_resume_id)
-    if resume is None:
-        return None
 
-    path = get_storage().path_for(resume.storage_ref)
-    if not path.is_file():
-        log.warning("resume_file_missing", storage_ref=resume.storage_ref)
-        return None
-    return str(path)
+async def _resume_path(
+    session: AsyncSession, application: Application, profile: Profile
+) -> str | None:
+    """Absolute path of the résumé to upload — the tailored one when there is one.
+
+    The tailored document is the point of Phase 3. Uploading the base résumé
+    instead means the guard ran, the projects were selected, the diff was
+    rendered for review, and the employer received none of it.
+
+    Falls back to the base résumé rather than to nothing. Tailoring is allowed
+    to fail — `_tailor` returns None on a render failure or a refused rewrite,
+    and §2.1 would rather send an honest untailored résumé than no résumé at
+    all. What it must not do is fail silently, so the fallback is logged.
+    """
+    candidates: list[tuple[str, uuid.UUID]] = []
+    if application.tailored_resume_id is not None:
+        candidates.append(("tailored", application.tailored_resume_id))
+    if profile.base_resume_id is not None:
+        candidates.append(("base", profile.base_resume_id))
+
+    for kind, resume_id in candidates:
+        resume = await session.get(Resume, resume_id)
+        if resume is None:
+            continue
+        path = get_storage().path_for(resume.storage_ref)
+        if not path.is_file():
+            log.warning("resume_file_missing", kind=kind, storage_ref=resume.storage_ref)
+            continue
+        if kind == "base" and application.tailored_resume_id is not None:
+            log.warning("uploading_base_resume_tailored_file_unusable")
+        return str(path)
+
+    return None
 
 
 async def _prepared_resume(
@@ -242,7 +283,7 @@ async def _tailor(
     session: AsyncSession,
     application: Application,
     profile: Profile,
-    posting_text: str,
+    posting: Any,
 ) -> dict[str, Any] | None:
     """Tailor the base résumé for this posting, render it, and return the diff.
 
@@ -265,6 +306,7 @@ async def _tailor(
     Returns None when there is nothing to tailor. A failure here must not stop
     the application: the untailored résumé is still a correct résumé.
     """
+    posting_text = posting.description_raw or ""
     if profile.base_resume_id is None or not posting_text.strip():
         return None
 
@@ -298,6 +340,29 @@ async def _tailor(
         # between them and still trace to "the résumé".
         corpus = SourceCorpus.from_resume(parsed)
         provider = llm_router.tailor_resume()
+
+        # Chosen before the key rather than inside the publish call, because
+        # which projects get attached changes the document and so has to be
+        # part of what identifies it.
+        projects = await _projects_for(session, resume.candidate_id, posting_text)
+        # From the stored row, not from `posting`: the adapter hands this
+        # function a `ParsedPosting`, which carries no content hash.
+        cache_key = tailoring_key(
+            source_resume_id=resume.id,
+            content_hash=await _posting_hash(session, application),
+            projects=projects,
+            provider=getattr(provider, "name", "unknown"),
+            model=getattr(provider, "model", None),
+        )
+        cached = await find_cached(session, candidate_id=resume.candidate_id, key=cache_key)
+        if cached is not None:
+            # Re-applying to a posting already tailored for sends nothing to a
+            # provider. §2.8 asks that the upload be minimal as well as
+            # audited, and the cheapest upload is the one not made.
+            application.tailored_resume_id = cached.id
+            log.info("tailored_resume_reused", resume_id=str(cached.id))
+            return {"changed": 0, "unchanged": 0, "rejected": 0, "reused": True}
+
         result = await tailor_bullets(provider, bullets, posting_text, corpus)
         summary = summarize(result)
 
@@ -312,8 +377,12 @@ async def _tailor(
             candidate_id=resume.candidate_id,
             parsed=parsed,
             result=result,
-            projects=await _projects_for(session, resume.candidate_id, posting_text),
+            projects=projects,
             posting_text=posting_text,
+            tailored_key=cache_key,
+            # From the application, not from `posting`: the adapter's
+            # ParsedPosting is read off the page and has no row id.
+            posting_id=application.posting_id,
         )
         if published is not None:
             application.tailored_resume_id = published.id

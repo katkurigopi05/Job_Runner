@@ -109,6 +109,8 @@ async def publish_tailored(
     projects: list[Project] | None = None,
     posting_text: str = "",
     options: AssemblyOptions | None = None,
+    tailored_key: str | None = None,
+    posting_id: uuid.UUID | None = None,
 ) -> Resume | None:
     """Render the tailored résumé to PDF, store it, and return its row.
 
@@ -147,6 +149,15 @@ async def publish_tailored(
         # the tailored text rather than re-deriving it from the PDF.
         parsed_json=tailored.model_dump(mode="json"),
         is_default=False,
+        # Written only on the miss that produced this row. Left NULL when the
+        # caller had nothing safe to key on, which keeps it out of every future
+        # lookup rather than making it reusable by accident.
+        tailored_key=tailored_key,
+        # Independent of the key above: `tailored_key` decides reuse and is a
+        # digest, this answers "which job was this written for" and is
+        # readable. A posting with no content hash is uncacheable but still
+        # perfectly nameable, so this is set even when the key is not.
+        tailored_for_posting_id=posting_id,
     )
     session.add(resume)
     await session.flush()
