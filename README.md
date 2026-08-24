@@ -23,8 +23,10 @@ If those two things aren't what you're looking for, this isn't the right tool.
 1. **Find** — polls a hand-picked list of career pages (not a mass crawl),
    detects new postings, and scores them against your profile.
 2. **Prep** — rewrites your résumé bullets for the posting and generates a
-   diff you can review. Tailoring only rephrases and reorders facts already in
-   your source résumé — it never invents a skill, employer, date, or metric.
+   diff you can review. Tailoring rephrases and reorders facts already in your
+   source résumé; the Projects section may add details GitHub reports for that
+   repository, kept attributed to it. It never invents a skill, employer, date,
+   or metric.
 3. **Apply** — drives the real ATS form (Greenhouse, Lever, Ashby, Workable),
    fills every field it can map to your profile, and **parks unanswerable
    questions for you to answer** rather than guessing.
@@ -34,6 +36,9 @@ If those two things aren't what you're looking for, this isn't the right tool.
 See [`CLAUDE.md`](./CLAUDE.md) for the full build spec and non-negotiable
 rules, and [`docs/TSENTA_ARCHITECTURE.md`](./docs/TSENTA_ARCHITECTURE.md) for
 the architecture teardown this project is modeled on.
+
+For a start-to-finish walkthrough, dashboard route reference, MCP command
+examples, and troubleshooting, see [`docs/USAGE.md`](./docs/USAGE.md).
 
 ## Scope boundaries
 

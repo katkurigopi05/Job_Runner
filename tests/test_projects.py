@@ -28,6 +28,7 @@ from packages.github.select import (
     select_projects,
     substance,
 )
+from packages.tailor.evidence import matched_job_terms, project_source_text
 from packages.tailor.projects import (
     LINK_ICON,
     LinkStyle,
@@ -237,6 +238,40 @@ def test_selection_is_deterministic() -> None:
     assert first == second
 
 
+def test_github_topics_supply_skills_missing_from_the_resume() -> None:
+    """A repository topic is owner-controlled GitHub evidence, not an LLM guess."""
+    project = make_project(
+        name="forecasting-lab",
+        description="Demand forecasting experiments",
+        language="Python",
+        topics_json=["time-series", "pandas", "prophet"],
+    )
+
+    terms = matched_job_terms(
+        project,
+        "We need production experience with time-series forecasting and Python.",
+    )
+
+    assert {"time-series", "forecasting", "Python"} <= set(terms)
+
+
+def test_project_evidence_contains_only_github_reported_fields() -> None:
+    project = make_project(
+        name="forecasting-lab",
+        description="Demand forecasting experiments",
+        language="Python",
+        topics_json=["time-series", "pandas"],
+    )
+
+    evidence = project_source_text(project)
+
+    assert "forecasting-lab" in evidence
+    assert "Demand forecasting experiments" in evidence
+    assert "Python" in evidence
+    assert "time-series" in evidence
+    assert "expert" not in evidence
+
+
 # --------------------------------------------------------------------------
 # Rendering
 # --------------------------------------------------------------------------
@@ -321,6 +356,20 @@ def test_pdf_carries_the_project_name_and_description() -> None:
     text, _ = _extract(pdf)
     assert "jobrunner" in text
     assert "Local job-application agent" in text
+
+
+def test_pdf_carries_github_language_and_topics_for_ats_matching() -> None:
+    project = make_project(
+        description="Forecasting experiments",
+        language="Python",
+        topics_json=["time-series", "pandas"],
+    )
+
+    text, _ = _extract(render_section_pdf([project]))
+
+    assert "Python" in text
+    assert "time-series" in text
+    assert "pandas" in text
 
 
 def test_every_selected_project_is_linked() -> None:

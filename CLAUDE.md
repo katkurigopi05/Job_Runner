@@ -35,10 +35,13 @@ Reference teardown of the commercial product this is modeled on: `docs/TSENTA_AR
 
 These are correctness requirements, not preferences. Violating any of them is a bug.
 
-1. **Résumé tailoring never invents facts.** Rewriting may rephrase, reorder, re-emphasize,
-   and inject keywords *that are already supported by the source résumé*. It may not add a
-   skill, employer, date, credential, or metric that is not in the source. There is a test
-   suite for this (`tests/test_no_fabrication.py`) and it is a merge gate.
+1. **Résumé tailoring never invents facts.** Experience rewriting may rephrase, reorder,
+   re-emphasize, and inject keywords *that are already supported by that résumé entry or a
+   shared source section*. It may not borrow a project skill into an employer bullet. The
+   Projects section may add facts verified by GitHub's source-reported repository name,
+   description, primary language, and topics, and must keep them attributed to that project.
+   It may not add a skill, employer, date, credential, or metric absent from those sources.
+   There is a test suite for this (`tests/test_no_fabrication.py`) and it is a merge gate.
 2. **Work-authorization and employment-history answers are copied verbatim from the profile.**
    Never LLM-generated. These have legal consequences for the applicant.
 3. **Nothing submits without explicit approval by default.** `AUTO_SUBMIT=false` is the
@@ -101,6 +104,20 @@ contain is worse than either option.
 Postgres runs on **5433** on the owner's machine, not the 5432 in the row above:
 another project holds 5432. The remap lives in an uncommitted
 `docker-compose.override.yml`, and `.env` points at 5433 to match.
+
+`next dev` binds **0.0.0.0:3001**, not the localhost:3000 the row implies. Port
+3001 because 3000 is taken; `0.0.0.0` so the dashboard can be read from the
+owner's phone on the same LAN, which is how a review queue gets checked away
+from the desk.
+
+This is a real narrowing of §1's "runs entirely on localhost", and it is worth
+naming rather than burying. What §1 is protecting is that no résumé, no
+recruiter thread, and no vault secret leaves the owner's control — and binding
+a dev server to the LAN does widen who can reach that surface. It is defensible
+only on a trusted network, and only for `dev`: `next start` is unchanged and
+still binds localhost, so nothing about a non-dev run is affected. On an
+untrusted network — a café, a conference, shared housing — set it back. The
+dashboard has no authentication, because until now it never needed any.
 
 ---
 
