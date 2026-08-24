@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     #: for a single call, which is how you look outside without editing a file.
     search_us_only: bool = True
 
+    #: Which embedder scores the feed — "lexical" or "sentence-transformers".
+    #: Read here rather than from os.environ for the same reason the provider
+    #: credentials above are: `.env` is loaded into *this object*, never into
+    #: the process environment, so `packages/matching/embed.py` calling
+    #: `os.environ.get` could not see a value the owner had put in the place
+    #: `.env.example` documents. It silently kept scoring lexically, which is
+    #: the failure this setting exists to end. A real environment variable
+    #: still wins.
+    embedding_backend: str = "lexical"
+
     storage_root: str = "./storage"
 
     #: Read-only token. Raises the API limit from 60/hour to 5000/hour and

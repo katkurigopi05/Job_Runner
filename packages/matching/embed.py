@@ -159,9 +159,15 @@ def get_embedder() -> Embedder:
     if _embedder is not None:
         return _embedder
 
-    import os
+    from packages.core.config import get_settings
 
-    backend = os.environ.get("EMBEDDING_BACKEND", "lexical").lower()
+    # Through Settings, not os.environ: `.env.example` documents this key, and
+    # pydantic-settings loads that file into the Settings object rather than
+    # into the environment. Reading os.environ here meant a `.env` saying
+    # sentence-transformers selected the lexical backend anyway, logged
+    # `embedder_selected backend=lexical`, and left every score a measure of
+    # vocabulary overlap. An exported variable still takes precedence.
+    backend = get_settings().embedding_backend.lower()
     if backend == "sentence-transformers":
         try:
             _embedder = SentenceTransformerEmbedder()
