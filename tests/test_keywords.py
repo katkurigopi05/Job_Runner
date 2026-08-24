@@ -10,7 +10,7 @@ from __future__ import annotations
 from packages.tailor.guard import SourceCorpus
 from packages.tailor.keywords import analyze, job_terms
 
-RESUME = """Gopi Krishna
+RESUME = """Jordan Avery
 Senior Engineer, Example Corp
 Built backend services in Python.
 Worked on reliability for internal tools.

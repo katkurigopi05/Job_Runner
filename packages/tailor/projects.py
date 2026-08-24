@@ -57,6 +57,22 @@ class ProjectEntry(BaseModel):
     language: str | None
     topics: list[str]
 
+    @property
+    def stack(self) -> list[str]:
+        """GitHub-reported language and topics, without case-insensitive duplicates."""
+        values = [self.language, *self.topics]
+        seen: set[str] = set()
+        result: list[str] = []
+        for value in values:
+            if not value or not value.strip():
+                continue
+            key = value.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(value)
+        return result
+
     @classmethod
     def from_project(cls, project: Project) -> ProjectEntry:
         return cls(
@@ -94,6 +110,10 @@ def render_entry_html(entry: ProjectEntry, style: LinkStyle = LinkStyle.ICON_SLU
 
     if entry.description:
         parts.append(f'<span class="project-desc">{html.escape(entry.description)}</span>')
+
+    if entry.stack:
+        stack = " · ".join(html.escape(value) for value in entry.stack)
+        parts.append(f'<span class="project-stack">{stack}</span>')
 
     anchor = (
         f'<a class="project-link" href="{html.escape(entry.url, quote=True)}">'
@@ -140,6 +160,7 @@ ul { list-style: none; padding: 0; margin: 0; }
 li { margin: 0 0 6pt; }
 .project-name { font-weight: 700; }
 .project-desc { }
+.project-stack { color: #333; }
 .project-link { color: #1a4d8f; text-decoration: none; white-space: nowrap; }
 """
 

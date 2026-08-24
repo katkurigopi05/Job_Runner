@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 from packages.matching.embed import Embedder, cosine, get_embedder, tokenize
 from packages.matching.filters import apply_filters
 from packages.matching.idf import DocumentFrequencies
+from packages.matching.roles import canonical, roles_in
 from packages.matching.salary import compare
 from packages.matching.titles import expand as expand_title
 
@@ -34,6 +35,18 @@ log = structlog.get_logger(__name__)
 
 #: Weight of title overlap. A title is short but highly indicative — "Staff
 #: Backend Engineer" says more per word than a paragraph of boilerplate.
+#: What the title half scores when the posting's role is one the profile
+#: actually evidences. A floor, not a bonus: it never lowers a cosine that
+#: already read the title correctly, and it does not touch the body half.
+#:
+#: It is high because the claim behind it is strong — an alias in
+#: matching/roles.py asserts two titles are the same job, which is more than a
+#: cosine over three words can establish either way. Short titles embed badly
+#: enough that an unrelated healthcare title scored 0.582 against "Software
+#: Engineer" while "SDE II" scored 0.645; a curated match is the more reliable
+#: signal of the two, so where one exists it decides.
+ROLE_MATCH_FLOOR = 0.9
+
 TITLE_WEIGHT = 0.35
 BODY_WEIGHT = 0.65
 
@@ -44,6 +57,11 @@ class ScoredPosting:
     score: float
     title_similarity: float = 0.0
     body_similarity: float = 0.0
+    #: The canonical role the title and the profile agreed on, when they did.
+    #: Recorded because a floored title similarity is otherwise indistinguishable
+    #: from a genuinely high cosine, and the owner should be able to tell which
+    #: of the two ranked a posting.
+    role_match: str | None = None
     excluded_by: list[str] = field(default_factory=list)
 
     matched_terms: list[str] = field(default_factory=list)
@@ -69,6 +87,7 @@ class ScoredPosting:
         return {
             "title_similarity": round(self.title_similarity, 4),
             "body_similarity": round(self.body_similarity, 4),
+            "role_match": self.role_match,
             "excluded_by": self.excluded_by,
             "matched_terms": self.matched_terms,
             "missing_terms": self.missing_terms,
@@ -179,6 +198,11 @@ def score_posting(
     title_similarity = cosine(profile_vector, title_vector)
     body_similarity = cosine(profile_vector, body_vector)
 
+    role = canonical(posting.title or "")
+    role_match = role if role is not None and role in roles_in(profile_text_value) else None
+    if role_match is not None:
+        title_similarity = max(title_similarity, ROLE_MATCH_FLOOR)
+
     combined = TITLE_WEIGHT * title_similarity + BODY_WEIGHT * body_similarity
 
     result = ScoredPosting(
@@ -186,6 +210,7 @@ def score_posting(
         score=round(combined, 6),
         title_similarity=title_similarity,
         body_similarity=body_similarity,
+        role_match=role_match,
         matched_terms=keyword_overlap(profile_text_value, posting) if profile_text_value else [],
         missing_terms=(
             missing_terms(profile_text_value, posting, frequencies=frequencies)
@@ -290,6 +315,7 @@ async def embed_postings(
     *,
     embedder: Embedder | None = None,
     revision: int | None = None,
+    force: bool = False,
 ) -> int:
     """Embed postings that lack a vector, or whose vector is from elsewhere.
 
@@ -303,6 +329,13 @@ async def embed_postings(
     So a stamp mismatch means re-embed, not compare. Switching
     `EMBEDDING_BACKEND`, or rebuilding the corpus statistics, quietly costs one
     pass over the postings rather than silently costing the ranking.
+
+    `force=True` re-embeds regardless of what the stamps say. The stamp check
+    subsumes what this flag was originally for — a backend switch is now
+    detected rather than declared — but it stays because `rescore.py` passes
+    it to mean "redo this pass whatever the rows claim", which is the honest
+    reading when the corpus statistics were rebuilt under a revision number
+    that did not change.
     """
     active = embedder or get_embedder()
     stamp = getattr(active, "name", "unknown")
@@ -312,7 +345,8 @@ async def embed_postings(
         for p in postings
         if p.description_raw
         and (
-            p.description_embedding is None
+            force
+            or p.description_embedding is None
             or p.embedding_model != stamp
             or p.embedding_revision != revision
         )

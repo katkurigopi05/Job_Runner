@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 from packages.core.models import Posting
 from packages.matching.locality import Locality, is_domestic, locality_of
+from packages.matching.roles import canonical
 
 #: Seniority ladder, low to high. Matching is by position so "senior or above"
 #: is expressible without enumerating every title an employer might invent.
@@ -145,9 +146,18 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
     haystack = " ".join(
         part.lower() for part in (posting.title, posting.location, posting.description_raw) if part
     )
+    wanted_role = canonical(posting.title or "")
     for keyword in filters.keywords:
-        if keyword.lower() not in haystack:
-            reasons.append(f"missing keyword {keyword!r}")
+        if keyword.lower() in haystack:
+            continue
+        # A keyword naming a role matches a title naming the same role, even
+        # with no string in common. This filter runs *before* scoring, so a
+        # posting dropped here is never scored at all and no embedding
+        # backend can recover it: filtering on "software engineer" used to
+        # discard "Member of Technical Staff" outright. See matching/roles.py.
+        if (asked := canonical(keyword)) is not None and asked == wanted_role:
+            continue
+        reasons.append(f"missing keyword {keyword!r}")
 
     if filters.locations:
         location = (posting.location or "").lower()

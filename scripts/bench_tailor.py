@@ -34,7 +34,7 @@ from packages.tailor.diff import summarize
 from packages.tailor.guard import SourceCorpus
 from packages.tailor.rewrite import tailor_bullets
 
-RESUME = """Gopi Krishna
+RESUME = """Jordan Avery
 Senior Engineer, Example Corp
 Built backend services in Python.
 Worked on reliability for internal tools.

@@ -23,11 +23,30 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+import structlog
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from packages.core.models import Application, Base, Candidate, Match, Posting, Profile, User
+
+# Several tests assert on the text of a log line. Nothing configures structlog,
+# so it falls back to its default ConsoleRenderer — which colorizes whenever it
+# detects a library that can do colour. Installing the `embeddings` extra pulls
+# sentence-transformers -> typer -> rich, and four audit tests that had passed
+# for months started failing on ANSI escapes wrapped around the value they were
+# looking for.
+#
+# The assertions were right and the renderer changed underneath them, so the
+# renderer is what gets pinned. Colour is a display choice; a test reading log
+# output should not inherit one from the dependency tree.
+structlog.configure(
+    processors=[
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.dev.ConsoleRenderer(colors=False),
+    ]
+)
 
 
 def _from_env_file(key: str) -> str | None:

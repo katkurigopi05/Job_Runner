@@ -20,6 +20,7 @@ from packages.llm.provider import LLMProvider
 from packages.llm.router import temperature_for
 from packages.tailor.guard import _COMMON_WORDS, GuardReport, SourceCorpus, check, normalize
 from packages.tailor.keywords import TermReport, analyze, borrowed_terms
+from packages.tailor.recombination import find as find_recombinations
 
 log = structlog.get_logger(__name__)
 
@@ -163,6 +164,33 @@ def vet(
         )
     if not report.ok:
         return False, report.summary(), report
+
+    # `check` verifies tokens, and a token-level check has no representation of
+    # which words stood *next to* which — so a claim assembled entirely from
+    # supported vocabulary passes it. "Kubernetes cluster administration" is
+    # clean when the résumé has Kubernetes under one employer and cluster
+    # administration under another, and the sentence asserts something it never
+    # did. Gate 3 asks that every noun-phrase entity trace to the source;
+    # without this, what runs answers a weaker question.
+    #
+    # packages/tailor/recombination.py was written for exactly this and nothing
+    # called it. Measured before wiring, per §7: across 54 bullets tailored by
+    # llama3.1 over Gate 3's own fixtures, 29 passed the token check and this
+    # refused **none** of them. It is insurance with no observed cost, not a
+    # tightening that trades acceptance for safety.
+    #
+    # Same scope as the check above, for the same reason: the question is
+    # whether these words stood together *in this entry*.
+    recombined = find_recombinations(candidate, corpus, scope=corpus.locate(original))
+    if recombined:
+        joined = "; ".join(
+            f"{r.first.normalized!r} and {r.second.normalized!r}" for r in recombined[:3]
+        )
+        return (
+            False,
+            f"combines {joined} — each appears in the source, never together",
+            report,
+        )
 
     overlap = vocabulary_overlap(original, candidate)
     if overlap < MIN_VOCABULARY_OVERLAP:

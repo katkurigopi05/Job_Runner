@@ -16,6 +16,8 @@ import re
 from datetime import UTC, datetime
 
 from packages.core.models import Project
+from packages.matching.embed import Embedder, cosine
+from packages.tailor.keywords import job_terms
 
 #: How many projects a résumé section should carry by default. More than this
 #: and it stops being a highlight reel.
@@ -142,3 +144,95 @@ def select_projects(
     rest.sort(key=lambda p: score(p, job_text, now=now), reverse=True)
 
     return (pinned + rest)[:limit]
+
+
+#: Cosine above which a project counts as related to a posting despite sharing
+#: none of its words. Measured, not chosen: against eight hand-written cases
+#: the related ones scored 0.573-0.887 and the unrelated 0.451-0.482, so 0.53
+#: sits in a 0.091 gap.
+#:
+#: That gap only exists because the comparison is against the posting's
+#: *extracted terms* rather than its full text. Against the whole description
+#: the same eight cases separated by 0.019 — a Jekyll blog at 0.523 against a
+#: Prometheus dashboard at 0.542 — which is not a threshold, it is a
+#: coincidence. Short project text against a long description embeds mostly as
+#: "is technical".
+#:
+#: Eight synthetic cases is a calibration, not evidence. Recheck it against
+#: real repositories and real postings before trusting it.
+SEMANTIC_THRESHOLD = 0.53
+
+
+def _semantic_relatedness(project: Project, terms_vector: list[float], embedder: Embedder) -> float:
+    """Cosine between the project's own words and the posting's salient terms."""
+    text = " ".join(
+        filter(
+            None,
+            [
+                project.name,
+                project.description or "",
+                project.language or "",
+                " ".join(project.topics_json or []),
+            ],
+        )
+    )
+    if not text.strip():
+        return 0.0
+    return cosine(terms_vector, embedder.encode([text])[0])
+
+
+def relevant_for_posting(
+    projects: list[Project],
+    job_text: str,
+    *,
+    limit: int = DEFAULT_LIMIT,
+    now: datetime | None = None,
+    embedder: Embedder | None = None,
+    threshold: float = SEMANTIC_THRESHOLD,
+) -> list[Project]:
+    """The projects worth putting on a résumé tailored to *this* posting.
+
+    `select_projects` ranks and then fills up to `limit`, which is right for a
+    general résumé and wrong for a targeted one: with a thin inventory it puts
+    an unrelated repository on the page purely because there was room. On a
+    résumé aimed at one job, a project that evidences nothing about that job
+    is worse than a shorter section — it spends the reader's attention and
+    says nothing.
+
+    So ranking still decides the order, and a project must additionally either
+    be pinned or share vocabulary with the posting. Pinning is the owner's
+    explicit "always show this" and outranks relevance, exactly as
+    `is_eligible` already treats `include`.
+
+    Only source-reported text is consulted — `relevance` reads name,
+    description, language and topics, all copied from GitHub. Nothing is
+    inferred about what a project does, which is what keeps a Projects section
+    inside §2.1.
+    """
+    ranked = select_projects(projects, job_text, limit=limit, now=now)
+
+    kept = [p for p in ranked if p.pinned or relevance(p, job_text) > 0]
+    if embedder is None or not job_text.strip():
+        return kept
+
+    # Shared vocabulary is precise and narrow. It keeps "Kubernetes clusters"
+    # against a Kubernetes posting and drops "k8s homelab", "Docker Swarm" and
+    # "Terraform modules" against the same one — the last of which the posting
+    # asked for by name as "infrastructure as code". A résumé that omits the
+    # owner's Terraform work because the employer spelled it differently is
+    # the failure this second pass exists for.
+    undecided = [p for p in ranked if p not in kept]
+    if not undecided:
+        return kept
+
+    terms = job_terms(job_text)
+    if not terms:
+        return kept
+    terms_vector = embedder.encode([" ".join(terms)])[0]
+
+    related = {
+        id(p) for p in undecided if _semantic_relatedness(p, terms_vector, embedder) >= threshold
+    }
+    # Rebuilt from `ranked` rather than appended, so the ordering `select_projects`
+    # decided survives the second pass.
+    return [p for p in ranked if p in kept or id(p) in related]

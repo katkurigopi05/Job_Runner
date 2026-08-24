@@ -40,6 +40,7 @@ from packages.core.models import Posting
 from packages.matching.embed import tokenize
 from packages.matching.idf import DocumentFrequencies
 from packages.matching.score import _BOILERPLATE, _proper_nouns
+from packages.matching.topics import TopicModel, entropy
 
 
 class Weight(StrEnum):
@@ -289,14 +290,72 @@ def _salary_range(posting: Posting) -> Signal | None:
     return None
 
 
+#: Above this share of the maximum entropy, a posting's topic mass is spread
+#: widely enough that it is not about one job.
+#:
+#: Measured, not chosen. `make fit-topics -k 8 -n 200` over the real corpus
+#: gives p10=0.72 p25=0.80 p50=0.86 p75=0.91 p90=0.94 p99=0.97. The first
+#: draft of this constant was 0.85, which is *below the median* — it would
+#: have flagged more than half of every sweep, and a warning that fires on the
+#: majority is the one nobody reads. Set at the p99 tail instead.
+#:
+#: **Read `_topic_focus`'s docstring before trusting the number.** The
+#: threshold is sound; the model underneath it is not yet.
+MAX_TOPIC_ENTROPY = 0.97
+
+
+def _topic_focus(posting: Posting, model: TopicModel) -> Signal:
+    """How many subjects this posting is about at once.
+
+    Deliberately independent of `specificity()`. That counts distinctive
+    words; this asks whether they describe one job. A posting stuffed with
+    jargon from four unrelated fields passes the first and fails this one,
+    and that combination is the one worth catching.
+
+    ## This is not yet a trustworthy signal
+
+    Fitted over 200 real postings, the topics come out dominated by boilerplate
+    and employer names — "this systems teams engineering", "benefits customers
+    status about platform" — rather than by job families. Topics that do not
+    separate roles cannot support a claim that a posting straddles several,
+    however clean the entropy arithmetic on top of them is.
+
+    Two plausible causes, neither investigated: `embed.py`'s stopword list is
+    tuned for scoring rather than for topic modelling and lets company names
+    and benefits language through, and the calibration run used 40 iterations
+    where the sampler defaults to 200.
+
+    It ships because it is inert — `assess()` omits the signal unless a caller
+    fits and passes a model, and nothing in the codebase does. The machinery is
+    tested and correct. What is missing is evidence the topics mean anything.
+    """
+    distribution = model.transform(posting.description_raw or "")
+    spread = entropy(distribution)
+
+    if spread > MAX_TOPIC_ENTROPY:
+        return Signal(
+            "topic_focus",
+            Weight.CONCERNING,
+            f"topic mass spread at {spread:.0%} of maximum; reads as several roles at once",
+        )
+    return Signal("topic_focus", Weight.POSITIVE, f"topic mass concentrated ({spread:.0%})")
+
+
 def assess(
     posting: Posting,
     *,
     siblings: list[Posting] | None = None,
     now: datetime | None = None,
     frequencies: DocumentFrequencies | None = None,
+    topics: TopicModel | None = None,
 ) -> Assessment:
-    """Tier this posting's legitimacy. Never returns or affects a score."""
+    """Tier this posting's legitimacy. Never returns or affects a score.
+
+    `topics` is optional on purpose. LDA has to be fit over a corpus before it
+    can say anything about one document, and this function is called per
+    posting across thousands of them. Pass a model fitted by
+    `scripts.fit_topics` to gain the signal; omit it and the cost is unchanged.
+    """
     moment = now or datetime.now(UTC)
 
     signals = [
@@ -304,6 +363,8 @@ def assess(
         _description_quality(posting, frequencies),
         _reposting(posting, siblings or []),
     ]
+    if topics is not None:
+        signals.append(_topic_focus(posting, topics))
 
     advisories = [
         signal

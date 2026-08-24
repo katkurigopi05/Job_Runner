@@ -33,24 +33,37 @@ from packages.core.storage import get_storage, resume_key
 from packages.tailor.assemble import AssemblyOptions, assemble_pdf
 from packages.tailor.parse import ParsedResume
 from packages.tailor.rewrite import TailorResult
+from packages.tailor.skills import reorder_skills
 
 log = structlog.get_logger(__name__)
+
+#: The section re-emphasized against the posting. Named here so it cannot
+#: drift from packages/tailor/parse.py::SECTION_PATTERNS.
+SKILLS_SECTION = "skills"
 
 #: The section the tailor rewrites. Kept here rather than inlined so this and
 #: the caller that extracted the bullets cannot drift apart.
 TAILORED_SECTION = "experience"
 
 
-def apply_rewrites(parsed: ParsedResume, result: TailorResult) -> ParsedResume:
+def apply_rewrites(
+    parsed: ParsedResume, result: TailorResult, *, posting_text: str = ""
+) -> ParsedResume:
     """A new résumé with the vetted rewrites substituted in.
 
     Returns a copy — the parsed source is the record of what the owner
     actually wrote and must survive tailoring unchanged, or the guard loses
     the thing it checks against.
+
+    With `posting_text`, the Skills section is also re-emphasized: the skills
+    the posting names move to the front of their own line. Order only — see
+    `packages.tailor.skills`, which cannot add or remove one. `raw_lines` is
+    deliberately left alone, because it is what the guard treats as "was this
+    in the source" and reordering is not a change to that answer.
     """
     lines = parsed.section(TAILORED_SECTION)
     if not lines:
-        return parsed.model_copy(deep=True)
+        return _with_ordered_skills(parsed.model_copy(deep=True), posting_text)
 
     pending = iter(result.bullets)
     rewritten: list[str] = []
@@ -66,7 +79,18 @@ def apply_rewrites(parsed: ParsedResume, result: TailorResult) -> ParsedResume:
 
     tailored = parsed.model_copy(deep=True)
     tailored.sections[TAILORED_SECTION] = rewritten
-    return tailored
+    return _with_ordered_skills(tailored, posting_text)
+
+
+def _with_ordered_skills(resume: ParsedResume, posting_text: str) -> ParsedResume:
+    """Re-emphasize the Skills section in place on an already-copied résumé."""
+    if not posting_text.strip():
+        return resume
+    existing = resume.sections.get(SKILLS_SECTION)
+    if not existing:
+        return resume
+    resume.sections[SKILLS_SECTION] = reorder_skills(existing, posting_text)
+    return resume
 
 
 async def _next_version(session: AsyncSession, candidate_id: uuid.UUID) -> int:
@@ -83,7 +107,10 @@ async def publish_tailored(
     parsed: ParsedResume,
     result: TailorResult,
     projects: list[Project] | None = None,
+    posting_text: str = "",
     options: AssemblyOptions | None = None,
+    tailored_key: str | None = None,
+    posting_id: uuid.UUID | None = None,
 ) -> Resume | None:
     """Render the tailored résumé to PDF, store it, and return its row.
 
@@ -96,7 +123,7 @@ async def publish_tailored(
     Not committed here. The caller owns the transaction, so the new résumé and
     the application row that points at it land together or not at all.
     """
-    tailored = apply_rewrites(parsed, result)
+    tailored = apply_rewrites(parsed, result, posting_text=posting_text)
 
     try:
         pdf = assemble_pdf(tailored, projects, options)
@@ -122,6 +149,15 @@ async def publish_tailored(
         # the tailored text rather than re-deriving it from the PDF.
         parsed_json=tailored.model_dump(mode="json"),
         is_default=False,
+        # Written only on the miss that produced this row. Left NULL when the
+        # caller had nothing safe to key on, which keeps it out of every future
+        # lookup rather than making it reusable by accident.
+        tailored_key=tailored_key,
+        # Independent of the key above: `tailored_key` decides reuse and is a
+        # digest, this answers "which job was this written for" and is
+        # readable. A posting with no content hash is uncacheable but still
+        # perfectly nameable, so this is set even when the key is not.
+        tailored_for_posting_id=posting_id,
     )
     session.add(resume)
     await session.flush()
