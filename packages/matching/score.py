@@ -28,6 +28,7 @@ from packages.matching.embed import Embedder, cosine, get_embedder, tokenize
 from packages.matching.filters import apply_filters
 from packages.matching.idf import DocumentFrequencies
 from packages.matching.salary import compare
+from packages.matching.titles import expand as expand_title
 
 log = structlog.get_logger(__name__)
 
@@ -168,7 +169,11 @@ def score_posting(
         excluded.rubric = _rubric(posting, profile, excluded, target_seniority=target_seniority)
         return excluded
 
-    title_vector = embedder.encode([posting.title or ""])[0]
+    # Abbreviations expanded on both sides. Measured, "Site Reliability
+    # Engineer" against "SRE" scored 0.000 — the same as against "Pastry
+    # Chef" — because an abbreviation shares no tokens with what it stands
+    # for. See packages/matching/titles.py.
+    title_vector = embedder.encode([expand_title(posting.title)])[0]
     body_vector = embedder.encode([posting.description_raw or ""])[0]
 
     title_similarity = cosine(profile_vector, title_vector)
@@ -215,7 +220,11 @@ async def score_and_store(
     # Kept, not discarded after encoding: the same text is what the matched
     # and missing term lists are computed against, so the vector and the
     # explanation can never describe different inputs.
-    text = await profile_text(session, profile)
+    # Expanded once and used for everything downstream. The other side of the
+    # title comparison needs it — a résumé written "SRE" has to reach a
+    # posting titled "Site Reliability Engineer" — and so does the gap report:
+    # unexpanded, a résumé saying "ML" was told it was missing "machine".
+    text = expand_title(await profile_text(session, profile))
     profile_vector = active.encode([text])[0]
 
     # One pass over the corpus, reused for every posting in it. Built here
