@@ -40,6 +40,13 @@ class ClassificationResult:
     evidence: str = ""
     #: Rules are certain by construction; a model's guess is not.
     confident: bool = True
+    #: How decisively this tier chose, when it can say. Naive Bayes reports the
+    #: per-token log-odds gap between its best label and the runner-up; the
+    #: rules leave it at 0.0 because an exact match has no runner-up to beat.
+    #: Divided by token count so a long email and a short one are comparable —
+    #: an unnormalized total grows with length and would call every long
+    #: message confident.
+    margin: float = 0.0
 
     @property
     def abstained(self) -> bool:
@@ -194,3 +201,98 @@ class LLMClassifier:
 def classify(subject: str, body: str) -> ClassificationResult:
     """Rule-based classification. The offline default."""
     return RuleClassifier().classify(subject, body)
+
+
+#: Below this, a Naive Bayes verdict is treated as a shrug and handed on.
+#:
+#: Calibrated on the 30 labeled messages behind Gate 6: every message Bayes got
+#: *wrong* scored at or below 0.190 per token, and the highest was 0.190, so
+#: 0.2 sits just above all three mistakes. Correct verdicts run from 0.082 to a
+#: median of 0.410, which means the gate also defers some it would have gotten
+#: right. That is the cheap direction to be wrong in — a deferred correct
+#: answer costs a model call, a kept wrong one silently mis-files a rejection.
+#:
+#: The realistic rejection in `tests/test_inbox.py::REALISTIC_REJECTION` is why
+#: this gate is not decoration. Bayes reads it as **interview** at 0.073 — the
+#: quoted thread carries the applicant's own "excited… interview panel", and
+#: the evidence tokens come back as 'technical love up speak'. Kept, that files
+#: a rejection as an interview, which is worse than any abstention: the owner
+#: believes they are waiting on a panel that will never be scheduled. Deferred,
+#: the model reads it correctly.
+#:
+#: Calibrated on fixtures, so provisional in exactly the way CLAUDE.md §15
+#: describes. Re-derive it once real mail exists; the numbers above are the
+#: procedure, not a constant of nature.
+BAYES_MIN_MARGIN = 0.2
+
+
+async def classify_message(
+    subject: str,
+    body: str,
+    *,
+    provider: object | None = None,
+    bayes: object | None = None,
+) -> ClassificationResult:
+    """Rules, then Naive Bayes, then a model — first tier that commits wins.
+
+    `classify()` alone is why a real rejection reads as noise. Its patterns
+    match the phrasings they were written beside: the fixture says "with other
+    candidates" and matches, while "with another candidate" — the same
+    sentence, as recruiters actually write it — does not, and the rules abstain
+    on the whole message. An abstention then *becomes* `noise`, so the
+    application's status never moves and the owner sees it waiting forever.
+
+    The order is measured, not assumed. On Gate 6's 30: rules 29/30 with one
+    abstention, Bayes 27/30 on its own. So Bayes must never run instead of the
+    rules — only after them, where it resolved both abstentions tested,
+    including a realistically messy rejection carrying a quoted thread, a
+    signature block and an unsubscribe footer.
+
+    Each tier may decline. The rules abstain by construction. Bayes cannot —
+    it takes an argmax — so `BAYES_MIN_MARGIN` makes it able to, which is what
+    keeps the model tier reachable rather than decorative.
+
+    Degrades rather than fails: no provider, or a provider that is down, leaves
+    the best verdict so far. A model outage must not turn into a mis-filed
+    rejection.
+    """
+    rules_result = RuleClassifier().classify(subject, body)
+    if not rules_result.abstained:
+        return rules_result
+
+    if bayes is None:
+        bayes = _seed_bayes()
+    if bayes is not None:
+        guess = bayes.classify(subject, body)  # type: ignore[attr-defined]
+        if not guess.abstained and guess.margin >= BAYES_MIN_MARGIN:
+            log.info("classified_by_bayes", margin=round(guess.margin, 3))
+            return guess
+
+    if provider is not None:
+        model_result = await LLMClassifier(provider).classify(subject, body)
+        if not model_result.abstained:
+            return model_result
+
+    return rules_result
+
+
+_SEED_BAYES: object | None = None
+_SEED_BAYES_FAILED = False
+
+
+def _seed_bayes() -> object | None:
+    """The corpus-trained classifier, fitted once.
+
+    Training is pure CPU over a few dozen short emails, but it happens on every
+    inbound message otherwise, and an IMAP poll delivers them in batches.
+    """
+    global _SEED_BAYES, _SEED_BAYES_FAILED
+    if _SEED_BAYES is None and not _SEED_BAYES_FAILED:
+        try:
+            from packages.inbox.bayes import train_from_corpus
+
+            _SEED_BAYES = train_from_corpus()
+        except Exception:  # noqa: BLE001 - a bad corpus must not stop routing
+            log.warning("bayes_unavailable")
+            _SEED_BAYES_FAILED = True
+    return _SEED_BAYES

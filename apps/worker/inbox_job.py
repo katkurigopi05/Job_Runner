@@ -16,6 +16,7 @@ from packages.core.models import Candidate
 from packages.core.queue import ClaimedTask
 from packages.inbox.imap import DEFAULT_BATCH, build_mail_source
 from packages.inbox.route import route_message
+from packages.llm.provider import LLMError, build_provider
 
 log = structlog.get_logger(__name__)
 
@@ -43,10 +44,21 @@ async def handle_inbox(session: AsyncSession, claimed: ClaimedTask) -> None:
     candidates = list((await session.scalars(select(Candidate))).all())
     candidate_id = candidates[0].id if len(candidates) == 1 else None
 
+    # The model tier of packages/inbox/classify.py. Ollama by name and never a
+    # cloud provider: recruiter mail is the owner's correspondence, and §2.8
+    # permits one third-party upload that this is not. If it cannot be built
+    # the chain simply stops one tier short — an inbox poll must not fail
+    # because a local model is not running.
+    provider: object | None = None
+    try:
+        provider = build_provider("ollama")
+    except LLMError:
+        log.info("inbox_classifier_model_unavailable")
+
     routed = 0
     inferred = 0
     for message in messages:
-        result = await route_message(session, message, candidate_id=candidate_id)
+        result = await route_message(session, message, candidate_id=candidate_id, provider=provider)
         if result.routed:
             routed += 1
         if result.inferred:

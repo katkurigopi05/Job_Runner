@@ -46,7 +46,7 @@ from packages.core.enums import (
 from packages.core.models import Application, InboundMessage
 from packages.core.state import transition
 from packages.inbox.alias import find_alias
-from packages.inbox.classify import ClassificationResult, classify
+from packages.inbox.classify import ClassificationResult, classify_message
 from packages.inbox.match import infer
 
 log = structlog.get_logger(__name__)
@@ -105,13 +105,14 @@ async def route_message(
     *,
     result: ClassificationResult | None = None,
     candidate_id: uuid.UUID | None = None,
+    provider: object | None = None,
 ) -> RoutingResult:
     """Store, classify, and act on one message. Does not commit.
 
     Idempotent on `message_id`: IMAP re-delivers, and a rejection recorded
     twice must not look like two rejections.
     """
-    verdict = result or classify(email.subject, email.body)
+    verdict = result or await classify_message(email.subject, email.body, provider=provider)
     routing = RoutingResult(message_id=email.message_id, classification=verdict.classification)
 
     alias = find_alias(email.to_addr, email.cc_addr, email.delivered_to)

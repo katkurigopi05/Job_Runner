@@ -578,7 +578,16 @@ where the gates are defined rather than only in a test docstring.
   actually apply to". `tests/test_matching.py` has 20, written the way real
   postings read. They are not postings the owner labeled.
 - **Gate 6** asks for "30 hand-labeled **real** recruiter emails".
-  `tests/test_inbox.py` has 30 written to match. They are not real correspondence.
+  `tests/test_inbox.py` has 30 written to match. They are not real correspondence,
+  and the cost of that is now measured rather than suspected. The fixtures were
+  written beside the patterns that read them, so they use the phrasing the
+  patterns expect: the fixture says "with other candidates" and matches, while
+  "with another candidate" — the same sentence as recruiters write it — does
+  not. Six of seven realistic rejection phrasings miss. On a rejection shaped
+  like one that actually arrives, the rules abstain outright.
+
+  `inbound_messages` in the owner's database is **0**. Gate 6 has never seen a
+  real email.
 
 Both suites are worth having — they catch regressions. Neither answers the
 question its gate was written to ask, which is whether the scoring and the
