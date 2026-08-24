@@ -127,13 +127,14 @@ class StubProvider:
 class OllamaProvider:
     name = "ollama"
 
-    def __init__(self, base_url: str | None = None, model: str = "llama3.1") -> None:
+    def __init__(self, base_url: str | None = None, model: str | None = None) -> None:
         from packages.core.config import get_settings
 
+        settings = get_settings()
         self.base_url = (
-            base_url or os.environ.get("OLLAMA_BASE_URL") or get_settings().ollama_base_url
+            base_url or os.environ.get("OLLAMA_BASE_URL") or settings.ollama_base_url
         ).rstrip("/")
-        self.model = model
+        self.model = model or os.environ.get("OLLAMA_MODEL") or settings.ollama_model
 
     async def complete(
         self,

@@ -349,7 +349,10 @@ async def check_ollama() -> Check:
             "ollama",
             Health.FAIL,
             "running, but no model is pulled",
-            fix="ollama pull llama3.1",
+            # The configured model, not a fixed name: a hint telling you to
+            # pull llama3.1 while OLLAMA_MODEL asks for something else sends
+            # you to fix the wrong thing.
+            fix=f"ollama pull {get_settings().ollama_model}",
             required=False,
         )
     return Check("ollama", Health.OK, f"{len(models)} model(s): {', '.join(models[:4])}")

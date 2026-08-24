@@ -46,6 +46,17 @@ class Settings(BaseSettings):
     #: cloud provider, so an unreadable base URL is an assistant that is down
     #: rather than one that quietly costs money.
     ollama_base_url: str = "http://localhost:11434"
+    #: Which local model answers. Benchmarked against this project's own
+    #: tasks rather than chosen by reputation: on the 30 labeled recruiter
+    #: emails behind Gate 6 it classified 30/30 where the next best managed
+    #: 28, it answers the assistant's probes from the context it was handed,
+    #: and it redirects a salary question to the profile instead of advising
+    #: on one — which `qwen2.5-coder` did not. It is also the most concise of
+    #: the six, and CHAT_SYSTEM asks for brief.
+    #:
+    #: A field rather than a Python default because the value was previously
+    #: written into three files and settable in none.
+    ollama_model: str = "llama3.1"
 
     #: Stable across restarts so a worker recognizes its own abandoned lease.
     #: Defaults to the hostname when unset.
