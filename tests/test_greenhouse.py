@@ -236,6 +236,23 @@ async def test_fill_populates_fields(posting_page) -> None:
     assert await posting_page.input_value("#email") == "ada@example.com"
 
 
+async def test_fill_types_the_cover_letter_into_the_textarea(posting_page) -> None:
+    """The last link in the chain, against the real markup.
+
+    `build_answers` produces the answer and `_cover_letter` produces the text,
+    but a `cover_letter` question is a `COVER_LETTER` kind and `_set_value`
+    dispatches on kind. Nothing else asserts that kind reaches a branch that
+    types anything, and a letter written, vetted, stored and then not typed is
+    the same defect as the résumé that was never uploaded.
+    """
+    letter = "Dear Hiring Manager,\n\nI maintained the billing service.\n\nSincerely, Ada"
+
+    report = await GreenhouseAdapter().fill(posting_page, {"cover_letter": letter})
+
+    assert "cover_letter" in {f.key for f in report.filled}
+    assert await posting_page.input_value("#cover_letter") == letter
+
+
 async def test_fill_selects_an_option(posting_page) -> None:
     key = "job_application_answers_attributes_1_boolean_value"
     report = await GreenhouseAdapter().fill(posting_page, {key: "1"})

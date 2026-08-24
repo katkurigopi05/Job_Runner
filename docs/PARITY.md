@@ -64,7 +64,7 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 | PDF render (`pdf`) | **HAVE** | `assemble.py`, `publish.py` |
 | HTML CV (`build-cv-html`) | **HAVE** | `assemble_html` |
 | LaTeX CV (`build-cv-latex`) | **DECLINED** | WeasyPrint covers it; LaTeX is a second toolchain |
-| Cover letter (`cover-letter`) | **PARTIAL** | writes and vets one; nothing in the apply pipeline calls it yet |
+| Cover letter (`cover-letter`) | **HAVE** | `packages/tailor/cover.py`, called from `apply_job::_cover_letter` — written only when the form asks, refusals recorded |
 | Voice/style capture (`voice-dna`) | **BUILD** | nothing models the owner's writing voice |
 | CV visual regression (`test:cv-visual`) | **BUILD** | we test the parse round-trip, never how it *looks* |
 | Tailoring done ahead of time | **HAVE** | `make tailor-batch` — per *posting*, not per company; see below |
@@ -133,8 +133,16 @@ half-features.
    Stripping the HTML out of the postings moved the maximum only to 0.282, so
    the 0.1–0.3 band is what this embedding does, not a bug to fix.
 4. **Reach** — company→board resolver, more extractors, board health re-checks.
-5. **Documents** — cover letter (finish #32), visual regression, voice
-   capture.
+5. **Documents** — ~~cover letter (finish #32)~~ **done**; visual regression,
+   voice capture still open.
+
+   The letter is wired into the apply pipeline: written only when the form
+   actually asks for one, vetted by the fabrication guard, stored, and reused
+   on a resumed run so the owner and the employer see the same letter. Doing
+   it surfaced the defect that made the module refuse most real letters —
+   `vet` re-judged the greeting `write` had just stripped, so "Dear Hiring
+   Manager," failed on `Manager`. Nothing caught it because every test built
+   letters with no greeting. CLAUDE.md §15 has the detail.
 
    **A note on "per-company caching", which CLAUDE.md §15 lists as a gap.**
    Measured against the real feed, only **5%** of matched postings share an
