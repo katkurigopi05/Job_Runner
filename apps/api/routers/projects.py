@@ -22,6 +22,7 @@ from packages.core.schemas import (
 from packages.github.client import GitHubError, RateLimited
 from packages.github.select import score, select_projects
 from packages.github.sync import sync_from_github
+from packages.tailor.evidence import matched_job_terms
 from packages.tailor.projects import LinkStyle, ProjectEntry, link_text
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -110,6 +111,8 @@ async def preview_selection(
             url=project.url,
             score=round(score(project, job_text), 4),
             pinned=project.pinned,
+            matched_terms=matched_job_terms(project, job_text),
+            evidence_source="github_metadata",
             rendered_link=link_text(ProjectEntry.from_project(project), style),
         )
         for project in chosen

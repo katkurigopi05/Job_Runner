@@ -40,9 +40,11 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.core.models import Match, Posting, Profile, Resume
+from packages.core.models import Match, Posting, Profile, Project, Resume
+from packages.github.select import select_projects
 from packages.llm import quota
 from packages.llm.provider import LLMProvider
+from packages.tailor.evidence import matched_job_terms
 from packages.tailor.guard import SourceCorpus
 from packages.tailor.parse import ParsedResume
 from packages.tailor.publish import publish_tailored
@@ -148,6 +150,26 @@ async def run(
             )
             break
 
+        project_inventory = list(
+            (
+                await session.scalars(
+                    select(Project).where(Project.candidate_id == profile.candidate_id)
+                )
+            ).all()
+        )
+        ranked_projects = select_projects(
+            project_inventory,
+            posting.description_raw or "",
+        )
+        # Exact GitHub evidence (or an explicit pin) is required here. A recent
+        # but unrelated repository should not consume résumé space merely
+        # because the inventory has fewer than four projects.
+        relevant_projects = [
+            project
+            for project in ranked_projects
+            if project.pinned or matched_job_terms(project, posting.description_raw or "")
+        ]
+
         try:
             rewrites = await tailor_bullets(
                 provider, bullets, posting.description_raw or "", SourceCorpus.from_resume(parsed)
@@ -163,7 +185,7 @@ async def run(
         # it would spend a row and a render to attach a document identical to
         # the one already on the profile, and would make the apply pipeline
         # report a tailored résumé that is not tailored.
-        if all(rewrite.used_fallback for rewrite in rewrites.bullets):
+        if all(rewrite.used_fallback for rewrite in rewrites.bullets) and not relevant_projects:
             result.failed += 1
             result.per_posting.append((posting.title or str(posting.id), "every rewrite refused"))
             continue
@@ -173,6 +195,7 @@ async def run(
             candidate_id=profile.candidate_id,
             parsed=parsed,
             result=rewrites,
+            projects=relevant_projects,
         )
         if published is None:
             result.failed += 1
@@ -180,8 +203,17 @@ async def run(
 
         match.tailored_resume_id = published.id
         result.tailored += 1
+        project_label = (
+            f", {len(relevant_projects)} GitHub "
+            f"{'project' if len(relevant_projects) == 1 else 'projects'} added"
+            if relevant_projects
+            else ""
+        )
         result.per_posting.append(
-            (posting.title or str(posting.id), f"{rewrites.changed_count} bullets rewritten")
+            (
+                posting.title or str(posting.id),
+                f"{rewrites.changed_count} bullets rewritten{project_label}",
+            )
         )
         await session.flush()
 

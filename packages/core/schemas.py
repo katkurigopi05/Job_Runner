@@ -227,6 +227,10 @@ class ProjectPreview(BaseModel):
     url: str
     score: float
     pinned: bool
+    #: Posting vocabulary supported by this repository's GitHub metadata.
+    matched_terms: list[str] = Field(default_factory=list)
+    #: Makes the trust boundary explicit to UI and MCP callers.
+    evidence_source: str = "github_metadata"
     #: Exactly the text that will be rendered as the link.
     rendered_link: str
 

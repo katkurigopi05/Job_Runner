@@ -35,10 +35,13 @@ Reference teardown of the commercial product this is modeled on: `docs/TSENTA_AR
 
 These are correctness requirements, not preferences. Violating any of them is a bug.
 
-1. **Résumé tailoring never invents facts.** Rewriting may rephrase, reorder, re-emphasize,
-   and inject keywords *that are already supported by the source résumé*. It may not add a
-   skill, employer, date, credential, or metric that is not in the source. There is a test
-   suite for this (`tests/test_no_fabrication.py`) and it is a merge gate.
+1. **Résumé tailoring never invents facts.** Experience rewriting may rephrase, reorder,
+   re-emphasize, and inject keywords *that are already supported by that résumé entry or a
+   shared source section*. It may not borrow a project skill into an employer bullet. The
+   Projects section may add facts verified by GitHub's source-reported repository name,
+   description, primary language, and topics, and must keep them attributed to that project.
+   It may not add a skill, employer, date, credential, or metric absent from those sources.
+   There is a test suite for this (`tests/test_no_fabrication.py`) and it is a merge gate.
 2. **Work-authorization and employment-history answers are copied verbatim from the profile.**
    Never LLM-generated. These have legal consequences for the applicant.
 3. **Nothing submits without explicit approval by default.** `AUTO_SUBMIT=false` is the

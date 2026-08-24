@@ -128,6 +128,8 @@ async def test_preview_excludes_forks_and_shows_the_rendered_link(
     assert "jobrunner" in names
     assert "someones-lib" not in names  # a fork
     assert "github.com/octocat/jobrunner" in r.json()[0]["rendered_link"]
+    assert "Python" in r.json()[0]["matched_terms"]
+    assert r.json()[0]["evidence_source"] == "github_metadata"
 
 
 async def test_patch_unknown_project_is_404(client: AsyncClient) -> None:
