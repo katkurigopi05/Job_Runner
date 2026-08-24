@@ -128,8 +128,10 @@ class OllamaProvider:
     name = "ollama"
 
     def __init__(self, base_url: str | None = None, model: str = "llama3.1") -> None:
+        from packages.core.config import get_settings
+
         self.base_url = (
-            base_url or os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434"
+            base_url or os.environ.get("OLLAMA_BASE_URL") or get_settings().ollama_base_url
         ).rstrip("/")
         self.model = model
 

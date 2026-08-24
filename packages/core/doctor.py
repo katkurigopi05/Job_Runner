@@ -327,7 +327,7 @@ async def check_ollama() -> Check:
     not-required so a crawl is not reported as blocked because a chat window
     would not work.
     """
-    base = os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434"
+    base = os.environ.get("OLLAMA_BASE_URL") or get_settings().ollama_base_url
     try:
         import httpx
 

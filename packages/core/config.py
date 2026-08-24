@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     #: set to 0 in tests, where the sleeps are pure wall clock.
     llm_call_interval_s: float = 4.0
     anthropic_api_key: str | None = None
+    #: Where Ollama listens. Same reason as the keys above: `.env.example`
+    #: documents this key, so reading it only from os.environ meant a `.env`
+    #: pointing at another host was ignored and the caller fell back to
+    #: localhost. It matters more here than for a credential — CLAUDE.md §14
+    #: pins the assistant to Ollama by name and refuses to fall back to a
+    #: cloud provider, so an unreadable base URL is an assistant that is down
+    #: rather than one that quietly costs money.
+    ollama_base_url: str = "http://localhost:11434"
 
     #: Stable across restarts so a worker recognizes its own abandoned lease.
     #: Defaults to the hostname when unset.
