@@ -235,3 +235,110 @@ async def test_github_skill_does_not_license_rewriting_an_employer_bullet(
 
     rewrites = captured["result"].bullets
     assert rewrites[0].tailored == "Built backend services in Python."
+
+
+async def _tailorable(session, profile) -> Match:
+    """A match the batch run will actually publish for.
+
+    The stub's rewrites are refused by the fabrication guard, so a posting with
+    no project evidence ends as "every rewrite refused" and publishes nothing.
+    A matching project is what makes the run produce a document.
+    """
+    match = await _match(session, profile, decision="interested")
+    posting = await session.get(Posting, match.posting_id)
+    posting.description_raw = "Python engineer with time-series forecasting experience."
+    session.add(
+        Project(
+            candidate_id=profile.candidate_id,
+            source="github",
+            external_id=uuid.uuid4().hex,
+            name="forecasting-lab",
+            url="https://github.com/owner/forecasting-lab",
+            description="Demand forecasting experiments",
+            language="Python",
+            topics_json=["time-series", "pandas"],
+        )
+    )
+    await session.flush()
+    return match
+
+
+def _publishes_with_key(session_profile):
+    """A publish that stores what it was handed, minus the PDF render."""
+
+    async def fake_publish(session, **kwargs):
+        resume = Resume(
+            candidate_id=kwargs["candidate_id"],
+            version=99,
+            storage_ref=f"r/{uuid.uuid4().hex[:8]}.pdf",
+            parsed_json=RESUME,
+            tailored_key=kwargs.get("tailored_key"),
+        )
+        session.add(resume)
+        await session.flush()
+        return resume
+
+    return fake_publish
+
+
+async def test_a_second_run_reuses_instead_of_calling_the_provider(db_session, monkeypatch) -> None:
+    """The mechanism, proven end to end.
+
+    `pending()` already skips a match that has a tailored résumé, so this
+    clears the link the way a re-tailor would and checks the second pass costs
+    nothing. That is the shape the cache is for: work already paid for, asked
+    for again.
+    """
+    from packages.llm.provider import StubProvider
+
+    profile = await _owner(db_session)
+    match = await _tailorable(db_session, profile)
+    posting = await db_session.get(Posting, match.posting_id)
+    # _match builds postings without one; the cache refuses to key on nothing.
+    posting.content_hash = "stable-hash"
+    await db_session.flush()
+
+    monkeypatch.setattr(batch, "publish_tailored", _publishes_with_key(profile))
+    monkeypatch.setattr(batch.quota, "remaining", lambda provider: None)
+
+    first = await batch.run(db_session, StubProvider(), profile_id=str(profile.id))
+    assert first.tailored == 1
+    assert first.reused == 0
+    assert first.calls_spent > 0
+
+    tailored_id = match.tailored_resume_id
+    assert tailored_id is not None
+    match.tailored_resume_id = None
+    await db_session.flush()
+
+    second = await batch.run(db_session, StubProvider(), profile_id=str(profile.id))
+
+    assert second.reused == 1
+    assert second.tailored == 0
+    # The whole point: nothing was sent to a provider the second time.
+    assert second.calls_spent == 0
+    assert match.tailored_resume_id == tailored_id
+
+
+async def test_a_posting_without_a_content_hash_is_tailored_every_time(
+    db_session, monkeypatch
+) -> None:
+    """Uncacheable is not a failure — it just does not reuse.
+
+    Better to pay twice than to serve a résumé written for a posting whose
+    description may have changed underneath the only identifier available.
+    """
+    from packages.llm.provider import StubProvider
+
+    profile = await _owner(db_session)
+    match = await _tailorable(db_session, profile)
+
+    monkeypatch.setattr(batch, "publish_tailored", _publishes_with_key(profile))
+    monkeypatch.setattr(batch.quota, "remaining", lambda provider: None)
+
+    first = await batch.run(db_session, StubProvider(), profile_id=str(profile.id))
+    assert first.tailored == 1
+
+    resume = await db_session.get(Resume, match.tailored_resume_id)
+    assert resume is not None
+    assert resume.tailored_key is None

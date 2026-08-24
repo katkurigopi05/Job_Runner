@@ -619,9 +619,29 @@ before trusting either number.
   apply pipeline never asks for a letter, `Application.cover_letter_ref` is
   never written, and so no application has carried one. The tests exercise the
   module, not the feature. `docs/PARITY.md` tracks the remaining gap.
-- **Per-company caching of tailored versions.** Every apply re-tailors from
-  scratch. Harmless today because tailoring is cheap and local; it becomes a
-  cost the moment a remote provider is used for it.
+- **Caching of tailored versions.** Built — `packages/tailor/cache.py`. The
+  condition it was waiting for arrived: `LLM_PROVIDER=gemini` with a key set,
+  and tailoring text now leaves the machine. Keyed on the source résumé, the
+  posting's `content_hash`, `TAILOR_SYSTEM.digest`, the attached project ids,
+  and the provider and model — everything that changes the output, because a
+  cache keyed on less serves a résumé written for a different job and nothing
+  about it looks wrong. A posting with no `content_hash` is not cached at all
+  rather than keyed on something weaker.
+
+  Worth being honest about how much it currently saves: **very little.** With
+  one profile, no two postings sharing a `content_hash`, `pending()` already
+  skipping tailored matches, and `_prepared_resume` already reusing within an
+  apply, there is no live path that re-tailors the same posting. It is
+  insurance for when there are several profiles, and for a re-run after a
+  partial failure.
+
+  The measured duplication is somewhere else. The audit trail's heaviest day —
+  204 uploads against a ceiling of 200 — carried only **69 distinct payloads**,
+  and 189 of the 204 were `tailor.system`. Nothing persisted: the database
+  holds one résumé and no tailored ones. That is `packages/tailor/evaluate.py`,
+  an offline harness with no session, re-run over the same fixtures. This cache
+  does not touch it and should not; a cache there is the follow-up that matches
+  the evidence.
 
 Gate 3 passes without them because it tests fabrication and the PDF round trip,
 which is the part with consequences. Recorded here so the gap is not mistaken

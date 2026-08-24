@@ -31,13 +31,22 @@ from packages.ats.registry import adapter_for
 from packages.ats.screen import ScreenReport, screen
 from packages.core.config import get_settings
 from packages.core.enums import ApplicationStatus, FailureReason
-from packages.core.models import Application, Candidate, Match, Profile, Project, Resume
+from packages.core.models import (
+    Application,
+    Candidate,
+    Match,
+    Posting,
+    Profile,
+    Project,
+    Resume,
+)
 from packages.core.queue import ClaimedTask
 from packages.core.state import WorkClaim, begin_work, transition
 from packages.core.storage import get_storage, receipt_key
 from packages.github.select import relevant_for_posting
 from packages.llm import router as llm_router
 from packages.matching.embed import get_embedder
+from packages.tailor.cache import find_cached, tailoring_key
 
 log = structlog.get_logger(__name__)
 
@@ -158,7 +167,7 @@ async def _run_pipeline(
         # approves, not after. Computed here so the review record carries it,
         # and the tailored PDF is rendered from the same vetted result so the
         # file the owner uploads is the document the diff described.
-        diff = await _tailor(session, application, profile, posting.description_raw or "")
+        diff = await _tailor(session, application, profile, posting)
 
         await _decide(
             session, application, profile, report, adapter, page, diff, screening=screening
@@ -242,7 +251,7 @@ async def _tailor(
     session: AsyncSession,
     application: Application,
     profile: Profile,
-    posting_text: str,
+    posting: Posting,
 ) -> dict[str, Any] | None:
     """Tailor the base résumé for this posting, render it, and return the diff.
 
@@ -265,6 +274,7 @@ async def _tailor(
     Returns None when there is nothing to tailor. A failure here must not stop
     the application: the untailored résumé is still a correct résumé.
     """
+    posting_text = posting.description_raw or ""
     if profile.base_resume_id is None or not posting_text.strip():
         return None
 
@@ -298,6 +308,27 @@ async def _tailor(
         # between them and still trace to "the résumé".
         corpus = SourceCorpus.from_resume(parsed)
         provider = llm_router.tailor_resume()
+
+        # Chosen before the key rather than inside the publish call, because
+        # which projects get attached changes the document and so has to be
+        # part of what identifies it.
+        projects = await _projects_for(session, resume.candidate_id, posting_text)
+        cache_key = tailoring_key(
+            source_resume_id=resume.id,
+            posting=posting,
+            projects=projects,
+            provider=getattr(provider, "name", "unknown"),
+            model=getattr(provider, "model", None),
+        )
+        cached = await find_cached(session, candidate_id=resume.candidate_id, key=cache_key)
+        if cached is not None:
+            # Re-applying to a posting already tailored for sends nothing to a
+            # provider. §2.8 asks that the upload be minimal as well as
+            # audited, and the cheapest upload is the one not made.
+            application.tailored_resume_id = cached.id
+            log.info("tailored_resume_reused", resume_id=str(cached.id))
+            return {"changed": 0, "unchanged": 0, "rejected": 0, "reused": True}
+
         result = await tailor_bullets(provider, bullets, posting_text, corpus)
         summary = summarize(result)
 
@@ -312,8 +343,9 @@ async def _tailor(
             candidate_id=resume.candidate_id,
             parsed=parsed,
             result=result,
-            projects=await _projects_for(session, resume.candidate_id, posting_text),
+            projects=projects,
             posting_text=posting_text,
+            tailored_key=cache_key,
         )
         if published is not None:
             application.tailored_resume_id = published.id
