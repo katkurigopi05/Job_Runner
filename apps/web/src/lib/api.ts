@@ -104,6 +104,27 @@ export interface TailoringCandidate {
   error?: string | null;
 }
 
+/**
+ * The letter written for this application, if the form asked for one.
+ *
+ * `accepted: false` with a `rejected_reason` is a real outcome, not an absence:
+ * a letter has no original to fall back to, so the alternative to a bad one is
+ * none — and "the guard refused it" has to look different from "never tried".
+ */
+export interface CoverLetter {
+  accepted: boolean;
+  rejected_reason?: string | null;
+  word_count?: number;
+  entities_checked?: number;
+  /** Sentences the guard stripped. A letter that survived only by deletion is worth seeing. */
+  sentences_dropped?: number;
+  /** Which model wrote it — §7's fallback applies here as it does to tailoring. */
+  answered_by?: string | null;
+  ref?: string | null;
+  text?: string | null;
+  reused?: boolean;
+}
+
 export interface ReviewRecord {
   fill_rate?: number;
   filled?: FilledField[];
@@ -113,6 +134,8 @@ export interface ReviewRecord {
   resume_diff?: ResumeDiff | null;
   /** Present once the owner has asked for a local-vs-cloud comparison. */
   tailoring_comparison?: TailoringCandidate[] | null;
+  /** Null when the form never asked for a letter, which most do not. */
+  cover_letter?: CoverLetter | null;
   owner_answers?: Record<string, unknown>;
   owner_approved?: boolean;
   reason?: string;
