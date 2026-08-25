@@ -173,6 +173,33 @@ CHOOSABLE_TASKS: dict[str, str] = {
 LOCAL_PROVIDER = "ollama"
 
 
+def cloud_for_tailoring() -> str | None:
+    """The remote provider a tailoring comparison should run against.
+
+    None when there is no remote side to compare with — no key anywhere, or the
+    owner pinned tailoring to the local model and configured nothing else. The
+    caller reports that as a candidate carrying the reason rather than quietly
+    showing one column, because a comparison missing half of itself reads as a
+    verdict.
+
+    An explicit `LLM_TASK_TAILOR` wins when it names a remote provider: it is
+    the provider real tailoring would use, so it is the one worth comparing
+    against. `openrouter` is reachable this way and only this way — it is kept
+    out of `QUALITY_ORDER` on purpose, and a comparison must not be the back
+    door that reintroduces it as a default.
+    """
+    chosen = _chosen("tailor_resume")
+    if chosen and chosen not in (LOCAL_PROVIDER, "stub"):
+        return chosen if _configured(chosen) else None
+
+    for name in QUALITY_ORDER:
+        if name in (LOCAL_PROVIDER, "stub"):
+            continue
+        if _configured(name):
+            return name
+    return None
+
+
 def _chosen(task: str) -> str | None:
     """The provider the owner pinned this task to, if any."""
     from packages.core.config import get_settings

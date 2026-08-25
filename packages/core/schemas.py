@@ -153,6 +153,17 @@ class ReviewDecision(BaseModel):
     note: str | None = None
 
 
+class TailoringChoice(BaseModel):
+    """Which of the compared résumés the owner wants sent.
+
+    The id is checked against the comparison stored on the application rather
+    than trusted: this sets the file that reaches an employer, and "any résumé
+    id belonging to this candidate" is a wider door than the screen needs.
+    """
+
+    resume_id: uuid.UUID
+
+
 class OtpSubmission(BaseModel):
     """A verification code the site asked for.
 

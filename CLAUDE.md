@@ -345,6 +345,38 @@ be mistaken for. The migration deliberately does not backfill: there is no
 record of which model wrote the existing rows, and a plausible guess on a
 document about to be sent to an employer is worse than an honest gap.
 
+### Comparing two models on one posting
+
+`/review` has a **Compare models** panel: it tailors the same posting with the
+local model and with the cloud one and shows both, each with its rewrite count,
+its guard-refusal count, and a button that makes it the document to upload.
+
+It exists because §7 made the provider settable without making it *decidable*.
+Answering "is the cloud one better for this résumé and this job" meant editing
+`.env`, re-running, and holding the first result in your head.
+
+Three properties are load-bearing:
+
+- **On demand.** Each remote side is another §2.8 upload of the owner's résumé.
+  Running both on every application would double that on every application,
+  including the ones rejected at review. The tailoring cache is consulted per
+  provider, so comparing a posting twice sends nothing.
+- **Both sides are guard-checked before either is shown.** A comparison offers
+  each column as something the owner may choose and send. An unvetted draft
+  presented that way is a fabricated bullet with a button under it. The refusal
+  counts are shown per side — a model that keeps trying to invent should not
+  look identical to one that does not.
+- **A side that cannot run is a reported column, not a missing one.** No key,
+  spent allowance, Ollama not started: each becomes a candidate carrying the
+  reason. A comparison silently missing half of itself reads as a verdict on the
+  half that is there. `CannotCompare` is separate and covers the case where
+  there was never anything to compare — no base résumé, no posting text —
+  because a precondition is not a model outcome.
+
+Selecting is restricted server-side to the two versions actually compared. This
+sets the file an employer receives, and "any résumé id this candidate owns" is a
+wider door than the screen needs.
+
 Tuning any of these against the guard's own pass rate is the trap in
 `docs/REFERENCE.md` §3.6: it optimises the one referee we control, and a
 rewrite can satisfy the guard while reading worse. Change one only with a

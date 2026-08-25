@@ -82,3 +82,51 @@ export async function submitOtp(
   revalidatePath("/applications");
   return { ok: true, message: "Code accepted. The run resumed." };
 }
+
+/**
+ * Tailor this posting a second time with the other provider, for a comparison.
+ *
+ * On demand rather than on every application, and that is a §2.8 decision: each
+ * remote side is another upload of the owner's résumé to a third party. The
+ * tailoring cache means asking twice for the same posting sends nothing.
+ */
+export async function compareTailoring(
+  applicationId: string,
+  _prev: ReviewResult | null,
+  _form: FormData,
+): Promise<ReviewResult> {
+  try {
+    await api.compareTailoring(applicationId);
+  } catch (error) {
+    if (error instanceof ApiError) return { ok: false, message: error.message };
+    throw error;
+  }
+
+  revalidatePath("/review");
+  return { ok: true, message: "Compared. Both versions are below." };
+}
+
+/**
+ * Choose the version that gets uploaded.
+ *
+ * The id is validated server-side against the two that were actually compared —
+ * this decides the file an employer receives.
+ */
+export async function selectTailoring(
+  applicationId: string,
+  _prev: ReviewResult | null,
+  form: FormData,
+): Promise<ReviewResult> {
+  const resumeId = String(form.get("resume_id") ?? "").trim();
+  if (!resumeId) return { ok: false, message: "No version was chosen." };
+
+  try {
+    await api.selectTailoring(applicationId, resumeId);
+  } catch (error) {
+    if (error instanceof ApiError) return { ok: false, message: error.message };
+    throw error;
+  }
+
+  revalidatePath("/review");
+  return { ok: true, message: "This version will be the one uploaded." };
+}

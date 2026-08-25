@@ -35,6 +35,7 @@ from packages.core.schemas import (
     PacketQuestion,
     PacketResume,
     ReviewDecision,
+    TailoringChoice,
 )
 from packages.core.state import transition
 from packages.core.storage import get_storage
@@ -187,6 +188,102 @@ async def review_application(
             payload={"decision": "reject", "note": body.note} if body.note else None,
         )
 
+    await session.commit()
+    await session.refresh(application)
+    return application
+
+
+@router.post("/{application_id}/tailoring/compare", response_model=ApplicationOut)
+async def compare_tailoring(application_id: uuid.UUID, session: SessionDep) -> Application:
+    """Tailor this posting with the local model and the cloud one, for a choice.
+
+    On demand rather than on every application, and that is a §2.8 decision
+    rather than a performance one: each remote side is another upload of the
+    owner's résumé to a third party. Running both up front would double that on
+    every application, including the ones rejected at review — so it happens
+    when the owner asks, and the tailoring cache means asking twice sends
+    nothing.
+
+    Both sides are vetted by the fabrication guard before either is shown. A
+    comparison offers each column as something the owner may choose and send;
+    an unvetted draft presented that way is a fabricated bullet with a button
+    under it.
+    """
+    application = await session.get(Application, application_id)
+    if application is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+
+    # Parked, not terminal. Re-tailoring something already submitted uploads the
+    # résumé again to produce a document that cannot be sent.
+    if application.status != ApplicationStatus.NEEDS_REVIEW.value:
+        raise ApiError(
+            ErrorCode.INVALID_STATE,
+            f"application is {application.status}, not needs_review",
+        )
+
+    profile = await session.get(Profile, application.profile_id)
+    if profile is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "profile not found")
+
+    posting = await session.get(Posting, application.posting_id) if application.posting_id else None
+    if posting is None:
+        raise ApiError(
+            ErrorCode.INVALID_REQUEST,
+            "this application has no posting on record, so there is no job description "
+            "to tailor against",
+        )
+
+    from packages.tailor.compare import CannotCompare, compare_tailorings
+
+    try:
+        candidates = await compare_tailorings(session, profile=profile, posting=posting)
+    except CannotCompare as exc:
+        raise ApiError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
+
+    application.review_json = {
+        **(application.review_json or {}),
+        "tailoring_comparison": [candidate.as_dict() for candidate in candidates],
+    }
+    await session.commit()
+    await session.refresh(application)
+    return application
+
+
+@router.post("/{application_id}/tailoring/select", response_model=ApplicationOut)
+async def select_tailoring(
+    application_id: uuid.UUID, body: TailoringChoice, session: SessionDep
+) -> Application:
+    """Send this one. Sets the résumé the apply run will upload.
+
+    The id is checked against the stored comparison rather than merely against
+    the candidate's résumés. This decides the file that reaches an employer, and
+    the screen only ever offers two — accepting any id the candidate happens to
+    own would be a wider door than the feature needs.
+    """
+    application = await session.get(Application, application_id)
+    if application is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+
+    review = application.review_json or {}
+    offered = {
+        candidate.get("resume_id")
+        for candidate in review.get("tailoring_comparison") or []
+        if candidate.get("resume_id")
+    }
+    if str(body.resume_id) not in offered:
+        raise ApiError(
+            ErrorCode.INVALID_REQUEST,
+            "that résumé is not one of the compared versions for this application",
+        )
+
+    application.tailored_resume_id = body.resume_id
+    session.add(
+        ApplicationEvent(
+            application_id=application.id,
+            type="tailoring_selected",
+            payload_json={"resume_id": str(body.resume_id)},
+        )
+    )
     await session.commit()
     await session.refresh(application)
     return application
