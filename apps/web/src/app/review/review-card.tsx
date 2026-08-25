@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 import type { Application, ResumeParsed, Screening } from "@/lib/api";
 import { ResumePreview } from "@/components/resume-preview";
 import { ResumeDiffView } from "@/components/resume-diff";
+import { TailoringCompare } from "@/components/tailoring-compare";
 import { FillRate, StatusPill } from "@/components/status";
 import { approve, reject, submitOtp, type ReviewResult } from "./actions";
 
@@ -165,6 +166,23 @@ export function ReviewCard({
             </div>
           </details>
         ) : null}
+
+        {/* Below the diff, not instead of it: the diff says what tailoring did
+            to the document being sent, and this asks whether a different model
+            would have done better. Collapsed by default because running it
+            uploads the résumé again. */}
+        <details className="border-b border-rule px-6 py-4">
+          <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
+            Compare models
+          </summary>
+          <div className="mt-4">
+            <TailoringCompare
+              applicationId={application.id}
+              candidates={review.tailoring_comparison}
+              selectedResumeId={application.tailored_resume_id}
+            />
+          </div>
+        </details>
 
         <AttachedResume resume={resume} tailored={tailored} />
 

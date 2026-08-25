@@ -269,6 +269,114 @@ original bullet, which looks like the tailorer doing nothing.
 The table lives in `packages/llm/router.py::TEMPERATURES`. `complete_json` is
 pinned to 0.0 regardless — the answer has to parse against a schema.
 
+**Local or cloud is now the owner's choice, per task.** The provider column
+above was not settable: `best_available()` walks a hardcoded `QUALITY_ORDER`
+and picks the strongest *configured* provider, so a Gemini key made every
+"best available" task remote and the only way to tailor locally was to delete
+the key that everything else wanted kept. `LLM_TASK_TAILOR`,
+`LLM_TASK_COVER_LETTER` and `LLM_TASK_OPEN_ENDED` take `auto` (the shipped
+behaviour) or a provider name.
+
+Only those three. Classification and the assistant read recruiter mail and
+chat context; §2.8 permits one third-party upload and neither is it, so both
+stay on Ollama in code and `CHOOSABLE_TASKS` does not list them — a setting
+able to move them would be a way to opt out of a non-negotiable by editing
+`.env`. `test_only_the_uploading_tasks_are_choosable` holds that.
+
+**OpenRouter is a fourth provider, and it is opt-in by name.** One key reaches
+many upstream models, and `docs/PARITY.md` had it refused under §3's "no paid
+service without asking" — the owner asked, and the route in use is free, so §11
+is untouched. What is *not* untouched is §2.8. OpenRouter forwards the résumé
+text to an upstream provider, and the audit trail can record the hop but not the
+destination; on a cloaked `stealth/*` route the upstream vendor is undisclosed
+by design, and free routes commonly log prompts and share them with that
+undisclosed creator. So `OpenRouterProvider` is deliberately absent from
+`router.QUALITY_ORDER`: a key in `.env` changes nothing on its own, and the
+provider answers only when named by `LLM_PROVIDER` or one of the three settings
+above. Acquiring a route whose recipient cannot be named should take typing the
+word, not pasting a key.
+
+The endpoint has one property worth knowing before pointing anything at it:
+**reasoning is mandatory and cannot be switched off.** Both `{"enabled": false}`
+and `{"max_tokens": 0}` come back `400 "Reasoning is mandatory for this endpoint
+and cannot be disabled"`. That matters because `max_tokens` there bounds
+reasoning *plus* answer, while every caller here means it as an answer budget —
+`tailor_bullets` passes 300 to keep a bullet bullet-sized. Passed through
+unchanged, a 300-token call returned `finish_reason="length"` with **empty
+content**: the allowance went on thinking and the model was cut off before
+writing. The tailorer caught the error and kept the original line, so the
+symptom was a tailorer that appeared to do nothing on a provider that was
+working fine. `REASONING_HEADROOM_TOKENS` is the fix, and the numbers behind it
+are in the constant's docstring.
+
+Free routes also rate-limit hard: a three-bullet résumé trips 429 at the default
+`LLM_CALL_INTERVAL_S=4.0`. The pacer obeys `Retry-After` and retries, but for a
+real batch raise the interval.
+
+`LLM_FALLBACK_LOCAL` answers with the local model when the daily allowance is
+spent or the remote provider is unreachable, rather than refusing. This is not
+a softening of "nothing falls back to the stub" — that stands, and the stub is
+excluded explicitly. `QuotaExceeded` already told the owner to "raise the
+limit, wait for the reset, or run a local provider"; the third option was an
+instruction to a human, and this is it automated. Which model answered is
+recorded on the provider and in the trail, because a résumé tailored by
+llama3.1 after the allowance ran out is a different document from one tailored
+by Gemini and the owner approving it should be able to tell.
+
+"Should be able to tell" was, until now, only true of someone reading the
+trail. `answered_by` lived on the provider object and died with the run, so the
+review screen — the one place the distinction has consequences, because it is
+where the document gets approved and sent — never showed it. It is now stored
+on the résumé as `resumes.tailored_by` and rendered under the diff.
+
+On the résumé rather than the application, because the reuse paths are the ones
+that would otherwise go blank: an overnight batch and the tailoring cache both
+serve a document written in an earlier run to an application that never calls a
+provider, and the model is a property of the document, not of the run that
+attached it. Read *after* the rewrites too, not before — `FallbackProvider`
+resets `answered_by` to the primary at the top of every call, so a value
+captured early names the model that did not answer, which is precisely the case
+worth seeing.
+
+NULL means unrecorded — a base résumé, or one tailored before the column
+existed — and the screen says "not recorded" rather than showing nothing. A
+blank line reads as "no fallback happened", which is the one thing it must not
+be mistaken for. The migration deliberately does not backfill: there is no
+record of which model wrote the existing rows, and a plausible guess on a
+document about to be sent to an employer is worse than an honest gap.
+
+### Comparing two models on one posting
+
+`/review` has a **Compare models** panel: it tailors the same posting with the
+local model and with the cloud one and shows both, each with its rewrite count,
+its guard-refusal count, and a button that makes it the document to upload.
+
+It exists because §7 made the provider settable without making it *decidable*.
+Answering "is the cloud one better for this résumé and this job" meant editing
+`.env`, re-running, and holding the first result in your head.
+
+Three properties are load-bearing:
+
+- **On demand.** Each remote side is another §2.8 upload of the owner's résumé.
+  Running both on every application would double that on every application,
+  including the ones rejected at review. The tailoring cache is consulted per
+  provider, so comparing a posting twice sends nothing.
+- **Both sides are guard-checked before either is shown.** A comparison offers
+  each column as something the owner may choose and send. An unvetted draft
+  presented that way is a fabricated bullet with a button under it. The refusal
+  counts are shown per side — a model that keeps trying to invent should not
+  look identical to one that does not.
+- **A side that cannot run is a reported column, not a missing one.** No key,
+  spent allowance, Ollama not started: each becomes a candidate carrying the
+  reason. A comparison silently missing half of itself reads as a verdict on the
+  half that is there. `CannotCompare` is separate and covers the case where
+  there was never anything to compare — no base résumé, no posting text —
+  because a precondition is not a model outcome.
+
+Selecting is restricted server-side to the two versions actually compared. This
+sets the file an employer receives, and "any résumé id this candidate owns" is a
+wider door than the screen needs.
+
 Tuning any of these against the guard's own pass rate is the trap in
 `docs/REFERENCE.md` §3.6: it optimises the one referee we control, and a
 rewrite can satisfy the guard while reading worse. Change one only with a

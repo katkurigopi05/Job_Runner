@@ -336,7 +336,14 @@ async def _tailor(
     prepared = await _prepared_resume(session, application, profile)
     if prepared is not None:
         application.tailored_resume_id = prepared
-        return {"reused": True}
+        # No provider is built on this path, so the model cannot be read live —
+        # it has to come off the row the batch wrote. A reused résumé that
+        # cannot name its model is the case this whole field exists for.
+        prepared_row = await session.get(Resume, prepared)
+        return {
+            "reused": True,
+            "answered_by": prepared_row.tailored_by if prepared_row else None,
+        }
 
     resume = await session.get(Resume, profile.base_resume_id)
     if resume is None or not resume.parsed_json:
@@ -379,9 +386,24 @@ async def _tailor(
             # audited, and the cheapest upload is the one not made.
             application.tailored_resume_id = cached.id
             log.info("tailored_resume_reused", resume_id=str(cached.id))
-            return {"changed": 0, "unchanged": 0, "rejected": 0, "reused": True}
+            return {
+                "changed": 0,
+                "unchanged": 0,
+                "rejected": 0,
+                "reused": True,
+                # Same reasoning as the batch path above: the call that wrote
+                # this document happened in another run, so the row is the only
+                # source for which model answered it.
+                "answered_by": cached.tailored_by,
+            }
 
         result = await tailor_bullets(provider, bullets, posting_text, corpus)
+        # After the rewrites, never before. FallbackProvider resets
+        # `answered_by` to the primary at the top of every call and only
+        # rewrites it once the primary has actually failed, so a value read
+        # ahead of the call names the model that did not answer — which is
+        # exactly the case the review screen needs to be able to show.
+        answered_by = getattr(provider, "answered_by", None) or getattr(provider, "name", None)
         summary = summarize(result)
 
         # The file the owner uploads. Rendered even when every rewrite was
@@ -398,6 +420,7 @@ async def _tailor(
             projects=projects,
             posting_text=posting_text,
             tailored_key=cache_key,
+            answered_by=answered_by,
             # From the application, not from `posting`: the adapter's
             # ParsedPosting is read off the page and has no row id.
             posting_id=application.posting_id,
@@ -410,6 +433,7 @@ async def _tailor(
             "unchanged": summary.unchanged,
             # Rewrites the guard refused. Surfaced, not swallowed.
             "rejected": summary.rejected,
+            "answered_by": answered_by,
             "unified": summary.unified,
             "changes": [change.model_dump() for change in summary.changes],
         }

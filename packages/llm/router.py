@@ -23,6 +23,10 @@ wrong for most of them. See `TEMPERATURES` below.
 from __future__ import annotations
 
 import os
+from typing import TypeVar
+
+import structlog
+from pydantic import BaseModel
 
 from packages.llm.provider import (
     DEFAULT_TEMPERATURE,
@@ -30,6 +34,11 @@ from packages.llm.provider import (
     LLMProvider,
     build_provider,
 )
+
+log = structlog.get_logger(__name__)
+
+#: Matches `LLMProvider.complete_json`'s schema parameter.
+T = TypeVar("T", bound=BaseModel)
 
 #: Fields whose answers are copied from the profile, never generated. §2.2
 #: names work authorization and employment history; salary sits alongside them
@@ -59,6 +68,14 @@ class ProtectedFieldError(LLMError):
 #: Strongest first. A provider is skipped when it is not configured — no API
 #: key, or no reachable host — rather than when it errors. A configured
 #: provider that fails still fails loudly; see the module docstring.
+#: `best_available()` walks this in order. **OpenRouter is deliberately not in
+#: it.** It is a real provider and `build_provider` knows it, but a key sitting
+#: in `.env` must not silently redirect every "auto" task to it: OpenRouter
+#: forwards to an upstream the audit trail cannot name, and on a cloaked
+#: `stealth/*` route the vendor is undisclosed by design. §2.8 asks that the one
+#: permitted upload be auditable, so that route is something the owner opts into
+#: by naming it — `LLM_PROVIDER=openrouter`, or `LLM_TASK_TAILOR=openrouter` —
+#: never something inherited from having configured a key.
 QUALITY_ORDER = ("anthropic", "gemini", "ollama", "stub")
 
 
@@ -88,6 +105,8 @@ def _configured(name: str) -> bool:
         return bool(os.environ.get("GEMINI_API_KEY") or settings.gemini_api_key)
     if name == "anthropic":
         return bool(os.environ.get("ANTHROPIC_API_KEY") or settings.anthropic_api_key)
+    if name == "openrouter":
+        return bool(os.environ.get("OPENROUTER_API_KEY") or settings.openrouter_api_key)
     return False
 
 
@@ -135,13 +154,158 @@ def temperature_for(task: str) -> float:
     return TEMPERATURES.get(task, DEFAULT_TEMPERATURE)
 
 
+#: The §7 tasks the owner may point at a provider, and the setting for each.
+#:
+#: Deliberately not every task. `classify_inbound_email` and the assistant read
+#: recruiter mail and chat context; §2.8 permits one third-party upload and
+#: that is not it, so those stay local and are not listed here. A setting that
+#: could move them would be a way to opt out of a non-negotiable by editing
+#: `.env`.
+CHOOSABLE_TASKS: dict[str, str] = {
+    "tailor_resume": "llm_task_tailor",
+    "write_cover_letter": "llm_task_cover_letter",
+    "answer_open_ended_question": "llm_task_open_ended",
+}
+
+#: The provider a fallback lands on. Never the stub: §7 is explicit that canned
+#: text must not reach a real application, and the whole value of StubProvider's
+#: marker is that "nothing is configured" stays visible.
+LOCAL_PROVIDER = "ollama"
+
+
+def cloud_for_tailoring() -> str | None:
+    """The remote provider a tailoring comparison should run against.
+
+    None when there is no remote side to compare with — no key anywhere, or the
+    owner pinned tailoring to the local model and configured nothing else. The
+    caller reports that as a candidate carrying the reason rather than quietly
+    showing one column, because a comparison missing half of itself reads as a
+    verdict.
+
+    An explicit `LLM_TASK_TAILOR` wins when it names a remote provider: it is
+    the provider real tailoring would use, so it is the one worth comparing
+    against. `openrouter` is reachable this way and only this way — it is kept
+    out of `QUALITY_ORDER` on purpose, and a comparison must not be the back
+    door that reintroduces it as a default.
+    """
+    chosen = _chosen("tailor_resume")
+    if chosen and chosen not in (LOCAL_PROVIDER, "stub"):
+        return chosen if _configured(chosen) else None
+
+    for name in QUALITY_ORDER:
+        if name in (LOCAL_PROVIDER, "stub"):
+            continue
+        if _configured(name):
+            return name
+    return None
+
+
+def _chosen(task: str) -> str | None:
+    """The provider the owner pinned this task to, if any."""
+    from packages.core.config import get_settings
+
+    field = CHOOSABLE_TASKS.get(task)
+    if field is None:
+        return None
+    value = (getattr(get_settings(), field, "auto") or "auto").strip().lower()
+    return None if value in ("", "auto") else value
+
+
+class FallbackProvider:
+    """A remote provider with the local model behind it.
+
+    Wraps rather than replaces, so the primary is still tried first and still
+    fails loudly for the reasons the module docstring gives. What it removes is
+    the case §7's own `QuotaExceeded` message describes: "raise
+    LLM_DAILY_REMOTE_CALLS, wait for the reset, or run a local provider". The
+    third option was a manual instruction to a human; this is that option taken
+    automatically, and recorded.
+
+    `answered_by` is what the review screen reads. A résumé tailored by
+    llama3.1 after the Gemini allowance ran out is a different document from
+    one tailored by Gemini, and the owner approving it should be able to see
+    which they are looking at.
+    """
+
+    def __init__(self, primary: LLMProvider, task: str) -> None:
+        self.primary = primary
+        self.task = task
+        self.name = getattr(primary, "name", "unknown")
+        self.answered_by = self.name
+
+    def _local(self) -> LLMProvider:
+        return build_provider(LOCAL_PROVIDER)
+
+    def _should_retry(self, exc: Exception) -> bool:
+        from packages.llm.quota import QuotaExceeded
+
+        return isinstance(exc, (QuotaExceeded, LLMError))
+
+    def _note(self, exc: Exception, local: LLMProvider) -> None:
+        log.warning(
+            "llm_fell_back_to_local",
+            task=self.task,
+            primary=self.name,
+            reason=type(exc).__name__,
+        )
+        self.answered_by = f"{LOCAL_PROVIDER}:{getattr(local, 'model', '')}".rstrip(":")
+
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int = 1024,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> str:
+        self.answered_by = self.name
+        try:
+            return await self.primary.complete(
+                system, user, max_tokens=max_tokens, temperature=temperature
+            )
+        except Exception as exc:
+            if not self._should_retry(exc):
+                raise
+            local = self._local()
+            self._note(exc, local)
+            return await local.complete(
+                system, user, max_tokens=max_tokens, temperature=temperature
+            )
+
+    async def complete_json(self, system: str, user: str, schema: type[T]) -> T:
+        self.answered_by = self.name
+        try:
+            return await self.primary.complete_json(system, user, schema)
+        except Exception as exc:
+            if not self._should_retry(exc):
+                raise
+            local = self._local()
+            self._note(exc, local)
+            return await local.complete_json(system, user, schema)
+
+
 def _for_task(task: str, preferred: str | None = None) -> LLMProvider:
     """Build a provider, recording which task asked for it.
 
     `preferred` is a request, not a fallback chain. If it is configured and
     broken, that surfaces — see the module docstring.
+
+    Order: a provider the caller pinned in code wins over one the owner pinned
+    in settings, because the in-code ones are the §2.8 locks rather than
+    preferences. Then the owner's choice, then `best_available()`.
     """
-    return build_provider(preferred) if preferred else build_provider(best_available())
+    selected = preferred or _chosen(task) or best_available()
+    provider = build_provider(selected)
+
+    from packages.core.config import get_settings
+
+    if (
+        get_settings().llm_fallback_local
+        and selected not in (LOCAL_PROVIDER, "stub")
+        and _configured(LOCAL_PROVIDER)
+    ):
+        return FallbackProvider(provider, task)
+    return provider
 
 
 def classify_inbound_email() -> LLMProvider:

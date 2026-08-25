@@ -38,6 +38,22 @@ class Settings(BaseSettings):
     #: set to 0 in tests, where the sleeps are pure wall clock.
     llm_call_interval_s: float = 4.0
     anthropic_api_key: str | None = None
+    #: OpenRouter reaches many upstream models through one key. Read the same
+    #: way as the keys above, so `.env` works.
+    #:
+    #: Setting it does not change what "auto" picks: this provider is left out
+    #: of `router.QUALITY_ORDER` on purpose, so it answers only when named by
+    #: `LLM_PROVIDER` or one of the per-task settings below. OpenRouter forwards
+    #: to an upstream provider the audit trail cannot see, and for a cloaked
+    #: `stealth/*` route that provider is undisclosed by design — §2.8 wants the
+    #: one permitted upload to be auditable, so a route whose recipient cannot
+    #: be named has to be chosen deliberately rather than inherited from a key
+    #: being present.
+    openrouter_api_key: str | None = None
+    #: Overrides OpenRouterProvider.DEFAULT_MODEL. Pre-release `stealth/*`
+    #: routes are withdrawn without notice, at which point every call 404s and
+    #: this is the one-line fix.
+    openrouter_model: str | None = None
     #: Where Ollama listens. Same reason as the keys above: `.env.example`
     #: documents this key, so reading it only from os.environ meant a `.env`
     #: pointing at another host was ignored and the caller fell back to
@@ -57,6 +73,31 @@ class Settings(BaseSettings):
     #: A field rather than a Python default because the value was previously
     #: written into three files and settable in none.
     ollama_model: str = "llama3.1"
+
+    #: Which provider answers each §7 task that is allowed a choice.
+    #:
+    #: "auto" keeps `router.best_available()` — the strongest configured
+    #: provider — which is what shipped. Naming one ("ollama", "gemini",
+    #: "anthropic", "openrouter") pins that task, so local tailoring no longer
+    #: requires deleting the API key that every other task wants kept.
+    #:
+    #: Only these three are settable, and that is a §2.8 boundary rather than
+    #: an oversight: inbound-email classification and the assistant read
+    #: recruiter mail and chat context, which §2.8 does not permit uploading
+    #: and §14 pins to Ollama in code. A setting that could send them to a
+    #: third party would be a way to opt out of a non-negotiable.
+    llm_task_tailor: str = "auto"
+    llm_task_cover_letter: str = "auto"
+    llm_task_open_ended: str = "auto"
+    #: On a spent quota or an unreachable remote provider, answer with the
+    #: local model instead of refusing.
+    #:
+    #: §7 says nothing falls back to the stub, and that still holds — the stub
+    #: returns canned text and putting that on a real application is the
+    #: failure it was written to make visible. A local model is a real answer,
+    #: and `QuotaExceeded` already tells the owner to "run a local provider",
+    #: which is this, automated. The audit trail records which one answered.
+    llm_fallback_local: bool = True
 
     #: Stable across restarts so a worker recognizes its own abandoned lease.
     #: Defaults to the hostname when unset.

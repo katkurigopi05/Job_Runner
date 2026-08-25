@@ -56,12 +56,52 @@ export interface ResumeChange {
 
 /** What tailoring changed, shown before the owner approves. §2.1. */
 export interface ResumeDiff {
+  /**
+   * Optional because the reuse paths genuinely have none of it. When an
+   * overnight batch or the tailoring cache already wrote this document, the
+   * apply run attaches it without rewriting anything, and the payload is a
+   * `reused` marker and the model that wrote it. The old required typing said
+   * otherwise and `ResumeDiffView` believed it, mapping over an undefined
+   * `changes`.
+   */
+  changed?: number;
+  unchanged?: number;
+  /** Rewrites the fabrication guard refused and replaced with the original. */
+  rejected?: number;
+  unified?: string;
+  changes?: ResumeChange[];
+  /** This run attached an already-tailored résumé rather than writing one. */
+  reused?: boolean;
+  /**
+   * Which model wrote the document: "gemini", or "ollama:llama3.1" when §7's
+   * fallback answered after the remote allowance ran out. Null or absent means
+   * unrecorded — a résumé tailored before the column existed — never a guess.
+   */
+  answered_by?: string | null;
+}
+
+/**
+ * One model's attempt at the same posting, for the comparison view.
+ *
+ * `requested` and `answered_by` are separate because §7's fallback answers with
+ * the local model when the remote allowance is spent — a column labelled by
+ * what was asked for would compare the local model against itself.
+ *
+ * `error` set means this side could not run: no key, spent quota, provider
+ * unreachable. It is rendered rather than dropped; a comparison missing half of
+ * itself reads as a verdict on the half that is there.
+ */
+export interface TailoringCandidate {
+  requested: string;
+  answered_by?: string | null;
+  resume_id?: string | null;
   changed: number;
   unchanged: number;
-  /** Rewrites the fabrication guard refused and replaced with the original. */
   rejected: number;
-  unified: string;
-  changes: ResumeChange[];
+  unified?: string;
+  changes?: ResumeChange[];
+  reused?: boolean;
+  error?: string | null;
 }
 
 export interface ReviewRecord {
@@ -71,6 +111,8 @@ export interface ReviewRecord {
   unanswered?: UnansweredQuestion[];
   screenshot_ref?: string | null;
   resume_diff?: ResumeDiff | null;
+  /** Present once the owner has asked for a local-vs-cloud comparison. */
+  tailoring_comparison?: TailoringCandidate[] | null;
   owner_answers?: Record<string, unknown>;
   owner_approved?: boolean;
   reason?: string;
@@ -443,6 +485,17 @@ export const api = {
     request<Application>(`/applications/${id}/otp`, {
       method: "POST",
       body: JSON.stringify({ code }),
+    }),
+
+  /** Tailor this posting with the local model and the cloud one, for a choice. */
+  compareTailoring: (id: string) =>
+    request<Application>(`/applications/${id}/tailoring/compare`, { method: "POST" }),
+
+  /** Send this one. Restricted server-side to the versions that were compared. */
+  selectTailoring: (id: string, resumeId: string) =>
+    request<Application>(`/applications/${id}/tailoring/select`, {
+      method: "POST",
+      body: JSON.stringify({ resume_id: resumeId }),
     }),
 };
 
