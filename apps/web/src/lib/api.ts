@@ -56,12 +56,28 @@ export interface ResumeChange {
 
 /** What tailoring changed, shown before the owner approves. §2.1. */
 export interface ResumeDiff {
-  changed: number;
-  unchanged: number;
+  /**
+   * Optional because the reuse paths genuinely have none of it. When an
+   * overnight batch or the tailoring cache already wrote this document, the
+   * apply run attaches it without rewriting anything, and the payload is a
+   * `reused` marker and the model that wrote it. The old required typing said
+   * otherwise and `ResumeDiffView` believed it, mapping over an undefined
+   * `changes`.
+   */
+  changed?: number;
+  unchanged?: number;
   /** Rewrites the fabrication guard refused and replaced with the original. */
-  rejected: number;
-  unified: string;
-  changes: ResumeChange[];
+  rejected?: number;
+  unified?: string;
+  changes?: ResumeChange[];
+  /** This run attached an already-tailored résumé rather than writing one. */
+  reused?: boolean;
+  /**
+   * Which model wrote the document: "gemini", or "ollama:llama3.1" when §7's
+   * fallback answered after the remote allowance ran out. Null or absent means
+   * unrecorded — a résumé tailored before the column existed — never a guess.
+   */
+  answered_by?: string | null;
 }
 
 export interface ReviewRecord {

@@ -111,6 +111,7 @@ async def publish_tailored(
     options: AssemblyOptions | None = None,
     tailored_key: str | None = None,
     posting_id: uuid.UUID | None = None,
+    answered_by: str | None = None,
 ) -> Resume | None:
     """Render the tailored résumé to PDF, store it, and return its row.
 
@@ -158,6 +159,11 @@ async def publish_tailored(
         # readable. A posting with no content hash is uncacheable but still
         # perfectly nameable, so this is set even when the key is not.
         tailored_for_posting_id=posting_id,
+        # Read off the provider *after* the rewrites, so a run that fell back to
+        # the local model records the model that answered rather than the one
+        # that was asked. Left NULL when the caller did not say: unrecorded is
+        # an honest answer, a guessed model name is not.
+        tailored_by=answered_by,
     )
     session.add(resume)
     await session.flush()
@@ -168,5 +174,6 @@ async def publish_tailored(
         version=version,
         bytes=len(pdf),
         rewritten=result.changed_count,
+        tailored_by=answered_by,
     )
     return resume

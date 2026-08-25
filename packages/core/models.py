@@ -138,6 +138,16 @@ class Resume(Base):
     tailored_for_posting_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("postings.id", ondelete="SET NULL"), index=True
     )
+    #: Which model wrote this document — "gemini", or "ollama:llama3.1" when the
+    #: allowance ran out mid-run and §7's fallback answered. Stored on the
+    #: résumé rather than derived at approval time because the run that tailored
+    #: it is gone by the time a cache hit or an overnight batch serves this row
+    #: to a different application, and those are the paths where the review
+    #: screen would otherwise show nothing at all.
+    #: NULL means unrecorded — a base résumé, or one tailored before this
+    #: column existed. Never a guess: a wrong model name is worse than a blank,
+    #: because the owner would have no reason to doubt it.
+    tailored_by: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = _created_at()
 
 

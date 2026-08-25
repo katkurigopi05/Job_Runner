@@ -293,6 +293,28 @@ recorded on the provider and in the trail, because a résumé tailored by
 llama3.1 after the allowance ran out is a different document from one tailored
 by Gemini and the owner approving it should be able to tell.
 
+"Should be able to tell" was, until now, only true of someone reading the
+trail. `answered_by` lived on the provider object and died with the run, so the
+review screen — the one place the distinction has consequences, because it is
+where the document gets approved and sent — never showed it. It is now stored
+on the résumé as `resumes.tailored_by` and rendered under the diff.
+
+On the résumé rather than the application, because the reuse paths are the ones
+that would otherwise go blank: an overnight batch and the tailoring cache both
+serve a document written in an earlier run to an application that never calls a
+provider, and the model is a property of the document, not of the run that
+attached it. Read *after* the rewrites too, not before — `FallbackProvider`
+resets `answered_by` to the primary at the top of every call, so a value
+captured early names the model that did not answer, which is precisely the case
+worth seeing.
+
+NULL means unrecorded — a base résumé, or one tailored before the column
+existed — and the screen says "not recorded" rather than showing nothing. A
+blank line reads as "no fallback happened", which is the one thing it must not
+be mistaken for. The migration deliberately does not backfill: there is no
+record of which model wrote the existing rows, and a plausible guess on a
+document about to be sent to an employer is worse than an honest gap.
+
 Tuning any of these against the guard's own pass rate is the trap in
 `docs/REFERENCE.md` §3.6: it optimises the one referee we control, and a
 rewrite can satisfy the guard while reading worse. Change one only with a
