@@ -355,6 +355,23 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     #: Scopes the answer to one application, so "what is it waiting on?" works.
     application_id: uuid.UUID | None = None
+    #: Which model answers. Omitted means the local one, which is the shipped
+    #: default and the only value that keeps chat context on this machine.
+    #:
+    #: Naming a remote provider sends the context — application URLs, profile
+    #: fields, recruiter correspondence — to that provider. The owner opted
+    #: into that; see CLAUDE.md §14. Per request rather than per environment so
+    #: the choice is visible at the point it is made instead of buried in
+    #: `.env`, and so it never persists past the question it was made for.
+    provider: str | None = None
+    #: Whether recruiter correspondence may go to a *remote* provider.
+    #:
+    #: Ignored for the local model, which always sees it — it never leaves the
+    #: machine, so there is nothing to withhold it from. Defaults to False, so
+    #: choosing a cloud provider does not silently take the mail along: it is
+    #: the most sensitive thing in the context and the only part written by
+    #: people who never chose a provider.
+    share_mail: bool = False
 
 
 class ChatReply(BaseModel):
@@ -362,10 +379,20 @@ class ChatReply(BaseModel):
 
     reply: str
     #: Which provider answered, or "refused" when a §2.2 boundary stopped it.
-    #: Surfaced so the owner can see the assistant really is running locally.
     provider: str
+    #: The exact model, so "ollama" cannot stand in for a cloud-served one and
+    #: a remote answer names the thing that produced it. None when refused.
+    model: str | None = None
     #: False when the answer came from a rule rather than the model.
     grounded: bool
+    #: False when the context left this machine. The dashboard shows this, so
+    #: an answer that cost privacy is never indistinguishable from one that did
+    #: not.
+    local: bool = True
+    #: Whether recruiter correspondence was actually in the context. Reports
+    #: what happened rather than what was asked: the local model always sees it
+    #: regardless of the request field.
+    shared_mail: bool = True
 
 
 # --------------------------------------------------------------------------

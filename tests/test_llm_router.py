@@ -68,12 +68,19 @@ def test_a_broken_preferred_provider_does_not_fall_back(monkeypatch) -> None:
 
 
 def test_only_the_uploading_tasks_are_choosable() -> None:
-    """§2.8 permits one third-party upload; the rest cannot be redirected.
+    """The tasks an environment variable can redirect. Still these three.
 
-    This is the whole safety property of the feature. Inbound-email
-    classification reads recruiter correspondence and the assistant reads chat
-    context — a setting able to point either at a cloud provider would be a way
-    to opt out of a non-negotiable by editing `.env`.
+    Inbound-email classification reads recruiter correspondence and cannot be
+    pointed anywhere: a setting able to move it would be a way to opt out of a
+    non-negotiable by editing `.env`.
+
+    The assistant is the case that changed, and it changed *without* joining
+    this set. The owner widened §14 so chat can be answered by a cloud provider
+    — but the choice is a per-request field on `ChatRequest`, made in the UI
+    for one question, not a variable that silently redirects every future
+    conversation. `apps/api/routers/chat.py` still ignores `LLM_PROVIDER`
+    entirely. Whichever way that decision goes, it should not be reachable from
+    here.
     """
     assert set(router.CHOOSABLE_TASKS) == {
         "tailor_resume",

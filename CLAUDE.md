@@ -283,6 +283,13 @@ stay on Ollama in code and `CHOOSABLE_TASKS` does not list them — a setting
 able to move them would be a way to opt out of a non-negotiable by editing
 `.env`. `test_only_the_uploading_tasks_are_choosable` holds that.
 
+The assistant has since gained a cloud option, and it is worth being precise
+about what that did and did not change here. It is **still absent from
+`CHOOSABLE_TASKS`**, and `/chat` still ignores `LLM_PROVIDER`. The owner picks a
+provider per question in the UI (§14); no environment variable redirects the
+assistant, which is the property this list protects. Inbound-email
+classification did not move at all.
+
 **OpenRouter is a fourth provider, and it is opt-in by name.** One key reaches
 many upstream models, and `docs/PARITY.md` had it refused under §3's "no paid
 service without asking" — the owner asked, and the route in use is free, so §11
@@ -643,22 +650,69 @@ the owner's own data, answered by a model on this machine.
 It was built after §9's phases and is not one of them. Three properties are
 load-bearing and easy to undo by accident.
 
-**Local-only, not configurable.** Chat context carries application URLs,
-profile fields, and recruiter correspondence. §2.8 permits exactly one
-third-party upload — the tailoring call — and a chat window is not it. So
-`apps/api/routers/chat.py` asks for Ollama *by name* rather than reading
-`LLM_PROVIDER`, and when Ollama is down it errors instead of falling back to a
-cloud provider that happens to be configured. Setting `LLM_PROVIDER=gemini`
-changes tailoring and leaves the assistant local.
+**Local by default; remote only when asked, per question.** This paragraph used
+to read "local-only, not configurable", and that was the rule for good reason:
+chat context carries application URLs, profile fields, and recruiter
+correspondence, and §2.8 permits exactly one third-party upload — the tailoring
+call — which a chat window is not.
 
-Asking for Ollama by name stopped being enough to know that. Ollama serves
+**The owner widened it deliberately.** `ChatRequest.provider` accepts `ollama`,
+`gemini`, `anthropic` or `openrouter`, and the `/chat` UI has a picker. Naming a
+remote provider sends the context to it. Recording the change rather than
+quietly editing the rule away: this *is* a narrowing of §2.8, it was made
+knowingly, and a reader who finds recruiter mail in a Gemini log should be able
+to find out why here.
+
+What did not change is what happens when nobody asks:
+
+- Omitting `provider` answers locally. The shipped default still costs nothing.
+- `apps/api/routers/chat.py` still ignores `LLM_PROVIDER` entirely, so nothing
+  about tailoring configuration moves the assistant.
+- The assistant is still **not** in `CHOOSABLE_TASKS`. The choice is a
+  per-request field made in the UI for one question, not an environment
+  variable that silently redirects every future conversation — the `.env`
+  opt-out route §7 warns about stays closed.
+- **No fallback in either direction.** A local model that is down does not get
+  promoted to a cloud provider, and a cloud provider that fails does not drop
+  to the local one. `LLM_FALLBACK_LOCAL` covers tailoring and deliberately does
+  not reach here: there the fallback is recorded on the document, here it would
+  be a different answer wearing the same label.
+- **Inbound-email classification is untouched** and remains local in code. The
+  owner widened the assistant, not the inbox.
+
+The `audit.is_local` check survives, narrowed to the local path. Ollama serves
 cloud-hosted models over the same localhost API — `kimi-k2.6:cloud` and
 `qwen3-coder:480b-cloud` are both in the owner's model list, neither runs on
-this machine, and the base URL is identical either way. So `/chat` checks the
-*model* through `audit.is_local` and refuses a remote one, which matters more
-now that `OLLAMA_MODEL` is a setting: one edit to `.env` could otherwise route
-applications and recruiter mail to a third party while the reply still read
-`provider="ollama"`.
+this machine, and the base URL is identical either way. That check was never
+only about distance; it is about the label matching. Choosing Gemini openly is a
+decision. Asking for the local model and silently getting a third party is not a
+decision at all, so it still refuses.
+
+The reply carries `model` and `local`, both computed rather than inferred from
+the provider name, and the UI marks every remote turn. An answer that cost
+privacy must never look like one that did not.
+
+**Recruiter mail is gated separately, and defaults to withheld.** Choosing a
+cloud provider does not take the inbox with it. `ChatRequest.share_mail` is
+`False` unless the owner ticks the box for that question, and the `/chat` panel
+shows the box only when a remote model is selected.
+
+It is separate from the provider choice because it is a different decision. The
+rest of the context is the owner's own material — their applications, their
+profile. Recruiter correspondence is *other people's writing about them*, sent
+privately, by people who never chose a provider. Consenting to send your own
+data somewhere is not the same as consenting to send theirs, so the two are not
+one switch.
+
+For the local model it is always included and the toggle is not shown. The gate
+is about crossing a boundary; on the side where nothing crosses there is nothing
+to gate, and rendering a control that does nothing would be worse than
+rendering none.
+
+When it is withheld the context says so — `recent replies: withheld` — rather
+than omitting the section. The assistant is told to answer from what it was
+handed and to say when it does not know, so a missing section would read as "no
+replies have arrived", which is a different answer and a wrong one.
 
 The model is **llama3.1**, chosen by benchmarking the six local models against
 this project's own tasks rather than by reputation. On the 30 labeled recruiter
