@@ -440,7 +440,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+/**
+ * What `/health` reports. `status` is `degraded` when the API answers but
+ * cannot reach Postgres — the case a hardcoded "ok" used to hide.
+ */
+export interface Health {
+  status: "ok" | "degraded";
+  api: string;
+  database: "ok" | "down";
+}
+
 export const api = {
+  health: () => request<Health>("/health"),
+
   applications: () => request<Application[]>("/applications"),
   application: (id: string) => request<Application>(`/applications/${id}`),
   events: (id: string) => request<ApplicationEvent[]>(`/applications/${id}/events`),
