@@ -14,7 +14,12 @@ export default function ChatPage() {
         </p>
       </header>
 
-      <div className="h-[34rem]">
+      {/* Clamped rather than fixed: 34rem was chosen when this panel had one
+          header row, and every row added since — the provider picker, the mail
+          gate — ate into it until the content no longer fit. A viewport-relative
+          height with a floor and a ceiling grows with the panel instead of
+          silently overflowing the next time a control is added. */}
+      <div className="h-[clamp(28rem,70vh,44rem)]">
         <Assistant />
       </div>
 

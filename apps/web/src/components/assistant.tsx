@@ -225,7 +225,13 @@ export function Assistant({
 
       {/* The grey canvas. */}
       <div
-        className={`min-h-0 flex-1 space-y-4 overflow-y-auto bg-rule/25 p-3 ${compact ? "" : "min-h-96"}`}
+        // `min-h-0` and nothing else: a flex child defaults to min-height:auto,
+        // which refuses to shrink below its content and pushes the column past
+        // its container. This carried `min-h-96` alongside, and the two are the
+        // same CSS property — the floor won, the panel outgrew the page's fixed
+        // height, and the overflow painted over the note beneath it. The
+        // container governs the height; this scrolls inside whatever it gets.
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-rule/25 p-3"
       >
         {turns.length === 0 ? (
           <p className="px-1 py-8 text-center font-mono text-xs text-ink-faint">
