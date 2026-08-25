@@ -6,6 +6,7 @@ import type { Application, ResumeParsed, Screening } from "@/lib/api";
 import { ResumePreview } from "@/components/resume-preview";
 import { ResumeDiffView } from "@/components/resume-diff";
 import { TailoringCompare } from "@/components/tailoring-compare";
+import { CoverLetterView } from "@/components/cover-letter";
 import { FillRate, StatusPill } from "@/components/status";
 import { approve, reject, submitOtp, type ReviewResult } from "./actions";
 
@@ -163,6 +164,21 @@ export function ReviewCard({
             </summary>
             <div className="mt-4">
               <ResumeDiffView diff={review.resume_diff} />
+            </div>
+          </details>
+        ) : null}
+
+        {/* Open by default, unlike the comparison below. This is a document
+            about to be sent under the owner's name and it was written by a
+            model — reading it is part of approving, not an optional detail.
+            Absent entirely when the form never asked, which most do not. */}
+        {review.cover_letter ? (
+          <details className="border-b border-rule px-6 py-4" open>
+            <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
+              Cover letter
+            </summary>
+            <div className="mt-4">
+              <CoverLetterView letter={review.cover_letter} />
             </div>
           </details>
         ) : null}

@@ -307,3 +307,76 @@ def test_the_letter_is_passed_to_the_answer_builder() -> None:
     assert "cover_letter_text=" in source or "cover_letter_path=" in source, (
         "the letter is written and never given to build_answers"
     )
+
+
+# --------------------------------------------------------------------------
+# Which model wrote it
+# --------------------------------------------------------------------------
+
+
+class _FallsBack:
+    """Answers, but not with the model that was asked for.
+
+    §7's `LLM_FALLBACK_LOCAL` does exactly this when the remote allowance is
+    spent: the call succeeds, and a different model produced the text.
+    """
+
+    name = "gemini"
+    model = "gemini-3.6-flash"
+
+    def __init__(self, text: str) -> None:
+        self.answered_by = self.name
+        self._text = text
+
+    async def complete(self, system: str, user: str, **kwargs: object) -> str:
+        self.answered_by = "ollama:llama3.1"
+        return self._text
+
+    async def complete_json(self, system: str, user: str, schema: type) -> object:
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_the_letter_records_the_model_that_actually_wrote_it(db_session, monkeypatch) -> None:
+    """A letter goes to an employer under the owner's name.
+
+    A tailored résumé records this on its own row (`resumes.tailored_by`); a
+    letter has no row, so it rides in the review record beside the text it
+    describes. Read after the call, never before — `FallbackProvider` rewrites
+    `answered_by` only once the primary has failed, so an early read names the
+    model that did not answer.
+    """
+    application, profile = await _setup(db_session)
+    provider = _FallsBack(_supported_letter())
+    monkeypatch.setattr(llm_router, "write_cover_letter", lambda: provider)
+
+    outcome = await apply_job._cover_letter(
+        db_session, application, profile, _posting(), [_cover_letter_question()]
+    )
+
+    assert outcome is not None
+    assert outcome["accepted"] is True
+    assert outcome["answered_by"] == "ollama:llama3.1", (
+        "reported the provider that was asked rather than the model that "
+        "answered, so a fallback is invisible at approval time"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_letter_still_says_which_model_wrote_it(db_session, monkeypatch) -> None:
+    """A refusal is a result about a model, so it has to name the model.
+
+    "The guard refused it" reads differently depending on whether the local
+    model or the cloud one produced the draft.
+    """
+    application, profile = await _setup(db_session)
+    provider = _FallsBack(_fabricating_letter())
+    monkeypatch.setattr(llm_router, "write_cover_letter", lambda: provider)
+
+    outcome = await apply_job._cover_letter(
+        db_session, application, profile, _posting(), [_cover_letter_question()]
+    )
+
+    assert outcome is not None
+    assert outcome["accepted"] is False
+    assert outcome["answered_by"] == "ollama:llama3.1"

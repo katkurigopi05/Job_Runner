@@ -297,6 +297,24 @@ async def _projects_for(
     return relevant_for_posting(inventory, posting_text, embedder=get_embedder())
 
 
+def _answered_by(provider: Any | None) -> str | None:
+    """Which model actually answered — read *after* the call, never before.
+
+    `FallbackProvider` resets `answered_by` to the primary at the top of every
+    call and rewrites it only once the primary has failed, so a value read
+    ahead of time names the model that did not answer. That is precisely the
+    case worth surfacing: a document produced by llama3.1 after the remote
+    allowance ran out is not the document Gemini would have produced, and the
+    owner approving it should be able to tell.
+
+    None when no provider was ever built, which is honest — an unrecorded model
+    is not a guessed one.
+    """
+    if provider is None:
+        return None
+    return getattr(provider, "answered_by", None) or getattr(provider, "name", None)
+
+
 async def _tailor(
     session: AsyncSession,
     application: Application,
@@ -398,12 +416,8 @@ async def _tailor(
             }
 
         result = await tailor_bullets(provider, bullets, posting_text, corpus)
-        # After the rewrites, never before. FallbackProvider resets
-        # `answered_by` to the primary at the top of every call and only
-        # rewrites it once the primary has actually failed, so a value read
-        # ahead of the call names the model that did not answer — which is
-        # exactly the case the review screen needs to be able to show.
-        answered_by = getattr(provider, "answered_by", None) or getattr(provider, "name", None)
+        # After the rewrites, never before — see `_answered_by`.
+        answered_by = _answered_by(provider)
         summary = summarize(result)
 
         # The file the owner uploads. Rendered even when every rewrite was
@@ -508,6 +522,9 @@ async def _cover_letter(
     if resume is None or not resume.parsed_json:
         return None
 
+    # Bound before the try so the failure path can still say which provider was
+    # being asked, and say nothing when the failure was building it.
+    provider: Any | None = None
     try:
         from packages.tailor.cover import write
         from packages.tailor.guard import SourceCorpus
@@ -519,8 +536,9 @@ async def _cover_letter(
         # résumé traces to the base by construction — the guard enforces it —
         # so the base corpus is the wider of the two nowhere and the safer of
         # the two here, and it does not depend on tailoring having succeeded.
+        provider = llm_router.write_cover_letter()
         letter = await write(
-            llm_router.write_cover_letter(),
+            provider,
             resume_text=parsed.text,
             job_description=posting_text,
             corpus=SourceCorpus.from_resume(parsed),
@@ -529,7 +547,11 @@ async def _cover_letter(
         )
     except Exception as exc:  # noqa: BLE001 - a letter is an enhancement
         log.warning("cover_letter_failed", error=type(exc).__name__)
-        return {"accepted": False, "rejected_reason": f"error: {type(exc).__name__}"}
+        return {
+            "accepted": False,
+            "rejected_reason": f"error: {type(exc).__name__}",
+            "answered_by": _answered_by(provider),
+        }
 
     outcome: dict[str, Any] = {
         "accepted": letter.usable,
@@ -539,6 +561,12 @@ async def _cover_letter(
         # A letter that survived only because most of it was deleted is worth
         # seeing on the review screen, not just in the accept/refuse bit.
         "sentences_dropped": letter.sentences_dropped,
+        # §7's fallback applies to `write_cover_letter` exactly as it does to
+        # tailoring, so a letter written by the local model after the allowance
+        # ran out has to be distinguishable from one written by the cloud one.
+        # The résumé records this on its own row; a letter has no row, so it
+        # rides in the review record beside the text it describes.
+        "answered_by": _answered_by(provider),
     }
 
     if not letter.usable:

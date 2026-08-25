@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import defer
+from starlette.concurrency import run_in_threadpool
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
@@ -149,18 +150,40 @@ async def list_matches(
         (await session.scalars(select(Application.url))).all() if not include_applied else []
     )
 
-    # Ordering happens before the limit, not during it. The SQL is ordered by
-    # score, so truncating inside the loop would take the top `limit` by score
-    # and only then sort those — a Bay Area posting at rank 51 would never be
-    # seen, which is the opposite of what "California first" is for.
-    kept = [
-        (match, posting)
-        for match, posting in rows
-        if (include_applied or posting.url not in applied_urls)
-        and filter_matches(posting, filters).kept
-    ]
-    if filters.us_only:
-        kept.sort(key=lambda row: (locality_rank(locality_of(row[1].location)), -row[0].score))
+    def _filter() -> list[tuple[Match, Posting]]:
+        # Ordering happens before the limit, not during it. The SQL is ordered
+        # by score, so truncating inside the loop would take the top `limit` by
+        # score and only then sort those — a Bay Area posting at rank 51 would
+        # never be seen, which is the opposite of what "California first" is for.
+        selected = [
+            (match, posting)
+            for match, posting in rows
+            if (include_applied or posting.url not in applied_urls)
+            and filter_matches(posting, filters).kept
+        ]
+        if filters.us_only:
+            selected.sort(
+                key=lambda row: (locality_rank(locality_of(row[1].location)), -row[0].score)
+            )
+        return selected
+
+    # Off the event loop, because this is the one genuinely CPU-bound step in
+    # the API. Seniority and remoteness are read out of posting *text*, so the
+    # filter cannot run in SQL, and it therefore scans every candidate row:
+    # measured at 2.5s over 4050 matches carrying 27MB of description between
+    # them, against 0.4s for the query that fetched them.
+    #
+    # Left inline, those 2.5s block the whole single-process API — not just this
+    # request. Every other page, and the dashboard's own health poll, queued
+    # behind it, which is why concurrent loads of /matches took 15-19s while the
+    # endpoint alone took 2.9s. Moving it to a worker thread does not make it
+    # faster; it stops one slow endpoint from freezing the rest of the app.
+    #
+    # Safe in a thread only because every attribute it touches is already
+    # loaded: title, location, description_raw and url all came back with the
+    # query above. `description_embedding` is deferred and must stay untouched —
+    # reading it here would emit a lazy load from a thread that has no session.
+    kept = await run_in_threadpool(_filter)
 
     feed: list[MatchOut] = []
     for match, posting in kept[:limit]:
