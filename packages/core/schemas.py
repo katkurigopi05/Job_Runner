@@ -262,6 +262,35 @@ class ResumeOut(BaseModel):
     created_at: datetime
 
 
+class ResumeContactEdit(BaseModel):
+    """Contact details as the owner wants them to read."""
+
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    links: list[str] = Field(default_factory=list)
+
+
+class ResumeEdit(BaseModel):
+    """An owner's edit to a parsed résumé.
+
+    Sections arrive whole — name to lines — rather than as a patch. The editor
+    shows the entire document, so a partial payload would mean the client and
+    the server disagreed about what was on screen, and the resolution of that
+    disagreement would silently delete a section.
+    """
+
+    contact: ResumeContactEdit = Field(default_factory=ResumeContactEdit)
+    sections: dict[str, list[str]] = Field(default_factory=dict)
+    #: Point every profile that used the source résumé at this new version.
+    #:
+    #: Default true because the alternative is an edit that changes nothing:
+    #: profiles keep their old `base_resume_id`, applications keep sending the
+    #: old file, and the owner has no way to tell from the screen. A silent
+    #: no-op is the failure this project keeps having.
+    adopt: bool = True
+
+
 class ResumeParsedOut(BaseModel):
     """What the parser extracted, so it can be checked before it is trusted."""
 

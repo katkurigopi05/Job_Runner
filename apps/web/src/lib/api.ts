@@ -493,6 +493,25 @@ export const api = {
   resumes: (candidateId: string) =>
     request<Resume[]>(`/resumes?candidate_id=${encodeURIComponent(candidateId)}`),
   resumeParsed: (id: string) => request<ResumeParsed>(`/resumes/${id}/parsed`),
+
+  /**
+   * Save an edited résumé. Creates a new version rather than rewriting the one
+   * an application may already have sent, re-renders the PDF so the file and
+   * the parsed form cannot disagree, and (by default) moves every profile that
+   * used the source onto it.
+   */
+  editResume: (
+    id: string,
+    body: {
+      contact: { name?: string; email?: string; phone?: string; links?: string[] };
+      sections: Record<string, string[]>;
+      adopt?: boolean;
+    },
+  ) =>
+    request<Resume>(`/resumes/${id}/edit`, {
+      method: "POST",
+      body: JSON.stringify({ adopt: true, ...body }),
+    }),
   profiles: () => request<Profile[]>("/profiles"),
   inbox: () => request<InboundMessage[]>("/inbox"),
   matches: (includeApplied = false) =>

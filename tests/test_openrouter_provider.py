@@ -106,10 +106,26 @@ def test_it_is_choosable_for_the_three_uploading_tasks(monkeypatch) -> None:
 
 
 def test_a_missing_key_says_which_variable(monkeypatch) -> None:
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    """Unsetting the environment variable is not enough to unset the key.
+
+    `Settings` reads `.env` as well as the environment — deliberately, because
+    a key in the documented place must not read as unconfigured. So a test that
+    only calls `delenv` passes on a machine with no `.env` key and fails the
+    moment the owner adds one, which is backwards: it would go green in CI and
+    red on the only machine that matters.
+
+    Both sources are cleared here, so this asserts the provider's behaviour
+    rather than the state of whoever's checkout it runs in.
+    """
+    import packages.core.config as core_config
     from packages.core.config import get_settings
 
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
     get_settings.cache_clear()
+    settings = get_settings().model_copy(update={"openrouter_api_key": None})
+    monkeypatch.setattr(core_config, "get_settings", lambda: settings)
+
     try:
         with pytest.raises(LLMError, match="OPENROUTER_API_KEY"):
             OpenRouterProvider()
