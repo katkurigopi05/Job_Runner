@@ -68,6 +68,14 @@ class ProtectedFieldError(LLMError):
 #: Strongest first. A provider is skipped when it is not configured — no API
 #: key, or no reachable host — rather than when it errors. A configured
 #: provider that fails still fails loudly; see the module docstring.
+#: `best_available()` walks this in order. **OpenRouter is deliberately not in
+#: it.** It is a real provider and `build_provider` knows it, but a key sitting
+#: in `.env` must not silently redirect every "auto" task to it: OpenRouter
+#: forwards to an upstream the audit trail cannot name, and on a cloaked
+#: `stealth/*` route the vendor is undisclosed by design. §2.8 asks that the one
+#: permitted upload be auditable, so that route is something the owner opts into
+#: by naming it — `LLM_PROVIDER=openrouter`, or `LLM_TASK_TAILOR=openrouter` —
+#: never something inherited from having configured a key.
 QUALITY_ORDER = ("anthropic", "gemini", "ollama", "stub")
 
 
@@ -97,6 +105,8 @@ def _configured(name: str) -> bool:
         return bool(os.environ.get("GEMINI_API_KEY") or settings.gemini_api_key)
     if name == "anthropic":
         return bool(os.environ.get("ANTHROPIC_API_KEY") or settings.anthropic_api_key)
+    if name == "openrouter":
+        return bool(os.environ.get("OPENROUTER_API_KEY") or settings.openrouter_api_key)
     return False
 
 

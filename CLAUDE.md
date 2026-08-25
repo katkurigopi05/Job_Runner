@@ -283,6 +283,36 @@ stay on Ollama in code and `CHOOSABLE_TASKS` does not list them — a setting
 able to move them would be a way to opt out of a non-negotiable by editing
 `.env`. `test_only_the_uploading_tasks_are_choosable` holds that.
 
+**OpenRouter is a fourth provider, and it is opt-in by name.** One key reaches
+many upstream models, and `docs/PARITY.md` had it refused under §3's "no paid
+service without asking" — the owner asked, and the route in use is free, so §11
+is untouched. What is *not* untouched is §2.8. OpenRouter forwards the résumé
+text to an upstream provider, and the audit trail can record the hop but not the
+destination; on a cloaked `stealth/*` route the upstream vendor is undisclosed
+by design, and free routes commonly log prompts and share them with that
+undisclosed creator. So `OpenRouterProvider` is deliberately absent from
+`router.QUALITY_ORDER`: a key in `.env` changes nothing on its own, and the
+provider answers only when named by `LLM_PROVIDER` or one of the three settings
+above. Acquiring a route whose recipient cannot be named should take typing the
+word, not pasting a key.
+
+The endpoint has one property worth knowing before pointing anything at it:
+**reasoning is mandatory and cannot be switched off.** Both `{"enabled": false}`
+and `{"max_tokens": 0}` come back `400 "Reasoning is mandatory for this endpoint
+and cannot be disabled"`. That matters because `max_tokens` there bounds
+reasoning *plus* answer, while every caller here means it as an answer budget —
+`tailor_bullets` passes 300 to keep a bullet bullet-sized. Passed through
+unchanged, a 300-token call returned `finish_reason="length"` with **empty
+content**: the allowance went on thinking and the model was cut off before
+writing. The tailorer caught the error and kept the original line, so the
+symptom was a tailorer that appeared to do nothing on a provider that was
+working fine. `REASONING_HEADROOM_TOKENS` is the fix, and the numbers behind it
+are in the constant's docstring.
+
+Free routes also rate-limit hard: a three-bullet résumé trips 429 at the default
+`LLM_CALL_INTERVAL_S=4.0`. The pacer obeys `Retry-After` and retries, but for a
+real batch raise the interval.
+
 `LLM_FALLBACK_LOCAL` answers with the local model when the daily allowance is
 spent or the remote provider is unreachable, rather than refusing. This is not
 a softening of "nothing falls back to the stub" — that stands, and the stub is

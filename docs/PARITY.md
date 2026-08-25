@@ -108,7 +108,8 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 | Pipeline verify | **PARTIAL** | gates cover it; no single command |
 | Go TUI dashboard | **DECLINED** | the web app is the surface |
 | Self-updater, plugin registry | **DECLINED** | single-user local tool |
-| Paid provider runners (OpenAI, OpenRouter) | **REFUSED** | §3 — no paid service without asking |
+| OpenRouter provider | **BUILT** | owner asked; free route, so §11 holds. Opt-in by name only — not in `QUALITY_ORDER`, because §2.8 cannot name the upstream |
+| Paid provider runners (OpenAI) | **REFUSED** | §3 — no paid service without asking |
 
 ---
 

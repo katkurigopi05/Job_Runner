@@ -38,6 +38,22 @@ class Settings(BaseSettings):
     #: set to 0 in tests, where the sleeps are pure wall clock.
     llm_call_interval_s: float = 4.0
     anthropic_api_key: str | None = None
+    #: OpenRouter reaches many upstream models through one key. Read the same
+    #: way as the keys above, so `.env` works.
+    #:
+    #: Setting it does not change what "auto" picks: this provider is left out
+    #: of `router.QUALITY_ORDER` on purpose, so it answers only when named by
+    #: `LLM_PROVIDER` or one of the per-task settings below. OpenRouter forwards
+    #: to an upstream provider the audit trail cannot see, and for a cloaked
+    #: `stealth/*` route that provider is undisclosed by design — §2.8 wants the
+    #: one permitted upload to be auditable, so a route whose recipient cannot
+    #: be named has to be chosen deliberately rather than inherited from a key
+    #: being present.
+    openrouter_api_key: str | None = None
+    #: Overrides OpenRouterProvider.DEFAULT_MODEL. Pre-release `stealth/*`
+    #: routes are withdrawn without notice, at which point every call 404s and
+    #: this is the one-line fix.
+    openrouter_model: str | None = None
     #: Where Ollama listens. Same reason as the keys above: `.env.example`
     #: documents this key, so reading it only from os.environ meant a `.env`
     #: pointing at another host was ignored and the caller fell back to
@@ -62,8 +78,8 @@ class Settings(BaseSettings):
     #:
     #: "auto" keeps `router.best_available()` — the strongest configured
     #: provider — which is what shipped. Naming one ("ollama", "gemini",
-    #: "anthropic") pins that task, so local tailoring no longer requires
-    #: deleting the API key that every other task wants kept.
+    #: "anthropic", "openrouter") pins that task, so local tailoring no longer
+    #: requires deleting the API key that every other task wants kept.
     #:
     #: Only these three are settable, and that is a §2.8 boundary rather than
     #: an oversight: inbound-email classification and the assistant read

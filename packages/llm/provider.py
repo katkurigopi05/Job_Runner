@@ -386,6 +386,215 @@ class AnthropicProvider:
                 raise LLMError(f"Anthropic JSON call failed: {_scrubbed(exc)}") from exc
 
 
+#: Keep the reasoning trace out of the response.
+#:
+#: Not a preference — a budget fix, measured. `tailor_bullets` caps a rewrite at
+#: `max_tokens=300`, and a reasoning model spends that allowance thinking before
+#: it writes anything: one bullet through `stealth/ox-alpha` returned
+#: `completion_tokens=299` with the trace included, right against the cap, so
+#: the answer came back empty often enough to look like the tailorer doing
+#: nothing. Excluding the trace took the same call to 176.
+#:
+#: Excluding is the only lever this endpoint offers. Both `{"enabled": False}`
+#: and `{"max_tokens": 0}` are refused with *"Reasoning is mandatory for this
+#: endpoint and cannot be disabled"*, so the choice is whether the trace comes
+#: back, not whether it happens.
+#:
+#: Nothing is lost by dropping it: only the final text is ever written into a
+#: résumé, and §10 would forbid logging the trace anyway — it quotes the
+#: bullets it is reasoning about, which are résumé contents.
+_REASONING_EXCLUDED = {"reasoning": {"exclude": True}}
+
+#: Extra completion budget for reasoning this endpoint will not let us switch off.
+#:
+#: `max_tokens` here bounds *reasoning plus answer*, while every caller in this
+#: repo means it as an answer budget — `tailor_bullets` passes 300 to keep a
+#: rewritten bullet roughly bullet-sized. Passing that through unchanged
+#: misapplies it, and the failure is silent in the worst way: measured on
+#: `stealth/ox-alpha`, a 300-token call comes back `finish_reason="length"`,
+#: `completion_tokens=300`, and **empty content** — the model spent the whole
+#: allowance thinking and was cut off before writing anything. The tailorer
+#: catches the error and keeps the original line, so the visible symptom is a
+#: tailorer that appears to do nothing.
+#:
+#: The same call at 1200 returns `finish_reason="stop"` and a 53-character
+#: bullet for 296-299 completion tokens. So reasoning costs ~250 and the answer
+#: ~50, and 300 sits exactly on the boundary — which is why this failed
+#: intermittently rather than always.
+#:
+#: Headroom rather than a larger fixed budget, so the caller's number still
+#: means what it says. Nothing stops a model using the slack for a longer
+#: answer, but `vet()` already rejects a rewrite disproportionately longer than
+#: its source, so length stays bounded by the guard rather than by this.
+REASONING_HEADROOM_TOKENS = 1024
+
+
+class OpenRouterProvider:
+    """OpenRouter's OpenAI-compatible chat completions endpoint.
+
+    One key reaches many upstream models, which is the appeal and also the
+    thing to be careful about. §2.8 permits exactly one third-party upload —
+    the tailoring call — and asks that it be *audited*, so the owner can prove
+    what left the machine. The audit trail records `openrouter` and the model
+    id, and that is genuinely where its knowledge stops: OpenRouter forwards to
+    an upstream provider, and for a cloaked `stealth/*` route the identity of
+    that provider is undisclosed by design. Anyone choosing one should know the
+    trail can name the hop but not the destination, and should read that
+    model's data policy — free routes commonly log prompts and share them with
+    the undisclosed creator, which for résumé PII is a different bargain from a
+    paid tier.
+
+    Deliberately absent from `router.QUALITY_ORDER`, so `best_available()` will
+    never select it on its own. Setting a key must not silently redirect every
+    "auto" task to a model whose vendor is unknown — this provider answers when
+    it is asked for by name, via `LLM_PROVIDER` or one of §7's per-task
+    settings, and not otherwise.
+
+    The optional `HTTP-Referer` and `X-Title` headers are not sent. They exist
+    to list an app on OpenRouter's public leaderboards, and §1 is a private
+    single-user tool on localhost; appearing in a public ranking is not a
+    default this should choose for the owner.
+    """
+
+    name = "openrouter"
+
+    #: Pinned for the same reason Gemini's is — the trail should name what ran.
+    #: `stealth/*` routes are pre-release and get withdrawn without notice, at
+    #: which point every call 404s; §7's `LLM_FALLBACK_LOCAL` is what keeps that
+    #: from stopping tailoring, and the fallback is recorded so a résumé written
+    #: by the local model after a withdrawal is not mistaken for this one's work.
+    DEFAULT_MODEL = "stealth/ox-alpha"
+
+    def __init__(self, model: str | None = None) -> None:
+        from packages.core.config import get_settings
+
+        settings = get_settings()
+        self.api_key = os.environ.get("OPENROUTER_API_KEY") or settings.openrouter_api_key
+        if not self.api_key:
+            raise LLMError("OPENROUTER_API_KEY environment variable is not set")
+        self.model = (
+            model or os.environ.get("OPENROUTER_MODEL") or settings.openrouter_model
+        ) or self.DEFAULT_MODEL
+        self.base_url = "https://openrouter.ai/api/v1"
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int = 1024,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> str:
+        record(self.name, system, user, model=getattr(self, "model", None))
+        payload = await self._post(
+            {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "max_tokens": max_tokens + REASONING_HEADROOM_TOKENS,
+                "temperature": temperature,
+                **_REASONING_EXCLUDED,
+            }
+        )
+        return self._content(payload)
+
+    def _content(self, payload: dict[str, Any]) -> str:
+        """The assistant text, or a failure that says what actually happened.
+
+        Reasoning models on this endpoint spend `max_tokens` on thinking before
+        they write anything, and a budget that runs out mid-thought returns a
+        200 with an empty `content` and no error. Left to the generic path that
+        surfaces as an unhelpful KeyError or, worse, an empty rewrite that the
+        tailorer treats as a real answer. `reasoning_details` in the response is
+        ignored on purpose: only the final text belongs in a résumé.
+        """
+        try:
+            message = payload["choices"][0]["message"]
+        except (KeyError, IndexError) as exc:
+            raise LLMError(f"OpenRouter returned no choices: {_scrubbed(exc)}") from exc
+
+        content = (message.get("content") or "").strip()
+        if not content:
+            finish = payload.get("choices", [{}])[0].get("finish_reason")
+            detail = (
+                " The response was cut off at the token limit "
+                f"(finish_reason={finish!r}), so raise REASONING_HEADROOM_TOKENS."
+                if finish == "length"
+                else f" (finish_reason={finish!r})"
+            )
+            raise LLMError(
+                f"{self.model} returned no text.{detail} Reasoning models spend max_tokens "
+                "on thinking before they write, and this endpoint refuses to let reasoning "
+                "be disabled."
+            )
+        return str(content)
+
+    async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
+        """One request, paced and retried on 429 — as Gemini's, and for the same
+        reason: the tailorer makes a call per bullet, so a résumé is several in
+        a row and a batch is hundreds. Free routes rate-limit hard.
+        """
+        pacer = pacer_for(self.name)
+        url = f"{self.base_url}/chat/completions"
+
+        for attempt in range(MAX_RETRIES + 1):
+            await pacer.wait_turn()
+            async with httpx.AsyncClient() as client:
+                try:
+                    resp = await client.post(url, json=body, headers=self._headers(), timeout=120.0)
+                except Exception as exc:
+                    raise LLMError(f"OpenRouter call failed: {_scrubbed(exc)}") from exc
+
+                if resp.status_code == 429 and attempt < MAX_RETRIES:
+                    await pacer.back_off(attempt, retry_after_seconds(resp.headers))
+                    continue
+
+                try:
+                    resp.raise_for_status()
+                except Exception as exc:
+                    raise LLMError(f"OpenRouter call failed: {_scrubbed(exc)}") from exc
+                return dict(resp.json())
+
+        raise LLMError(
+            f"OpenRouter refused {MAX_RETRIES + 1} times with 429 — this route's rate limit is "
+            "lower than this workload. Raise LLM_CALL_INTERVAL_S, or run a smaller batch."
+        )
+
+    async def complete_json(self, system: str, user: str, schema: type[T]) -> T:
+        record(self.name, system, user, model=getattr(self, "model", None))
+        payload = await self._post(
+            {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": f"{system}\n\n{render_json_instruction(schema)}"},
+                    {"role": "user", "content": user},
+                ],
+                # The schema goes in the prompt as well as here. Not every model
+                # behind this endpoint honours `response_format`, and one that
+                # ignores it silently returns prose that fails validation with
+                # no hint as to why.
+                "response_format": {"type": "json_object"},
+                "max_tokens": 1024 + REASONING_HEADROOM_TOKENS,
+                "temperature": JSON_TEMPERATURE,
+                **_REASONING_EXCLUDED,
+            }
+        )
+        try:
+            return schema.model_validate_json(self._content(payload))
+        except LLMError:
+            raise
+        except Exception as exc:
+            raise LLMError(f"OpenRouter JSON call failed: {_scrubbed(exc)}") from exc
+
+
 def build_provider(name: str | None = None) -> LLMProvider:
     """Select a provider by name. Only the stub exists until it is needed."""
     from packages.core.config import get_settings
@@ -402,6 +611,8 @@ def build_provider(name: str | None = None) -> LLMProvider:
         return GeminiProvider()
     elif selected == "anthropic":
         return AnthropicProvider()
+    elif selected == "openrouter":
+        return OpenRouterProvider()
     else:
         raise LLMError(f"LLM provider {selected!r} is unknown or not implemented.")
 
