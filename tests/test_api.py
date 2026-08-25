@@ -16,6 +16,54 @@ APPLY_URL = "https://boards.greenhouse.io/acme/jobs/12345"
 async def test_health(client: AsyncClient) -> None:
     r = await client.get("/health")
     assert r.status_code == 200
+    assert r.json() == {"status": "ok", "api": "ok", "database": "ok"}
+
+
+async def test_an_unmatched_path_uses_the_shared_envelope(client: AsyncClient) -> None:
+    """§10 promises one error shape. A 404 had two.
+
+    `ApiError(NOT_FOUND, ...)` produced the envelope; a 404 for a path with no
+    route fell through to FastAPI's `{"detail": "Not Found"}`. A client parsing
+    errors got a different shape for the same status depending on how the 404
+    arose.
+    """
+    r = await client.get("/no-such-route")
+
+    assert r.status_code == 404
+    assert r.json() == {"error": {"code": "not_found", "message": "Not Found"}}
+
+
+async def test_a_wrong_method_keeps_its_own_status(client: AsyncClient) -> None:
+    """405 is derived from the status, not routed back through STATUS_BY_CODE.
+
+    Mapping the code back to a status would rewrite this into a 400.
+    """
+    r = await client.delete("/health")
+
+    assert r.status_code == 405
+    assert r.json()["error"]["code"] == "invalid_request"
+
+
+async def test_health_reports_a_database_it_cannot_reach(client: AsyncClient, monkeypatch) -> None:
+    """The check has to be able to fail, or it is not a check.
+
+    `/health` returned a hardcoded `{"status": "ok"}`, so Postgres could be
+    stopped and it still said ok — and the dashboard indicator built on it would
+    have reported healthy while every page that loads data threw.
+    """
+    from packages.core import db as core_db
+
+    def broken():
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(core_db, "get_sessionmaker", broken)
+
+    r = await client.get("/health")
+
+    # Still 200: the process is answering, and a 503 would make the indicator
+    # unreachable exactly when it has something to report.
+    assert r.status_code == 200
+    assert r.json() == {"status": "degraded", "api": "ok", "database": "down"}
 
 
 async def test_create_candidate_and_profile(client: AsyncClient) -> None:
