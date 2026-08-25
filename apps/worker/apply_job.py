@@ -20,10 +20,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.worker.browser import browser_page
-from packages.ats.answers import build_answers
+from packages.ats.answers import asks_for_cover_letter, build_answers
 from packages.ats.base import (
     FillReport,
     ManualCompletionRequired,
+    Question,
     SiteError,
     UnsupportedSiteError,
 )
@@ -162,19 +163,36 @@ async def _run_pipeline(
         # anything worth uploading.
         diff = await _tailor(session, application, profile, posting)
 
+        # Same rule as the résumé above, for the same reason: the document has
+        # to exist before there is anything to put in the field. Reads
+        # `questions` because most forms never ask for a letter, and writing
+        # one for a form with nowhere to put it is a provider call spent on a
+        # document no employer sees.
+        letter = await _cover_letter(session, application, profile, posting, questions)
+
         answers = build_answers(
             questions,
             candidate,
             profile,
             extra=owner_answers,
             resume_path=await _resume_path(session, application, profile),
+            cover_letter_text=(letter or {}).get("text"),
+            cover_letter_path=_letter_path(application),
         )
         report = await adapter.fill(page, answers)
 
         report.screenshot_ref = await _capture(page, application, "filled-form.png")
 
         await _decide(
-            session, application, profile, report, adapter, page, diff, screening=screening
+            session,
+            application,
+            profile,
+            report,
+            adapter,
+            page,
+            diff,
+            screening=screening,
+            cover_letter=letter,
         )
 
 
@@ -424,6 +442,136 @@ async def _tailor(
         return None
 
 
+def _stored_letter(application: Application) -> dict[str, Any] | None:
+    """The letter this application already has, if it still has one.
+
+    A resumed run — the owner approved at review and the pipeline replays —
+    must send the letter that was approved, not a second one written from the
+    same prompt. Any real provider returns different prose the second time, so
+    without this the owner reviews one letter and the employer reads another.
+    That is the tailored-résumé defect exactly, and the check is cheap.
+    """
+    previous = (application.review_json or {}).get("cover_letter") or {}
+    if not previous.get("accepted") or not previous.get("text"):
+        return None
+    ref = application.cover_letter_ref
+    if not ref or not get_storage().path_for(ref).is_file():
+        return None
+    return dict(previous)
+
+
+async def _cover_letter(
+    session: AsyncSession,
+    application: Application,
+    profile: Profile,
+    posting: Any,
+    questions: list[Question],
+) -> dict[str, Any] | None:
+    """Write the letter this posting asks for, vet it, store it.
+
+    §9 Phase 3 lists a cover letter and `packages/tailor/cover.py` writes one:
+    it sifts the sentences that do not trace to the résumé, vets the remainder
+    through the fabrication guard, and returns nothing rather than falling
+    back. Until now nothing called it, `Application.cover_letter_ref` was
+    written by nobody, and no application carried a letter.
+
+    Three refusals, in order of how much they cost:
+
+    - **The form never asked.** Most do not. Writing a letter no field can
+      hold is a provider call spent on a document that goes nowhere, so the
+      questions are read first and the model is not reached at all.
+    - **There is nothing to write from.** No base résumé, or a posting whose
+      description never parsed — a letter about a job we did not read is
+      exactly the invention §2.1 forbids.
+    - **The guard refused it.** Returned with the reason, and no file. A
+      letter has no original to fall back to, so the alternative to a bad one
+      is none; recording *why* is what keeps that different from never trying.
+
+    Returns the record the review screen shows, or None when no letter was
+    called for. Never raises: a failure here leaves an application with a
+    filled form and an empty optional field, which is a worse application and
+    still an application.
+    """
+    if not any(asks_for_cover_letter(question) for question in questions):
+        return None
+
+    reused = _stored_letter(application)
+    if reused is not None:
+        log.info("cover_letter_reused", ref=application.cover_letter_ref)
+        return {**reused, "reused": True}
+
+    posting_text = posting.description_raw or ""
+    if profile.base_resume_id is None or not posting_text.strip():
+        return None
+
+    resume = await session.get(Resume, profile.base_resume_id)
+    if resume is None or not resume.parsed_json:
+        return None
+
+    try:
+        from packages.tailor.cover import write
+        from packages.tailor.guard import SourceCorpus
+        from packages.tailor.parse import ParsedResume
+        from packages.tailor.publish import publish_cover_letter
+
+        parsed = ParsedResume.model_validate(resume.parsed_json)
+        # The base résumé, not the tailored one. Every fact in a tailored
+        # résumé traces to the base by construction — the guard enforces it —
+        # so the base corpus is the wider of the two nowhere and the safer of
+        # the two here, and it does not depend on tailoring having succeeded.
+        letter = await write(
+            llm_router.write_cover_letter(),
+            resume_text=parsed.text,
+            job_description=posting_text,
+            corpus=SourceCorpus.from_resume(parsed),
+            # The one thing outside the résumé the letter may name.
+            company=posting.company,
+        )
+    except Exception as exc:  # noqa: BLE001 - a letter is an enhancement
+        log.warning("cover_letter_failed", error=type(exc).__name__)
+        return {"accepted": False, "rejected_reason": f"error: {type(exc).__name__}"}
+
+    outcome: dict[str, Any] = {
+        "accepted": letter.usable,
+        "rejected_reason": letter.rejected_reason,
+        "word_count": letter.word_count,
+        "entities_checked": letter.entities_checked,
+        # A letter that survived only because most of it was deleted is worth
+        # seeing on the review screen, not just in the accept/refuse bit.
+        "sentences_dropped": letter.sentences_dropped,
+    }
+
+    if not letter.usable:
+        # Never the letter itself — §10 keeps résumé-derived text out of logs.
+        log.info("cover_letter_refused", reason=letter.rejected_reason)
+        return outcome
+
+    ref = publish_cover_letter(letter.text, application_id=str(application.id))
+    if ref is None:
+        # Storage failed, so there is no file to attach. The text would still
+        # fill a textarea, but then an approved letter would exist in one
+        # shape and not the other depending on the employer's form — refuse
+        # both rather than ship the inconsistency.
+        return {**outcome, "accepted": False, "rejected_reason": "letter could not be stored"}
+
+    application.cover_letter_ref = ref
+    # Kept alongside the ref because the review screen has to show the letter
+    # the owner is approving, and a PDF is not readable back as text.
+    return {**outcome, "ref": ref, "text": letter.text}
+
+
+def _letter_path(application: Application) -> str | None:
+    """The stored letter as a path, for a field that wants a file upload."""
+    ref = application.cover_letter_ref
+    if not ref:
+        return None
+    path = get_storage().path_for(ref)
+    if not path.is_file():
+        log.warning("cover_letter_file_missing", storage_ref=ref)
+        return None
+    return str(path)
+
+
 async def _capture(page: Any, application: Application, name: str) -> str | None:
     """Screenshot into storage. A failed capture must not fail the run.
 
@@ -462,6 +610,7 @@ async def _decide(
     page: Any,
     resume_diff: dict[str, Any] | None = None,
     screening: ScreenReport | None = None,
+    cover_letter: dict[str, Any] | None = None,
 ) -> None:
     """Park for review, or submit — the approval gate.
 
@@ -485,6 +634,11 @@ async def _decide(
         "resume_diff": resume_diff,
         # Read off the form before anything was answered.
         "screening": screening.as_dict() if screening else None,
+        # The letter, or the guard's reason there is not one. A refusal has to
+        # be visible here: a form that asked for a letter and got none looks
+        # identical to a form that never asked, and the owner is the one who
+        # decides whether to write it by hand.
+        "cover_letter": cover_letter,
     }
 
     if not report.is_complete:
