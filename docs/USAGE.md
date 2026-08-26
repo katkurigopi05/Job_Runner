@@ -309,15 +309,17 @@ Everything the employer would receive, before it is sent:
 
 ### Editing a résumé
 
-`/resumes` has an `edit` button per résumé: one box per section, one line per
-bullet, with a **live preview beside it** that updates as you type. The preview
-is the same component the saved résumé renders through, fed your draft — so what
-you see while editing is drawn by the same code as what gets stored, and the two
-cannot drift apart.
+`/resumes` shows each résumé as the parser reads it, with an `edit` button in
+the corner. Pressing it turns that same document into the editor — every line
+stays where it will appear and you type in place, rather than filling a form
+beside a preview and mapping between the two.
 
-It previews the document *as the server will build it*: blank lines dropped, a
-section you empty disappearing. It carries no version number, because a draft
-has not been stored or re-parsed yet.
+Per line: hover or focus a line to get a `✕` that removes it, and each section
+has a `+ line`. Boxes grow with their text, so a long bullet is never cut off
+at the end — which is the part most likely to be wrong after tailoring.
+
+Blank lines are dropped and an emptied section is removed, so what gets saved is
+what you see with the empties gone.
 
 Saving does three things worth knowing about:
 
