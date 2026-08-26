@@ -130,7 +130,7 @@ Beside it is a spider showing what the crawler is doing:
 
 | Spider | Meaning | What to do |
 |---|---|---|
-| 🕷 moving, green — `crawling` | A crawl is running | Wait; new postings land in `/matches` when it finishes |
+| 🕷 walking across the top of the window — `crawling` | A crawl is running | Wait; new postings land in `/matches` when it finishes |
 | 🕷 still, amber — `N queued` | Queued, but nothing is draining it | `make worker` |
 | 🕷 still, faint — `postings 5d ago` | Nothing crawling | `make crawl` if that age looks wrong |
 
@@ -138,7 +138,11 @@ The idle label carries the age of the newest posting, because that is the number
 that actually answers "are my results current". An empty "posted in the last
 day" search usually means nothing has been *looked for* since the last crawl.
 
-The spider holds still if your system asks for reduced motion.
+While a crawl runs the spider leaves the header and walks the top edge of the
+page on a thread, left to right. It is the only moving thing on screen, so
+"is anything happening" is answerable without reading a word. It does not appear
+at all if your system asks for reduced motion — the header label still says
+`crawling`.
 
 Optional terminal 5 — local assistant:
 

@@ -96,26 +96,55 @@ export function CrawlerSpider() {
         };
 
   return (
-    <p className={`flex items-center gap-1.5 font-mono text-xs ${tone}`} title={title}>
-      <span
-        aria-hidden="true"
-        className={moving ? "inline-block motion-safe:animate-[skitter_1.1s_ease-in-out_infinite]" : "inline-block"}
-      >
-        🕷
-      </span>
-      <span>{label}</span>
+    <>
+      {/* While a crawl runs, the spider leaves the header and walks the top
+          edge of the page, left to right, on a thread. It is the only moving
+          thing on screen, which is the point: the question it answers — is
+          anything happening — should be answerable without reading a word.
+
+          Fixed and `pointer-events-none` so it crosses over the page without
+          intercepting a click on whatever it passes. `translateX` only, per
+          the project's animation rules: it never triggers layout. */}
+      {moving ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-x-0 top-0 z-50 h-0 overflow-visible"
+        >
+          <span className="absolute top-0 left-0 motion-safe:animate-[traverse_9s_linear_infinite]">
+            {/* The thread it descends on, so the spider reads as hanging from
+                the top of the window rather than floating in it. */}
+            <span className="mx-auto block h-3 w-px bg-current opacity-30" />
+            <span className="block text-base leading-none motion-safe:animate-[bob_0.7s_ease-in-out_infinite]">
+              🕷
+            </span>
+          </span>
+        </div>
+      ) : null}
+
+      <p className={`flex items-center gap-1.5 font-mono text-xs ${tone}`} title={title}>
+        {/* The header keeps a still spider as the label's marker. The moving
+            one above is the signal; this one is the legend for it. */}
+        <span aria-hidden="true" className="inline-block">
+          🕷
+        </span>
+        <span>{label}</span>
+      </p>
+
       {/* Keyframes live here rather than in the global sheet: this is the only
           thing that uses them, and a reader of this file should not have to go
-          looking for what "skitter" means. `motion-safe:` above is what honours
-          a reduced-motion preference — the spider then simply sits still. */}
+          looking for what "traverse" means. `motion-safe:` on both is what
+          honours a reduced-motion preference — the spider then does not appear
+          at all, and the header label still says `crawling`. */}
       <style>{`
-        @keyframes skitter {
-          0%, 100% { transform: translateX(0) rotate(0deg); }
-          25%      { transform: translateX(2px) rotate(8deg); }
-          50%      { transform: translateX(0) rotate(0deg); }
-          75%      { transform: translateX(-2px) rotate(-8deg); }
+        @keyframes traverse {
+          from { transform: translateX(-2rem); }
+          to   { transform: translateX(calc(100vw + 2rem)); }
+        }
+        @keyframes bob {
+          0%, 100% { transform: translateY(0) rotate(-6deg); }
+          50%      { transform: translateY(2px) rotate(6deg); }
         }
       `}</style>
-    </p>
+    </>
   );
 }
