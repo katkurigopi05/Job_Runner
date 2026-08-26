@@ -1,5 +1,4 @@
 import { ApiError, api, type Profile, type Resume, type ResumeParsed } from "@/lib/api";
-import { ResumePreview } from "@/components/resume-preview";
 import { ErrorPanel } from "@/components/error-panel";
 import { ResumeUpload } from "@/components/resume-upload";
 import { ResumeEditor } from "@/components/resume-editor";
@@ -86,16 +85,18 @@ export default async function ResumesPage() {
                     >
                       original file
                     </a>
-                    {/* Only where there is a parsed form to edit. A résumé the
-                        parser could not read has no sections to put in boxes,
-                        and offering an editor over nothing would suggest the
-                        file is fixable here when it needs re-uploading. */}
-                    {document ? <ResumeEditor parsed={document} /> : null}
                   </div>
 
                   <div className="mt-5">
+                    {/* `ResumeEditor` renders the preview when it is closed and
+                        becomes the editable document when opened, so there is
+                        one résumé on screen rather than a copy to compare
+                        against. A file the parser could not read has no
+                        sections to edit, and offering an editor over nothing
+                        would suggest it is fixable here when it needs
+                        re-uploading. */}
                     {document ? (
-                      <ResumePreview parsed={document} />
+                      <ResumeEditor parsed={document} />
                     ) : (
                       <p className="border border-stop/40 bg-stop-soft px-5 py-4 text-sm text-stop">
                         This résumé could not be parsed. An ATS will not read it either — re-upload

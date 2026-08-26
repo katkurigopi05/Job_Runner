@@ -473,8 +473,21 @@ export interface Health {
   database: "ok" | "down";
 }
 
+/** Whether the crawler is working, waiting, or stuck waiting for a worker. */
+export interface CrawlStatus {
+  running: boolean;
+  pending: number;
+  /** Work queued with nobody holding it — `make worker` is not up. */
+  stalled: boolean;
+  last_finished_at?: string | null;
+  last_status?: string | null;
+  /** Newest posting anyone has seen. This is what staleness actually means. */
+  newest_posting_at?: string | null;
+}
+
 export const api = {
   health: () => request<Health>("/health"),
+  crawlStatus: () => request<CrawlStatus>("/crawl/status"),
 
   applications: () => request<Application[]>("/applications"),
   application: (id: string) => request<Application>(`/applications/${id}`),

@@ -378,6 +378,28 @@ class InboundMessageOut(BaseModel):
 # --------------------------------------------------------------------------
 
 
+class CrawlStatusOut(BaseModel):
+    """Whether the crawler is working, for a dashboard that could not tell.
+
+    `running` and `pending` are separate because they need different actions
+    from the owner: pending with no worker means nothing is draining the queue,
+    which looks exactly like a crawl in progress if the two are conflated.
+    """
+
+    #: A crawl is claimed and being worked right now.
+    running: bool
+    #: Crawls queued and not yet claimed.
+    pending: int
+    #: True when work is waiting but no worker holds it — start `make worker`.
+    stalled: bool
+    #: When the last crawl finished, successfully or not. None if none ever has.
+    last_finished_at: datetime | None = None
+    #: Status of that last crawl: "done" or "failed".
+    last_status: str | None = None
+    #: The newest posting anyone has seen, which is what staleness really means.
+    newest_posting_at: datetime | None = None
+
+
 class ChatRequest(BaseModel):
     """A question about the owner's own job search."""
 

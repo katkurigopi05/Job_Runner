@@ -90,6 +90,7 @@ async def list_matches(
     #: Pass false to look outside the US for one call.
     us_only: bool | None = None,
     allow_unknown_location: bool = True,
+    allow_unknown_seniority: bool = False,
 ) -> list[MatchOut]:
     """Scored postings, best first.
 
@@ -110,6 +111,7 @@ async def list_matches(
         include_closed=include_closed,
         us_only=get_settings().search_us_only if us_only is None else us_only,
         allow_unknown_location=allow_unknown_location,
+        allow_unknown_seniority=allow_unknown_seniority,
     )
 
     for level in (min_seniority, max_seniority):

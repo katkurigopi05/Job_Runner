@@ -126,6 +126,26 @@ The header shows a status pill. When everything is up it reads `localhost only`;
 it turns amber for `db down` (run `make up`) and red for `api down` (run
 `make api`), so you never have to guess which process stopped.
 
+Beside it is a spider showing what the crawler is doing:
+
+| Spider | Meaning | What to do |
+|---|---|---|
+| 🕷 walking across the top of the window — `crawling` | A crawl is running | Wait; new postings land in `/matches` when it finishes |
+| 🕷 still, amber — `N queued` | Queued, but nothing is draining it | `make worker` |
+| 🕷 asleep with `z z z` — `postings 5d ago` | Nothing crawling | `make crawl` if that age looks wrong |
+
+The idle label carries the age of the newest posting, because that is the number
+that actually answers "are my results current". Only genuine idleness sleeps —
+a queued crawl with no worker stays awake and amber, because that is something
+to fix rather than something to rest through. An empty "posted in the last
+day" search usually means nothing has been *looked for* since the last crawl.
+
+While a crawl runs the spider leaves the header and walks the top edge of the
+page on a thread, left to right. It is the only moving thing on screen, so
+"is anything happening" is answerable without reading a word. It does not appear
+at all if your system asks for reduced motion — the header label still says
+`crawling`.
+
 Optional terminal 5 — local assistant:
 
 ```bash
@@ -291,8 +311,19 @@ Everything the employer would receive, before it is sent:
 
 ### Editing a résumé
 
-`/resumes` has an `edit` button per résumé: one box per section, one line per
-bullet. Saving does three things worth knowing about:
+`/resumes` shows each résumé as the parser reads it, with an `edit` button in
+the corner. Pressing it turns that same document into the editor — every line
+stays where it will appear and you type in place, rather than filling a form
+beside a preview and mapping between the two.
+
+Per line: hover or focus a line to get a `✕` that removes it, and each section
+has a `+ line`. Boxes grow with their text, so a long bullet is never cut off
+at the end — which is the part most likely to be wrong after tailoring.
+
+Blank lines are dropped and an emptied section is removed, so what gets saved is
+what you see with the empties gone.
+
+Saving does three things worth knowing about:
 
 - It creates a **new version** rather than rewriting the one on screen. An
   application may already have sent that version, and its receipt has to keep

@@ -239,6 +239,96 @@ _NON_US_CITIES_RE = re.compile(
     re.I,
 )
 
+#: State code to full name, so a search for one finds the other.
+#:
+#: Employers write the same place both ways — "San Francisco, CA" and "San
+#: Francisco, California" sit side by side in this corpus — so a location
+#: filter that knows only the form the owner typed silently drops half the
+#: matches. The module already carries both vocabularies for *classification*;
+#: this is the same knowledge in the form a *search* needs.
+#:
+#: DC is included because postings write it as a state.
+STATE_BY_CODE: dict[str, str] = {
+    "AL": "alabama",
+    "AK": "alaska",
+    "AZ": "arizona",
+    "AR": "arkansas",
+    "CA": "california",
+    "CO": "colorado",
+    "CT": "connecticut",
+    "DE": "delaware",
+    "DC": "district of columbia",
+    "FL": "florida",
+    "GA": "georgia",
+    "HI": "hawaii",
+    "ID": "idaho",
+    "IL": "illinois",
+    "IN": "indiana",
+    "IA": "iowa",
+    "KS": "kansas",
+    "KY": "kentucky",
+    "LA": "louisiana",
+    "ME": "maine",
+    "MD": "maryland",
+    "MA": "massachusetts",
+    "MI": "michigan",
+    "MN": "minnesota",
+    "MS": "mississippi",
+    "MO": "missouri",
+    "MT": "montana",
+    "NE": "nebraska",
+    "NV": "nevada",
+    "NH": "new hampshire",
+    "NJ": "new jersey",
+    "NM": "new mexico",
+    "NY": "new york",
+    "NC": "north carolina",
+    "ND": "north dakota",
+    "OH": "ohio",
+    "OK": "oklahoma",
+    "OR": "oregon",
+    "PA": "pennsylvania",
+    "RI": "rhode island",
+    "SC": "south carolina",
+    "SD": "south dakota",
+    "TN": "tennessee",
+    "TX": "texas",
+    "UT": "utah",
+    "VT": "vermont",
+    "VA": "virginia",
+    "WA": "washington",
+    "WV": "west virginia",
+    "WI": "wisconsin",
+    "WY": "wyoming",
+}
+
+#: The reverse, built rather than typed twice.
+CODE_BY_STATE: dict[str, str] = {name: code for code, name in STATE_BY_CODE.items()}
+
+
+def is_us_state(term: str) -> bool:
+    """Whether `term` names a US state, by either spelling."""
+    cleaned = term.strip().lower()
+    return cleaned.upper() in STATE_BY_CODE or cleaned in CODE_BY_STATE
+
+
+def location_aliases(term: str) -> tuple[str, ...]:
+    """Every spelling of `term` a posting might use, including `term` itself.
+
+    "CA" yields ("ca", "california"); "California" yields ("california", "ca").
+    Anything that is not a US state is returned unchanged — this widens a
+    search, it does not reinterpret it.
+    """
+    cleaned = term.strip().lower()
+    if not cleaned:
+        return ()
+    if (name := STATE_BY_CODE.get(cleaned.upper())) is not None:
+        return (cleaned, name)
+    if (code := CODE_BY_STATE.get(cleaned)) is not None:
+        return (cleaned, code.lower())
+    return (cleaned,)
+
+
 _US_STATE_CODES = (
     "AL",
     "AK",

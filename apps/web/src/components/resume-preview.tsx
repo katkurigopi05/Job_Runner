@@ -10,8 +10,36 @@ import type { ResumeParsed } from "@/lib/api";
  */
 export function ResumePreview({ parsed }: { parsed: ResumeParsed }) {
   const document = parsed.parsed ?? {};
-  const sections = document.sections ?? {};
-  const contact = (document.contact ?? parsed.contact ?? {}) as Record<string, unknown>;
+  return (
+    <ResumeDocumentView
+      contact={(document.contact ?? parsed.contact ?? {}) as Record<string, unknown>}
+      sections={document.sections ?? {}}
+      version={parsed.version}
+      lineCount={parsed.line_count}
+    />
+  );
+}
+
+/**
+ * The same rendering, from values rather than from a stored résumé.
+ *
+ * Split out so the editor can feed it a draft. Sharing the component is the
+ * whole point: a preview drawn by different code than the saved view would
+ * eventually disagree with it, and the one thing this screen must not do is
+ * show the owner a document that differs from the one being stored.
+ */
+export function ResumeDocumentView({
+  contact,
+  sections,
+  version,
+  lineCount,
+}: {
+  contact: Record<string, unknown>;
+  sections: Record<string, string[]>;
+  /** Omitted for an unsaved draft, which has neither yet. */
+  version?: number;
+  lineCount?: number;
+}) {
   const contactBits = ["name", "email", "phone", "location"]
     .map((key) => contact[key])
     .filter((value): value is string => typeof value === "string" && value.trim() !== "");
@@ -60,9 +88,15 @@ export function ResumePreview({ parsed }: { parsed: ResumeParsed }) {
         </div>
       )}
 
-      <p className="border-t border-rule px-5 py-3 font-mono text-xs text-ink-faint">
-        v{parsed.version} · {parsed.line_count} lines parsed
-      </p>
+      {/* A draft has no version and no parsed line count — it has not been
+          stored or re-parsed yet. Showing a stale v-number over live text would
+          claim the preview is something it is not. */}
+      {version !== undefined ? (
+        <p className="border-t border-rule px-5 py-3 font-mono text-xs text-ink-faint">
+          v{version}
+          {lineCount !== undefined ? ` · ${lineCount} lines parsed` : ""}
+        </p>
+      ) : null}
     </div>
   );
 }
