@@ -466,6 +466,29 @@ make discover
 Runs a broad aggregator discovery pass and promotes resolved company boards into the seed registry. It can be slow and makes network requests.
 
 ```bash
+make crawl
+make crawl force=1
+```
+
+Polls the company registry for new postings, then embeds and re-scores whatever
+it finds. This is what makes `/matches` current; without it the feed keeps
+describing whenever a crawl last ran.
+
+It **enqueues** — `make worker` does the work, and nothing happens until the
+worker drains it. Running it twice while one is still pending is refused rather
+than doubled: two crawls minutes apart poll the same hosts and the later one
+emits nothing, having spent the rate limit to do so.
+
+`force=1` re-emits postings whose content is unchanged. Normally a second run
+emitting nothing is change detection working correctly, so use this only when
+you have reason to distrust the stored hashes.
+
+If postings look stale, this is the command. Check `/matches` and look at how
+old the newest posting is before concluding the job market went quiet — an empty
+"posted in the last day" filter usually means nothing has been *looked for*
+since the last crawl, not that nothing was posted.
+
+```bash
 make rescore
 make rescore p=backend
 make rescore dry=1
