@@ -178,6 +178,18 @@ gate-1-live:
 discover:
 	$(PY)/python -m scripts.discover
 
+# make crawl — poll the company registry for new postings.
+#
+# Enqueues; `make worker` does the work. `apps/worker/crawl_job.py` has been
+# wired into the worker since Phase 5 and nothing ever enqueued it, so the
+# registry was polled only when someone inserted a row by hand — which is why
+# postings went stale with nothing looking broken.
+#
+#     make crawl              one cycle over the registry
+#     make crawl force=1      re-emit unchanged postings (rarely wanted)
+crawl:
+	$(PY)/python -m scripts.crawl $(if $(force),--force,)
+
 # make rescore — re-score every open posting against the profiles as they are
 # now. Crawling already re-scores, but returns early when the sweep emitted
 # nothing, so a résumé change on its own never reaches the feed without this.

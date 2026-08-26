@@ -66,11 +66,36 @@ async def test_no_tool_submits_an_application() -> None:
     assert not any("submit" in n for n in names if n != "submit_otp")
 
 
-async def test_no_tool_claims_to_tailor() -> None:
-    """Tailoring is Phase 3; a tool named for it would advertise a lie."""
+async def test_no_tool_tailors_on_its_own() -> None:
+    """There is no standalone `tailor_resume`, and the reason has changed.
+
+    It used to be that tailoring did not exist. It does now — the apply
+    pipeline calls it on every run. What is still absent is a tool that tailors
+    *without* applying, because the document it produced would belong to no
+    application: nothing would upload it, and §9's `tailored_resume_id` would
+    stay null while a résumé sat in storage looking finished.
+
+    `compare_tailoring` is not that tool. It tailors against a real parked
+    application and attaches the result to it, which is what makes the output
+    something the owner can actually send.
+    """
     names = {t.name for t in await mcp_server.server.list_tools()}
     assert "tailor_resume" not in names
     assert "preview_resume" in names
+    assert "compare_tailoring" in names
+
+
+async def test_choosing_a_tailoring_is_not_approving_one() -> None:
+    """§2.3 — picking which résumé goes is upstream of the approval gate.
+
+    Two separate tools on purpose. A single "choose and send" would collapse a
+    decision about the *document* into a decision about *submitting*, and the
+    approval gate is the one thing that must stay its own deliberate act.
+    """
+    tools = {t.name: t for t in await mcp_server.server.list_tools()}
+    assert "select_tailoring" in tools
+    description = (tools["select_tailoring"].description or "").lower()
+    assert "not approving" in description or "stays parked" in description
 
 
 # --------------------------------------------------------------------------

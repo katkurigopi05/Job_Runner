@@ -2,6 +2,7 @@ import { ApiError, api, type Profile, type Resume, type ResumeParsed } from "@/l
 import { ResumePreview } from "@/components/resume-preview";
 import { ErrorPanel } from "@/components/error-panel";
 import { ResumeUpload } from "@/components/resume-upload";
+import { ResumeEditor } from "@/components/resume-editor";
 
 export const dynamic = "force-dynamic";
 
@@ -85,6 +86,11 @@ export default async function ResumesPage() {
                     >
                       original file
                     </a>
+                    {/* Only where there is a parsed form to edit. A résumé the
+                        parser could not read has no sections to put in boxes,
+                        and offering an editor over nothing would suggest the
+                        file is fixable here when it needs re-uploading. */}
+                    {document ? <ResumeEditor parsed={document} /> : null}
                   </div>
 
                   <div className="mt-5">

@@ -18,7 +18,7 @@ from apps.api.errors import ApiError
 from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
 from packages.core.models import Candidate, Profile, Project, Resume
-from packages.core.schemas import ResumeOut, ResumeParsedOut, ResumePreviewOut
+from packages.core.schemas import ResumeEdit, ResumeOut, ResumeParsedOut, ResumePreviewOut
 from packages.core.storage import get_storage, resume_key
 from packages.github.select import select_projects
 from packages.tailor.assemble import describe
@@ -125,6 +125,111 @@ async def get_parsed(resume_id: uuid.UUID, session: SessionDep) -> ResumeParsedO
         line_count=len(parsed.get("raw_lines") or []),
         parsed=parsed,
     )
+
+
+@router.post("/{resume_id}/edit", response_model=ResumeOut, status_code=status.HTTP_201_CREATED)
+async def edit_resume(resume_id: uuid.UUID, body: ResumeEdit, session: SessionDep) -> Resume:
+    """Save an edited résumé as a new version, rendered and adopted.
+
+    Until now the parsed form was read-only: fixing a typo, or a section the
+    parser mis-split, meant editing the source document elsewhere and
+    re-uploading.
+
+    Three things this does that a plain form save would not, each of which is a
+    silent wrong answer if skipped.
+
+    **A new version, never a mutation.** An `Application` may already point at
+    the source résumé and may already have sent it. Rewriting that row in place
+    would leave a receipt describing a document that no longer exists.
+
+    **The PDF is re-rendered from the edit.** `apply_job._resume_path` uploads
+    the *file*, while tailoring renders from `parsed_json`. Storing the edit
+    without a new file would make it invisible on untailored applications and
+    visible on tailored ones — the same divergence that let the base résumé go
+    out while the review screen showed a tailored diff.
+
+    **`raw_lines` is rebuilt**, in `packages/tailor/edit.py`. It is what the
+    fabrication guard treats as "was this in the source", so an edit that added
+    a real employer while leaving it stale would have the guard refuse the
+    owner's own fact and the rewriter would look broken.
+
+    With `adopt` (the default) every profile pointing at the source is moved to
+    the new version. Without it the edit is stored and nothing uses it, which
+    reads as having done nothing.
+    """
+    source = await session.get(Resume, resume_id)
+    if source is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "resume not found")
+    if not source.parsed_json:
+        raise ApiError(ErrorCode.INVALID_REQUEST, "this résumé has no parsed form to edit")
+
+    from packages.tailor.assemble import assemble_pdf
+    from packages.tailor.edit import apply_edit
+    from packages.tailor.parse import Contact
+
+    # Emptiness is judged on what the editor actually controls, not on the
+    # result. `preamble` survives the round trip because no form shows it, so a
+    # cleared résumé could still render a PDF containing nothing but a stray
+    # "Available from June" — technically non-empty, and not a document anyone
+    # meant to send.
+    contact_values = [v for v in body.contact.model_dump().values() if v]
+    has_sections = any(line.strip() for lines in body.sections.values() for line in lines)
+    if not contact_values and not has_sections:
+        raise ApiError(ErrorCode.INVALID_REQUEST, "the edited résumé is empty")
+
+    parsed = ParsedResume.model_validate(source.parsed_json)
+    edited = apply_edit(
+        parsed,
+        contact=Contact.model_validate(body.contact.model_dump()),
+        sections=body.sections,
+    )
+
+    try:
+        # Projects are excluded here. They are rebuilt per posting at tailoring
+        # time from the GitHub inventory, so baking today's set into the base
+        # would freeze a section that is supposed to follow the job.
+        pdf = assemble_pdf(edited, None, None)
+    except Exception as exc:  # noqa: BLE001 - WeasyPrint needs system libraries
+        raise ApiError(
+            ErrorCode.INTERNAL_ERROR,
+            f"the edit could not be rendered to PDF ({type(exc).__name__}), so it was not "
+            "saved — a stored edit with no file would be invisible to every application",
+        ) from exc
+
+    next_version = (
+        await session.scalar(
+            select(func.coalesce(func.max(Resume.version), 0) + 1).where(
+                Resume.candidate_id == source.candidate_id
+            )
+        )
+    ) or 1
+
+    storage = get_storage()
+    key = resume_key(str(source.candidate_id), next_version, "resume.pdf")
+    try:
+        storage.put(key, pdf)
+    except Exception as exc:  # noqa: BLE001 - surfaces size limits too
+        raise ApiError(ErrorCode.INTERNAL_ERROR, f"could not store the edit: {exc}") from exc
+
+    resume = Resume(
+        candidate_id=source.candidate_id,
+        version=next_version,
+        storage_ref=key,
+        parsed_json=edited.model_dump(mode="json"),
+        is_default=source.is_default,
+    )
+    session.add(resume)
+    await session.flush()
+
+    if body.adopt:
+        for profile in (
+            await session.scalars(select(Profile).where(Profile.base_resume_id == source.id))
+        ).all():
+            profile.base_resume_id = resume.id
+
+    await session.commit()
+    await session.refresh(resume)
+    return resume
 
 
 @router.post("/{resume_id}/set-base", response_model=ResumeOut)
