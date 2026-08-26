@@ -102,21 +102,63 @@ export function CrawlerSpider() {
           thing on screen, which is the point: the question it answers — is
           anything happening — should be answerable without reading a word.
 
+          Drawn rather than set as the 🕷 emoji, because an emoji cannot move
+          its legs and cannot be turned to face where it is going. Here the
+          cephalothorax and eyes are on the right, so it looks along its own
+          direction of travel, and the eight legs step in two alternating sets
+          the way a real spider's do.
+
           Fixed and `pointer-events-none` so it crosses over the page without
-          intercepting a click on whatever it passes. `translateX` only, per
-          the project's animation rules: it never triggers layout. */}
+          intercepting a click on whatever it passes. `translateX` and `rotate`
+          only, per the project's animation rules: neither triggers layout. */}
       {moving ? (
         <div
           aria-hidden="true"
           className="pointer-events-none fixed inset-x-0 top-0 z-50 h-0 overflow-visible"
         >
-          <span className="absolute top-0 left-0 motion-safe:animate-[traverse_9s_linear_infinite]">
-            {/* The thread it descends on, so the spider reads as hanging from
-                the top of the window rather than floating in it. */}
-            <span className="mx-auto block h-3 w-px bg-current opacity-30" />
-            <span className="block text-base leading-none motion-safe:animate-[bob_0.7s_ease-in-out_infinite]">
-              🕷
-            </span>
+          <span className="absolute top-0 left-0 motion-safe:animate-[traverse_26s_linear_infinite]">
+            {/* The thread it descends on, so it reads as hanging from the top
+                of the window rather than floating in it. */}
+            <span className="mx-auto block h-4 w-px bg-current opacity-40" />
+            <svg
+              viewBox="0 0 60 40"
+              className="block h-10 w-14 motion-safe:animate-[bob_1.8s_ease-in-out_infinite]"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            >
+              {/* Legs first, so the body sits over where they attach. Four a
+                  side, alternating between two gaits half a cycle apart —
+                  legs moving in unison reads as a twitch, not a walk. */}
+              <g className="spider-legs">
+                <g className="leg leg-a" style={{ transformOrigin: "30px 17px" }}>
+                  <path d="M30 17 L20 8 L13 4" />
+                  <path d="M31 17 L24 6 L20 1" />
+                </g>
+                <g className="leg leg-b" style={{ transformOrigin: "32px 17px" }}>
+                  <path d="M32 17 L30 6 L28 1" />
+                  <path d="M33 17 L36 7 L39 2" />
+                </g>
+                <g className="leg leg-b" style={{ transformOrigin: "30px 23px" }}>
+                  <path d="M30 23 L20 32 L13 36" />
+                  <path d="M31 23 L24 34 L20 39" />
+                </g>
+                <g className="leg leg-a" style={{ transformOrigin: "32px 23px" }}>
+                  <path d="M32 23 L30 34 L28 39" />
+                  <path d="M33 23 L36 33 L39 38" />
+                </g>
+              </g>
+
+              {/* Abdomen behind, cephalothorax in front — the spider faces the
+                  way it is walking. */}
+              <ellipse cx="22" cy="20" rx="11" ry="8" fill="currentColor" stroke="none" />
+              <ellipse cx="37" cy="20" rx="7" ry="6" fill="currentColor" stroke="none" />
+              {/* Eyes, on the leading edge. Small, but they are what make the
+                  direction of travel readable at a glance. */}
+              <circle cx="41" cy="18" r="1.4" fill="var(--color-paper, #fff)" stroke="none" />
+              <circle cx="41" cy="22" r="1.4" fill="var(--color-paper, #fff)" stroke="none" />
+            </svg>
           </span>
         </div>
       ) : null}
@@ -132,17 +174,30 @@ export function CrawlerSpider() {
 
       {/* Keyframes live here rather than in the global sheet: this is the only
           thing that uses them, and a reader of this file should not have to go
-          looking for what "traverse" means. `motion-safe:` on both is what
-          honours a reduced-motion preference — the spider then does not appear
-          at all, and the header label still says `crawling`. */}
+          looking for what "traverse" means. `motion-safe:` on the animated
+          elements is what honours a reduced-motion preference — the spider then
+          does not appear at all, and the header label still says `crawling`. */}
       <style>{`
         @keyframes traverse {
-          from { transform: translateX(-2rem); }
-          to   { transform: translateX(calc(100vw + 2rem)); }
+          from { transform: translateX(-4rem); }
+          to   { transform: translateX(calc(100vw + 4rem)); }
         }
         @keyframes bob {
-          0%, 100% { transform: translateY(0) rotate(-6deg); }
-          50%      { transform: translateY(2px) rotate(6deg); }
+          0%, 100% { transform: translateY(0); }
+          50%      { transform: translateY(2px); }
+        }
+        @keyframes step-a {
+          0%, 100% { transform: rotate(-7deg); }
+          50%      { transform: rotate(7deg); }
+        }
+        @keyframes step-b {
+          0%, 100% { transform: rotate(7deg); }
+          50%      { transform: rotate(-7deg); }
+        }
+        .spider-legs .leg { transform-box: view-box; }
+        @media (prefers-reduced-motion: no-preference) {
+          .spider-legs .leg-a { animation: step-a 1.8s ease-in-out infinite; }
+          .spider-legs .leg-b { animation: step-b 1.8s ease-in-out infinite; }
         }
       `}</style>
     </>
