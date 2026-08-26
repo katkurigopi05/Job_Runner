@@ -310,7 +310,16 @@ Everything the employer would receive, before it is sent:
 ### Editing a résumé
 
 `/resumes` has an `edit` button per résumé: one box per section, one line per
-bullet. Saving does three things worth knowing about:
+bullet, with a **live preview beside it** that updates as you type. The preview
+is the same component the saved résumé renders through, fed your draft — so what
+you see while editing is drawn by the same code as what gets stored, and the two
+cannot drift apart.
+
+It previews the document *as the server will build it*: blank lines dropped, a
+section you empty disappearing. It carries no version number, because a draft
+has not been stored or re-parsed yet.
+
+Saving does three things worth knowing about:
 
 - It creates a **new version** rather than rewriting the one on screen. An
   application may already have sent that version, and its receipt has to keep

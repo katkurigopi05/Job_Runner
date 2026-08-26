@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import type { ResumeParsed } from "@/lib/api";
+import { ResumeDocumentView } from "@/components/resume-preview";
 import { saveResumeEdit } from "@/app/resumes/actions";
 import type { UploadResult } from "@/app/resumes/actions";
 
@@ -38,14 +39,37 @@ function Saving() {
 export function ResumeEditor({ parsed }: { parsed: ResumeParsed }) {
   const [open, setOpen] = useState(false);
   const document = parsed.parsed ?? {};
-  const contact = (document.contact ?? {}) as Record<string, unknown>;
-  const sections = document.sections ?? {};
+  const saved = (document.contact ?? {}) as Record<string, unknown>;
+  const savedSections = document.sections ?? {};
 
   const action = saveResumeEdit.bind(null, parsed.id);
   const [state, run] = useActionState<UploadResult | null, FormData>(action, null);
 
   const text = (value: unknown) => (typeof value === "string" ? value : "");
-  const links = Array.isArray(contact.links) ? (contact.links as string[]) : [];
+  const links = Array.isArray(saved.links) ? (saved.links as string[]) : [];
+
+  // Draft state, so the preview can show what is being typed rather than what
+  // was last saved. Controlled inputs rather than `defaultValue`: an
+  // uncontrolled form cannot drive a preview, and a preview fed from anywhere
+  // other than the same values the form will submit would eventually disagree
+  // with what gets stored.
+  const [name, setName] = useState(text(saved.name));
+  const [email, setEmail] = useState(text(saved.email));
+  const [phone, setPhone] = useState(text(saved.phone));
+  const [linkText, setLinkText] = useState(links.join("\n"));
+  const [drafts, setDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.entries(savedSections).map(([key, lines]) => [key, lines.join("\n")])),
+  );
+
+  // What the server will build from this form, computed the same way it will:
+  // blank lines dropped, empty sections removed. Showing the raw textareas
+  // instead would preview a document that is not the one being saved.
+  const draftContact: Record<string, unknown> = { name, email, phone };
+  const draftSections = Object.fromEntries(
+    Object.entries(drafts)
+      .map(([key, value]) => [key, value.split("\n").filter((line) => line.trim() !== "")])
+      .filter(([, lines]) => (lines as string[]).length > 0),
+  ) as Record<string, string[]>;
 
   if (!open) {
     return (
@@ -59,67 +83,86 @@ export function ResumeEditor({ parsed }: { parsed: ResumeParsed }) {
     );
   }
 
+  const field =
+    "mt-1 w-full rounded border border-rule bg-paper-raised px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn";
+  const legend = "font-mono text-xs uppercase tracking-widest text-ink-soft";
+
   return (
-    <form action={run} className="mt-5 space-y-6 border border-rule bg-paper p-5">
-      <div className="grid gap-4 sm:grid-cols-3">
-        <label className="block">
-          <span className="font-mono text-xs uppercase tracking-widest text-ink-soft">name</span>
-          <input
-            name="contact:name"
-            defaultValue={text(contact.name)}
-            className="mt-1 w-full rounded border border-rule bg-paper-raised px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
-          />
-        </label>
-        <label className="block">
-          <span className="font-mono text-xs uppercase tracking-widest text-ink-soft">email</span>
-          <input
-            name="contact:email"
-            defaultValue={text(contact.email)}
-            className="mt-1 w-full rounded border border-rule bg-paper-raised px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
-          />
-        </label>
-        <label className="block">
-          <span className="font-mono text-xs uppercase tracking-widest text-ink-soft">phone</span>
-          <input
-            name="contact:phone"
-            defaultValue={text(contact.phone)}
-            className="mt-1 w-full rounded border border-rule bg-paper-raised px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
-          />
-        </label>
+    <form action={run} className="mt-5 border border-rule bg-paper">
+      {/* Form and preview side by side on a wide screen, stacked on a narrow
+          one. The preview is the same component the saved résumé renders
+          through, fed the draft instead — drawing it with different code would
+          eventually disagree with what actually gets stored, and this screen
+          exists precisely so the owner can trust what they are looking at. */}
+      <div className="grid gap-6 p-5 lg:grid-cols-2">
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <label className="block">
+              <span className={legend}>name</span>
+              <input
+                name="contact:name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className={field}
+              />
+            </label>
+            <label className="block">
+              <span className={legend}>email</span>
+              <input
+                name="contact:email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                className={field}
+              />
+            </label>
+            <label className="block">
+              <span className={legend}>phone</span>
+              <input
+                name="contact:phone"
+                value={phone}
+                onChange={(event) => setPhone(event.target.value)}
+                className={field}
+              />
+            </label>
+          </div>
+
+          <label className="block">
+            <span className={legend}>links — one per line</span>
+            <textarea
+              name="contact:links"
+              rows={2}
+              value={linkText}
+              onChange={(event) => setLinkText(event.target.value)}
+              className={`${field} font-mono`}
+            />
+          </label>
+
+          {Object.entries(drafts).map(([section, value]) => (
+            <label key={section} className="block">
+              <span className={legend}>{section} — one line per bullet</span>
+              <textarea
+                name={`section:${section}`}
+                rows={Math.min(Math.max(value.split("\n").length + 1, 3), 18)}
+                value={value}
+                onChange={(event) =>
+                  setDrafts((held) => ({ ...held, [section]: event.target.value }))
+                }
+                className={`${field} leading-relaxed`}
+              />
+            </label>
+          ))}
+        </div>
+
+        <div className="lg:sticky lg:top-6 lg:self-start">
+          <p className={`${legend} mb-2`}>preview — as the parser will read it</p>
+          <ResumeDocumentView contact={draftContact} sections={draftSections} />
+          <p className="mt-2 font-mono text-xs text-ink-faint">
+            Not saved yet. A section that empties disappears here because it will not be written.
+          </p>
+        </div>
       </div>
 
-      <label className="block">
-        <span className="font-mono text-xs uppercase tracking-widest text-ink-soft">
-          links — one per line
-        </span>
-        <textarea
-          name="contact:links"
-          rows={2}
-          defaultValue={links.join("\n")}
-          className="mt-1 w-full rounded border border-rule bg-paper-raised px-3 py-2 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
-        />
-      </label>
-
-      {Object.entries(sections).map(([name, lines]) => (
-        <label key={name} className="block">
-          <span className="font-mono text-xs uppercase tracking-widest text-ink-soft">
-            {name} — one line per bullet
-          </span>
-          <textarea
-            name={`section:${name}`}
-            rows={Math.min(Math.max(lines.length + 1, 3), 18)}
-            defaultValue={lines.join("\n")}
-            className="mt-1 w-full rounded border border-rule bg-paper-raised px-3 py-2 text-sm leading-relaxed focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
-          />
-        </label>
-      ))}
-
-      <p className="font-mono text-xs text-ink-faint">
-        Saving renders a new PDF and points every profile that used this résumé at it. The version
-        on screen is kept — an application that already sent it keeps describing what it sent.
-      </p>
-
-      <div className="flex flex-wrap items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4 border-t border-rule px-5 py-4">
         <Saving />
         <button
           type="button"
@@ -131,6 +174,11 @@ export function ResumeEditor({ parsed }: { parsed: ResumeParsed }) {
         {state ? (
           <span className={`text-sm ${state.ok ? "text-go" : "text-stop"}`}>{state.message}</span>
         ) : null}
+        <p className="w-full font-mono text-xs text-ink-faint">
+          Saving renders a new PDF and points every profile that used this résumé at it. The
+          version on screen is kept — an application that already sent it keeps describing what it
+          sent.
+        </p>
       </div>
     </form>
   );
