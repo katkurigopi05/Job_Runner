@@ -134,7 +134,30 @@ async def _run_pipeline(
     application.ats = adapter.name
 
     async with browser_page(adapter.name) as page:
-        await page.goto(application.url, wait_until="domcontentloaded")
+        response = await page.goto(application.url, wait_until="domcontentloaded")
+
+        # A withdrawn posting is `job_closed`, not `site_error`.
+        #
+        # The adapters read "closed" from on-page text — "this posting is
+        # closed", "position has been filled" — which a 404 page does not
+        # carry. So a job taken down entirely got as far as `enumerate_fields`,
+        # found no form, and was recorded as `site_error`: a code that says
+        # *our side is broken* and invites a retry, for the one outcome that is
+        # both expected and permanent.
+        #
+        # Checked here rather than per adapter because the HTTP status is the
+        # authoritative signal and is the same for every ATS. 410 says removed;
+        # 404 on a board URL that we hold a record of means the same thing. 403
+        # is deliberately not included — that is usually automation being
+        # blocked, which §2.5 makes `manual_completion_required`.
+        if response is not None and response.status in (404, 410):
+            await _fail(
+                session,
+                application,
+                FailureReason.JOB_CLOSED,
+                f"posting returned HTTP {response.status} — it has been taken down",
+            )
+            return
 
         posting = await adapter.parse_posting(page)
         if posting.closed:
