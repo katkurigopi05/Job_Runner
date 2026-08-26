@@ -395,6 +395,8 @@ You normally do not call these by hand. They are listed so you know what the ass
 | `approve_application` | Record approval and optional answers, then resume work |
 | `reject_application` | Reject a parked application permanently |
 | `submit_otp` | Supply a requested one-time verification code |
+| `compare_tailoring` | Tailor a parked application both locally and in the cloud, and return both |
+| `select_tailoring` | Choose which compared résumé that application will upload |
 | `list_candidates` | List candidate records and their IDs |
 | `list_profiles` | List reusable application profiles and their IDs |
 | `list_resumes` | List a candidate's uploaded résumés |
@@ -405,7 +407,24 @@ You normally do not call these by hand. They are listed so you know what the ass
 | `preview_projects` | Rank projects against job text and return matched GitHub evidence terms |
 | `curate_project` | Pin a project or exclude it from future selection |
 
-There is deliberately no `submit_now` tool. Approval releases an application to the worker, which enforces the project's submission rules. There is also no tool named `tailor_resume`; `preview_resume` previews assembly and selected projects.
+There is deliberately no `submit_now` tool. Approval releases an application to
+the worker, which enforces the project's submission rules.
+
+There is also no `tailor_resume` tool, and the reason has changed. Tailoring is
+built and the apply pipeline runs it on every application; what is absent is a
+tool that tailors *without* applying, because the document it produced would
+belong to no application — nothing would upload it, and it would sit in storage
+looking finished. `preview_resume` previews assembly and selected projects
+without writing anything.
+
+`compare_tailoring` costs a real upload: each remote side sends your résumé to a
+third party. Ask for it when you want the comparison, not to browse. Asking
+twice for the same posting sends nothing, because the tailoring cache is keyed
+per provider.
+
+`select_tailoring` and `approve_application` are separate on purpose. Choosing
+which document goes is not the same act as deciding to send it, and the approval
+gate has to stay its own deliberate step.
 
 ## 7. Typical application workflow
 

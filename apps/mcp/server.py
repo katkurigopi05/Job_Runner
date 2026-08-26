@@ -224,6 +224,73 @@ async def submit_otp(application_id: str, code: str) -> dict[str, Any]:
     return await _call("POST", f"/applications/{application_id}/otp", json={"code": code})
 
 
+@server.tool()
+async def compare_tailoring(application_id: str) -> dict[str, Any]:
+    """Tailor this posting with the local model and the cloud one, for a choice.
+
+    Answers "would the other model have written a better résumé for this job",
+    which is otherwise only answerable by editing `.env` and re-running.
+
+    Costs a real upload. Each remote side sends the owner's résumé to a third
+    party, so call it when the owner has asked to compare — not routinely, and
+    not to explore. Asking twice for the same posting sends nothing: the
+    tailoring cache is keyed per provider.
+
+    Both sides are checked by the fabrication guard before either is returned,
+    and `rejected` counts what it refused. A side that could not run — no key,
+    spent allowance, Ollama not started — comes back with `error` set rather
+    than missing, because a comparison silently down to one column reads as a
+    verdict on the column that is there.
+
+    Requires the application to be parked at needs_review. Nothing here changes
+    which résumé is sent; `select_tailoring` does that.
+    """
+    result = await _call("POST", f"/applications/{application_id}/tailoring/compare")
+    if not isinstance(result, dict):
+        return result
+
+    review = result.get("review") or {}
+    sides = review.get("tailoring_comparison") or []
+    return {
+        "application_id": result.get("id"),
+        "currently_attached": result.get("tailored_resume_id"),
+        "candidates": [
+            {
+                "requested": side.get("requested"),
+                # What answered, which differs from what was asked when the
+                # remote allowance ran out and the local model took over.
+                "answered_by": side.get("answered_by"),
+                "resume_id": side.get("resume_id"),
+                "changed": side.get("changed"),
+                "unchanged": side.get("unchanged"),
+                "rejected_by_guard": side.get("rejected"),
+                "reused": side.get("reused"),
+                "error": side.get("error"),
+                "changes": side.get("changes"),
+            }
+            for side in sides
+        ],
+    }
+
+
+@server.tool()
+async def select_tailoring(application_id: str, resume_id: str) -> dict[str, Any]:
+    """Choose which compared résumé this application will upload.
+
+    `resume_id` comes from `compare_tailoring`. The API refuses anything that
+    was not one of the compared versions — this decides the file an employer
+    receives, and the screen only ever offers two.
+
+    Selecting is not approving. The application stays parked until
+    `approve_application` is called.
+    """
+    return await _call(
+        "POST",
+        f"/applications/{application_id}/tailoring/select",
+        json={"resume_id": resume_id},
+    )
+
+
 # --------------------------------------------------------------------------
 # Profile, résumé, projects
 # --------------------------------------------------------------------------
