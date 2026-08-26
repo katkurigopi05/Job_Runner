@@ -306,6 +306,12 @@ STATE_BY_CODE: dict[str, str] = {
 CODE_BY_STATE: dict[str, str] = {name: code for code, name in STATE_BY_CODE.items()}
 
 
+def is_us_state(term: str) -> bool:
+    """Whether `term` names a US state, by either spelling."""
+    cleaned = term.strip().lower()
+    return cleaned.upper() in STATE_BY_CODE or cleaned in CODE_BY_STATE
+
+
 def location_aliases(term: str) -> tuple[str, ...]:
     """Every spelling of `term` a posting might use, including `term` itself.
 

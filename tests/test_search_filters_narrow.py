@@ -62,7 +62,7 @@ def test_the_owner_can_widen_it_back_out() -> None:
 
 
 def test_prose_in_the_description_no_longer_sets_the_rung() -> None:
-    """"lead a team" and "our staff" filed 54% of the corpus as staff.
+    """ "lead a team" and "our staff" filed 54% of the corpus as staff.
 
     Seniority is read from the title, which is what this function's own
     docstring always claimed. A body that happens to use the word is not a
@@ -126,6 +126,49 @@ def test_the_code_matches_the_full_state_name() -> None:
     in_california = SearchFilters(locations=("California",))
     assert matches(_posting(location="San Jose, CA"), in_california).kept
     assert not matches(_posting(location="Toronto, Canada"), in_california).kept
+
+
+@pytest.mark.parametrize("location", ["Toronto, ON, CA", "Vancouver, BC, CA"])
+def test_the_canadian_country_code_is_not_california(location: str) -> None:
+    """The half word boundaries cannot fix, and `locality.py`'s opening warning.
+
+    "CA is two countries": in `San Jose, CA` and `Toronto, ON, CA` alike, "CA"
+    is a standalone token, so no amount of anchoring separates them. A state
+    search therefore also requires the location to read as domestic, which
+    `locality_of` already decides correctly — rather than this module inventing
+    a second, worse answer to a question solved next door.
+    """
+    assert not matches(_posting(location=location), IN_CA).kept
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["CA", "Remote — CA", "Palo Alto, CA, US", "Sunnyvale, CA / Bellevue, WA"],
+)
+def test_domestic_shorthand_still_matches(location: str) -> None:
+    """Requiring a domestic reading must not cost the ordinary spellings.
+
+    `locality_of` is case-sensitive about state codes, so an earlier version of
+    this check lowered the location first and made *every* state search look
+    foreign — narrowing all the way to nothing while looking like it worked.
+    """
+    assert matches(_posting(location=location), IN_CA).kept
+
+
+def test_a_multi_office_posting_matches_on_any_one_of_them() -> None:
+    """A California office is a California job, whatever else is listed."""
+    location = "Dallas, Texas; San Francisco, California; Vancouver, Canada"
+    assert matches(_posting(location=location), IN_CA).kept
+
+
+def test_non_state_searches_are_not_restricted_to_the_us() -> None:
+    """The domestic requirement applies to state terms only.
+
+    Searching for "Toronto" should find Toronto. The rule exists to disambiguate
+    a two-letter code, not to make the filter refuse foreign places by name.
+    """
+    in_toronto = SearchFilters(locations=("Toronto",))
+    assert matches(_posting(location="Toronto, ON, CA"), in_toronto).kept
 
 
 def test_longer_place_names_still_match_inside_a_string() -> None:

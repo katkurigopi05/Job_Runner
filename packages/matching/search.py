@@ -19,7 +19,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from packages.core.models import Posting
-from packages.matching.locality import Locality, is_domestic, locality_of, location_aliases
+from packages.matching.locality import (
+    Locality,
+    is_domestic,
+    is_us_state,
+    locality_of,
+    location_aliases,
+)
 from packages.matching.roles import canonical
 
 #: Seniority ladder, low to high. Matching is by position so "senior or above"
@@ -151,14 +157,31 @@ def _location_mentions(location: str, wanted: str) -> bool:
     a search for punctuation is odd, but silently matching nothing would be
     worse than the old behaviour it replaces.
     """
+    lowered = location.lower()
+    matched = False
     for alias in location_aliases(wanted):
         if not re.search(r"\w", alias):
-            if alias in location:
-                return True
+            matched = matched or alias in lowered
             continue
-        if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", location):
-            return True
-    return False
+        if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", lowered):
+            matched = True
+    if not matched:
+        return False
+
+    # "CA" is two countries, which is `locality.py`'s own opening warning:
+    # `San Jose, CA` is California and `Toronto, ON, CA` is Canada. Word
+    # boundaries cannot tell those apart — in both, "CA" is a standalone token.
+    #
+    # `locality_of` already can, and gets every form right: `Toronto, ON, CA`
+    # and `Vancouver, BC, CA` read as elsewhere, while a bare "CA", "Remote —
+    # CA" and "Palo Alto, CA, US" read as domestic. So a state search additionally
+    # requires the location to read as domestic, rather than this module
+    # inventing a second, worse answer to a question already solved next door.
+    #
+    # Only for state terms: a search for "Toronto" or "London" should find them.
+    if is_us_state(wanted):
+        return is_domestic(locality_of(location))
+    return True
 
 
 def is_remote(posting: Posting) -> bool:
@@ -203,8 +226,11 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
             reasons.append(f"missing keyword {keyword!r}")
 
     if filters.locations:
-        location = (posting.location or "").lower()
-        if not any(_location_mentions(location, wanted) for wanted in filters.locations):
+        # The raw string, not a lowered copy: `locality_of` reads state codes
+        # case-sensitively, so lowering here made every state search look
+        # foreign and match nothing.
+        raw_location = posting.location or ""
+        if not any(_location_mentions(raw_location, wanted) for wanted in filters.locations):
             reasons.append("location does not match")
 
     if filters.us_only:
