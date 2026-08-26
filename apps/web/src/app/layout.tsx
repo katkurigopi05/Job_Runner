@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ApiHealth } from "@/components/api-health";
+import { CrawlerSpider } from "@/components/crawler-spider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import "./globals.css";
 
@@ -46,6 +47,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               {/* Was a static "localhost only" label. It is still that when
                   everything is up, but it now also answers the question the
                   dashboard could not: which process stopped. */}
+              <CrawlerSpider />
               <ApiHealth />
               <ThemeToggle />
             </div>

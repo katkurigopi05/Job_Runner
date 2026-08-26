@@ -126,6 +126,20 @@ The header shows a status pill. When everything is up it reads `localhost only`;
 it turns amber for `db down` (run `make up`) and red for `api down` (run
 `make api`), so you never have to guess which process stopped.
 
+Beside it is a spider showing what the crawler is doing:
+
+| Spider | Meaning | What to do |
+|---|---|---|
+| 🕷 moving, green — `crawling` | A crawl is running | Wait; new postings land in `/matches` when it finishes |
+| 🕷 still, amber — `N queued` | Queued, but nothing is draining it | `make worker` |
+| 🕷 still, faint — `postings 5d ago` | Nothing crawling | `make crawl` if that age looks wrong |
+
+The idle label carries the age of the newest posting, because that is the number
+that actually answers "are my results current". An empty "posted in the last
+day" search usually means nothing has been *looked for* since the last crawl.
+
+The spider holds still if your system asks for reduced motion.
+
 Optional terminal 5 — local assistant:
 
 ```bash
