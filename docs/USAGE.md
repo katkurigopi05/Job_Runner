@@ -132,10 +132,12 @@ Beside it is a spider showing what the crawler is doing:
 |---|---|---|
 | 🕷 walking across the top of the window — `crawling` | A crawl is running | Wait; new postings land in `/matches` when it finishes |
 | 🕷 still, amber — `N queued` | Queued, but nothing is draining it | `make worker` |
-| 🕷 still, faint — `postings 5d ago` | Nothing crawling | `make crawl` if that age looks wrong |
+| 🕷 asleep with `z z z` — `postings 5d ago` | Nothing crawling | `make crawl` if that age looks wrong |
 
 The idle label carries the age of the newest posting, because that is the number
-that actually answers "are my results current". An empty "posted in the last
+that actually answers "are my results current". Only genuine idleness sleeps —
+a queued crawl with no worker stays awake and amber, because that is something
+to fix rather than something to rest through. An empty "posted in the last
 day" search usually means nothing has been *looked for* since the last crawl.
 
 While a crawl runs the spider leaves the header and walks the top edge of the

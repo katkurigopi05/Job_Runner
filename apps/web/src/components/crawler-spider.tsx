@@ -20,9 +20,14 @@ const POLL_MS = 10_000;
  * - **working** — a crawl is claimed and running. The spider walks.
  * - **waiting** — queued with nobody holding it. The spider is still and amber:
  *   `make worker` is not up, and this would otherwise look identical to working.
- * - **idle** — nothing queued. The spider is still and faint, and the label
- *   carries the age of the newest posting, which is the number that actually
- *   answers "are my results current".
+ * - **idle** — nothing queued. The spider sleeps: a slow breath and three z's
+ *   drifting up. Nothing is crawling and nothing is wrong, and a motionless
+ *   spider on its own reads the same as a broken one. The label carries the age
+ *   of the newest posting, which is the number that actually answers "are my
+ *   results current".
+ *
+ * Only genuinely idle sleeps. `queued` is waiting on a worker — a thing to fix,
+ * not a thing to rest through — so it stays awake and amber.
  */
 function ageInWords(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -71,18 +76,23 @@ export function CrawlerSpider() {
 
   const freshness = ageInWords(status.newest_posting_at);
 
-  const { label, tone, moving, title } = status.running
+  const { label, tone, moving, asleep, title } = status.running
     ? {
         label: "crawling",
         tone: "text-go",
         moving: true,
+        asleep: false,
         title: "A crawl is running. New postings will appear in /matches when it finishes.",
       }
     : status.stalled
       ? {
           label: `${status.pending} queued`,
           tone: "text-attn",
+          // Waiting, not resting. A crawl that nobody is draining is a problem
+          // to fix, and drawing it asleep would make it look like a state the
+          // owner chose.
           moving: false,
+          asleep: false,
           title:
             "A crawl is queued but no worker is draining it. Start one with: make worker",
         }
@@ -90,6 +100,7 @@ export function CrawlerSpider() {
           label: freshness ? `postings ${freshness}` : "idle",
           tone: "text-ink-faint",
           moving: false,
+          asleep: true,
           title: freshness
             ? `Nothing is crawling. The newest posting was first seen ${freshness}. Queue a crawl with: make crawl`
             : "Nothing is crawling and no postings have been seen yet.",
@@ -164,10 +175,31 @@ export function CrawlerSpider() {
       ) : null}
 
       <p className={`flex items-center gap-1.5 font-mono text-xs ${tone}`} title={title}>
-        {/* The header keeps a still spider as the label's marker. The moving
-            one above is the signal; this one is the legend for it. */}
-        <span aria-hidden="true" className="inline-block">
-          🕷
+        {/* The header keeps a small spider as the label's marker. The one that
+            walks the top of the window is the signal; this is its legend.
+
+            Idle, it sleeps: a slow breath and three z's drifting up. Nothing is
+            crawling and nothing is wrong, and a still spider alone reads the
+            same as a broken one. Only the genuinely idle state gets this —
+            `queued` is waiting on a worker, which is a thing to fix rather
+            than a thing to rest through. */}
+        <span aria-hidden="true" className="relative inline-block">
+          <span
+            className={asleep ? "inline-block motion-safe:animate-[breathe_3.6s_ease-in-out_infinite]" : "inline-block"}
+          >
+            🕷
+          </span>
+          {asleep ? (
+            <span className="pointer-events-none absolute -top-1 -right-1 select-none">
+              <span className="absolute motion-safe:animate-[snore_3.6s_ease-in-out_infinite]">z</span>
+              <span className="absolute motion-safe:animate-[snore_3.6s_ease-in-out_infinite] [animation-delay:1.2s]">
+                z
+              </span>
+              <span className="absolute motion-safe:animate-[snore_3.6s_ease-in-out_infinite] [animation-delay:2.4s]">
+                z
+              </span>
+            </span>
+          ) : null}
         </span>
         <span>{label}</span>
       </p>
@@ -185,6 +217,17 @@ export function CrawlerSpider() {
         @keyframes bob {
           0%, 100% { transform: translateY(0); }
           50%      { transform: translateY(2px); }
+        }
+        @keyframes breathe {
+          0%, 100% { transform: scale(1); opacity: 0.75; }
+          50%      { transform: scale(1.08); opacity: 1; }
+        }
+        /* Up and out, fading as it goes. Staggered by animation-delay above so
+           the three z's trail rather than move as one block. */
+        @keyframes snore {
+          0%   { transform: translate(0, 0) scale(0.6); opacity: 0; }
+          20%  { opacity: 0.9; }
+          100% { transform: translate(6px, -10px) scale(1); opacity: 0; }
         }
         @keyframes step-a {
           0%, 100% { transform: rotate(-7deg); }
