@@ -289,6 +289,10 @@ Everything the employer would receive, before it is sent:
 
 - **The filled form** — every answer, plus a screenshot, plus the exact text of
   any question that could not be answered.
+- **Résumé to be sent** — the actual document that will be uploaded, labelled
+  `tailored for this posting` or `profile base, unmodified`, and **editable
+  while the application is parked**. See *Editing the résumé about to be sent*
+  below.
 - **What tailoring changed** — the rewritten bullets against the originals, how
   many the fabrication guard refused, and which model wrote the document
   (`written by gemini`, or `ollama:llama3.1` if the allowance ran out mid-run).
@@ -308,6 +312,11 @@ Everything the employer would receive, before it is sent:
   fabrication guard before either is shown; a side that cannot run (no key,
   spent allowance, Ollama not started) appears as a column with the reason
   rather than silently vanishing.
+
+  Once you pick a column it stays picked. Approving re-runs the pipeline, and
+  until recently that re-tailored with the default provider and quietly
+  replaced your choice on the way out — the screen showed one document and the
+  employer got the other.
 
 ### Editing a résumé
 
@@ -332,11 +341,39 @@ Saving does three things worth knowing about:
   disagree. A failed render refuses the save rather than storing an edit no
   application could see.
 - It **moves every profile** that used the old version onto the new one, or the
-  edit would change nothing and the screen could not tell you.
+  edit would change nothing and the screen could not tell you. This last one is
+  specific to `/resumes`; editing from `/review` deliberately does not.
 
 Editing also widens what tailoring is allowed to say, because the guard checks
 rewrites against your résumé's own text. That is intended: the guard exists to
 stop the model inventing, not to stop you writing your own résumé.
+
+### Editing the résumé about to be sent
+
+`/review` has the same editor, on the document that application will upload.
+Open **Résumé to be sent** and press `edit before sending`.
+
+Use it when a tailored bullet reads wrong for one job. Editing the base on
+`/resumes` would not help there: a résumé already tailored for this posting is
+not the base, and the application is not going to send the base.
+
+The difference from `/resumes` is scope. Saving here attaches the new version to
+**that application only** — your base résumé and every other application are
+left alone. A résumé written for one posting is a poor starting point for the
+next, so this is not something to inherit by accident. If the fix is true
+everywhere — a typo, a changed phone number — tick **Also make this my base
+résumé** under the editor, which is off by default.
+
+Two things follow from saving:
+
+- The **tailoring diff above says so**. It still shows what tailoring did, but
+  it now describes the résumé yours was derived from, not the file going out,
+  and it says that rather than letting you read it as current.
+- **Approving sends your version.** Nothing re-tailors over it.
+
+Only available while the application is parked at `needs_review`. A running one
+is mid-fill in a browser and a submitted one has already sent its file, so
+editing either would change the screen and nothing else.
 
 ### Choosing who answers in `/chat`
 
@@ -413,6 +450,17 @@ Keep repository descriptions and topics accurate if you rely on this feature. Jo
 
 You normally do not call these by hand. They are listed so you know what the assistant can actually do.
 
+One asymmetry is worth knowing. `edit_application_resume` runs every edit
+through the fabrication guard, and the `/review` editor does not. That is not an
+oversight in either direction: §2.1 exists to stop a *model* inventing, and you
+are the authority on your own employers and dates. When you type on `/review`
+the author is you. When an assistant calls the tool the author is a model, so
+the same words get checked.
+
+If you ask an assistant to add something true and the guard refuses it, type it
+on `/review` yourself rather than asking the assistant to reword it past the
+check.
+
 | Tool | What it does |
 |---|---|
 | `detect_ats` | Detect an ATS from a posting URL |
@@ -428,6 +476,8 @@ You normally do not call these by hand. They are listed so you know what the ass
 | `submit_otp` | Supply a requested one-time verification code |
 | `compare_tailoring` | Tailor a parked application both locally and in the cloud, and return both |
 | `select_tailoring` | Choose which compared résumé that application will upload |
+| `inspect_application_resume` | Show the résumé a parked application will actually upload, line by line |
+| `edit_application_resume` | Edit that résumé — fabrication-guarded, unlike the dashboard editor |
 | `list_candidates` | List candidate records and their IDs |
 | `list_profiles` | List reusable application profiles and their IDs |
 | `list_resumes` | List a candidate's uploaded résumés |
@@ -468,8 +518,9 @@ gate has to stay its own deliberate step.
 7. Let the worker fill the ATS form.
 8. Open `/review` or ask, “What is in my review queue?”
 9. Inspect the job, filled answers, unanswered questions, résumé, and screenshot.
-10. Approve with exact missing answers, reject it, or finish manually if automation is blocked.
-11. Check `/applications` and `/tracker` for status and replies.
+10. Fix anything the résumé got wrong for this job with `edit before sending`, if needed.
+11. Approve with exact missing answers, reject it, or finish manually if automation is blocked.
+12. Check `/applications` and `/tracker` for status and replies.
 
 Application states normally move like this:
 
