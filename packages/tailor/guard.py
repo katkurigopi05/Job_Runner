@@ -366,6 +366,21 @@ def _index(text: str) -> set[str]:
         # "three" supports an output saying "3".
         if normalized in _NUMBER_WORDS:
             tokens.add(_NUMBER_WORDS[normalized])
+
+    # Equivalent spellings of the same fact — "Postgres" also findable as
+    # "PostgreSQL", "K8s" as "Kubernetes". Indexed here rather than checked at
+    # lookup time so that `keywords.analyze` and `supports()` cannot disagree:
+    # one decides which of the posting's terms the model is invited to use, the
+    # other decides whether the result is a fabrication, and a term ruled safe
+    # by the first and refused by the second is worse than never offering it.
+    #
+    # This widens the corpus, which `SourceCorpus` warns is how a fabrication
+    # becomes permissible — see `packages/tailor/aliases.py` for the two rules
+    # that keep the table to true equivalences rather than related terms.
+    from packages.tailor.aliases import expand_phrases, expand_tokens
+
+    tokens |= expand_tokens(tokens)
+    tokens |= expand_phrases(" ".join(normalize(m.group(0)) for m in _TOKEN_RE.finditer(text)))
     return tokens
 
 

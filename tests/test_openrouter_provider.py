@@ -134,10 +134,27 @@ def test_a_missing_key_says_which_variable(monkeypatch) -> None:
 
 
 def test_the_model_defaults_to_the_route_that_was_asked_for(monkeypatch) -> None:
+    """The built-in default, isolated from whatever this machine's `.env` says.
+
+    Clearing the environment variable is not enough: `OpenRouterProvider` falls
+    back to `settings.openrouter_model`, which pydantic reads from `.env` — so
+    this passed only on a checkout whose `.env` happened to be silent about it,
+    and started failing the moment one set the key it is documented to set.
+    A test that asserts a default has to control every source of that default.
+    """
+    import packages.core.config as core_config
+    from packages.core.config import get_settings
+
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+    get_settings.cache_clear()
+    settings = get_settings().model_copy(update={"openrouter_model": None})
+    monkeypatch.setattr(core_config, "get_settings", lambda: settings)
 
-    assert OpenRouterProvider().model == "stealth/ox-alpha"
+    try:
+        assert OpenRouterProvider().model == OpenRouterProvider.DEFAULT_MODEL
+    finally:
+        get_settings.cache_clear()
 
 
 def test_the_model_is_overridable_because_stealth_routes_vanish(monkeypatch) -> None:
