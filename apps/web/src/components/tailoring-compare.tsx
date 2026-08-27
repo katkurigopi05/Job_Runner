@@ -168,9 +168,12 @@ const CLOUD_SIDES = [
   },
   {
     value: "openrouter",
-    label: "openrouter · ox-alpha",
+    // Named by `OPENROUTER_MODEL`, not pinned here. The label used to carry the
+    // shipped default — until that route was withdrawn and the picker began
+    // advertising a model every call 404s on.
+    label: "openrouter",
     hint:
-      "Sends your résumé to OpenRouter, which forwards it to an upstream provider it does not name. Free routes commonly log prompts and share them with that undisclosed creator.",
+      "Sends your résumé to OpenRouter, which forwards it to an upstream provider it does not name. Free routes commonly log prompts and share them with that undisclosed creator. Which model runs is whatever OPENROUTER_MODEL names.",
   },
 ] as const;
 
