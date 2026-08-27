@@ -118,3 +118,56 @@ def test_every_group_is_symmetric() -> None:
     for group in ALIAS_GROUPS:
         for member in group:
             assert equivalents(member) == group, f"{member} is not symmetric in {sorted(group)}"
+
+
+# --------------------------------------------------------------------------
+# A verb is not a name
+# --------------------------------------------------------------------------
+
+
+def test_an_ordinary_action_verb_is_not_a_proper_noun() -> None:
+    """A résumé bullet opens with a verb, and the proper-noun test is
+    capitalization — so a rewrite opening with any verb the source had not
+    already used was refused as a fabricated name. "Deployed the pipeline"
+    failed against a source saying "Wrote the pipeline", for the word
+    "Deployed"."""
+    from packages.tailor.guard import EntityKind, _classify
+
+    for verb in (
+        "Deployed",
+        "Tested",
+        "Automated",
+        "Integrated",
+        "Documented",
+        "Monitored",
+        "Operated",
+        "Resolved",
+        "Validated",
+        "Rewrote",
+    ):
+        assert _classify(verb) != EntityKind.PROPER_NOUN, verb
+
+
+def test_a_seniority_verb_is_still_a_claim() -> None:
+    """The distinction the fix must not flatten.
+
+    "Deployed" says what was done; "oversaw" says who you were while doing it.
+    Claiming you led what you contributed to is a fabrication of scope, and the
+    one a résumé rewrite is most tempted by.
+    """
+    from packages.tailor.guard import EntityKind, _classify
+
+    for verb in ("Led", "Managed", "Owned", "Architected", "Oversaw", "Founded", "Spearheaded"):
+        assert _classify(verb) == EntityKind.SCOPE, verb
+
+
+def test_the_object_of_an_allowed_verb_is_still_checked() -> None:
+    """Freeing the verb must not free what follows it."""
+    from packages.tailor.guard import SourceCorpus, check
+
+    corpus = SourceCorpus.from_texts("Wrote the data pipeline that feeds the service, in Go.")
+
+    assert check("Deployed the data pipeline, in Go.", corpus).ok
+    assert not check("Deployed the data pipeline to Kubernetes.", corpus).ok
+    assert not check("Tested the data pipeline, cutting latency by 40%.", corpus).ok
+    assert not check("Led the data pipeline work.", corpus).ok
