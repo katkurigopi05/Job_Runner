@@ -191,6 +191,20 @@ a résumé written by `llama3.1` after the allowance ran out is a different
 document from one written by Gemini, and you should be able to tell before
 approving it.
 
+#### When an OpenRouter route stops working
+
+`OPENROUTER_MODEL` defaults to `stealth/ox-alpha`, and pre-release routes are
+withdrawn without notice — that one now returns 404 for every call. The symptom
+is a tailorer that appears to do nothing on a provider you believe is working.
+
+Set `OPENROUTER_MODEL` in `.env` to a route that still exists;
+`https://openrouter.ai/models` lists them, and free ones end in `:free`. The
+error names this fix when it happens.
+
+Free routes also rate-limit hard. Several calls in quick succession return 429,
+and a comparison run right after another one can fail on the cloud side alone.
+Raise `LLM_CALL_INTERVAL_S` for a real batch.
+
 #### Free and paid providers
 
 ```dotenv
@@ -317,6 +331,19 @@ Everything the employer would receive, before it is sent:
   until recently that re-tailored with the default provider and quietly
   replaced your choice on the way out — the screen showed one document and the
   employer got the other.
+
+  **Choose the cloud side per comparison.** The picker above the button names
+  which remote model runs — leave it on "whatever tailoring uses" for the usual
+  question, or pick one. This applies to that comparison only and does not
+  change what your applications tailor with. It exists because OpenRouter is
+  deliberately not in the automatic order, so comparing against it otherwise
+  meant setting `LLM_TASK_TAILOR=openrouter` and adopting it for everything
+  first. Each option says where your résumé goes.
+
+  A column reads `never answered` when the model failed rather than when the
+  guard refused it. The two are counted separately on purpose: "refused by the
+  guard" says the model tried to invent something, and a provider that was down
+  should not be read that way.
 
 ### Editing a résumé
 

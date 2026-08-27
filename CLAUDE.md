@@ -406,6 +406,35 @@ cached document over it — so the column the owner picked was shown here and th
 other one was sent. The choice is pinned now; see §15, *The owner's choice at
 review was discarded on the way to the employer*.
 
+**The remote side is nameable per comparison.** `cloud` on the compare request
+picks it for that run only; omitted, it is whatever real tailoring would use.
+
+This exists because the default could not answer the question for OpenRouter.
+§7 keeps `openrouter` out of `QUALITY_ORDER`, so the only way to make it the
+cloud column was `LLM_TASK_TAILOR=openrouter` — which also redirects every real
+tailoring call. The owner had to *adopt* a provider in order to evaluate it,
+which is the friction this panel exists to remove, pointing the wrong way: the
+provider hardest to name is the one whose output most deserves a look first.
+
+It is not a back door into §7. Only a provider with a key configured may be
+named, so pasting a key is still what makes a route reachable at all; nothing
+routes to OpenRouter by default; and naming one here moves no setting, so the
+next application tailors exactly as it did before. That is the same shape as
+§14's per-question provider choice in `/chat`. The picker states where the
+résumé goes for each option, and says outright that OpenRouter forwards to an
+upstream it cannot name — §2.8 permits this upload, it does not excuse making
+the recipient invisible at the moment of choosing.
+
+**A provider that never answered is not a guard refusal.** Found on the first
+real local-vs-cloud run. `tailor_bullet` keeps the original line for either
+reason and set `rejected_reason` for both, so `summarize` counted them
+together — and the comparison rendered "1 refused by the guard" for a model
+that had returned a 404 and never written a word. On a screen whose entire
+purpose is judging two models against each other, that is the wrong verdict
+about the wrong subject: "the guard refused this" describes what a model tried
+to write, and a transport error describes the network. `provider_failures` is
+counted and displayed separately, and the column says so.
+
 Tuning any of these against the guard's own pass rate is the trap in
 `docs/REFERENCE.md` §3.6: it optimises the one referee we control, and a
 rewrite can satisfy the guard while reading worse. Change one only with a
