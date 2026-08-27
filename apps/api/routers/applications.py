@@ -39,6 +39,7 @@ from packages.core.schemas import (
     PacketResume,
     ReviewDecision,
     TailoringChoice,
+    TailoringCompareRequest,
 )
 from packages.core.state import transition
 from packages.core.storage import get_storage
@@ -197,7 +198,11 @@ async def review_application(
 
 
 @router.post("/{application_id}/tailoring/compare", response_model=ApplicationOut)
-async def compare_tailoring(application_id: uuid.UUID, session: SessionDep) -> Application:
+async def compare_tailoring(
+    application_id: uuid.UUID,
+    session: SessionDep,
+    body: TailoringCompareRequest | None = None,
+) -> Application:
     """Tailor this posting with the local model and the cloud one, for a choice.
 
     On demand rather than on every application, and that is a §2.8 decision
@@ -211,6 +216,10 @@ async def compare_tailoring(application_id: uuid.UUID, session: SessionDep) -> A
     comparison offers each column as something the owner may choose and send;
     an unvetted draft presented that way is a fabricated bullet with a button
     under it.
+
+    `cloud` names the remote half for this comparison only — it moves no
+    setting and leaves real tailoring routed exactly as it was. Omitted, the
+    remote half is whatever real tailoring would use.
     """
     application = await session.get(Application, application_id)
     if application is None:
@@ -239,7 +248,12 @@ async def compare_tailoring(application_id: uuid.UUID, session: SessionDep) -> A
     from packages.tailor.compare import CannotCompare, compare_tailorings
 
     try:
-        candidates = await compare_tailorings(session, profile=profile, posting=posting)
+        candidates = await compare_tailorings(
+            session,
+            profile=profile,
+            posting=posting,
+            cloud=(body.cloud if body else None),
+        )
     except CannotCompare as exc:
         raise ApiError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
 

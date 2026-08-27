@@ -225,7 +225,7 @@ async def submit_otp(application_id: str, code: str) -> dict[str, Any]:
 
 
 @server.tool()
-async def compare_tailoring(application_id: str) -> dict[str, Any]:
+async def compare_tailoring(application_id: str, cloud: str | None = None) -> dict[str, Any]:
     """Tailor this posting with the local model and the cloud one, for a choice.
 
     Answers "would the other model have written a better résumé for this job",
@@ -242,10 +242,21 @@ async def compare_tailoring(application_id: str) -> dict[str, Any]:
     than missing, because a comparison silently down to one column reads as a
     verdict on the column that is there.
 
+    `cloud` names the remote half — "gemini", "anthropic", "openrouter" — for
+    this comparison only. Leave it out for whatever real tailoring would use,
+    which answers the usual question. Naming one moves no setting: the next
+    application tailors exactly as it did before. It exists because OpenRouter
+    is deliberately not in the automatic order, so comparing against it
+    otherwise meant adopting it for everything first.
+
     Requires the application to be parked at needs_review. Nothing here changes
     which résumé is sent; `select_tailoring` does that.
     """
-    result = await _call("POST", f"/applications/{application_id}/tailoring/compare")
+    result = await _call(
+        "POST",
+        f"/applications/{application_id}/tailoring/compare",
+        json={"cloud": cloud},
+    )
     if not isinstance(result, dict):
         return result
 

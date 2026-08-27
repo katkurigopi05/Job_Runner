@@ -153,6 +153,28 @@ class ReviewDecision(BaseModel):
     note: str | None = None
 
 
+class TailoringCompareRequest(BaseModel):
+    """Which remote model the comparison should run against.
+
+    Omitted — the shipped case — the remote half is whatever real tailoring
+    would use. That answers the usual question, "would my cloud provider have
+    done better than local".
+
+    Naming one changes this comparison and nothing else. No setting moves and
+    the next application routes exactly as before, the same shape as §14's
+    per-question provider choice in `/chat`.
+
+    It exists because the default could not reach OpenRouter. §7 keeps it out of
+    `QUALITY_ORDER`, so the only way to compare against it was
+    `LLM_TASK_TAILOR=openrouter`, which also redirects every real tailoring call
+    — the owner had to adopt a provider in order to evaluate it. Only providers
+    with a key configured may be named, so pasting a key is still what makes a
+    route reachable; this is the typing §7 asks for, not a bypass of it.
+    """
+
+    cloud: str | None = None
+
+
 class TailoringChoice(BaseModel):
     """Which of the compared résumés the owner wants sent.
 

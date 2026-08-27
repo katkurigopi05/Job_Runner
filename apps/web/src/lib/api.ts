@@ -68,6 +68,15 @@ export interface ResumeDiff {
   unchanged?: number;
   /** Rewrites the fabrication guard refused and replaced with the original. */
   rejected?: number;
+  /**
+   * Bullets the model never answered — a transport error, an empty completion,
+   * a spent allowance.
+   *
+   * Apart from `rejected` deliberately. One says what the model tried to write,
+   * the other says the network failed, and adding them together makes a
+   * provider that was down look like one that kept trying to invent.
+   */
+  provider_failures?: number;
   unified?: string;
   changes?: ResumeChange[];
   /** This run attached an already-tailored résumé rather than writing one. */
@@ -108,6 +117,8 @@ export interface TailoringCandidate {
   changed: number;
   unchanged: number;
   rejected: number;
+  /** Bullets the model never answered. Never folded into `rejected`. */
+  provider_failures?: number;
   unified?: string;
   changes?: ResumeChange[];
   reused?: boolean;
@@ -564,9 +575,18 @@ export const api = {
       body: JSON.stringify({ code }),
     }),
 
-  /** Tailor this posting with the local model and the cloud one, for a choice. */
-  compareTailoring: (id: string) =>
-    request<Application>(`/applications/${id}/tailoring/compare`, { method: "POST" }),
+  /**
+   * Tailor this posting with the local model and a cloud one, for a choice.
+   *
+   * `cloud` names the remote half for this comparison only. Omitted, it is
+   * whatever real tailoring would use. Naming one moves no setting — the next
+   * application routes exactly as it did before.
+   */
+  compareTailoring: (id: string, cloud?: string) =>
+    request<Application>(`/applications/${id}/tailoring/compare`, {
+      method: "POST",
+      body: JSON.stringify({ cloud: cloud ?? null }),
+    }),
 
   /**
    * Edit the résumé one application is about to send.

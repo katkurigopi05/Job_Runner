@@ -93,17 +93,27 @@ export async function submitOtp(
 export async function compareTailoring(
   applicationId: string,
   _prev: ReviewResult | null,
-  _form: FormData,
+  form: FormData,
 ): Promise<ReviewResult> {
+  // Empty means "whatever real tailoring would use" — the shipped default, and
+  // the one that costs the owner no decision. A named provider applies to this
+  // comparison only; nothing about how applications route changes.
+  const cloud = String(form.get("cloud") ?? "").trim();
+
   try {
-    await api.compareTailoring(applicationId);
+    await api.compareTailoring(applicationId, cloud || undefined);
   } catch (error) {
     if (error instanceof ApiError) return { ok: false, message: error.message };
     throw error;
   }
 
   revalidatePath("/review");
-  return { ok: true, message: "Compared. Both versions are below." };
+  return {
+    ok: true,
+    message: cloud
+      ? `Compared against ${cloud}. Both versions are below — nothing else changed.`
+      : "Compared. Both versions are below.",
+  };
 }
 
 /**

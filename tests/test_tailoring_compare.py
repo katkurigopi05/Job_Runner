@@ -239,3 +239,162 @@ async def test_choosing_a_resume_that_was_not_offered_is_refused(
 
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "invalid_request"
+
+
+# --------------------------------------------------------------------------
+# Naming the remote half
+# --------------------------------------------------------------------------
+#
+# The default is whatever real tailoring would use, which answers the usual
+# question. It could not answer it for OpenRouter: §7 keeps that out of
+# `QUALITY_ORDER`, so the only way to compare against it was
+# `LLM_TASK_TAILOR=openrouter` — which also redirects every real tailoring call.
+# The owner had to adopt a provider in order to evaluate it, which is the exact
+# friction this comparison was built to remove.
+
+
+@pytest.mark.asyncio
+async def test_a_named_cloud_is_the_side_that_runs(db_session, monkeypatch) -> None:
+    """The point of the parameter."""
+    monkeypatch.setattr(compare_mod, "is_comparable_cloud", lambda name: True)
+    profile, _ = await _profile(db_session)
+    posting = await _posting(db_session)
+    asked = _sides_are(
+        monkeypatch,
+        {
+            "ollama": Side(requested="ollama", changed=1),
+            "openrouter": Side(requested="openrouter", changed=2),
+        },
+    )
+
+    await compare_tailorings(db_session, profile=profile, posting=posting, cloud="openrouter")
+
+    assert asked == ["ollama", "openrouter"]
+
+
+@pytest.mark.asyncio
+async def test_omitting_it_still_uses_what_tailoring_would(db_session, monkeypatch) -> None:
+    """The shipped default has to stay the shipped default."""
+    monkeypatch.setattr(compare_mod, "cloud_for_tailoring", lambda: "gemini")
+    profile, _ = await _profile(db_session)
+    posting = await _posting(db_session)
+    asked = _sides_are(
+        monkeypatch,
+        {
+            "ollama": Side(requested="ollama", changed=1),
+            "gemini": Side(requested="gemini", changed=2),
+        },
+    )
+
+    await compare_tailorings(db_session, profile=profile, posting=posting)
+
+    assert asked == ["ollama", "gemini"]
+
+
+@pytest.mark.asyncio
+async def test_an_unconfigured_cloud_is_refused_not_shown_as_a_failed_column(
+    db_session, monkeypatch
+) -> None:
+    """A precondition, not a model outcome.
+
+    The owner asked for a specific comparison and did not get it. A column
+    reading "openrouter: unavailable" beside a local one would look like a
+    verdict on OpenRouter rather than on this machine's configuration.
+    """
+    monkeypatch.setattr(compare_mod, "is_comparable_cloud", lambda name: False)
+    monkeypatch.setattr(compare_mod, "comparable_clouds", lambda: ["gemini"])
+    profile, _ = await _profile(db_session)
+    posting = await _posting(db_session)
+
+    with pytest.raises(CannotCompare) as caught:
+        await compare_tailorings(db_session, profile=profile, posting=posting, cloud="openrouter")
+
+    assert "openrouter" in str(caught.value)
+    # Names what would work, so the message is actionable.
+    assert "gemini" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_the_local_model_cannot_be_named_as_the_cloud_half(db_session) -> None:
+    """A model compared against itself is not a comparison."""
+    from packages.llm.router import is_comparable_cloud
+
+    assert is_comparable_cloud("ollama") is False
+    assert is_comparable_cloud("stub") is False
+
+
+def test_openrouter_is_comparable_but_still_not_automatic() -> None:
+    """The §7 boundary this feature must not quietly erase.
+
+    A comparison may be pointed at OpenRouter by name. Nothing may route to it
+    by default — a key in `.env` still changes nothing on its own.
+    """
+    from packages.llm.router import COMPARABLE_CLOUD, QUALITY_ORDER
+
+    assert "openrouter" in COMPARABLE_CLOUD
+    assert "openrouter" not in QUALITY_ORDER
+
+
+# --------------------------------------------------------------------------
+# A provider that never answered is not a guard refusal
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_provider_failure_is_not_counted_as_a_guard_refusal() -> None:
+    """Found on a real local-vs-ox-alpha run, where it misreported the column.
+
+    OpenRouter returned an error, `tailor_bullet` kept the original line with
+    `rejected_reason="provider error: LLMError"`, and the comparison displayed
+    "1 refused by the guard" — which reads as "this model kept trying to
+    invent". It never spoke at all. On a screen whose entire purpose is judging
+    two models against each other, that is the wrong verdict on the wrong
+    subject.
+    """
+    from packages.llm.provider import LLMError
+    from packages.tailor.diff import summarize
+    from packages.tailor.guard import SourceCorpus
+    from packages.tailor.rewrite import tailor_bullets
+
+    class Dead:
+        name = "openrouter"
+
+        async def complete(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            raise LLMError("upstream refused")
+
+    bullets = ["Built the billing service in Python."]
+    result = await tailor_bullets(
+        Dead(), bullets, "Backend engineer.", SourceCorpus.from_texts(*bullets)
+    )
+
+    assert result.provider_failures == 1
+    assert result.rejected == 0
+
+    summary = summarize(result)
+    assert summary.provider_failures == 1
+    assert summary.rejected == 0
+    # The original line is still kept — an honest untailored bullet beats none.
+    assert result.tailored_lines == bullets
+
+
+@pytest.mark.asyncio
+async def test_a_guard_refusal_is_still_counted_as_one() -> None:
+    """The other half. Splitting the counts must not empty the one that mattered."""
+    from packages.tailor.diff import summarize
+    from packages.tailor.guard import SourceCorpus
+    from packages.tailor.rewrite import tailor_bullets
+
+    class Inventing:
+        name = "ollama"
+
+        async def complete(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            return "Led platform engineering at Netflix, cutting latency by 40%."
+
+    bullets = ["Built the billing service in Python."]
+    result = await tailor_bullets(
+        Inventing(), bullets, "Backend engineer.", SourceCorpus.from_texts(*bullets)
+    )
+
+    assert result.rejected == 1
+    assert result.provider_failures == 0
+    assert summarize(result).rejected == 1
