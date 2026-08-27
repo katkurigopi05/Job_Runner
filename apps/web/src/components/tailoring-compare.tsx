@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import type { TailoringCandidate } from "@/lib/api";
 import { compareTailoring, selectTailoring, type ReviewResult } from "@/app/review/actions";
@@ -78,8 +78,24 @@ function Column({
         {side.rejected > 0 ? (
           <span className="text-attn"> · {side.rejected} refused by the guard</span>
         ) : null}
+        {/* Never merged into the line above. "The guard refused it" is a
+            verdict on what this model wrote; "it never answered" is a verdict
+            on the network, and on a screen whose whole purpose is comparing two
+            models, showing the second as the first is worse than showing
+            nothing. */}
+        {side.provider_failures ? (
+          <span className="text-stop"> · {side.provider_failures} never answered</span>
+        ) : null}
         {side.reused ? <span className="text-ink-faint"> · reused, nothing sent</span> : null}
       </p>
+
+      {side.provider_failures && side.changed === 0 ? (
+        <p className="mt-2 max-w-prose font-mono text-xs text-stop">
+          This model did not produce a rewrite, so this column is your résumé unchanged. That is
+          not a judgment on the model — it never answered. Worth re-running before reading
+          anything into the comparison.
+        </p>
+      ) : null}
 
       {side.changes && side.changes.length > 0 ? (
         <ul className="mt-3 space-y-3">
@@ -117,6 +133,78 @@ function Column({
   );
 }
 
+/**
+ * Which remote model the comparison runs against.
+ *
+ * Hardcoded rather than fetched, matching the `/chat` picker: an unconfigured
+ * provider surfaces as a refusal naming the ones that are, which is a better
+ * failure than a picker that quietly omits an option the owner expected.
+ *
+ * "whatever tailoring uses" is first and is the default, because it answers the
+ * usual question and costs no decision. The named entries exist for the one it
+ * cannot answer: §7 keeps OpenRouter out of the automatic order, so comparing
+ * against it used to mean setting `LLM_TASK_TAILOR=openrouter` — adopting a
+ * provider in order to evaluate it.
+ *
+ * Each carries where the résumé goes. §2.8 permits this upload; it does not
+ * excuse making the recipient invisible at the moment of choosing, and
+ * OpenRouter is the one that cannot name who ultimately receives it.
+ */
+const CLOUD_SIDES = [
+  {
+    value: "",
+    label: "whatever tailoring uses",
+    hint: "The provider a real application would tailor with. No decision needed.",
+  },
+  {
+    value: "gemini",
+    label: "gemini",
+    hint: "Sends your résumé and this posting to Google.",
+  },
+  {
+    value: "anthropic",
+    label: "anthropic",
+    hint: "Sends your résumé and this posting to Anthropic.",
+  },
+  {
+    value: "openrouter",
+    // Named by `OPENROUTER_MODEL`, not pinned here. The label used to carry the
+    // shipped default — until that route was withdrawn and the picker began
+    // advertising a model every call 404s on.
+    label: "openrouter",
+    hint:
+      "Sends your résumé to OpenRouter, which forwards it to an upstream provider it does not name. Free routes commonly log prompts and share them with that undisclosed creator. Which model runs is whatever OPENROUTER_MODEL names.",
+  },
+] as const;
+
+/** The picker, plus what the current choice means for where the résumé goes. */
+function CloudSide({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+  const chosen = CLOUD_SIDES.find((side) => side.value === value) ?? CLOUD_SIDES[0];
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="cloud-side" className="font-mono text-xs text-ink-faint">
+          cloud side
+        </label>
+        <select
+          id="cloud-side"
+          name="cloud"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="rounded-md border border-rule bg-paper px-2 py-1.5 font-mono text-xs focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+        >
+          {CLOUD_SIDES.map((side) => (
+            <option key={side.value} value={side.value}>
+              {side.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="max-w-prose font-mono text-xs text-ink-faint">{chosen.hint}</p>
+    </div>
+  );
+}
+
 export function TailoringCompare({
   applicationId,
   candidates,
@@ -128,19 +216,27 @@ export function TailoringCompare({
 }) {
   const compareAction = compareTailoring.bind(null, applicationId);
   const [state, run] = useActionState<ReviewResult | null, FormData>(compareAction, null);
+  const [cloud, setCloud] = useState("");
 
   if (!candidates || candidates.length === 0) {
     return (
-      <div className="space-y-2">
-        <form action={run} className="flex flex-wrap items-center gap-3">
-          <Pending>compare local vs cloud</Pending>
-          {state ? (
-            <span className={`text-sm ${state.ok ? "text-go" : "text-stop"}`}>{state.message}</span>
-          ) : null}
+      <div className="space-y-3">
+        <form action={run} className="space-y-3">
+          <CloudSide value={cloud} onChange={setCloud} />
+          <div className="flex flex-wrap items-center gap-3">
+            <Pending>compare local vs cloud</Pending>
+            {state ? (
+              <span className={`text-sm ${state.ok ? "text-go" : "text-stop"}`}>
+                {state.message}
+              </span>
+            ) : null}
+          </div>
         </form>
-        <p className="font-mono text-xs text-ink-faint">
+        <p className="max-w-prose font-mono text-xs text-ink-faint">
           Runs the tailorer twice and shows both. The cloud side uploads your résumé again, so
           this happens only when you ask — and a posting already tailored for sends nothing.
+          Choosing a provider here applies to this comparison only; it does not change what your
+          applications tailor with.
         </p>
       </div>
     );
@@ -158,11 +254,17 @@ export function TailoringCompare({
           />
         ))}
       </div>
-      <form action={run} className="flex flex-wrap items-center gap-3">
-        <Pending>run it again</Pending>
-        {state ? (
-          <span className={`text-sm ${state.ok ? "text-go" : "text-stop"}`}>{state.message}</span>
-        ) : null}
+      {/* Same picker after a run, so a second column can be fetched from a
+          different provider without leaving the screen — which is the point of
+          being able to name one at all. */}
+      <form action={run} className="space-y-3">
+        <CloudSide value={cloud} onChange={setCloud} />
+        <div className="flex flex-wrap items-center gap-3">
+          <Pending>run it again</Pending>
+          {state ? (
+            <span className={`text-sm ${state.ok ? "text-go" : "text-stop"}`}>{state.message}</span>
+          ) : null}
+        </div>
       </form>
     </div>
   );

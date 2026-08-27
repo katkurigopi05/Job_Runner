@@ -383,3 +383,90 @@ async def test_not_found_surfaces_the_error_code() -> None:
 
     result = await call("application_status", application_id=str(uuid.uuid4()))
     assert result["code"] == "not_found"
+
+
+# --------------------------------------------------------------------------
+# Editing the attached résumé over the tool surface
+# --------------------------------------------------------------------------
+
+
+async def _parked_application(client, complete_candidate) -> str:
+    """An application at needs_review, which is the only state edits apply to."""
+    import uuid as _uuid
+
+    from packages.core.enums import ApplicationStatus
+    from packages.core.models import Application
+
+    created = await call("apply_to_url", **complete_candidate, url=APPLY_URL)
+    application_id = created["id"]
+
+    from packages.core.db import get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        application = await session.get(Application, _uuid.UUID(application_id))
+        application.status = ApplicationStatus.NEEDS_REVIEW.value
+        await session.commit()
+    return application_id
+
+
+async def test_inspecting_the_attached_resume_returns_its_lines(client, complete_candidate) -> None:
+    """Sections are replaced whole, so an edit has to start from the current set."""
+    application_id = await _parked_application(client, complete_candidate)
+
+    attached = await call("inspect_application_resume", application_id=application_id)
+
+    assert attached["editable"] is True
+    assert isinstance(attached["sections"]["experience"], list)
+
+
+async def test_a_tool_edit_that_invents_a_fact_is_refused(client, complete_candidate) -> None:
+    """The reason this tool is guarded at all.
+
+    The dashboard editor is not: §2.1 constrains the model, not the owner
+    writing their own history. Here the author *is* a model, and an unguarded
+    résumé write handed to one is the door §2.1 exists to close.
+    """
+    application_id = await _parked_application(client, complete_candidate)
+
+    result = await call(
+        "edit_application_resume",
+        application_id=application_id,
+        sections={"experience": ["Principal Engineer at Netflix, cutting latency by 40%."]},
+        contact_name="Ada Lovelace",
+    )
+
+    assert "error" in result
+    assert "does not support" in result["error"]
+    assert "Netflix" in result["error"]
+
+
+async def test_a_relayed_edit_is_stored_and_attached(client, complete_candidate) -> None:
+    """The case the tool is for: the owner said to drop a line."""
+    application_id = await _parked_application(client, complete_candidate)
+    attached = await call("inspect_application_resume", application_id=application_id)
+
+    result = await call(
+        "edit_application_resume",
+        application_id=application_id,
+        sections={"experience": attached["sections"]["experience"]},
+        contact_name=attached["contact"].get("name"),
+        contact_email=attached["contact"].get("email"),
+    )
+
+    assert "error" not in result, result
+    assert result["resume_id"] is not None
+    # Editing is not approving.
+    assert result["status"] == "needs_review"
+    assert result["adopted_as_base"] is False
+
+
+async def test_the_tool_cannot_turn_the_guard_off() -> None:
+    """A settable guard is an opt-out from §2.1 by argument.
+
+    The API takes the flag because it cannot tell a person from a model; this
+    surface knows the answer and must not offer a choice.
+    """
+    tools = {t.name: t for t in await mcp_server.server.list_tools()}
+    schema = tools["edit_application_resume"].input_schema
+
+    assert "guard" not in schema.get("properties", {})

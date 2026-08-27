@@ -200,6 +200,37 @@ def cloud_for_tailoring() -> str | None:
     return None
 
 
+#: Remote providers a comparison may be pointed at, in the order shown.
+#:
+#: Wider than `QUALITY_ORDER` by exactly one: `openrouter`. That omission is
+#: deliberate and stays — §7 keeps it out so a key in `.env` cannot make it a
+#: default for anything. This list is not a default; nothing here is used unless
+#: the owner names it for one comparison.
+COMPARABLE_CLOUD = ("anthropic", "gemini", "openrouter")
+
+
+def comparable_clouds() -> list[str]:
+    """Remote providers that could answer a comparison right now.
+
+    Configured only — a provider with no key is not offered, so pasting a key
+    remains the thing that makes a route reachable at all. §7 asks that
+    acquiring a route whose recipient cannot be named take typing the word
+    rather than pasting a key; naming it per comparison is that typing, and the
+    UI says what the route implies before the owner picks it.
+    """
+    return [name for name in COMPARABLE_CLOUD if _configured(name)]
+
+
+def is_comparable_cloud(name: str) -> bool:
+    """Whether `name` may be the remote half of a comparison.
+
+    The local model is excluded deliberately: it is already the other column,
+    and a comparison of a model against itself is not a comparison. `stub` is
+    excluded because canned output has nothing to say about a real posting.
+    """
+    return name in COMPARABLE_CLOUD and _configured(name)
+
+
 def _chosen(task: str) -> str | None:
     """The provider the owner pinned this task to, if any."""
     from packages.core.config import get_settings

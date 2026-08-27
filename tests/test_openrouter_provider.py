@@ -283,3 +283,45 @@ async def test_json_mode_asks_for_json_both_ways(monkeypatch) -> None:
     assert "schema" in seen["json"]["messages"][0]["content"].lower()
     # §7 pins JSON calls to 0.0 regardless of task — the answer has to parse.
     assert seen["json"]["temperature"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_a_withdrawn_route_names_the_one_line_fix(monkeypatch) -> None:
+    """The failure `.env.example` predicts, and the owner actually hit.
+
+    `stealth/ox-alpha` — the shipped default — was withdrawn, and every call
+    404s from then on. Reported as a bare "404 Not Found" it reads like a bug in
+    this code or a bad key, and the tailorer's own fallback turns it into a
+    résumé that silently went untailored on a provider the owner believed was
+    working. The remedy is one line in `.env`, so the error says which line.
+    """
+    from packages.llm.provider import LLMError, OpenRouterProvider
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    provider = OpenRouterProvider(model="stealth/ox-alpha")
+
+    class Resp:
+        status_code = 404
+        headers: dict[str, str] = {}
+
+        def json(self) -> dict[str, object]:
+            return {}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def post(self, *args: object, **kwargs: object) -> Resp:
+            return Resp()
+
+    monkeypatch.setattr("packages.llm.provider.httpx.AsyncClient", lambda *a, **k: Client())
+
+    with pytest.raises(LLMError) as caught:
+        await provider.complete("s", "u", max_tokens=50)
+
+    message = str(caught.value)
+    assert "stealth/ox-alpha" in message
+    assert "OPENROUTER_MODEL" in message

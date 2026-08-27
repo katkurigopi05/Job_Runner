@@ -225,7 +225,7 @@ async def submit_otp(application_id: str, code: str) -> dict[str, Any]:
 
 
 @server.tool()
-async def compare_tailoring(application_id: str) -> dict[str, Any]:
+async def compare_tailoring(application_id: str, cloud: str | None = None) -> dict[str, Any]:
     """Tailor this posting with the local model and the cloud one, for a choice.
 
     Answers "would the other model have written a better résumé for this job",
@@ -242,10 +242,21 @@ async def compare_tailoring(application_id: str) -> dict[str, Any]:
     than missing, because a comparison silently down to one column reads as a
     verdict on the column that is there.
 
+    `cloud` names the remote half — "gemini", "anthropic", "openrouter" — for
+    this comparison only. Leave it out for whatever real tailoring would use,
+    which answers the usual question. Naming one moves no setting: the next
+    application tailors exactly as it did before. It exists because OpenRouter
+    is deliberately not in the automatic order, so comparing against it
+    otherwise meant adopting it for everything first.
+
     Requires the application to be parked at needs_review. Nothing here changes
     which résumé is sent; `select_tailoring` does that.
     """
-    result = await _call("POST", f"/applications/{application_id}/tailoring/compare")
+    result = await _call(
+        "POST",
+        f"/applications/{application_id}/tailoring/compare",
+        json={"cloud": cloud},
+    )
     if not isinstance(result, dict):
         return result
 
@@ -289,6 +300,97 @@ async def select_tailoring(application_id: str, resume_id: str) -> dict[str, Any
         f"/applications/{application_id}/tailoring/select",
         json={"resume_id": resume_id},
     )
+
+
+@server.tool()
+async def inspect_application_resume(application_id: str) -> dict[str, Any]:
+    """The résumé this application will actually upload, line by line.
+
+    The tailored one when tailoring has run, otherwise the profile's base — the
+    same rule the uploader applies, answered by the API rather than worked out
+    here, so a tool and the worker cannot disagree about which document is
+    being sent.
+
+    Call this before `edit_application_resume`: sections are replaced whole, so
+    an edit has to be built from the current set rather than guessed.
+    """
+    return await _call("GET", f"/applications/{application_id}/resume")
+
+
+@server.tool()
+async def edit_application_resume(
+    application_id: str,
+    sections: dict[str, list[str]],
+    contact_name: str | None = None,
+    contact_email: str | None = None,
+    contact_phone: str | None = None,
+    contact_links: list[str] | None = None,
+    adopt: bool = False,
+) -> dict[str, Any]:
+    """Edit the résumé an application is about to send. Guarded — see below.
+
+    **Relay the owner's words; do not compose résumé content.** This writes a
+    document that goes to a real employer under the owner's name. Use it when
+    they have told you what to change — a line to drop, a phrasing they dictated,
+    a typo to fix — not to improve their résumé on their behalf.
+
+    The fabrication guard runs on every edit that arrives through this tool, and
+    it is not optional here. §2.1 permits rephrasing, reordering and
+    re-emphasis; it forbids adding a skill, employer, date, credential or metric
+    the résumé does not already support. A refused edit comes back naming the
+    lines and the unsupported claims.
+
+    That refusal is not always a verdict on the fact. If the owner says it is
+    true and the guard still refuses, the answer is for them to type it on the
+    `/review` screen — an edit made there is theirs, and is deliberately not
+    guarded. Do not try to reword it past the check.
+
+    `sections` replaces the whole set, so start from `inspect_application_resume`
+    and send it back modified. The `contact_*` fields do the same — one left as
+    None is *cleared*, not kept, so pass back every one the résumé should keep.
+
+    Only applications parked at needs_review may be edited, and the edit is
+    attached to this application alone — `adopt=True` also makes it the
+    profile's base, which is only right for a fix that is true for every future
+    application.
+
+    Editing does not approve. The application stays parked, and the edit
+    survives approval rather than being re-tailored over.
+    """
+    result = await _call(
+        "POST",
+        f"/applications/{application_id}/resume/edit",
+        json={
+            "contact": {
+                "name": contact_name,
+                "email": contact_email,
+                "phone": contact_phone,
+                "links": contact_links or [],
+            },
+            "sections": sections,
+            "adopt": adopt,
+            # Never settable from here. The author on this path is a model, and
+            # the whole reason this flag exists is that the API cannot tell.
+            "guard": True,
+        },
+    )
+    if not isinstance(result, dict) or "error" in result:
+        return result
+
+    review = result.get("review") or {}
+    pinned = review.get("resume_pinned") or {}
+    return {
+        "application_id": result.get("id"),
+        "resume_id": result.get("tailored_resume_id"),
+        "from_version": pinned.get("from_version"),
+        "version": pinned.get("version"),
+        "adopted_as_base": adopt,
+        "status": result.get("status"),
+        "note": (
+            "Attached to this application only. It stays parked — call "
+            "approve_application when the owner has decided."
+        ),
+    }
 
 
 # --------------------------------------------------------------------------

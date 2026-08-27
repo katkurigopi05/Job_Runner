@@ -160,66 +160,20 @@ async def edit_resume(resume_id: uuid.UUID, body: ResumeEdit, session: SessionDe
     source = await session.get(Resume, resume_id)
     if source is None:
         raise ApiError(ErrorCode.NOT_FOUND, "resume not found")
-    if not source.parsed_json:
-        raise ApiError(ErrorCode.INVALID_REQUEST, "this résumé has no parsed form to edit")
 
-    from packages.tailor.assemble import assemble_pdf
-    from packages.tailor.edit import apply_edit
     from packages.tailor.parse import Contact
-
-    # Emptiness is judged on what the editor actually controls, not on the
-    # result. `preamble` survives the round trip because no form shows it, so a
-    # cleared résumé could still render a PDF containing nothing but a stray
-    # "Available from June" — technically non-empty, and not a document anyone
-    # meant to send.
-    contact_values = [v for v in body.contact.model_dump().values() if v]
-    has_sections = any(line.strip() for lines in body.sections.values() for line in lines)
-    if not contact_values and not has_sections:
-        raise ApiError(ErrorCode.INVALID_REQUEST, "the edited résumé is empty")
-
-    parsed = ParsedResume.model_validate(source.parsed_json)
-    edited = apply_edit(
-        parsed,
-        contact=Contact.model_validate(body.contact.model_dump()),
-        sections=body.sections,
-    )
+    from packages.tailor.revise import ReviseError, save_edit
 
     try:
-        # Projects are excluded here. They are rebuilt per posting at tailoring
-        # time from the GitHub inventory, so baking today's set into the base
-        # would freeze a section that is supposed to follow the job.
-        pdf = assemble_pdf(edited, None, None)
-    except Exception as exc:  # noqa: BLE001 - WeasyPrint needs system libraries
-        raise ApiError(
-            ErrorCode.INTERNAL_ERROR,
-            f"the edit could not be rendered to PDF ({type(exc).__name__}), so it was not "
-            "saved — a stored edit with no file would be invisible to every application",
-        ) from exc
-
-    next_version = (
-        await session.scalar(
-            select(func.coalesce(func.max(Resume.version), 0) + 1).where(
-                Resume.candidate_id == source.candidate_id
-            )
+        resume = await save_edit(
+            session,
+            source,
+            contact=Contact.model_validate(body.contact.model_dump()),
+            sections=body.sections,
         )
-    ) or 1
-
-    storage = get_storage()
-    key = resume_key(str(source.candidate_id), next_version, "resume.pdf")
-    try:
-        storage.put(key, pdf)
-    except Exception as exc:  # noqa: BLE001 - surfaces size limits too
-        raise ApiError(ErrorCode.INTERNAL_ERROR, f"could not store the edit: {exc}") from exc
-
-    resume = Resume(
-        candidate_id=source.candidate_id,
-        version=next_version,
-        storage_ref=key,
-        parsed_json=edited.model_dump(mode="json"),
-        is_default=source.is_default,
-    )
-    session.add(resume)
-    await session.flush()
+    except ReviseError as exc:
+        code = ErrorCode.INTERNAL_ERROR if exc.internal else ErrorCode.INVALID_REQUEST
+        raise ApiError(code, str(exc)) from exc
 
     if body.adopt:
         for profile in (

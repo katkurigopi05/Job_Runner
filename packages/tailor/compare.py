@@ -42,7 +42,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.models import Posting, Profile, Project, Resume
 from packages.github.select import relevant_for_posting
 from packages.llm.provider import build_provider
-from packages.llm.router import LOCAL_PROVIDER, cloud_for_tailoring
+from packages.llm.router import (
+    LOCAL_PROVIDER,
+    cloud_for_tailoring,
+    comparable_clouds,
+    is_comparable_cloud,
+)
 from packages.matching.embed import get_embedder
 from packages.tailor.cache import find_cached, tailoring_key
 from packages.tailor.diff import summarize
@@ -79,7 +84,13 @@ class Candidate:
     resume_id: uuid.UUID | None = None
     changed: int = 0
     unchanged: int = 0
+    #: Rewrites the fabrication guard refused — what the model tried to write.
     rejected: int = 0
+    #: Bullets the model never answered — the network, not the model's judgment.
+    #: Reported apart from `rejected` because a provider that was down would
+    #: otherwise be shown as one that kept trying to invent, which is the
+    #: opposite reading and the one a comparison must not invite.
+    provider_failures: int = 0
     unified: str = ""
     changes: list[dict[str, Any]] = field(default_factory=list)
     reused: bool = False
@@ -94,6 +105,7 @@ class Candidate:
             "changed": self.changed,
             "unchanged": self.unchanged,
             "rejected": self.rejected,
+            "provider_failures": self.provider_failures,
             "unified": self.unified,
             "changes": self.changes,
             "reused": self.reused,
@@ -175,6 +187,7 @@ async def tailor_with(
         changed=summary.changed,
         unchanged=summary.unchanged,
         rejected=summary.rejected,
+        provider_failures=summary.provider_failures,
         unified=summary.unified,
         changes=[change.model_dump() for change in summary.changes],
         # A render failure is not a tailoring failure, but it does mean there is
@@ -202,17 +215,45 @@ async def compare_tailorings(
     *,
     profile: Profile,
     posting: Posting,
+    cloud: str | None = None,
 ) -> list[Candidate]:
-    """Tailor this posting with the local model and with the cloud one.
+    """Tailor this posting with the local model and with a cloud one.
 
     Order is local first. The local side costs nothing and cannot fail on
     quota, so when the remote half is refused the owner still has a document
     and a reason rather than an empty screen.
 
-    Raises only for the two cases where there is nothing to compare at all — no
-    base résumé, or a posting with no text. Everything else that can go wrong
-    belongs to one side and is reported on that side.
+    `cloud` names the remote half for *this comparison only*. Omitted, it is
+    whatever real tailoring would use (`cloud_for_tailoring`), which is the
+    right default: the usual question is "would my configured cloud provider
+    have done better than local".
+
+    It is settable because that default could not answer the question for
+    OpenRouter. §7 keeps `openrouter` out of `QUALITY_ORDER` on purpose, so the
+    only way to make it the cloud column was `LLM_TASK_TAILOR=openrouter` —
+    which also redirects every real tailoring call to it. The owner had to
+    *adopt* a provider in order to evaluate it, which is the exact friction this
+    comparison exists to remove, and it pointed the wrong way: the provider
+    hardest to name is the one whose output most deserves a look first.
+
+    Naming it here changes nothing outside this call. No setting moves, real
+    tailoring is untouched, and the next application routes exactly as before —
+    the same shape as §14's per-question provider choice in `/chat`.
+
+    Raises only for the cases where there is nothing to compare at all — no base
+    résumé, a posting with no text, or a named cloud that cannot answer.
+    Everything else that can go wrong belongs to one side and is reported there.
     """
+    if cloud is not None and not is_comparable_cloud(cloud):
+        # A precondition, not a model outcome, so it raises rather than becoming
+        # a failed column — the owner asked for a specific comparison and did
+        # not get it, and a column reading "openrouter: unavailable" beside a
+        # local one would look like a verdict on OpenRouter.
+        raise CannotCompare(
+            f"{cloud!r} cannot be the remote half of a comparison. Choose one of "
+            f"{comparable_clouds() or ['— none configured —']}, or omit it to use "
+            "whatever real tailoring would."
+        )
     if profile.base_resume_id is None:
         raise CannotCompare("this profile has no base résumé to tailor")
 
@@ -242,8 +283,8 @@ async def compare_tailorings(
     )
     projects = relevant_for_posting(inventory, posting_text, embedder=get_embedder())
 
-    cloud = cloud_for_tailoring()
-    sides = [LOCAL_PROVIDER] + ([cloud] if cloud else [])
+    remote = cloud or cloud_for_tailoring()
+    sides = [LOCAL_PROVIDER] + ([remote] if remote else [])
 
     candidates: list[Candidate] = []
     for name in sides:
@@ -261,7 +302,7 @@ async def compare_tailorings(
             )
         )
 
-    if cloud is None:
+    if remote is None:
         candidates.append(
             Candidate(
                 requested="cloud",

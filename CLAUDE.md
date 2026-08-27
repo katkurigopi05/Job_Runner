@@ -400,6 +400,41 @@ Selecting is restricted server-side to the two versions actually compared. This
 sets the file an employer receives, and "any résumé id this candidate owns" is a
 wider door than the screen needs.
 
+**It did not always set that file.** Selecting wrote `tailored_resume_id` and
+approving then re-entered `_tailor`, which reattached the default provider's
+cached document over it — so the column the owner picked was shown here and the
+other one was sent. The choice is pinned now; see §15, *The owner's choice at
+review was discarded on the way to the employer*.
+
+**The remote side is nameable per comparison.** `cloud` on the compare request
+picks it for that run only; omitted, it is whatever real tailoring would use.
+
+This exists because the default could not answer the question for OpenRouter.
+§7 keeps `openrouter` out of `QUALITY_ORDER`, so the only way to make it the
+cloud column was `LLM_TASK_TAILOR=openrouter` — which also redirects every real
+tailoring call. The owner had to *adopt* a provider in order to evaluate it,
+which is the friction this panel exists to remove, pointing the wrong way: the
+provider hardest to name is the one whose output most deserves a look first.
+
+It is not a back door into §7. Only a provider with a key configured may be
+named, so pasting a key is still what makes a route reachable at all; nothing
+routes to OpenRouter by default; and naming one here moves no setting, so the
+next application tailors exactly as it did before. That is the same shape as
+§14's per-question provider choice in `/chat`. The picker states where the
+résumé goes for each option, and says outright that OpenRouter forwards to an
+upstream it cannot name — §2.8 permits this upload, it does not excuse making
+the recipient invisible at the moment of choosing.
+
+**A provider that never answered is not a guard refusal.** Found on the first
+real local-vs-cloud run. `tailor_bullet` keeps the original line for either
+reason and set `rejected_reason` for both, so `summarize` counted them
+together — and the comparison rendered "1 refused by the guard" for a model
+that had returned a 404 and never written a word. On a screen whose entire
+purpose is judging two models against each other, that is the wrong verdict
+about the wrong subject: "the guard refused this" describes what a model tried
+to write, and a transport error describes the network. `provider_failures` is
+counted and displayed separately, and the column says so.
+
 Tuning any of these against the guard's own pass rate is the trap in
 `docs/REFERENCE.md` §3.6: it optimises the one referee we control, and a
 rewrite can satisfy the guard while reading worse. Change one only with a
@@ -875,3 +910,120 @@ it tests fabrication and the PDF round trip — the part with consequences — a
 it still does not test either now that both are built. The cover letter has
 its own tests rather than a gate. Recorded here so a green Gate 3 is not read
 as more than it checks.
+
+### The owner's choice at review was discarded on the way to the employer
+
+The same defect as *The tailored résumé was not the one being sent*, one screen
+further along, and it survived that fix because the fix asserted which résumé
+`adapter.fill` uploads — not which résumé is still attached by the time it runs.
+
+Approving a parked application does not resume mid-flight. It re-enters
+`_run_pipeline` from the top: fresh page, re-`goto`, re-`enumerate_fields`,
+re-`_tailor`. And every path in `_tailor` assigns `tailored_resume_id` — the
+batch-prepared one, the cache hit, the fresh publish. So a decision the owner
+made on the review screen was written to the row, and then quietly overwritten
+by the run their approval started.
+
+**Compare models** is where this had teeth. Choosing the cloud column set
+`tailored_resume_id`; approving re-tailored with the router's *default*
+provider, found that provider's cached document, and attached it instead. The
+screen showed one document, the employer received another, and nothing on
+either side reported the swap. §7 said "this sets the file an employer
+receives", which is what a reader would have checked against.
+
+`review_json["resume_pinned"]` is the fix, and `_tailor` returns before any of
+the assigning paths when it is set. Two details are load-bearing:
+
+- **It is checked against `tailored_resume_id`, not trusted alone.** If the row
+  no longer points where the pin says, something else moved it, and re-tailoring
+  is safer than uploading a document the application is no longer attached to.
+- **The stored diff is marked, not cleared.** It is still the honest account of
+  what tailoring did to the document the owner's version came from, and it
+  carries the guard's refusal count — the one number that says whether the model
+  kept trying to invent. What it must not do is go on reading as a description
+  of the file about to be sent, so it gains `owner_pinned` and the panel says
+  the changes describe the earlier document.
+
+`tests/test_review_resume_edit.py` covers both ways of choosing. They are real
+gates: with the pin removed, three go red and the log shows
+`tailored_resume_published … version=3` landing on top of the owner's pick.
+
+### Editing the résumé on the review screen
+
+The review screen showed the attached document and could not change it. A
+tailored bullet that read wrong left two options — reject the application, or
+send it anyway — and editing the base on the résumés page did not help, because
+a résumé already tailored for this posting is not the base.
+
+`POST /applications/{id}/resume/edit` is the smaller path, and
+`packages/tailor/revise.py` is the reason it is not a second implementation:
+both edit routes render the PDF, rebuild `raw_lines`, and version rather than
+mutate through one function. A second copy of that sequence is how one of them
+ends up storing `parsed_json` with no file — invisible until an employer
+receives the old PDF.
+
+**Scoped to the application, and that is the whole design.** The edit lands on
+`tailored_resume_id`; the profile's base moves only if the owner ticks the box.
+On this screen the subject is one employer, and a résumé written for one posting
+is a poor starting point for the next — adopting it silently would make every
+future application inherit this job's phrasing from a screen that never
+mentioned them. `ApplicationResumeEdit.adopt` defaults to `False` for that
+reason, and is a separate schema from `ResumeEdit` precisely so the two
+defaults can disagree.
+
+Parked only. A `running` application is mid-fill in a browser and a `submitted`
+one has already sent its file; editing either changes a screen without changing
+anything an employer sees.
+
+The guard is not applied to the owner's own edit, and that is deliberate — the
+same reasoning `packages/tailor/edit.py` already records. §2.1 constrains the
+*model*, not the owner writing their own history. `raw_lines` is rebuilt so a
+fact the owner adds is source text for the next tailoring pass, rather than
+something the guard refuses on their behalf.
+
+**Over MCP the author is a model, so there the guard runs.** `edit.py`'s
+reasoning turns on who is typing, and a tool call inverts that: an unguarded
+résumé write handed to an assistant is exactly the door §2.1 closes — it would
+let a model put an employer, a credential or a metric onto a document going to
+a real employer under the owner's name, checked by nothing.
+
+The API cannot tell a person from a model, so the caller declares it:
+`ApplicationResumeEdit.guard`, off for the dashboard, and sent `true` by
+`apps/mcp/server.py` with no parameter that could say otherwise. A settable
+guard would be an opt-out from a non-negotiable by argument, which is the same
+shape as the `.env` opt-out §7 refuses; `test_the_tool_cannot_turn_the_guard_off`
+holds the tool's schema to it.
+
+Only *added* lines are checked. The guard is strict enough that some genuine
+source text does not survive a round trip, so re-judging carried-over lines
+would refuse edits that changed nothing. The check is document-wide rather than
+scoped to one employer's entry — an added line has no entry to be scoped
+against yet — so cross-entry borrowing is not caught on this path and callers
+should not assume it is. `packages/tailor/revise.py::guard_edit` says so at the
+point it matters.
+
+A refusal is not a verdict on the fact. If the owner says it is true, the answer
+is for them to type it on `/review`, where the edit is theirs — not for an
+assistant to reword it past the check. Both the tool docstring and
+`docs/USAGE.md` say that, because it is the one place this design could
+otherwise push a model toward laundering a claim.
+
+`GET /applications/{id}/resume` exists for the same reason `revise.py` does:
+"which résumé is attached" now has three readers — the review screen, the MCP
+tools, and the uploader — and a client working it out for itself is how a screen
+ends up describing a document other than the one being sent.
+
+### Nested forms on the review card
+
+Found while adding the editor, and worth recording because it was silent.
+
+`TailoringCompare` renders forms of its own, and the review card wrapped it in
+the approve `<form>`. An HTML parser drops a nested `<form>` start tag, so on
+the server render those buttons were inert — the feature worked when reached by
+client-side navigation and not on a fresh load, which is the hardest kind of
+bug to believe a report of.
+
+The approve form no longer wraps the document panels. Its button and note bind
+to it by `form` id instead, and `Submitting` takes `pending` explicitly because
+`useFormStatus` reads the enclosing form and a detached button has none. Served
+HTML for `/review` now has form nesting depth 1.

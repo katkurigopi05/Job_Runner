@@ -26,7 +26,13 @@ class LineChange(BaseModel):
 class DiffSummary(BaseModel):
     changes: list[LineChange] = Field(default_factory=list)
     unchanged: int = 0
+    #: Rewrites the fabrication guard refused — a statement about what the model
+    #: tried to write.
     rejected: int = 0
+    #: Bullets where the model never answered — a statement about the network.
+    #: Kept apart from `rejected` because a comparison that adds them together
+    #: makes a provider that was down look like one that kept inventing.
+    provider_failures: int = 0
     unified: str = ""
 
     @property
@@ -89,6 +95,7 @@ def summarize(result: TailorResult) -> DiffSummary:
         changes=changes,
         unchanged=len(result.bullets) - len(changes),
         rejected=result.rejected,
+        provider_failures=result.provider_failures,
         unified=unified([b.original for b in result.bullets], [b.tailored for b in result.bullets]),
     )
 

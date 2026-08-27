@@ -557,6 +557,22 @@ class OpenRouterProvider:
                     await pacer.back_off(attempt, retry_after_seconds(resp.headers))
                     continue
 
+                if resp.status_code == 404:
+                    # The failure `.env.example` predicts, said out loud.
+                    #
+                    # A pre-release route is withdrawn without notice and every
+                    # call 404s from then on. Reported as a bare "404 Not Found"
+                    # it reads like a bug in this code or a bad key, and the
+                    # tailorer's own error handling turns it into a résumé that
+                    # silently went untailored. The remedy is one line in
+                    # `.env`, so the error should say which line.
+                    raise LLMError(
+                        f"OpenRouter has no route named {self.model!r} (404). Pre-release "
+                        "and stealth routes are withdrawn without notice, and every call "
+                        "404s once that happens. Set OPENROUTER_MODEL in .env to a route "
+                        "that still exists — https://openrouter.ai/models lists them."
+                    )
+
                 try:
                     resp.raise_for_status()
                 except Exception as exc:
