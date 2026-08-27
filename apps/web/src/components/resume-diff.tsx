@@ -46,6 +46,31 @@ export function ResumeDiffView({ diff }: { diff: ResumeDiff }) {
   // *this* run to diff. Checked before the counts because `changed` is
   // undefined here, and `undefined === 0` is false — which used to fall
   // through to the branch below and map over an undefined `changes`.
+  // Checked before `reused`, which the pinned paths also set. The owner having
+  // chosen this document is the more specific fact and the one with
+  // consequences: everything below describes the résumé theirs was derived
+  // from, not the file that will be uploaded.
+  if (diff.owner_pinned) {
+    const byHand = diff.owner_pinned === "owner_edit";
+    return (
+      <div className="space-y-3">
+        <div className="rounded-[var(--radius)] border border-attn/40 bg-attn-soft px-3 py-2">
+          <p className="font-mono text-xs text-attn">
+            {byHand
+              ? "you edited this résumé after tailoring wrote it"
+              : "you chose this version from the model comparison"}
+          </p>
+          <p className="mt-1.5 text-sm text-ink-soft">
+            The changes below are what tailoring did to the résumé yours came from. They do not
+            describe the file that will be uploaded — that one is further down, under “Résumé to
+            be sent”. Approving sends your version; nothing re-tailors over it.
+          </p>
+        </div>
+        <TailoredBy model={diff.answered_by} />
+      </div>
+    );
+  }
+
   if (diff.reused) {
     return (
       <div className="space-y-2">

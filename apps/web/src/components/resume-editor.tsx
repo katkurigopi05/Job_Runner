@@ -87,14 +87,38 @@ function EditableLine({
   );
 }
 
-export function ResumeEditor({ parsed }: { parsed: ResumeParsed }) {
+export function ResumeEditor({
+  parsed,
+  action,
+  note,
+  extra,
+  editLabel = "edit",
+}: {
+  parsed: ResumeParsed;
+  /**
+   * What saving does. Defaults to the résumés-page save, which versions the
+   * document and moves every profile onto it.
+   *
+   * The review screen passes its own: there an edit belongs to one application
+   * and must not move the profile's base. Taking the action as a prop rather
+   * than forking the component is deliberate — this editor *is* the preview
+   * (see above), and a second copy of it would be a second rendering of the
+   * résumé that could disagree with the one being stored.
+   */
+  action?: (prev: UploadResult | null, form: FormData) => Promise<UploadResult>;
+  /** Replaces the footer explanation, which differs by what saving means. */
+  note?: React.ReactNode;
+  /** Extra controls posted with the form — the review screen's adopt opt-in. */
+  extra?: React.ReactNode;
+  editLabel?: string;
+}) {
   const [open, setOpen] = useState(false);
   const document = parsed.parsed ?? {};
   const saved = (document.contact ?? {}) as Record<string, unknown>;
   const savedSections = document.sections ?? {};
 
-  const action = saveResumeEdit.bind(null, parsed.id);
-  const [state, run] = useActionState<UploadResult | null, FormData>(action, null);
+  const save = action ?? saveResumeEdit.bind(null, parsed.id);
+  const [state, run] = useActionState<UploadResult | null, FormData>(save, null);
 
   const text = (value: unknown) => (typeof value === "string" ? value : "");
   const savedLinks = Array.isArray(saved.links) ? (saved.links as string[]) : [];
@@ -136,7 +160,7 @@ export function ResumeEditor({ parsed }: { parsed: ResumeParsed }) {
           onClick={() => setOpen(true)}
           className="absolute top-3 right-3 rounded border border-rule bg-paper-raised px-3 py-1.5 font-mono text-xs text-ink-soft transition-colors hover:border-ink-faint hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
         >
-          edit
+          {editLabel}
         </button>
       </div>
     );
@@ -243,11 +267,16 @@ export function ResumeEditor({ parsed }: { parsed: ResumeParsed }) {
         {state ? (
           <span className={`text-sm ${state.ok ? "text-go" : "text-stop"}`}>{state.message}</span>
         ) : null}
+        {extra ? <div className="w-full">{extra}</div> : null}
         <p className="w-full font-mono text-xs text-ink-faint">
-          Blank lines are dropped and an emptied section is removed, so what gets saved is what you
-          see with the empties gone. Saving renders a new PDF and points every profile that used
-          this résumé at it — the version on screen is kept, because an application that already
-          sent it must keep describing what it sent.
+          {note ?? (
+            <>
+              Blank lines are dropped and an emptied section is removed, so what gets saved is what
+              you see with the empties gone. Saving renders a new PDF and points every profile that
+              used this résumé at it — the version on screen is kept, because an application that
+              already sent it must keep describing what it sent.
+            </>
+          )}
         </p>
       </div>
     </form>

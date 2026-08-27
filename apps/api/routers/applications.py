@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Query, status
 from sqlalchemy import select
@@ -28,6 +29,8 @@ from packages.core.schemas import (
     ApplicationEventOut,
     ApplicationOut,
     ApplicationPacketOut,
+    ApplicationResumeEdit,
+    ApplicationResumeOut,
     ManualSubmission,
     OtpSubmission,
     PacketAnswer,
@@ -277,6 +280,17 @@ async def select_tailoring(
         )
 
     application.tailored_resume_id = body.resume_id
+    # Pinned for the same reason an owner's edit is: approving re-enters
+    # `_tailor` from the top, which reattaches whatever the router's default
+    # provider produces or has cached. Choosing the cloud column and approving
+    # used to send the local one — the choice was recorded on this row and then
+    # quietly overwritten on the resumed run, with nothing on the screen to say
+    # so. `apply_job._tailor` reads this and keeps the owner's choice.
+    application.review_json = {
+        **review,
+        "resume_diff": _stale_diff(review, "comparison"),
+        "resume_pinned": {"resume_id": str(body.resume_id), "source": "comparison"},
+    }
     session.add(
         ApplicationEvent(
             application_id=application.id,
@@ -284,6 +298,188 @@ async def select_tailoring(
             payload_json={"resume_id": str(body.resume_id)},
         )
     )
+    await session.commit()
+    await session.refresh(application)
+    return application
+
+
+def _stale_diff(review: dict[str, Any], source: str) -> dict[str, Any] | None:
+    """The stored tailoring diff, marked as no longer describing the attached file.
+
+    Kept rather than cleared. It is still the honest account of what tailoring
+    did to the document the owner's version was derived from, and deleting it
+    would lose the guard's refusal count — the one number that says whether the
+    model kept trying to invent. What it must not do is go on looking like a
+    description of the file about to be uploaded.
+    """
+    if not review.get("resume_diff"):
+        return review.get("resume_diff")
+    return {**review["resume_diff"], "owner_pinned": source}
+
+
+async def _attached_resume(session: AsyncSession, application: Application) -> Resume | None:
+    """The résumé this application will actually upload.
+
+    The tailored one when tailoring has run, otherwise the profile's base —
+    the same rule `apply_job._resume_path` applies when it picks the file. It
+    has to be the same rule: the review screen exists to show the owner the
+    document that is going to be sent, and a screen deciding that differently
+    from the uploader is the defect CLAUDE.md §15 records.
+    """
+    if application.tailored_resume_id is not None:
+        resume = await session.get(Resume, application.tailored_resume_id)
+        if resume is not None:
+            return resume
+
+    profile = await session.get(Profile, application.profile_id)
+    if profile is None or profile.base_resume_id is None:
+        return None
+    return await session.get(Resume, profile.base_resume_id)
+
+
+@router.get("/{application_id}/resume", response_model=ApplicationResumeOut)
+async def get_application_resume(
+    application_id: uuid.UUID, session: SessionDep
+) -> ApplicationResumeOut:
+    """The résumé this application will upload, as the parser reads it.
+
+    One definition of "which résumé", shared by every caller. A client that
+    worked it out for itself would eventually disagree with the uploader, and
+    that disagreement is invisible until an employer receives the wrong file.
+    """
+    application = await session.get(Application, application_id)
+    if application is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+
+    resume = await _attached_resume(session, application)
+    if resume is None:
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            "this application has no résumé attached — set a base résumé on the profile",
+        )
+
+    parsed = resume.parsed_json or {}
+    return ApplicationResumeOut(
+        application_id=application.id,
+        resume_id=resume.id,
+        version=resume.version,
+        is_tailored=application.tailored_resume_id == resume.id,
+        editable=application.status == ApplicationStatus.NEEDS_REVIEW.value,
+        contact=parsed.get("contact") or {},
+        sections=parsed.get("sections") or {},
+    )
+
+
+@router.post("/{application_id}/resume/edit", response_model=ApplicationOut)
+async def edit_application_resume(
+    application_id: uuid.UUID, body: ApplicationResumeEdit, session: SessionDep
+) -> Application:
+    """Edit the résumé this application is about to send, before approving it.
+
+    The review screen already showed the attached document; it could not change
+    it. So the owner's only options for a tailored bullet that read wrong were
+    to reject the application or to send it anyway — and editing the *base* on
+    the résumés page would not touch a document already tailored for this
+    posting.
+
+    Scoped to this application by design. The edit lands on
+    `tailored_resume_id`, not on the profile, because on this screen the subject
+    is one employer: adopting one posting's phrasing as the base for every
+    future application is not what "fix this line" means. `adopt` opts into the
+    wider change when the owner does mean it, and then only for profiles that
+    were using the *base* résumé — a tailored document is per-posting and is
+    never a sensible base.
+
+    **The edit is pinned.** Approving resumes the pipeline, which re-enters
+    `_tailor` from the top and would otherwise re-attach a machine-tailored
+    résumé over the owner's edit — the edit would be visible on this screen and
+    absent from the file the employer received. `resume_pinned` in the review
+    record is what stops that; `apply_job._tailor` reads it.
+
+    Parked only. A `running` application is mid-fill in a browser and an
+    already-`submitted` one has sent its file; editing either would change a
+    screen without changing anything an employer sees.
+    """
+    application = await session.get(Application, application_id)
+    if application is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+
+    if application.status != ApplicationStatus.NEEDS_REVIEW.value:
+        raise ApiError(
+            ErrorCode.INVALID_STATE,
+            f"application is {application.status}, not needs_review",
+        )
+
+    source = await _attached_resume(session, application)
+    if source is None:
+        raise ApiError(
+            ErrorCode.INVALID_REQUEST,
+            "this application has no résumé attached, so there is nothing to edit — "
+            "set a base résumé on the profile first",
+        )
+
+    from packages.tailor.parse import Contact
+    from packages.tailor.revise import ReviseError, guard_edit, save_edit
+
+    if body.guard:
+        try:
+            guard_edit(source, body.sections)
+        except ReviseError as exc:
+            raise ApiError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
+
+    try:
+        resume = await save_edit(
+            session,
+            source,
+            contact=Contact.model_validate(body.contact.model_dump()),
+            sections=body.sections,
+        )
+    except ReviseError as exc:
+        code = ErrorCode.INTERNAL_ERROR if exc.internal else ErrorCode.INVALID_REQUEST
+        raise ApiError(code, str(exc)) from exc
+
+    profile = await session.get(Profile, application.profile_id)
+    if body.adopt and profile is not None and profile.base_resume_id is not None:
+        # Only profiles on the *base* move. Adopting from a tailored source
+        # would hand every future application a résumé written for one posting.
+        base_id = profile.base_resume_id
+        for other in (
+            await session.scalars(select(Profile).where(Profile.base_resume_id == base_id))
+        ).all():
+            other.base_resume_id = resume.id
+
+    application.tailored_resume_id = resume.id
+    review = dict(application.review_json or {})
+    application.review_json = {
+        **review,
+        # Marked now, not only when the resumed run rewrites this record. The
+        # owner is looking at the diff on this screen the moment they save, and
+        # from that moment it describes the document this edit came *from*
+        # rather than the one that will be uploaded. An unmarked diff here is a
+        # review screen describing a file nobody is sending — §15, in miniature.
+        "resume_diff": _stale_diff(review, "owner_edit"),
+        # Read by `apply_job._tailor` on the resumed run. Without it the owner's
+        # edit is overwritten by re-tailoring and never reaches the employer.
+        "resume_pinned": {
+            "resume_id": str(resume.id),
+            "source": "owner_edit",
+            "from_resume_id": str(source.id),
+            "from_version": source.version,
+            "version": resume.version,
+        },
+    }
+    session.add(
+        ApplicationEvent(
+            application_id=application.id,
+            type="resume_edited",
+            payload_json={
+                "resume_id": str(resume.id),
+                "from_resume_id": str(source.id),
+                "adopted": bool(body.adopt),
+            },
+        )
+    )
+
     await session.commit()
     await session.refresh(application)
     return application

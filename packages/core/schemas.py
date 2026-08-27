@@ -291,6 +291,66 @@ class ResumeEdit(BaseModel):
     adopt: bool = True
 
 
+class ApplicationResumeEdit(BaseModel):
+    """An owner's edit to the résumé one application is about to send.
+
+    The same payload as `ResumeEdit`, with `adopt` defaulting the other way.
+    That flip is the whole point of having a separate schema rather than
+    reusing one.
+
+    On the résumés page an edit is to *the document*, and adopting it is what
+    stops the save being a no-op. On the review screen an edit is to *this
+    application's* copy — usually a résumé tailored for one posting. Adopting
+    that as the profile's base would make one job's phrasing the starting point
+    for every future application, silently, from a screen whose subject is a
+    single employer.
+
+    So the default is off, and the owner opts in per edit when the change is one
+    they want everywhere. `ResumeEdit.adopt` keeps its own default for its own
+    reason; a shared field would have had to be wrong on one of the two screens.
+    """
+
+    contact: ResumeContactEdit = Field(default_factory=ResumeContactEdit)
+    sections: dict[str, list[str]] = Field(default_factory=dict)
+    #: Also point every profile using the *base* résumé at this new version.
+    adopt: bool = False
+    #: Hold the edit to the fabrication guard before storing it.
+    #:
+    #: Off for the dashboard and on for MCP, and the difference is *who is
+    #: typing*. §2.1 constrains the model, not the owner writing their own
+    #: history — `packages/tailor/edit.py` says so, and the editor is a person
+    #: at a keyboard. A tool call is not: there the author is a model, and an
+    #: unguarded résumé write handed to one is the exact door §2.1 closes.
+    #:
+    #: The API cannot tell the two apart, so the caller declares it. The MCP
+    #: server always sends `true` and offers no way to send anything else.
+    guard: bool = False
+
+
+class ApplicationResumeOut(BaseModel):
+    """The résumé an application will upload, as the parser reads it.
+
+    Exists so "which résumé is attached" has one definition. The rule — the
+    tailored one when tailoring has run, otherwise the profile's base — is the
+    one `apply_job._resume_path` applies when it picks the file, and a second
+    copy of it in a client is how a screen ends up describing a document other
+    than the one being sent (CLAUDE.md §15).
+
+    `sections` carries the lines themselves, not counts: the caller of this is
+    about to edit them.
+    """
+
+    application_id: uuid.UUID
+    resume_id: uuid.UUID
+    version: int
+    #: False means the profile's base is going as-is — tailoring has not run.
+    is_tailored: bool
+    #: Whether an edit would be accepted. Only parked applications may be edited.
+    editable: bool
+    contact: dict[str, Any] = Field(default_factory=dict)
+    sections: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class ResumeParsedOut(BaseModel):
     """What the parser extracted, so it can be checked before it is trusted."""
 

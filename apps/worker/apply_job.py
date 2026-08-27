@@ -365,6 +365,36 @@ async def _tailor(
     Returns None when there is nothing to tailor. A failure here must not stop
     the application: the untailored résumé is still a correct résumé.
     """
+    # An owner's choice at review outranks anything this function would compute.
+    #
+    # Approving a parked application resumes the pipeline from the top, so this
+    # runs a second time — and every path below assigns `tailored_resume_id`.
+    # That silently discarded two decisions the owner had already made on the
+    # review screen: a hand-edit of the attached résumé, and a pick from the
+    # model comparison. The screen showed the chosen document, the employer
+    # received the re-tailored one, and nothing anywhere reported the swap. It
+    # is the §15 defect exactly — a review screen describing a file that is not
+    # the file being uploaded.
+    #
+    # The pin is checked against `tailored_resume_id` rather than trusted on its
+    # own: if the row no longer points where the pin says, something else moved
+    # it and re-tailoring is the safer answer.
+    pinned = (application.review_json or {}).get("resume_pinned") or {}
+    pinned_id = pinned.get("resume_id")
+    if pinned_id and str(application.tailored_resume_id) == str(pinned_id):
+        row = await session.get(Resume, application.tailored_resume_id)
+        log.info("tailoring_skipped_owner_pinned", source=pinned.get("source"))
+        # The stored diff is kept rather than recomputed — it still describes
+        # what tailoring did to the document this one came from, which is the
+        # honest account. `owner_pinned` is what tells the review screen the
+        # diff no longer describes the file being sent.
+        stored = dict((application.review_json or {}).get("resume_diff") or {})
+        stored["owner_pinned"] = pinned.get("source") or "owner_edit"
+        stored["reused"] = True
+        if row is not None and row.tailored_by:
+            stored.setdefault("answered_by", row.tailored_by)
+        return stored
+
     posting_text = posting.description_raw or ""
     if profile.base_resume_id is None or not posting_text.strip():
         return None

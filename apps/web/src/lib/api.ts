@@ -73,6 +73,16 @@ export interface ResumeDiff {
   /** This run attached an already-tailored résumé rather than writing one. */
   reused?: boolean;
   /**
+   * The owner fixed the document after tailoring wrote it — `owner_edit` for a
+   * hand edit, `comparison` for a pick from the model comparison.
+   *
+   * Set means the changes below describe the résumé this one was *derived
+   * from*, not the file that will be uploaded. Rendering the diff without
+   * saying so would repeat the §15 failure in miniature: a review screen
+   * describing a document other than the one being sent.
+   */
+  owner_pinned?: string | null;
+  /**
    * Which model wrote the document: "gemini", or "ollama:llama3.1" when §7's
    * fallback answered after the remote allowance ran out. Null or absent means
    * unrecorded — a résumé tailored before the column existed — never a guess.
@@ -557,6 +567,27 @@ export const api = {
   /** Tailor this posting with the local model and the cloud one, for a choice. */
   compareTailoring: (id: string) =>
     request<Application>(`/applications/${id}/tailoring/compare`, { method: "POST" }),
+
+  /**
+   * Edit the résumé one application is about to send.
+   *
+   * Distinct from `editResume` in what it changes, not in how it saves. Both
+   * version the document rather than mutating it; this one attaches the result
+   * to a single application and leaves the profile's base alone, because on the
+   * review screen the subject is one employer.
+   */
+  editApplicationResume: (
+    id: string,
+    body: {
+      contact: { name?: string; email?: string; phone?: string; links?: string[] };
+      sections: Record<string, string[]>;
+      adopt?: boolean;
+    },
+  ) =>
+    request<Application>(`/applications/${id}/resume/edit`, {
+      method: "POST",
+      body: JSON.stringify({ adopt: false, ...body }),
+    }),
 
   /** Send this one. Restricted server-side to the versions that were compared. */
   selectTailoring: (id: string, resumeId: string) =>
