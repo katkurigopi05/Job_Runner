@@ -500,6 +500,10 @@ async def _tailor(
             "unchanged": summary.unchanged,
             # Rewrites the guard refused. Surfaced, not swallowed.
             "rejected": summary.rejected,
+            # And separately, bullets the model never answered at all. Folding
+            # these into `rejected` would report a provider outage as the guard
+            # doing its job.
+            "provider_failures": summary.provider_failures,
             "answered_by": answered_by,
             "unified": summary.unified,
             "changes": [change.model_dump() for change in summary.changes],

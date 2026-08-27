@@ -54,15 +54,35 @@ class BulletRewrite(BaseModel):
     #: Set when the model's attempt was discarded.
     rejected_reason: str | None = None
     entities_checked: int = 0
+    #: The model never answered — a transport error, an empty completion, a
+    #: spent allowance.
+    #:
+    #: Separate from the guard refusing an answer, and the distinction is the
+    #: whole point of reporting refusals at all. "The guard refused this" is a
+    #: statement about what the model tried to write; "the provider failed" is a
+    #: statement about the network. Counted together, a model that never spoke
+    #: is indistinguishable from one that kept trying to invent — which is
+    #: exactly backwards, and on a comparison screen it reads as a verdict on
+    #: the wrong thing.
+    provider_failed: bool = False
 
     @property
     def used_fallback(self) -> bool:
+        """The original line was kept, for either reason."""
         return self.rejected_reason is not None
+
+    @property
+    def guard_refused(self) -> bool:
+        """The model answered and the fabrication guard rejected the answer."""
+        return self.rejected_reason is not None and not self.provider_failed
 
 
 class TailorResult(BaseModel):
     bullets: list[BulletRewrite] = Field(default_factory=list)
+    #: Rewrites the fabrication guard refused. Provider failures are *not* here.
     rejected: int = 0
+    #: Bullets where the model never answered. See `BulletRewrite.provider_failed`.
+    provider_failures: int = 0
 
     @property
     def tailored_lines(self) -> list[str]:
@@ -232,6 +252,7 @@ async def tailor_bullet(
             original=bullet,
             tailored=bullet,
             rejected_reason=f"provider error: {type(exc).__name__}",
+            provider_failed=True,
         )
 
     candidate = _clean(raw)
@@ -273,5 +294,6 @@ async def tailor_bullets(
     ]
     return TailorResult(
         bullets=rewrites,
-        rejected=sum(1 for r in rewrites if r.used_fallback),
+        rejected=sum(1 for r in rewrites if r.guard_refused),
+        provider_failures=sum(1 for r in rewrites if r.provider_failed),
     )
