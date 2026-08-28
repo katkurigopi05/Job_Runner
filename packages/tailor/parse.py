@@ -218,6 +218,17 @@ def _runs_in_order(element: object) -> list:  # type: ignore[type-arg]
     return runs
 
 
+def _cell_text(cell: object) -> str:
+    """One table cell, read the same way a paragraph is.
+
+    A cell holds paragraphs, so it inherits every defect `_paragraph_text`
+    fixes — dropped tabs and dropped hyperlinks — if it is read with the
+    convenience property instead.
+    """
+    paragraphs = getattr(cell, "paragraphs", [])
+    return " ".join(text for p in paragraphs if (text := _paragraph_text(p))).strip()
+
+
 def _extract_docx(data: bytes) -> str:
     """Text from a DOCX, in the order the document actually reads.
 
@@ -255,7 +266,16 @@ def _extract_docx(data: bytes) -> str:
                 # value column. Joined with two spaces so the label stays
                 # attached to what it labels, which is what makes
                 # `Frameworks & Web  FastAPI, React` one readable line.
-                cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                #
+                # Read through `_paragraph_text` rather than `_Cell.text`.
+                # `_Cell.text` joins `Paragraph.text` per paragraph, which is
+                # the exact API the paragraph path above was moved off: it
+                # drops `<w:tab/>` and every run inside a `<w:hyperlink>`. A
+                # résumé whose Skills or contact block is a table would lose a
+                # link in a cell and a tab inside one — the defect this
+                # function exists to repair, surviving in the half of it that
+                # was not looked at.
+                cells = [text for cell in row.cells if (text := _cell_text(cell))]
                 if cells:
                     lines.append("  ".join(dict.fromkeys(cells)))
     return "\n".join(lines)

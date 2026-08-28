@@ -182,3 +182,49 @@ def test_a_title_is_never_overwritten_by_a_truncated_result() -> None:
     assert applied.section("projects")[0] == "Widget Engine   [GitHub]"
     assert applied.section("projects")[2] == "ONLY ONE"
     assert applied.section("projects")[3] == "Wrote the migration tool used across the team."
+
+
+# --------------------------------------------------------------------------
+# A date range does not settle it on its own
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Led the platform migration from 2019 - 2021 and cut deploy time by half across teams",
+        "Built the ingest path between Jan 2021 and Mar 2022 across four teams and two regions",
+    ],
+)
+def test_a_bullet_that_mentions_a_span_is_still_a_bullet(line: str) -> None:
+    """A date range used to force ENTRY, whatever else the line was.
+
+    These were skipped by the rewriter and rendered with entry-name typography.
+    """
+    assert is_rewritable(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Software Engineer, Acme Corp, Jan 2021 - Present",
+        "Senior Software Engineer, Platform Infrastructure Team, Acme Corp, Jan 2021 - Present",
+    ],
+)
+def test_an_employment_header_is_still_an_entry_however_long(line: str) -> None:
+    """Why the fix is the opening word and not the line length.
+
+    The second of these is thirteen words. Making length win outright — the
+    obvious fix — would have handed it to the rewriter.
+    """
+    assert not is_rewritable(line)
+
+
+def test_a_link_marker_outranks_length() -> None:
+    """The stated exception to "a long line is prose"."""
+    title = (
+        "Attorney.AI — Citation-First Legal Research RAG Assistant "
+        "for Courts, Agencies and Regulatory Filings [GitHub]"
+    )
+    assert len(title.split()) > 12
+    assert not is_rewritable(title)

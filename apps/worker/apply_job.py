@@ -519,6 +519,15 @@ async def _tailor(
             # doing its job.
             "provider_failures": summary.provider_failures,
             "answered_by": answered_by,
+            # The ATS score before and after this run. Hand-copied like every
+            # other field here, and that is exactly how it was missed the first
+            # time: `summarize` computed it, `DiffSummary` carried it, and this
+            # dict — which is what actually becomes `review_json["resume_diff"]`
+            # — listed the fields by name and did not list this one. The screen
+            # rendered nothing and reported no error, because there was none.
+            # §15's defect in miniature, so `tests/test_apply_review_payload.py`
+            # asserts the payload rather than the model.
+            "ats": summary.ats.model_dump() if summary.ats else None,
             "unified": summary.unified,
             "changes": [change.model_dump() for change in summary.changes],
         }
