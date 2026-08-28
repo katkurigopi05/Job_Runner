@@ -30,6 +30,7 @@ and leaving the jobs untouched would tailor the half the employer reads second.
 from __future__ import annotations
 
 import re
+from enum import StrEnum
 
 from packages.tailor.parse import ParsedResume
 
@@ -83,22 +84,34 @@ def tailorable_section(parsed: ParsedResume) -> str | None:
     return None
 
 
-def is_rewritable(line: str) -> bool:
-    """Whether this line is prose a model should be asked to rewrite.
+class LineKind(StrEnum):
+    """What a line inside an entry-bearing section is."""
+
+    #: Prose describing work done. The only kind the model rewrites.
+    BULLET = "bullet"
+    #: The line that starts an entry — a project name, an employer and role,
+    #: a degree and its dates.
+    ENTRY = "entry"
+    #: A supporting line under an entry name, in practice a technology list.
+    META = "meta"
+
+
+def classify(line: str) -> LineKind:
+    """What kind of line this is.
 
     A section is not a list of bullets. It is a list of *entries*, each opening
-    with a name and often a technology line, followed by the bullets. Handing
-    all of it to the rewriter asks the model to tailor a project title and a
-    comma-separated stack list against a job description, which is not a
-    question with a good answer — and it is most of why tailored output reads
-    badly.
+    with a name, often carrying a technology line, and only then having prose.
+    Two callers need the distinction and would otherwise each guess at it: the
+    rewriter, which must not be asked to tailor a project title, and the
+    renderer, which cannot lay out an entry it cannot find.
 
     On the owner's résumé, 12 of the 28 lines under Projects are not bullets:
     six titles like `Attorney.AI — Citation-First Legal Research RAG Assistant
     [GitHub]` and six stacks like `Python, FastAPI, React, HuggingFace
-    Transformers, Qdrant`. The model was asked to rewrite every one.
+    Transformers, Qdrant`. The model was asked to rewrite every one, which is
+    most of why tailored output read badly.
 
-    ## The default is to rewrite
+    ## The default is BULLET
 
     Only positively identified non-prose is excluded, and each test is chosen
     to be high-precision rather than broad. The opposite default is the failure
@@ -112,21 +125,19 @@ def is_rewritable(line: str) -> bool:
     """
     stripped = line.strip()
     if not stripped:
-        return False
+        return LineKind.META
 
     # A leading bullet glyph is the author saying which lines are bullets.
     # Nothing beats being told.
     if stripped[0] in "-•*‣◦–—" and len(stripped) > 2:
-        return True
+        return LineKind.BULLET
 
-    if _LINK_MARKER_RE.search(stripped):
-        return False
-    if _DATE_RANGE_RE.search(stripped):
-        return False
+    if _LINK_MARKER_RE.search(stripped) or _DATE_RANGE_RE.search(stripped):
+        return LineKind.ENTRY
 
     words = stripped.split()
     if len(words) < _PROSE_WORDS and _looks_like_a_label(stripped):
-        return False
+        return LineKind.ENTRY
 
     # The opening word settles it, and settles it before the comma test below.
     # Prose commas fool that test on their own: `Added model adapters,
@@ -138,14 +149,19 @@ def is_rewritable(line: str) -> bool:
     # whose last word looks like an action and is not one. A résumé bullet
     # opens with its verb — that convention is the signal.
     if _opens_with_a_verb(stripped):
-        return True
+        return LineKind.BULLET
     if len(words) >= _PROSE_WORDS:
-        return True
+        return LineKind.BULLET
     if _is_list(stripped):
-        return False
+        return LineKind.META
     # A verb further in, on a line short enough to have got here: prose with an
     # unusual opening rather than a name.
-    return bool(_VERBAL_RE.search(stripped))
+    return LineKind.BULLET if _VERBAL_RE.search(stripped) else LineKind.ENTRY
+
+
+def is_rewritable(line: str) -> bool:
+    """Whether the model should be asked to rewrite this line."""
+    return bool(line.strip()) and classify(line) is LineKind.BULLET
 
 
 def _opens_with_a_verb(line: str) -> bool:

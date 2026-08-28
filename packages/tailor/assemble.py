@@ -17,6 +17,7 @@ Two constraints shape the output:
 from __future__ import annotations
 
 import html
+import re
 
 from pydantic import BaseModel, Field
 
@@ -54,18 +55,58 @@ SECTION_TITLES: dict[str, str] = {
     "interests": "Interests",
 }
 
+#: The layout. Every rule here is either an ATS constraint or the hierarchy a
+#: human needs, and the two pull in opposite directions often enough to be
+#: worth stating.
+#:
+#: **Single column, no tables, no text boxes, no header/footer, no images.**
+#: Those are the standard ways a good-looking résumé becomes an unreadable one
+#: after a parser gets to it, and none of them is used here.
+#:
+#: **Hierarchy comes from weight and space, not from position.** An entry name
+#: is bold, a technology line is muted italic, a bullet is indented under a
+#: real `•`. None of that moves text out of reading order, so extraction still
+#: yields the document in the order a person reads it.
+#:
+#: **The date sits inline after its entry name, and is not floated right.**
+#: This was tried the other way and the round trip refused it. `float: right`
+#: looks better and moves the date out of the extracted text flow: `pypdf`
+#: returned `Master of Science in Business Analytics` on one line and `Jan 2025
+#: – Dec 2026` somewhere else entirely, so nothing connects a degree to its
+#: dates. Inline, extraction gives them as one line, which is what a parser
+#: needs. `tests/test_assemble_layout.py` round-trips a rendered PDF back
+#: through the parser to hold that, because it is the only evidence available —
+#: no ATS vendor publishes its parser, so our own is the referee.
+#:
+#: **`h1` has real space under it.** Without it `pypdf` merged the name into
+#: the contact line and returned `Gopi Krishna Reddy Katkurigkatkuri@…` — our
+#: own output reproducing, on the way out, the same fused-field defect the
+#: DOCX reader was just fixed for on the way in.
 RESUME_CSS = """
 @page { size: Letter; margin: 0.55in; }
 body { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
-       font-size: 10pt; line-height: 1.32; color: #111; }
-header { margin-bottom: 10pt; }
-h1 { font-size: 16pt; margin: 0 0 2pt; letter-spacing: 0.01em; }
-.contact { font-size: 9pt; color: #333; }
+       font-size: 10pt; line-height: 1.34; color: #111; }
+header { margin-bottom: 12pt; }
+h1 { font-size: 17pt; font-weight: 700; margin: 0 0 6pt;
+     letter-spacing: 0.01em; line-height: 1.2; }
+.contact { font-size: 9pt; color: #333; line-height: 1.5; }
 .contact a { color: #1a4d8f; text-decoration: none; }
-h2 { font-size: 11pt; margin: 12pt 0 4pt; text-transform: uppercase;
-     letter-spacing: 0.05em; border-bottom: 0.6pt solid #999; padding-bottom: 2pt; }
-ul { list-style: none; padding: 0; margin: 0; }
-li { margin: 0 0 4pt; }
+h2 { font-size: 9.5pt; font-weight: 700; margin: 13pt 0 5pt;
+     text-transform: uppercase; letter-spacing: 0.08em; color: #222;
+     border-bottom: 0.7pt solid #888; padding-bottom: 2.5pt; }
+p { margin: 0 0 4pt; }
+.entry { margin: 6pt 0 2pt; }
+.entry:first-child { margin-top: 0; }
+.entry-name { font-weight: 700; }
+.entry-date { font-size: 9pt; color: #444; font-weight: 400; }
+.entry-date::before { content: "  \\00b7  "; color: #999; }
+.entry-meta { font-style: italic; color: #444; font-size: 9pt; margin: 0 0 3pt; }
+ul { list-style: none; padding: 0; margin: 0 0 2pt; }
+li { margin: 0 0 3pt; padding-left: 11pt; text-indent: -11pt; }
+li::before { content: "\\2022  "; color: #555; }
+.plain { list-style: none; padding: 0; margin: 0; }
+.plain li { padding-left: 0; text-indent: 0; }
+.plain li::before { content: ""; }
 .project-name { font-weight: 700; }
 .project-link { color: #1a4d8f; text-decoration: none; white-space: nowrap; }
 """
@@ -108,9 +149,118 @@ def _render_contact(resume: ParsedResume) -> str:
     return f"<header>\n<h1>{name}</h1>\n<div class='contact'>{line}</div>\n</header>"
 
 
+#: Sections built out of entries — a name, optional supporting line, bullets.
+#: Everything else is a flat list of lines and is rendered as one.
+_ENTRY_SECTIONS: frozenset[str] = frozenset({"experience", "projects", "education"})
+
+#: Sections whose lines are labelled rows rather than bullets. A `•` in front
+#: of `Languages  Python, TypeScript, Rust` is noise: it is not a claim about
+#: work, it is a category and its members.
+_PLAIN_SECTIONS: frozenset[str] = frozenset({"skills", "languages", "interests"})
+
+#: A trailing date range on an entry line, so it can be set to the right.
+#:
+#: Anchored at the end because that is where a résumé puts it, and a date in
+#: the middle of a title is part of the title. A full *range* is required —
+#: two endpoints and a dash — which is what makes a single leading space safe
+#: to split on: `Product Launch 2024` is a name and keeps its year, while
+#: `Master of Science in Business Analytics Jan 2025 – Dec 2026` is a degree
+#: and a date. Requiring two spaces instead missed every line the DOCX reader
+#: had repaired, since that inserts one.
+_TRAILING_DATE_RE = re.compile(
+    r"\s+((?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\w*\.?\s*)?"
+    r"(?:19|20)\d{2}\s*[-–—]\s*"
+    r"(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\w*\.?\s*)?"
+    r"(?:(?:19|20)\d{2}|present|current)\.?)\s*$",
+    re.IGNORECASE,
+)
+
+
 def _render_lines(lines: list[str]) -> str:
     items = "\n".join(f"<li>{html.escape(line)}</li>" for line in lines)
     return f"<ul>\n{items}\n</ul>"
+
+
+def _render_plain(lines: list[str]) -> str:
+    items = "\n".join(f"<li>{html.escape(line)}</li>" for line in lines)
+    return f"<ul class='plain'>\n{items}\n</ul>"
+
+
+def _render_paragraphs(lines: list[str]) -> str:
+    return "\n".join(f"<p>{html.escape(line)}</p>" for line in lines)
+
+
+def _render_entry_name(line: str) -> str:
+    """An entry name, with any trailing date range set to the right.
+
+    The date is emitted after the name in the markup and floated, so the
+    *content* order an extractor sees is still `name  date`. Putting it first
+    in the markup to make the float work would put it first in the extracted
+    text too, and a parser reading `Jan 2021 – Present Acme Corp` has to guess
+    which half is the employer.
+    """
+    match = _TRAILING_DATE_RE.search(line)
+    if not match:
+        return f"<div class='entry'><span class='entry-name'>{html.escape(line)}</span></div>"
+    name = line[: match.start()].rstrip()
+    return (
+        "<div class='entry'>"
+        f"<span class='entry-name'>{html.escape(name)}</span>"
+        f"<span class='entry-date'>{html.escape(match.group(1))}</span>"
+        "</div>"
+    )
+
+
+def _render_entries(lines: list[str]) -> str:
+    """Lay a section out as entries rather than as one undifferentiated list.
+
+    Before this every line in a section was an `<li>` in a `<ul>` with
+    `list-style: none` — a project title, its technology line and its bullets
+    all rendered identically, with no bullet glyphs anywhere. The document had
+    no hierarchy at all, which is most of what "the résumé has no format"
+    means.
+
+    Grouping uses `packages.tailor.bullets.classify`, the same function that
+    decides what the model is asked to rewrite. One answer to "what is this
+    line", so the document cannot be laid out on one reading of it and
+    tailored on another.
+    """
+    from packages.tailor.bullets import LineKind, classify
+
+    parts: list[str] = []
+    pending_bullets: list[str] = []
+
+    def flush() -> None:
+        if pending_bullets:
+            parts.append(_render_lines(pending_bullets))
+            pending_bullets.clear()
+
+    for line in lines:
+        if not line.strip():
+            continue
+        kind = classify(line)
+        if kind is LineKind.BULLET:
+            pending_bullets.append(line)
+            continue
+        flush()
+        if kind is LineKind.ENTRY:
+            parts.append(_render_entry_name(line))
+        else:
+            parts.append(f"<p class='entry-meta'>{html.escape(line)}</p>")
+
+    flush()
+    return "\n".join(parts)
+
+
+def _render_body(name: str, lines: list[str]) -> str:
+    """The lines of one section, laid out the way that section reads."""
+    if name == "summary":
+        return _render_paragraphs(lines)
+    if name in _PLAIN_SECTIONS:
+        return _render_plain(lines)
+    if name in _ENTRY_SECTIONS:
+        return _render_entries(lines)
+    return _render_lines(lines)
 
 
 def assemble_html(
@@ -155,7 +305,7 @@ def assemble_html(
                 heading = "Projects" if not rendered_projects else "Selected Project Experience"
                 parts.append(
                     f"<section><h2>{html.escape(heading)}</h2>"
-                    f"{_render_lines(source_projects)}</section>"
+                    f"{_render_body('projects', source_projects)}</section>"
                 )
                 emitted.add("projects")
             continue
@@ -164,7 +314,7 @@ def assemble_html(
         if not lines:
             continue
         title = SECTION_TITLES.get(name, name.title())
-        parts.append(f"<section><h2>{html.escape(title)}</h2>{_render_lines(lines)}</section>")
+        parts.append(f"<section><h2>{html.escape(title)}</h2>{_render_body(name, lines)}</section>")
         emitted.add(name)
 
     # A section the parser found but the layout does not know about is kept,
@@ -175,7 +325,7 @@ def assemble_html(
         if name == "projects" and opts.replace_source_projects and rendered_projects:
             continue
         title = SECTION_TITLES.get(name, name.title())
-        parts.append(f"<section><h2>{html.escape(title)}</h2>{_render_lines(lines)}</section>")
+        parts.append(f"<section><h2>{html.escape(title)}</h2>{_render_body(name, lines)}</section>")
 
     return "\n".join(parts)
 
