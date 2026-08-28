@@ -28,6 +28,71 @@ function TailoredBy({ model }: { model?: string | null }) {
   );
 }
 
+function Score({ label, before, after }: { label: string; before: number; after: number }) {
+  const delta = after - before;
+  const tone = delta < -0.001 ? "text-stop" : delta > 0.001 ? "text-go" : "text-ink-faint";
+  return (
+    <div className="flex items-baseline gap-2">
+      <span className="w-20 font-mono text-xs text-ink-faint">{label}</span>
+      <span className="font-mono text-sm text-ink-soft">{Math.round(before * 100)}%</span>
+      <span className="text-ink-faint">→</span>
+      <span className="font-mono text-sm">{Math.round(after * 100)}%</span>
+      {Math.abs(delta) > 0.001 ? (
+        <span className={`font-mono text-xs ${tone}`}>
+          {delta > 0 ? "+" : ""}
+          {Math.round(delta * 100)}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * How an ATS reads this résumé, before and after tailoring, against this posting.
+ *
+ * Both halves are shown and never averaged. They fail independently: a run that
+ * raises keyword coverage while lowering the parse score has made the document
+ * worse in the way that matters most, because a résumé an ATS cannot segment is
+ * a row of empty columns and no amount of keyword matching rescues it.
+ *
+ * `gained` is the part worth reading. Coverage moving from 31% to 37% says
+ * nothing about whether the terms it picked up were worth having; the list of
+ * terms does. None of them is invented — tailoring can only surface vocabulary
+ * the source résumé already supported, which is what the guard holds.
+ */
+function AtsPanel({ ats }: { ats: NonNullable<ResumeDiff["ats"]> }) {
+  return (
+    <div className="space-y-2 border border-rule bg-paper px-3 py-2.5">
+      <p className="font-mono text-xs uppercase tracking-wide text-ink-faint">
+        How an ATS reads this
+      </p>
+      <Score label="parse" before={ats.parse_before} after={ats.parse_after} />
+      <Score label="keywords" before={ats.keywords_before} after={ats.keywords_after} />
+
+      {ats.parse_after < ats.parse_before ? (
+        <p className="text-sm text-stop">
+          Tailoring made this document harder for a parser to read. That costs more than any
+          keyword it gained — check the résumé below before approving.
+        </p>
+      ) : null}
+
+      {ats.gained.length > 0 ? (
+        <p className="text-sm text-ink-soft">
+          <span className="text-go">Now matching:</span> {ats.gained.join(", ")}
+        </p>
+      ) : null}
+
+      {ats.still_missing.length > 0 ? (
+        <p className="text-sm text-ink-faint">
+          <span className="text-ink-soft">Still unmatched:</span> {ats.still_missing.join(", ")}.
+          These are terms the posting asks for that your résumé does not back. Tailoring cannot
+          add them — if one is genuinely true and simply unwritten, edit your résumé below.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * What tailoring changed, before it is sent.
  *
@@ -104,6 +169,10 @@ export function ResumeDiffView({ diff }: { diff: ResumeDiff }) {
           ) : null}
         </p>
         <TailoredBy model={diff.answered_by} />
+        {/* Shown even here. "Tailoring changed nothing" and "your résumé
+            matches a fifth of what this posting asks for" are different facts,
+            and the second is the one that decides whether to apply at all. */}
+        {diff.ats ? <AtsPanel ats={diff.ats} /> : null}
       </div>
     );
   }
@@ -117,6 +186,8 @@ export function ResumeDiffView({ diff }: { diff: ResumeDiff }) {
         </p>
         <TailoredBy model={diff.answered_by} />
       </div>
+
+      {diff.ats ? <AtsPanel ats={diff.ats} /> : null}
 
       <ul className="space-y-4">
         {changes.map((change, index) => (

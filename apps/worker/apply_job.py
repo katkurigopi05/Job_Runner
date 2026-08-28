@@ -472,7 +472,20 @@ async def _tailor(
         result = await tailor_bullets(provider, bullets, posting_text, corpus)
         # After the rewrites, never before — see `_answered_by`.
         answered_by = _answered_by(provider)
-        summary = summarize(result)
+
+        # Scored against the same posting, before and after, so the review
+        # screen can say what tailoring bought rather than only what it
+        # changed. `apply_rewrites` is called here anyway — `publish_tailored`
+        # below does the same thing internally — and the duplicate is cheap
+        # next to re-deriving it on the screen from two stored documents.
+        from packages.tailor.publish import apply_rewrites
+
+        summary = summarize(
+            result,
+            source=parsed,
+            tailored=apply_rewrites(parsed, result, posting_text=posting_text),
+            job_description=posting_text,
+        )
 
         # The file the owner uploads. Rendered even when every rewrite was
         # rejected: that document is the source résumé with the current

@@ -29,10 +29,46 @@ and leaving the jobs untouched would tailor the half the employer reads second.
 
 from __future__ import annotations
 
+import re
+from enum import StrEnum
+
 from packages.tailor.parse import ParsedResume
 
 #: Sections the tailorer may rewrite, in priority order.
 TAILORABLE_SECTIONS: tuple[str, ...] = ("experience", "projects")
+
+#: A repository or portfolio annotation. A line carrying one is naming a
+#: project, not describing work done on it.
+_LINK_MARKER_RE = re.compile(
+    r"\[[^\]]{1,20}\]|https?://|(?:github|gitlab|linkedin)\.com/|\bwww\.", re.IGNORECASE
+)
+
+#: A date range — the shape of an employment or education entry line.
+_DATE_RANGE_RE = re.compile(
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\w*\.?\s+(?:19|20)\d{2}\b"
+    r"|\b(?:19|20)\d{2}\s*[-–—]\s*(?:(?:19|20)\d{2}|present|current)\b",
+    re.IGNORECASE,
+)
+
+#: Evidence that a line makes a statement rather than naming a thing.
+#: Deliberately crude — a participle or a gerund is what a résumé bullet opens
+#: with, and one anywhere in the line is enough.
+_VERBAL_RE = re.compile(r"\b\w{3,}(?:ed|ing)\b", re.IGNORECASE)
+
+#: Irregular past tenses a résumé bullet opens with that `-ed` misses.
+_IRREGULAR_PAST_TEXT = """
+built wrote ran led made drove grew set sent kept taught won chose brought
+gave took found held rebuilt spent met beat cut put shipped drew
+"""
+
+_IRREGULAR_PAST: frozenset[str] = frozenset(_IRREGULAR_PAST_TEXT.split())
+
+#: Above this, a line is prose whatever else it looks like.
+_PROSE_WORDS = 12
+
+#: A comma-separated line whose fragments are this short is a list of things,
+#: not a sentence about them.
+_LIST_FRAGMENT_WORDS = 4
 
 
 def tailorable_section(parsed: ParsedResume) -> str | None:
@@ -48,8 +84,142 @@ def tailorable_section(parsed: ParsedResume) -> str | None:
     return None
 
 
+class LineKind(StrEnum):
+    """What a line inside an entry-bearing section is."""
+
+    #: Prose describing work done. The only kind the model rewrites.
+    BULLET = "bullet"
+    #: The line that starts an entry — a project name, an employer and role,
+    #: a degree and its dates.
+    ENTRY = "entry"
+    #: A supporting line under an entry name, in practice a technology list.
+    META = "meta"
+
+
+def classify(line: str) -> LineKind:
+    """What kind of line this is.
+
+    A section is not a list of bullets. It is a list of *entries*, each opening
+    with a name, often carrying a technology line, and only then having prose.
+    Two callers need the distinction and would otherwise each guess at it: the
+    rewriter, which must not be asked to tailor a project title, and the
+    renderer, which cannot lay out an entry it cannot find.
+
+    On the owner's résumé, 12 of the 28 lines under Projects are not bullets:
+    six titles like `Attorney.AI — Citation-First Legal Research RAG Assistant
+    [GitHub]` and six stacks like `Python, FastAPI, React, HuggingFace
+    Transformers, Qdrant`. The model was asked to rewrite every one, which is
+    most of why tailored output read badly.
+
+    ## The default is BULLET
+
+    Only positively identified non-prose is excluded, and each test is chosen
+    to be high-precision rather than broad. The opposite default is the failure
+    CLAUDE.md already records twice — a tailorer that silently does nothing —
+    and it is harder to notice than a bad rewrite, because a bad rewrite is
+    visible on the review screen and an absent one is not.
+
+    Excluding a real bullet costs a rewrite. Including a title costs a title
+    rewritten into a sentence, which the owner then has to catch. Neither is
+    free, so the tests below identify what a line *is*, not what it is not.
+    """
+    stripped = line.strip()
+    if not stripped:
+        return LineKind.META
+
+    # A leading bullet glyph is the author saying which lines are bullets.
+    # Nothing beats being told.
+    if stripped[0] in "-•*‣◦–—" and len(stripped) > 2:
+        return LineKind.BULLET
+
+    if _LINK_MARKER_RE.search(stripped) or _DATE_RANGE_RE.search(stripped):
+        return LineKind.ENTRY
+
+    words = stripped.split()
+    if len(words) < _PROSE_WORDS and _looks_like_a_label(stripped):
+        return LineKind.ENTRY
+
+    # The opening word settles it, and settles it before the comma test below.
+    # Prose commas fool that test on their own: `Added model adapters,
+    # audio-upload handling, and graceful fallbacks.` is three short
+    # comma-separated fragments and is plainly a bullet.
+    #
+    # *Opening* rather than anywhere, because `-ing` is a gerund as often as a
+    # verb: `Python, Scikit-learn, Time-Series Forecasting` is a stack list
+    # whose last word looks like an action and is not one. A résumé bullet
+    # opens with its verb — that convention is the signal.
+    if _opens_with_a_verb(stripped):
+        return LineKind.BULLET
+    if len(words) >= _PROSE_WORDS:
+        return LineKind.BULLET
+    if _is_list(stripped):
+        return LineKind.META
+    # A verb further in, on a line short enough to have got here: prose with an
+    # unusual opening rather than a name.
+    return LineKind.BULLET if _VERBAL_RE.search(stripped) else LineKind.ENTRY
+
+
+def is_rewritable(line: str) -> bool:
+    """Whether the model should be asked to rewrite this line."""
+    return bool(line.strip()) and classify(line) is LineKind.BULLET
+
+
+def _opens_with_a_verb(line: str) -> bool:
+    """Whether the line opens the way a résumé bullet does."""
+    words = line.split()
+    if not words:
+        return False
+    first = words[0].strip(".,:;").lower()
+    return bool(re.fullmatch(r"\w{3,}(?:ed|ing)", first)) or first in _IRREGULAR_PAST
+
+
+def _looks_like_a_label(line: str) -> bool:
+    """ALL CAPS, or Title Case With Every Word Capitalized.
+
+    A heading the parser did not claim, or an entry name. Checked before the
+    verb test because a name can contain one: `Selected Work` opens with a past
+    participle and is not a bullet, and neither is `Cloud Data Warehousing`.
+
+    A résumé bullet fails this on its first lowercase word, which it reaches
+    almost immediately — `Built the ingest path`.
+    """
+    if any(c in ",[]()0123456789/:" for c in line) or line.endswith("."):
+        return False
+    letters = [c for c in line if c.isalpha()]
+    if not letters:
+        return False
+    if all(c.isupper() for c in letters):
+        return True
+    return all(word[0].isupper() for word in line.split() if word and word[0].isalpha())
+
+
+def _is_list(line: str) -> bool:
+    """A run of short comma-separated fragments — a stack, not a sentence.
+
+    `Python, FastAPI, React, HuggingFace Transformers, Qdrant` and `Snowflake,
+    AWS Redshift, Google BigQuery, Talend, Tableau, SQL`. Requires at least two
+    commas, because one comma is ordinary punctuation in a sentence, and every
+    fragment to be short, because `Built X, which did Y across Z` has long ones.
+    """
+    fragments = [part.strip() for part in line.split(",")]
+    if len(fragments) < 3:
+        return False
+    return all(0 < len(part.split()) <= _LIST_FRAGMENT_WORDS for part in fragments)
+
+
+def rewritable_indices(lines: list[str]) -> list[int]:
+    """Positions in a section's lines that the model should be handed.
+
+    Positions rather than the lines themselves, because the write-back in
+    `publish.apply_rewrites` has to skip exactly the same lines in exactly the
+    same order. Both callers ask this one function; if they disagreed, a
+    rewrite would land on the line after the one it was written for, silently.
+    """
+    return [i for i, line in enumerate(lines) if is_rewritable(line)]
+
+
 def tailorable_bullets(parsed: ParsedResume) -> tuple[str | None, list[str]]:
-    """The section name and its non-empty lines.
+    """The section name and the prose lines within it.
 
     Returned together so a caller cannot rewrite bullets taken from one section
     and write them back into another — the failure this module exists to make
@@ -58,4 +228,5 @@ def tailorable_bullets(parsed: ParsedResume) -> tuple[str | None, list[str]]:
     name = tailorable_section(parsed)
     if name is None:
         return None, []
-    return name, [line for line in parsed.section(name) if line.strip()]
+    lines = parsed.section(name)
+    return name, [lines[i] for i in rewritable_indices(lines)]

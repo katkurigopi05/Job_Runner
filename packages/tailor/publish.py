@@ -68,9 +68,10 @@ def apply_rewrites(
     deliberately left alone, because it is what the guard treats as "was this
     in the source" and reordering is not a change to that answer.
     """
-    # The same function the extractor used, so the bullets cannot be taken from
-    # one section and written back into another.
-    from packages.tailor.bullets import tailorable_section
+    # The same two functions the extractor used, so the bullets cannot be taken
+    # from one section and written back into another, and cannot be written back
+    # onto lines that were never sent.
+    from packages.tailor.bullets import rewritable_indices, tailorable_section
 
     section = tailorable_section(parsed)
     lines = parsed.section(section) if section else []
@@ -78,10 +79,15 @@ def apply_rewrites(
         return _with_ordered_skills(parsed.model_copy(deep=True), posting_text)
     assert section is not None  # non-empty lines only come from a named section
 
+    # A project title and its technology line are in this section and are not
+    # bullets; `tailorable_bullets` does not send them, so consuming a result
+    # for them here would put every rewrite one line off its own bullet.
+    targets = set(rewritable_indices(lines))
+
     pending = iter(result.bullets)
     rewritten: list[str] = []
-    for line in lines:
-        if not line.strip():
+    for index, line in enumerate(lines):
+        if index not in targets:
             rewritten.append(line)
             continue
         bullet = next(pending, None)
