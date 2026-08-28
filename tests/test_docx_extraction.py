@@ -140,6 +140,34 @@ def test_a_case_change_alone_does_not_separate() -> None:
     assert "HuggingFace" in _render(document)
 
 
+def test_a_tab_inside_a_table_cell_is_kept() -> None:
+    """A cell holds paragraphs, so it inherits every paragraph defect.
+
+    `_Cell.text` joins `Paragraph.text`, which is the API the paragraph path
+    was moved off precisely because it drops `<w:tab/>`. Reading cells with it
+    left half the extractor with the bug the other half had just been fixed for.
+    """
+    document = docx.Document()
+    table = document.add_table(rows=1, cols=1)
+    paragraph = table.rows[0].cells[0].paragraphs[0]
+    paragraph.add_run("Acme Corp")
+    paragraph.add_run().add_tab()
+    paragraph.add_run("Jan 2021 - Present")
+
+    assert "Acme Corp Jan 2021 - Present" in _render(document)
+
+
+def test_a_hyperlink_inside_a_table_cell_is_kept() -> None:
+    """A contact block laid out as a table would otherwise lose its links."""
+    document = docx.Document()
+    table = document.add_table(rows=1, cols=1)
+    paragraph = table.rows[0].cells[0].paragraphs[0]
+    paragraph.add_run("Links: ")
+    _add_hyperlink(paragraph, "github.com/janedoe")
+
+    assert "github.com/janedoe" in _render(document)
+
+
 # --------------------------------------------------------------------------
 # Hyperlinks
 # --------------------------------------------------------------------------
@@ -154,7 +182,7 @@ def test_a_hyperlink_is_not_dropped() -> None:
     document = docx.Document()
     paragraph = document.add_paragraph()
     paragraph.add_run("me@example.com | ")
-    paragraph.add_hyperlink = None  # not part of the API; build the element by hand
+    # `Paragraph` has no public API for adding a link, so build the element by hand.
     _add_hyperlink(paragraph, "github.com/janedoe")
 
     text = _render(document)
@@ -166,7 +194,6 @@ def test_a_hyperlink_is_not_dropped() -> None:
 
 def _add_hyperlink(paragraph: docx.text.paragraph.Paragraph, text: str) -> None:
     """Append a `<w:hyperlink>` wrapping one run, the way Word writes a link."""
-    from docx.oxml.ns import qn
     from docx.oxml.shared import OxmlElement
 
     link = OxmlElement("w:hyperlink")
@@ -176,7 +203,6 @@ def _add_hyperlink(paragraph: docx.text.paragraph.Paragraph, text: str) -> None:
     run.append(node)
     link.append(run)
     paragraph._p.append(link)
-    assert link.tag == qn("w:hyperlink")
 
 
 # --------------------------------------------------------------------------

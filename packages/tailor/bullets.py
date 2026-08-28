@@ -132,7 +132,24 @@ def classify(line: str) -> LineKind:
     if stripped[0] in "-•*‣◦–—" and len(stripped) > 2:
         return LineKind.BULLET
 
-    if _LINK_MARKER_RE.search(stripped) or _DATE_RANGE_RE.search(stripped):
+    # A repository or portfolio annotation names a thing, at any length. This
+    # is the one exception to "a long line is prose" below, and it is here
+    # rather than after the length test because `[GitHub]` is only ever put on
+    # a title.
+    if _LINK_MARKER_RE.search(stripped):
+        return LineKind.ENTRY
+
+    # A date range says "entry" — unless the line opens like a bullet. Both
+    # readings are common and the opening word separates them: an employment
+    # header is a noun phrase (`Senior Software Engineer, Acme Corp, Jan 2021 -
+    # Present`), while a bullet that happens to mention a span is still a
+    # sentence (`Led the platform migration from 2019 - 2021 and cut deploy
+    # time by half`). Without this the second was filed as an entry, skipped by
+    # the rewriter and rendered with entry-name typography.
+    #
+    # Testing the length instead would be the wrong cut: that header is
+    # thirteen words and is not prose.
+    if _DATE_RANGE_RE.search(stripped) and not _opens_with_a_verb(stripped):
         return LineKind.ENTRY
 
     words = stripped.split()

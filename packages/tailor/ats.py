@@ -72,10 +72,27 @@ _MONTHS = (
 #: Scoped this narrowly on purpose. The general "lowercase then uppercase"
 #: signal cannot tell `BayHayward` from `HuggingFace`, `WebGPU`, `BigQuery` or
 #: `XGBoost`, all of which are correct and all of which appear in the owner's
-#: résumé. A month or a four-digit year on the right-hand side has no such
-#: false positives, and dates are where the tab is used, because that is what
-#: right-aligns them.
-_FUSED_DATE_RE = re.compile(rf"[a-z](?:{_MONTHS})\b|[a-z](?:19|20)\d{{2}}\b", re.IGNORECASE)
+#: résumé.
+#:
+#: A month alone is not enough either, and an earlier version that accepted one
+#: was wrong about people's names: case-insensitively, `Arjun` ends in `jun`
+#: and `Omar` ends in `mar`, so both were reported as fused dates and both cost
+#: the owner parse score for having a name. Two bounds fix it:
+#:
+#: - **The month must be followed by a year.** A date is what the dropped tab
+#:   was separating; a month-shaped substring inside a word is not a date.
+#: - **The month must be capitalized.** The right-hand side of a fused pair is
+#:   the start of a field, so it is capitalized the way `AnalyticsJan 2025` is.
+#:   Case-insensitivity is what let `arjun` in.
+#:
+#: The bare-year branch keeps no month at all — `Engineering2020` is fused
+#: whatever precedes the digits.
+_CAPITALIZED_MONTHS = "|".join(name.capitalize() for name in _MONTHS.split("|"))
+
+_FUSED_DATE_RE = re.compile(
+    rf"[a-z](?:{_CAPITALIZED_MONTHS})[a-z]*\.?\s*(?:19|20)\d{{2}}\b"
+    rf"|[a-z](?:19|20)\d{{2}}\b"
+)
 
 #: A date range, however it is punctuated. Absence of one under Experience is
 #: the single most common reason an ATS files a job with no start date.

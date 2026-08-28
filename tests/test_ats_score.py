@@ -17,6 +17,8 @@ from packages.tailor.ats import (
     compare,
     score,
 )
+from packages.tailor.guard import SourceCorpus
+from packages.tailor.keywords import _supported
 from packages.tailor.parse import parse_text
 
 RESUME = """\
@@ -253,18 +255,28 @@ def test_score_change_reports_both_halves_and_what_was_gained() -> None:
     from packages.tailor.ats import score_change
 
     posting = "We need Kubernetes and PostgreSQL experience. Kubernetes. PostgreSQL. Kafka."
-    before = parse_text(
-        RESUME.replace("Built payment services in Python and Postgres.", "Built services.")
-    )
+    # The term has to be absent from the *whole* source, not just from the
+    # bullet: an earlier fixture only edited the bullet and left `Kubernetes`
+    # in the skills line, so both sides supported it and `gained` was empty.
+    before = parse_text(RESUME.replace("Python, PostgreSQL, Kubernetes", "Python"))
     after = parse_text(RESUME)
 
     delta = score_change(before, after, posting)
 
     assert delta.parse_before > 0
     assert delta.keywords_after >= delta.keywords_before
-    # Nothing invented: a gained term is one the résumé already supported.
+    assert delta.gained
+
+    # Nothing invented: every gained term is one the résumé actually backs.
+    #
+    # Asserted against the corpus rather than against the raw text, because an
+    # alias is a legitimate gain — a posting asking for `PostgreSQL` is backed
+    # by a résumé that says `Postgres`, and the term would not appear verbatim.
+    # An earlier version compared each term against `" ".join(delta.gained)`,
+    # which always contains it, so the property went untested.
+    corpus = SourceCorpus.from_resume(after)
     for term in delta.gained:
-        assert term.lower() in after.text.lower() or term.lower() in " ".join(delta.gained).lower()
+        assert _supported(term, corpus), term
 
 
 def test_a_parse_regression_is_reported_rather_than_averaged_away() -> None:
@@ -289,3 +301,22 @@ def test_still_missing_terms_are_carried_so_the_owner_can_judge_fit() -> None:
     delta = score_change(parse_text(RESUME), parse_text(RESUME), posting)
     joined = " ".join(delta.still_missing).lower()
     assert "erlang" in joined or "cobol" in joined
+
+
+def test_a_name_containing_a_month_is_not_a_fused_date() -> None:
+    """`Arjun` ends in `jun`; `Omar` ends in `mar`.
+
+    The first version matched a month case-insensitively with nothing after it,
+    so both were reported as fused dates and both cost their owner parse score
+    for having a name.
+    """
+    for name in ("Arjun Kumar", "Omar Sharif", "Janet Maynard", "Julie Marchetti", "Maya Decker"):
+        report = score(parse_text(RESUME.replace("Jane Doe", name)))
+        assert "fused_date" not in _codes(report), name
+
+
+def test_a_month_without_a_year_is_not_a_fused_date() -> None:
+    text = RESUME.replace(
+        "Built payment services in Python and Postgres.", "Shipped the MarTech integration."
+    )
+    assert "fused_date" not in _codes(score(parse_text(text)))

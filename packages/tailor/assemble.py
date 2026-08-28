@@ -191,13 +191,18 @@ def _render_paragraphs(lines: list[str]) -> str:
 
 
 def _render_entry_name(line: str) -> str:
-    """An entry name, with any trailing date range set to the right.
+    """An entry name, with any trailing date range split into its own span.
 
-    The date is emitted after the name in the markup and floated, so the
-    *content* order an extractor sees is still `name  date`. Putting it first
-    in the markup to make the float work would put it first in the extracted
-    text too, and a parser reading `Jan 2021 – Present Acme Corp` has to guess
-    which half is the employer.
+    The date stays *inline* after the name — styled, not floated. Splitting it
+    out buys the styling; it must not be read as licence to add `float: right`,
+    which was tried and reverted: floating moved the date out of the extracted
+    text flow, so `pypdf` returned the entry on one line and its dates
+    somewhere else and nothing connected them. See the note on `RESUME_CSS`,
+    and `test_a_date_stays_on_the_line_of_the_entry_it_belongs_to`.
+
+    The date is also emitted after the name rather than before it, so a parser
+    never reads `Jan 2021 – Present Acme Corp` and has to guess which half is
+    the employer.
     """
     match = _TRAILING_DATE_RE.search(line)
     if not match:
