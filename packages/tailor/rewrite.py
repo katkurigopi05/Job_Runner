@@ -12,6 +12,8 @@ prompts are advisory and models disregard them.
 
 from __future__ import annotations
 
+import re
+
 import structlog
 from pydantic import BaseModel, Field
 
@@ -114,15 +116,52 @@ def _user_prompt(bullet: str, job_description: str, terms: TermReport | None = N
     return "\n\n".join(parts)
 
 
-def _clean(candidate: str) -> str:
-    """Strip the wrappers models add despite being told not to."""
+#: A short label the model put in front of its answer — `Analysis:`, `Note:`,
+#: `Revised bullet:`. At most two words, because three already reaches a real
+#: clause: `Built the parser: fast and small.` is a bullet, and an earlier
+#: version of this stripped it down to `fast and small.`
+_PREAMBLE_RE = re.compile(r"^([A-Z][A-Za-z]*(?: [A-Za-z]+)?):\s+")
+
+
+def _clean(candidate: str, original: str = "") -> str:
+    """Strip the wrappers models add despite being told not to.
+
+    The fixed list was not enough. Running llama3.1 over the owner's own
+    résumé, one rewrite came back as `Analysis: Designing a validated,
+    reversible…` and another opened with `Note:` — which the guard then refused
+    as a fabricated proper noun, so the bullet fell back to its original and
+    the owner saw a refusal whose stated reason was a word the model had used
+    as punctuation.
+
+    Both symptoms are one cause, so this strips any short `Label: ` opening
+    rather than growing the list.
+
+    `original` is what keeps it from eating content. A label made of words the
+    source bullet already uses is not a preamble — it is the bullet's own
+    opening, and `Built the parser: fast and small.` must keep it. A preamble,
+    by contrast, is a word the model reached for on its own and so is absent
+    from the source.
+    """
     text = candidate.strip()
     for prefix in ("Rewritten bullet:", "Bullet:", "-", "*", "•"):
         if text.startswith(prefix):
             text = text[len(prefix) :].strip()
+
+    match = _PREAMBLE_RE.match(text)
+    if match and not _echoes(match.group(1), original):
+        text = text[match.end() :].strip()
+
     if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
         text = text[1:-1].strip()
     return text
+
+
+def _echoes(label: str, original: str) -> bool:
+    """Whether a candidate label repeats a word the source bullet already uses."""
+    if not original.strip():
+        return False
+    source = {word.strip(".,:;()").lower() for word in original.split()}
+    return any(word.lower() in source for word in label.split())
 
 
 def _content_words(text: str) -> set[str]:
@@ -255,7 +294,7 @@ async def tailor_bullet(
             provider_failed=True,
         )
 
-    candidate = _clean(raw)
+    candidate = _clean(raw, bullet)
     forbidden = tuple(terms.missing) if terms else ()
     accepted, reason, report = vet(bullet, candidate, corpus, forbidden)
 
