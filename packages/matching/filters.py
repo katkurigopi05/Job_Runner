@@ -98,8 +98,6 @@ def location_matches(profile: Profile, posting: Posting) -> bool:
     hard filter: a posting whose city no rule here recognizes should be ranked
     down, not hidden. Only an explicit foreign signal excludes.
     """
-    if is_remote(posting):
-        return True
     if not profile.location or not posting.location:
         # Nothing to contradict, so do not exclude on a guess.
         return True
@@ -111,6 +109,15 @@ def location_matches(profile: Profile, posting: Posting) -> bool:
     if not is_domestic(locality_of(profile.location)):
         return True
 
+    # Country is read *before* remoteness, not after. "Remote" is not a place,
+    # and on a foreign posting it does not mean remote-from-anywhere — it means
+    # remote within that country. `Spain (Remote)`, `United Kingdom (Remote)`
+    # and `Republic of Ireland (Remote)` were the three highest-scoring matches
+    # in the owner's feed after the substring bug below was fixed, all kept by
+    # an `is_remote` short-circuit that ran first.
+    #
+    # `Remote - US or Canada` is unaffected: `locality_of` yields a foreign
+    # country name to an explicit US signal, so it classifies as UNITED_STATES.
     return locality_of(posting.location) is not Locality.ELSEWHERE
 
 

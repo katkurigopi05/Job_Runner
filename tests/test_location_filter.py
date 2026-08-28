@@ -137,3 +137,43 @@ def test_a_profile_outside_the_us_gets_no_opinion() -> None:
     confidently wrong one.
     """
     assert location_matches(Profile(location="Berlin, Germany"), _posting("Toronto, ON"))
+
+
+# --------------------------------------------------------------------------
+# "Remote" is not a place
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "Spain (Remote)",
+        "United Kingdom (Remote)",
+        "Republic of Ireland (Remote)",
+        "Remote - Canada",
+        "Kitchener-Waterloo, ON; Remote",
+        "Remote, Germany",
+    ],
+)
+def test_remote_inside_another_country_is_still_that_country(location: str) -> None:
+    """`is_remote` used to short-circuit before the country was read.
+
+    On a foreign posting "Remote" does not mean remote-from-anywhere; it means
+    remote *within that country*. The three highest-scoring matches in the
+    owner's feed, once the substring bug was fixed, were Grafana Labs roles in
+    Spain, Ireland and the UK — all kept by that short-circuit.
+    """
+    assert not _keeps(location)
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["Remote - US or Canada", "Remote - USA", "U.S. Remote", "Remote - United States", "Remote"],
+)
+def test_us_remote_is_kept_including_when_it_names_canada_too(location: str) -> None:
+    """`locality_of` yields a foreign country name to an explicit US signal.
+
+    `Remote - US or Canada` is a job the owner can take, and must survive the
+    check that excludes `Remote - Canada`.
+    """
+    assert _keeps(location)
