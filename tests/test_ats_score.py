@@ -55,13 +55,26 @@ def test_a_well_formed_resume_has_no_findings() -> None:
 
 
 def test_an_unrecognized_heading_is_reported_with_the_line() -> None:
-    """The defect that mis-filed the owner's certifications under Skills."""
-    text = RESUME.replace("SKILLS", "CERTIFICATIONS & TRAINING")
+    """A heading the parser has no pattern for still has to be reported.
+
+    This used to use `CERTIFICATIONS & TRAINING`, which the parser now matches.
+    That is the fix working, not the check becoming unnecessary: the point of
+    the finding is that whatever the parser cannot place, the owner is told
+    about rather than left to wonder why a section is empty.
+    """
+    text = RESUME.replace("SKILLS", "VOLUNTEER WORK")
     report = score(parse_text(text))
 
     findings = [f for f in report.findings if f.code == "unrecognized_heading"]
     assert len(findings) == 1
-    assert findings[0].line == "CERTIFICATIONS & TRAINING"
+    assert findings[0].line == "VOLUNTEER WORK"
+
+
+def test_a_compound_heading_is_no_longer_reported_as_unrecognized() -> None:
+    """`CERTIFICATIONS & TRAINING` and `ACHIEVEMENTS & ACTIVITIES` now parse."""
+    for heading in ("CERTIFICATIONS & TRAINING", "ACHIEVEMENTS & ACTIVITIES"):
+        report = score(parse_text(RESUME.replace("SKILLS", heading)))
+        assert "unrecognized_heading" not in _codes(report), heading
 
 
 def test_a_tech_stack_line_is_not_reported_as_a_heading() -> None:
