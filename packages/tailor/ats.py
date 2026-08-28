@@ -481,6 +481,61 @@ def score(resume: ParsedResume, job_description: str = "") -> AtsReport:
     )
 
 
+@dataclass(frozen=True)
+class AtsDelta:
+    """What tailoring did to the score, for one posting.
+
+    The pair before and after, plus the concrete answer underneath it: which
+    of the posting's terms the résumé did not carry before and does now.
+    `gained` is the list a person can actually check — a coverage number moving
+    from 31% to 37% says nothing about whether the six terms it picked up were
+    worth having.
+    """
+
+    parse_before: float
+    parse_after: float
+    keywords_before: float
+    keywords_after: float
+    #: Posting terms newly covered. Never fabricated — tailoring can only
+    #: surface vocabulary the source already supported, and the guard is what
+    #: holds that. These are terms that were present in the résumé and absent
+    #: from the bullets an ATS reads most closely.
+    gained: list[str] = field(default_factory=list)
+    #: Terms the posting asks for that the résumé still does not back. Not a
+    #: to-do list: closing one by writing it in would be fabrication. It is
+    #: there so the owner can judge fit, and edit their own history if a gap is
+    #: real and simply unwritten.
+    still_missing: list[str] = field(default_factory=list)
+
+    @property
+    def parse_regressed(self) -> bool:
+        """Tailoring made the document harder to parse. Always worth surfacing."""
+        return self.parse_after < self.parse_before
+
+
+def score_change(before: ParsedResume, after: ParsedResume, job_description: str = "") -> AtsDelta:
+    """Score a résumé before and after tailoring, against the same posting.
+
+    The measurement CLAUDE.md §7 asks for whenever the rewriter changes: a
+    second referee that is not the fabrication guard's own pass rate. A run
+    that raises keyword coverage while lowering the parse score has made the
+    document worse in the way that matters most, and `parse_regressed` says so
+    rather than leaving it to be noticed in an average.
+    """
+    first = score(before, job_description)
+    second = score(after, job_description)
+
+    had = {term.lower() for term in first.supported}
+    return AtsDelta(
+        parse_before=first.parse,
+        parse_after=second.parse,
+        keywords_before=first.keywords,
+        keywords_after=second.keywords,
+        gained=[term for term in second.supported if term.lower() not in had],
+        still_missing=list(second.missing),
+    )
+
+
 def compare(before: AtsReport, after: AtsReport) -> str:
     """A one-line before/after, for the review screen and the benchmark.
 
@@ -495,8 +550,10 @@ def compare(before: AtsReport, after: AtsReport) -> str:
 
 
 __all__ = [
+    "AtsDelta",
     "AtsReport",
     "Finding",
     "compare",
     "score",
+    "score_change",
 ]

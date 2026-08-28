@@ -77,6 +77,29 @@ export interface ResumeDiff {
    * provider that was down look like one that kept trying to invent.
    */
   provider_failures?: number;
+  /**
+   * How an ATS reads the résumé, before and after this run, against this
+   * posting. Absent when the run had no posting text to score against, and on
+   * every diff written before the field existed.
+   *
+   * Both halves are carried rather than one combined number. They fail
+   * independently: a run that raises keyword coverage while lowering the parse
+   * score has made the document worse in the way that matters most, because a
+   * résumé an ATS cannot segment is a row of empty columns.
+   */
+  ats?: {
+    parse_before: number;
+    parse_after: number;
+    keywords_before: number;
+    keywords_after: number;
+    /** Posting terms the tailored résumé now matches and the source did not. */
+    gained: string[];
+    /**
+     * Terms the posting asks for that the résumé still cannot back. Not a
+     * to-do list — writing one in would be fabrication under §2.1.
+     */
+    still_missing: string[];
+  } | null;
   unified?: string;
   changes?: ResumeChange[];
   /** This run attached an already-tailored résumé rather than writing one. */
