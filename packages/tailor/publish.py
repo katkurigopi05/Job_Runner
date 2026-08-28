@@ -43,8 +43,13 @@ log = structlog.get_logger(__name__)
 #: drift from packages/tailor/parse.py::SECTION_PATTERNS.
 SKILLS_SECTION = "skills"
 
-#: The section the tailor rewrites. Kept here rather than inlined so this and
-#: the caller that extracted the bullets cannot drift apart.
+#: The section the tailor rewrites, when a résumé has one.
+#:
+#: Retained for callers that still name it, but `apply_rewrites` no longer uses
+#: it: a résumé with no employment section is tailored on Projects instead, and
+#: writing rewrites back into a fixed section would put project bullets under a
+#: heading the owner does not have. `packages/tailor/bullets.py` is the single
+#: answer to "which section", shared with everything that extracts them.
 TAILORED_SECTION = "experience"
 
 
@@ -63,9 +68,15 @@ def apply_rewrites(
     deliberately left alone, because it is what the guard treats as "was this
     in the source" and reordering is not a change to that answer.
     """
-    lines = parsed.section(TAILORED_SECTION)
+    # The same function the extractor used, so the bullets cannot be taken from
+    # one section and written back into another.
+    from packages.tailor.bullets import tailorable_section
+
+    section = tailorable_section(parsed)
+    lines = parsed.section(section) if section else []
     if not lines:
         return _with_ordered_skills(parsed.model_copy(deep=True), posting_text)
+    assert section is not None  # non-empty lines only come from a named section
 
     pending = iter(result.bullets)
     rewritten: list[str] = []
@@ -80,7 +91,7 @@ def apply_rewrites(
         rewritten.append(bullet.tailored if bullet is not None else line)
 
     tailored = parsed.model_copy(deep=True)
-    tailored.sections[TAILORED_SECTION] = rewritten
+    tailored.sections[section] = rewritten
     return _with_ordered_skills(tailored, posting_text)
 
 
@@ -127,6 +138,17 @@ async def publish_tailored(
     the application row that points at it land together or not at all.
     """
     tailored = apply_rewrites(parsed, result, posting_text=posting_text)
+
+    # A résumé tailored on its Projects section keeps that section. The GitHub
+    # set is rebuilt per posting and is the right Projects section for an
+    # employment résumé, where it is supporting material — but here it would
+    # overwrite the only substantive thing the document has, discarding every
+    # rewrite this function was called to render. The review screen would report
+    # eighteen changes and the PDF would contain none of them.
+    from packages.tailor.bullets import tailorable_section
+
+    if options is None and tailorable_section(parsed) == "projects":
+        options = AssemblyOptions(include_projects=False, replace_source_projects=False)
 
     try:
         pdf = assemble_pdf(tailored, projects, options)

@@ -44,6 +44,7 @@ from packages.core.models import Match, Posting, Profile, Project, Resume
 from packages.github.select import select_projects
 from packages.llm import quota
 from packages.llm.provider import LLMProvider
+from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
 from packages.tailor.evidence import matched_job_terms
 from packages.tailor.guard import SourceCorpus
@@ -141,7 +142,7 @@ async def run(
             continue
 
         parsed = ParsedResume.model_validate(resume.parsed_json)
-        bullets = [line for line in parsed.section("experience") if line.strip()]
+        _, bullets = tailorable_bullets(parsed)
         if not bullets:
             result.failed += 1
             continue

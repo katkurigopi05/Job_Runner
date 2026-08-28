@@ -79,6 +79,13 @@ class AssemblyOptions(BaseModel):
     link_style: LinkStyle = LinkStyle.ICON_SLUG
     projects_heading: str = "Projects"
     #: Replace a source Projects section rather than printing two of them.
+    #:
+    #: Right for an employment résumé, where Projects is supporting material and
+    #: the GitHub set should follow the posting. Wrong when the source Projects
+    #: section is the résumé's substance — a student or new graduate has their
+    #: whole record there, and replacing it with repository names and their raw
+    #: GitHub descriptions deletes the document. `publish_tailored` turns this
+    #: off when Projects is the section that was tailored.
     replace_source_projects: bool = True
     sections: tuple[str, ...] = SECTION_ORDER
 
@@ -131,13 +138,24 @@ def assemble_html(
 
     for name in opts.sections:
         if name == "projects":
+            # `replace_source_projects` was dead here. This branch marked
+            # "projects" emitted whenever the GitHub section rendered, so the
+            # trailing loop that honours the flag could never reach it — and a
+            # résumé whose Projects section *is* its substance had that section
+            # silently replaced by repository metadata, tailored rewrites and
+            # all. Setting the flag to False changed nothing.
+            source_projects = resume.section("projects")
+            keep_source = bool(source_projects) and (
+                not rendered_projects or not opts.replace_source_projects
+            )
             if rendered_projects:
                 parts.append(rendered_projects)
                 emitted.add("projects")
-            elif resume.section("projects"):
+            if keep_source:
+                heading = "Projects" if not rendered_projects else "Selected Project Experience"
                 parts.append(
-                    f"<section><h2>{html.escape(SECTION_TITLES['projects'])}</h2>"
-                    f"{_render_lines(resume.section('projects'))}</section>"
+                    f"<section><h2>{html.escape(heading)}</h2>"
+                    f"{_render_lines(source_projects)}</section>"
                 )
                 emitted.add("projects")
             continue

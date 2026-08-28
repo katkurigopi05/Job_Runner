@@ -49,6 +49,7 @@ from packages.llm.router import (
     is_comparable_cloud,
 )
 from packages.matching.embed import get_embedder
+from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
 from packages.tailor.diff import summarize
 from packages.tailor.guard import SourceCorpus
@@ -266,9 +267,10 @@ async def compare_tailorings(
         raise CannotCompare("the base résumé has not been parsed")
 
     parsed = ParsedResume.model_validate(resume.parsed_json)
-    bullets = [line for line in parsed.section("experience") if line.strip()]
+    section, bullets = tailorable_bullets(parsed)
     if not bullets:
-        raise CannotCompare("the base résumé has no experience bullets to rewrite")
+        raise CannotCompare("the base résumé has no experience or project bullets to rewrite")
+    log.info("compare_section_chosen", section=section)
 
     # The same policy the apply pipeline uses (`apply_job._projects_for`), so
     # the documents being compared are the ones an application would actually

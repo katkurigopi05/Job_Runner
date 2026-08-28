@@ -113,7 +113,27 @@ your
 
 my me we us those whose another still why though hire hiring company letter
 dear sincerely regards please thank thanks
+
+automate automated automating consolidate consolidated consolidating
+coach coached coaching coordinate coordinated coordinating debug debugged
+debugging deploy deployed deploying diagnose diagnosed diagnosing document
+documented documenting establish established establishing grew grow growing
+handle handled handling instrument instrumented instrumenting integrate
+integrated integrating monitor monitored monitoring negotiate negotiated
+negotiating operate operated operating ran run running resolve resolved
+resolving review reviewed rewrite rewrote rewriting standardize standardized
+standardizing test tested validate validated validating
 """
+# The block above is the same fix CLAUDE.md records for cover letters, where
+# "My", "We" and "Please" were read as proper nouns and rejected nearly every
+# letter. A résumé bullet opens with a verb, and the guard's proper-noun test is
+# capitalization — so a rewrite that opened with any verb the source did not
+# already use was refused as a fabricated name. "Deployed the pipeline" failed
+# against a source that said "Wrote the pipeline", for the word "Deployed".
+#
+# These carry no factual claim in any position; the claim is the object, and
+# the object is still checked — "Deployed Kubernetes" still has to trace
+# Kubernetes. Verbs that *do* assert seniority stay out: see _SCOPE_CLAIMS.
 
 _COMMON_WORDS: frozenset[str] = frozenset(_COMMON_WORDS_TEXT.split())
 
@@ -126,10 +146,20 @@ class EntityKind(StrEnum):
     SCOPE = "scope"
 
 
+#: Words that assert seniority or ownership rather than describe work.
+#:
+#: Checked like any other claim, because "led the migration" against a source
+#: saying "worked on the migration" is a fabrication — of scope rather than of
+#: fact, and the kind a résumé rewrite is most tempted by.
+#:
+#: The distinction from ordinary verbs is whether the word alone claims rank.
+#: "Deployed" says what was done; "oversaw" says who you were while doing it.
 _SCOPE_CLAIMS_TEXT = """
 architect architected chief direct directed director drive drove head
 lead leader led manage managed manager own owned principal
 scale scaled scalability senior spearhead spearheaded sr staff
+oversee oversaw overseeing found founded founding
+pioneer pioneered pioneering champion championed championing
 """
 
 _SCOPE_CLAIMS: frozenset[str] = frozenset(_SCOPE_CLAIMS_TEXT.split())
@@ -366,6 +396,21 @@ def _index(text: str) -> set[str]:
         # "three" supports an output saying "3".
         if normalized in _NUMBER_WORDS:
             tokens.add(_NUMBER_WORDS[normalized])
+
+    # Equivalent spellings of the same fact — "Postgres" also findable as
+    # "PostgreSQL", "K8s" as "Kubernetes". Indexed here rather than checked at
+    # lookup time so that `keywords.analyze` and `supports()` cannot disagree:
+    # one decides which of the posting's terms the model is invited to use, the
+    # other decides whether the result is a fabrication, and a term ruled safe
+    # by the first and refused by the second is worse than never offering it.
+    #
+    # This widens the corpus, which `SourceCorpus` warns is how a fabrication
+    # becomes permissible — see `packages/tailor/aliases.py` for the two rules
+    # that keep the table to true equivalences rather than related terms.
+    from packages.tailor.aliases import expand_phrases, expand_tokens
+
+    tokens |= expand_tokens(tokens)
+    tokens |= expand_phrases(" ".join(normalize(m.group(0)) for m in _TOKEN_RE.finditer(text)))
     return tokens
 
 

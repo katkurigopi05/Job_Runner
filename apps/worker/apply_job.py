@@ -47,6 +47,7 @@ from packages.core.storage import get_storage, receipt_key
 from packages.github.select import relevant_for_posting
 from packages.llm import router as llm_router
 from packages.matching.embed import get_embedder
+from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
 
 log = structlog.get_logger(__name__)
@@ -427,7 +428,7 @@ async def _tailor(
         from packages.tailor.rewrite import tailor_bullets
 
         parsed = ParsedResume.model_validate(resume.parsed_json)
-        bullets = [line for line in parsed.section("experience") if line.strip()]
+        _, bullets = tailorable_bullets(parsed)
         if not bullets:
             return None
 
