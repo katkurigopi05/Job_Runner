@@ -212,6 +212,49 @@ _NON_US_MARKERS = (
     r"apac",
     r"latam",
     r"cemea",
+    # Added after a real crawl put "Sr. Manager, Finance Transformation —
+    # Costa Rica" near the top of the owner's match feed. Absent from the list,
+    # it classified as UNPLACED rather than ELSEWHERE, and UNPLACED passes the
+    # hard filter by design.
+    #
+    # **Four countries are deliberately not here**, because their names are
+    # American places and rule 1 runs before any US state *name* is read:
+    # `georgia` (Savannah, Georgia), `panama` (Panama City, FL), `lebanon`
+    # (Lebanon, PA / NH) and `jordan`. A comma-position state code rescues
+    # each of those, but a spelled-out state name does not, so adding them
+    # would hide American postings to catch rare foreign ones.
+    r"costa rica",
+    r"ukraine",
+    r"peru",
+    r"uruguay",
+    r"ecuador",
+    r"guatemala",
+    r"dominican republic",
+    r"morocco",
+    r"tunisia",
+    r"ghana",
+    r"uganda",
+    r"tanzania",
+    r"kuwait",
+    r"bahrain",
+    r"oman",
+    r"nepal",
+    r"iceland",
+    r"estonia",
+    r"latvia",
+    r"lithuania",
+    r"slovakia",
+    r"slovenia",
+    r"croatia",
+    r"serbia",
+    r"bulgaria",
+    r"cyprus",
+    r"malta",
+    r"luxembourg",
+    r"armenia",
+    r"azerbaijan",
+    r"kazakhstan",
+    r"uzbekistan",
 )
 
 _NON_US_RE = re.compile(r"\b(?:" + "|".join(_NON_US_MARKERS) + r")\b", re.I)

@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass, field
 
 from packages.core.models import Posting, Profile
+from packages.matching.locality import Locality, is_domestic, locality_of
 
 #: Seniority ladder, lowest first. Used to reject a mismatch in either
 #: direction — an intern posting and a principal posting are both wrong for a
@@ -65,9 +66,37 @@ def is_remote(posting: Posting) -> bool:
 def location_matches(profile: Profile, posting: Posting) -> bool:
     """Whether the owner could plausibly hold this role's location.
 
-    Remote always qualifies. Otherwise the posting's location must mention
-    something from the profile's — city or region, matched loosely because
-    boards write locations every way imaginable.
+    Country only. Which *part* of the United States a posting is in is a
+    ranking question, not a disqualifying one — `locality.rank` orders Bay Area
+    above California above the rest, and as that module puts it, a Texan
+    posting the owner would love should still rank above a Californian one they
+    would not. Excluding on it here would hide the first and keep the second.
+
+    ## Why this stopped being a substring test
+
+    It split the profile's location on commas and asked whether any part
+    appeared anywhere in the posting's. On a profile reading
+    `san fransico , ca,usa` that produced exactly the wrong answer in both
+    directions:
+
+        'Canada'                 -> kept, because 'ca' is inside 'canada'
+        'Costa Rica'             -> kept, because 'ca' is inside 'costa'
+        'Vancouver, Canada'      -> kept
+        'United States - Remote' -> rejected
+
+    Every Canadian and Costa Rican role passed as California while American
+    ones did not. It was the top of the owner's match feed after a real crawl:
+    four Elastic roles in Canada and a finance manager in Costa Rica.
+
+    `packages/matching/locality.py` exists for this and its own docstring names
+    the trap — "CA is two countries", so the country has to be decided before
+    `CA` is read as a state. It was written and never wired into this filter.
+
+    ## What still passes
+
+    `UNKNOWN` and `UNPLACED` both pass. Silence is not evidence, and this is a
+    hard filter: a posting whose city no rule here recognizes should be ranked
+    down, not hidden. Only an explicit foreign signal excludes.
     """
     if is_remote(posting):
         return True
@@ -75,11 +104,14 @@ def location_matches(profile: Profile, posting: Posting) -> bool:
         # Nothing to contradict, so do not exclude on a guess.
         return True
 
-    profile_parts = {
-        part.strip().lower() for part in re.split(r"[,/|]", profile.location) if part.strip()
-    }
-    posting_location = posting.location.lower()
-    return any(part and part in posting_location for part in profile_parts)
+    # The profile's own location decides whether this US-shaped reading applies
+    # at all. `locality.py` is explicit that it answers one owner's question —
+    # United States only, California first — so a profile located outside it
+    # gets no opinion from this filter rather than a wrong one.
+    if not is_domestic(locality_of(profile.location)):
+        return True
+
+    return locality_of(posting.location) is not Locality.ELSEWHERE
 
 
 def sponsorship_ok(profile: Profile, posting: Posting) -> bool:
