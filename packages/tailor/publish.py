@@ -76,6 +76,7 @@ def apply_rewrites(
     lines = parsed.section(section) if section else []
     if not lines:
         return _with_ordered_skills(parsed.model_copy(deep=True), posting_text)
+    assert section is not None  # non-empty lines only come from a named section
 
     pending = iter(result.bullets)
     rewritten: list[str] = []
