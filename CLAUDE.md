@@ -807,6 +807,29 @@ question its gate was written to ask, which is whether the scoring and the
 classifier work on *this owner's* material. Swap the fixtures for real data
 before trusting either number.
 
+- **Gate 5's ranking half is now measured rather than asserted.** The gate
+  checks one bit — ten wanted postings in the top ten — which cannot see a
+  match slide from rank 1 to rank 10 and cannot compare two scorers. It also
+  turns out to prove less than it looks: on those twenty postings the shipped
+  scorer and a five-line token-overlap baseline both score a perfect NDCG@10,
+  because the negatives are pastry chefs and truck drivers and every scorer
+  separates those. `make bench-matching` reports NDCG/MAP/MRR/P@K with
+  bootstrap intervals against a constant control, over the same labels plus
+  twelve adjacent roles that actually discriminate. On those twelve NDCG@5
+  falls to 0.577 and the control is statistically tied with everything, which
+  is where the matcher's real weakness lives. The labels are still
+  fixture-grade, so the harness refuses to report a production candidate at
+  all — `docs/ML_EVALUATION.md` says what would have to arrive first.
+
+  Two side findings worth keeping. `seeds/labeled_matches.yaml` is now the one
+  definition of the Gate 5 set, which `tests/test_matching.py` reads by tag —
+  two copies of a labeled corpus drift, and the gate was the copy that would
+  go stale. And `filters.seniority_ok` passes everything when
+  `target_seniority` is unset, which no production caller sets: a Junior
+  Backend Engineer with a perfect technology match ranks in the top ten, and
+  arming the target takes P@10 from 0.900 to 1.000. Whether to arm it by
+  default is a separate decision; it now has a number attached.
+
 - **Gate 1's HAR replay** is now real. `tests/test_greenhouse_har.py` replays
   bytes Greenhouse actually served, offline, and runs in `make gate-1` and in
   CI. It exists because the hand-written fixture beside it had native
