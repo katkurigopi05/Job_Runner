@@ -32,7 +32,7 @@ import httpx
 import structlog
 from pydantic import BaseModel
 
-from packages.llm.audit import record
+from packages.llm.audit import CLOUD_MODEL_MARKERS, record
 from packages.llm.pacing import MAX_RETRIES, pacer_for, retry_after_seconds
 
 log = structlog.get_logger(__name__)
@@ -127,6 +127,15 @@ class StubProvider:
 class OllamaProvider:
     name = "ollama"
 
+    def _headers(self) -> dict[str, str]:
+        """Nothing to send. `OllamaCloudProvider` overrides this.
+
+        A hook rather than a conditional so the two request bodies below stay
+        single-sourced: they are identical for a local and a hosted model,
+        which is the whole reason the two are easy to confuse.
+        """
+        return {}
+
     def __init__(self, base_url: str | None = None, model: str | None = None) -> None:
         from packages.core.config import get_settings
 
@@ -158,6 +167,7 @@ class OllamaProvider:
                         "stream": False,
                         "options": {"num_predict": max_tokens, "temperature": temperature},
                     },
+                    headers=self._headers(),
                     timeout=120.0,
                 )
                 resp.raise_for_status()
@@ -182,6 +192,7 @@ class OllamaProvider:
                         "format": "json",
                         "options": {"num_predict": 1024, "temperature": JSON_TEMPERATURE},
                     },
+                    headers=self._headers(),
                     timeout=120.0,
                 )
                 resp.raise_for_status()
@@ -208,6 +219,86 @@ def _scrubbed(exc: Exception) -> str:
     """An exception's text with any `key=` query value removed."""
     scrubbed = _KEY_QUERY_RE.sub(r"\1***", str(exc))
     return _KEY_HEADER_RE.sub(r"\1***", scrubbed)
+
+
+class OllamaCloudProvider(OllamaProvider):
+    """A model Ollama hosts on its own servers, reached over the same API.
+
+    Ollama serves cloud-hosted models through the identical `/api/chat`
+    endpoint as local ones — `glm-5.3-flash:cloud` and `llama3.1` differ by the
+    model tag and nothing else, and the URL is `localhost:11434` either way.
+    That is exactly the confusion CLAUDE.md §14 refuses on the assistant, and
+    the reason this is a separate provider rather than a model setting.
+
+    ## Why a second class and not just a `:cloud` tag on `OllamaProvider`
+
+    `audit.is_local` reads the provider first and the model second. Under the
+    name `ollama` a call is presumed local and only the "cloud" substring in
+    the tag rescues the label; under this name it is presumed remote, which is
+    the correct default for something whose whole purpose is running elsewhere.
+    Two names make the audit trail right by construction instead of by a string
+    match that a rename could break.
+
+    It also keeps the §14 refusal intact. Setting `OLLAMA_MODEL` to a `:cloud`
+    tag still fails, because asking for the local model and silently getting a
+    third party is not a decision. Asking for `ollama_cloud` is.
+
+    ## Deliberately absent from `router.QUALITY_ORDER`
+
+    The same reasoning as `OpenRouterProvider`, and for one more reason
+    besides. `_configured("ollama_cloud")` is true as soon as
+    `OLLAMA_CLOUD_MODEL` names a model, and Ollama needs no API key when the
+    local daemon is signed in — so were this in the quality order, a single
+    line in `.env` would silently redirect every "auto" task off the machine.
+    §2.8 permits that upload; it does not permit it happening unnoticed. This
+    provider answers when named and not otherwise.
+
+    Unlike an OpenRouter `stealth/*` route the recipient here is nameable —
+    Ollama's servers, running the tagged model — so the trail can record where
+    the résumé went rather than only that it left.
+    """
+
+    name = "ollama_cloud"
+
+    #: What the owner asked for. Pinned rather than tracking "latest" for the
+    #: reason the other providers pin: the trail should name what actually ran,
+    #: and a cloud tag that silently moves under you makes an audited upload
+    #: unauditable after the fact.
+    DEFAULT_MODEL = "glm-5.3-flash:cloud"
+
+    def __init__(self, base_url: str | None = None, model: str | None = None) -> None:
+        from packages.core.config import get_settings
+
+        settings = get_settings()
+        self.base_url = (
+            base_url or os.environ.get("OLLAMA_BASE_URL") or settings.ollama_base_url
+        ).rstrip("/")
+        self.model = (
+            model or os.environ.get("OLLAMA_CLOUD_MODEL") or settings.ollama_cloud_model
+        ) or self.DEFAULT_MODEL
+        # The mirror of §14's refusal, and the reason both exist: the label has
+        # to match the reality in *both* directions. `ollama` refusing a
+        # `:cloud` tag stops a remote call being recorded as local. This stops
+        # a local call being recorded as remote — which sounds harmless, and is
+        # not: an audit trail that cries wolf about a résumé leaving teaches
+        # the owner to stop reading it, and §2.8's whole value is that it gets
+        # read.
+        if not any(marker in self.model.lower() for marker in CLOUD_MODEL_MARKERS):
+            raise LLMError(
+                f"OLLAMA_CLOUD_MODEL is set to {self.model!r}, which is not one of the "
+                "models Ollama hosts remotely — those carry a 'cloud' tag, such as "
+                "'glm-5.3-flash:cloud'. Use OLLAMA_MODEL and the 'ollama' provider for "
+                "a model on this machine."
+            )
+        # Optional. The local daemon proxies cloud models once it is signed in,
+        # so there is nothing to send in the common case; a key is only needed
+        # when OLLAMA_BASE_URL points at ollama.com directly.
+        self.api_key = os.environ.get("OLLAMA_API_KEY") or settings.ollama_api_key
+
+    def _headers(self) -> dict[str, str]:
+        if not self.api_key:
+            return {}
+        return {"Authorization": f"Bearer {self.api_key}"}
 
 
 class GeminiProvider:
@@ -629,6 +720,8 @@ def build_provider(name: str | None = None) -> LLMProvider:
         return AnthropicProvider()
     elif selected == "openrouter":
         return OpenRouterProvider()
+    elif selected == "ollama_cloud":
+        return OllamaCloudProvider()
     else:
         raise LLMError(f"LLM provider {selected!r} is unknown or not implemented.")
 

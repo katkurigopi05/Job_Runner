@@ -74,6 +74,27 @@ class Settings(BaseSettings):
     #: written into three files and settable in none.
     ollama_model: str = "llama3.1"
 
+    #: Which model the `ollama_cloud` provider asks for — one Ollama hosts on
+    #: its own servers rather than this machine.
+    #:
+    #: Unset by default, and that is what keeps it opt-in. `_configured`
+    #: reads this field, so naming a model here is what makes the provider
+    #: reachable at all — the equivalent of pasting an API key for the others,
+    #: except that Ollama needs no key once the local daemon is signed in.
+    #: Which is precisely why it is kept out of `router.QUALITY_ORDER`: with
+    #: no key to be absent, a provider in the quality order would become the
+    #: "auto" default for every task the moment this line existed, and §2.8
+    #: permits that upload without permitting it to happen unnoticed.
+    #:
+    #: Must carry a "cloud" marker; `OllamaCloudProvider` refuses a local tag
+    #: so the audit trail cannot claim a résumé left when it did not.
+    ollama_cloud_model: str | None = None
+
+    #: Only needed when OLLAMA_BASE_URL points at ollama.com directly. The
+    #: local daemon proxies cloud models once it is signed in, so the common
+    #: case sends no credential at all.
+    ollama_api_key: str | None = None
+
     #: Which provider answers each §7 task that is allowed a choice.
     #:
     #: "auto" keeps `router.best_available()` — the strongest configured

@@ -175,6 +175,12 @@ const CLOUD_SIDES = [
     hint:
       "Sends your résumé to OpenRouter, which forwards it to an upstream provider it does not name. Free routes commonly log prompts and share them with that undisclosed creator. Which model runs is whatever OPENROUTER_MODEL names.",
   },
+  {
+    value: "ollama_cloud",
+    label: "ollama cloud",
+    hint:
+      "Sends your résumé and this posting to Ollama's servers. The address is localhost either way, so nothing in the request distinguishes this from the local model — the tag does. Which model runs is whatever OLLAMA_CLOUD_MODEL names.",
+  },
 ] as const;
 
 /** The picker, plus what the current choice means for where the résumé goes. */

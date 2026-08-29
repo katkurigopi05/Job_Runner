@@ -247,7 +247,8 @@ class LLMProvider(Protocol):
     async def complete_json(self, system: str, user: str, schema: type[BaseModel]) -> BaseModel: ...
 ```
 
-Implementations: `OllamaProvider`, `GeminiProvider`, `AnthropicProvider`, `StubProvider`.
+Implementations: `OllamaProvider`, `OllamaCloudProvider`, `GeminiProvider`,
+`AnthropicProvider`, `StubProvider`.
 Selected by `LLM_PROVIDER` env var. `StubProvider` returns deterministic canned output and
 is what tests use — no test may hit a network LLM.
 
@@ -694,7 +695,8 @@ correspondence, and §2.8 permits exactly one third-party upload — the tailori
 call — which a chat window is not.
 
 **The owner widened it deliberately.** `ChatRequest.provider` accepts `ollama`,
-`gemini`, `anthropic` or `openrouter`, and the `/chat` UI has a picker. Naming a
+`gemini`, `anthropic`, `openrouter` or `ollama_cloud`, and the `/chat` UI has a
+picker. Naming a
 remote provider sends the context to it. Recording the change rather than
 quietly editing the rule away: this *is* a narrowing of §2.8, it was made
 knowingly, and a reader who finds recruiter mail in a Gemini log should be able
@@ -782,6 +784,53 @@ machine; §10 forbids logging résumé contents. Both hold: the trail proves wha
 was sent without becoming a second copy of it.
 
 ---
+
+### Ollama's own hosted models
+
+The owner asked for `glm-5.3-flash:cloud`. Recording how it landed, because the
+obvious implementation was the wrong one and the difference is the whole point.
+
+The obvious one is to let `OLLAMA_MODEL` take a `:cloud` tag. That is precisely
+what the refusal above exists to stop: Ollama serves hosted models through the
+identical `localhost:11434` API, so nothing in the request distinguishes them,
+and a remote answer would carry the label `provider="ollama", local=true`.
+Loosening the check would not have widened a choice, it would have removed the
+owner's ability to know which they got.
+
+So the remote path got **its own provider name**, `ollama_cloud`, and the
+refusal is untouched — `test_asking_for_local_still_refuses_the_same_model`
+runs the same model through both and asserts one answers and one is refused.
+Naming it is the informed decision §14 was protecting; `OLLAMA_MODEL` still
+means "a model on this machine".
+
+Two consequences worth keeping visible:
+
+- **`audit.is_local` is now right by construction rather than by substring.**
+  Under `ollama` a call is presumed local and only "cloud" in the tag rescues
+  the label; under `ollama_cloud` it is presumed remote. A retag cannot make
+  the trail lie.
+- **The provider refuses a *local* model**, which sounds like pedantry and is
+  not. §2.8's trail is worth having only if it is read, and one that reports a
+  résumé leaving when it did not teaches the owner to stop reading it. Both
+  directions of mislabelling are refused, for one reason.
+
+**It is deliberately absent from `router.QUALITY_ORDER`, and that matters more
+here than it does for OpenRouter.** Every other remote provider needs an API
+key, so an absent key keeps it out of "auto" on its own. This one needs no
+credential once the local daemon is signed in — `_configured` is satisfied by
+`OLLAMA_CLOUD_MODEL` naming a model. Were it in the quality order, that single
+line in `.env` would send every "auto" task off the machine, with nothing in
+the configuration that reads as having asked for it. §2.8 permits the upload;
+it does not permit it happening unnoticed.
+
+It is **not** in `CHOOSABLE_TASKS` either, so nothing about the list above
+moved: the assistant is still chosen per question in the UI, never by an
+environment variable.
+
+Unlike an OpenRouter `stealth/*` route, the recipient is nameable — Ollama's
+servers, running the tagged model — so the trail records where the résumé went
+rather than only that it left. Both UI pickers say so at the moment of
+choosing, and both say the quiet part: the address is localhost either way.
 
 ## 15. What the gates do and do not prove
 
