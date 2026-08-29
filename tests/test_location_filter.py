@@ -177,3 +177,42 @@ def test_us_remote_is_kept_including_when_it_names_canada_too(location: str) -> 
     check that excludes `Remote - Canada`.
     """
     assert _keeps(location)
+
+
+# --------------------------------------------------------------------------
+# Continents and blocs
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "Europe",
+        "Europe (Remote)",
+        "Asia",
+        "Middle East",
+        "South America",
+        "Latin America",
+        "Nordics",
+    ],
+)
+def test_a_continent_is_not_a_country_but_is_still_abroad(location: str) -> None:
+    """Two Synthesia roles located simply `Europe` sat in the owner's top ten.
+
+    The country list had just been extended and a continent is not a country,
+    so nothing was reading it.
+    """
+    assert not _keeps(location)
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["Worldwide", "Global", "Anywhere", "International", "North America", "Americas"],
+)
+def test_open_to_everyone_is_not_excluded(location: str) -> None:
+    """These describe a role the owner can take as much as anyone.
+
+    Excluding them would drop jobs that are genuinely available, which is the
+    opposite of the bug this filter was fixed for.
+    """
+    assert _keeps(location)
