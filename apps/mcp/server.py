@@ -143,7 +143,7 @@ async def list_applications(status: str | None = None, limit: int = 50) -> dict[
     """
     params: dict[str, Any] = {}
     if status:
-        params["status_filter"] = status
+        params["status"] = status
     result = await _call("GET", "/applications", params=params or None)
     if isinstance(result, list):
         return {"applications": result[:limit], "count": len(result)}
@@ -163,7 +163,7 @@ async def review_queue() -> dict[str, Any]:
     `review.unanswered`. Answer those exactly — a paraphrase is not something
     the owner can safely stand behind.
     """
-    result = await _call("GET", "/applications", params={"status_filter": "needs_review"})
+    result = await _call("GET", "/applications", params={"status": "needs_review"})
     if not isinstance(result, list):
         return result
 
