@@ -167,13 +167,29 @@ _PLAIN_SECTIONS: frozenset[str] = frozenset({"skills", "languages", "interests"}
 #: `Master of Science in Business Analytics Jan 2025 – Dec 2026` is a degree
 #: and a date. Requiring two spaces instead missed every line the DOCX reader
 #: had repaired, since that inserts one.
-_TRAILING_DATE_RE = re.compile(
-    r"\s+((?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\w*\.?\s*)?"
+#: A date range: `Mar 2021 - Present`, `2017 - 2021`, `Jun 2017 – Feb 2021`.
+_DATE_BODY = (
+    r"(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\w*\.?\s*)?"
     r"(?:19|20)\d{2}\s*[-–—]\s*"
     r"(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\w*\.?\s*)?"
-    r"(?:(?:19|20)\d{2}|present|current)\.?)\s*$",
-    re.IGNORECASE,
+    r"(?:(?:19|20)\d{2}|present|current)\.?"
 )
+
+#: A date range *following* an entry name on the same line — `Staff Engineer,
+#: Acme   Mar 2021 - Present`. The leading `\s+` is what makes it trailing.
+_TRAILING_DATE_RE = re.compile(rf"\s+({_DATE_BODY})\s*$", re.IGNORECASE)
+
+#: A line that is *nothing but* a date range, which is how most résumés write
+#: it — the employer on one line and the dates on the next.
+#:
+#: Without this the line went through `_render_entry_name`, where the leading
+#: `\s+` of the trailing pattern matched the space after the month: `Mar 2021 -
+#: Present` split into the name `Mar` and the date `2021 - Present`, and
+#: rendered as a bold **Mar** on its own row directly beneath the job title.
+#: A bare `2017 - 2021` matched nothing at all and became a bold entry name,
+#: reading like an employer. Either way the document showed two entries where
+#: there is one job.
+_DATE_ONLY_RE = re.compile(rf"^\s*({_DATE_BODY})\s*$", re.IGNORECASE)
 
 
 def _render_lines(lines: list[str]) -> str:
@@ -234,11 +250,17 @@ def _render_entries(lines: list[str]) -> str:
 
     parts: list[str] = []
     pending_bullets: list[str] = []
+    #: Index of the entry a bare date line would belong to, or None when there
+    #: is no open entry — the date of a job is written under its title, so once
+    #: bullets have been emitted the entry above is finished.
+    open_entry: int | None = None
 
     def flush() -> None:
+        nonlocal open_entry
         if pending_bullets:
             parts.append(_render_lines(pending_bullets))
             pending_bullets.clear()
+            open_entry = None
 
     for line in lines:
         if not line.strip():
@@ -248,13 +270,44 @@ def _render_entries(lines: list[str]) -> str:
             pending_bullets.append(line)
             continue
         flush()
+
+        date_only = _DATE_ONLY_RE.match(line)
+        if date_only is not None:
+            if open_entry is not None:
+                parts[open_entry] = _with_date(parts[open_entry], date_only.group(1))
+                continue
+            # No entry to attach to. Still not a name: rendering a date in bold
+            # as though it were an employer is the failure this branch avoids.
+            parts.append(f"<p class='entry-meta'>{html.escape(line)}</p>")
+            continue
+
         if kind is LineKind.ENTRY:
             parts.append(_render_entry_name(line))
+            open_entry = len(parts) - 1
         else:
             parts.append(f"<p class='entry-meta'>{html.escape(line)}</p>")
 
     flush()
     return "\n".join(parts)
+
+
+def _with_date(entry_html: str, date: str) -> str:
+    """Attach a date to an already-rendered entry.
+
+    A no-op when the entry carries one already: a résumé that writes the dates
+    beside the title *and* on the line below has said it twice, and printing
+    both is worse than either.
+    """
+    if "entry-date" in entry_html:
+        return entry_html
+    closing = "</div>"
+    if not entry_html.endswith(closing):
+        return entry_html
+    return (
+        entry_html[: -len(closing)]
+        + f"<span class='entry-date'>{html.escape(date)}</span>"
+        + closing
+    )
 
 
 def _render_body(name: str, lines: list[str]) -> str:
