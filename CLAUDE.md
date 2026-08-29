@@ -159,6 +159,8 @@ jobrunner/
     ├── TSENTA_ARCHITECTURE.md    teardown of the commercial reference
     ├── REFERENCE.md              what the teardown implies for this build
     ├── PARITY.md                 capability map against career-ops
+    ├── BACKLOG.md                gap register against the job-discovery spec
+    ├── ML_EVALUATION.md          what the ranking numbers may and may not claim
     └── PARALLEL_WORK.md
 ```
 
