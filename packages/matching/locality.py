@@ -212,6 +212,77 @@ _NON_US_MARKERS = (
     r"apac",
     r"latam",
     r"cemea",
+    # Added after a real crawl put "Sr. Manager, Finance Transformation —
+    # Costa Rica" near the top of the owner's match feed. Absent from the list,
+    # it classified as UNPLACED rather than ELSEWHERE, and UNPLACED passes the
+    # hard filter by design.
+    #
+    # **Four countries are deliberately not here**, because their names are
+    # American places and rule 1 runs before any US state *name* is read:
+    # `georgia` (Savannah, Georgia), `panama` (Panama City, FL), `lebanon`
+    # (Lebanon, PA / NH) and `jordan`. A comma-position state code rescues
+    # each of those, but a spelled-out state name does not, so adding them
+    # would hide American postings to catch rare foreign ones.
+    r"costa rica",
+    r"ukraine",
+    r"peru",
+    r"uruguay",
+    r"ecuador",
+    r"guatemala",
+    r"dominican republic",
+    r"morocco",
+    r"tunisia",
+    r"ghana",
+    r"uganda",
+    r"tanzania",
+    r"kuwait",
+    r"bahrain",
+    r"oman",
+    r"nepal",
+    r"iceland",
+    r"estonia",
+    r"latvia",
+    r"lithuania",
+    r"slovakia",
+    r"slovenia",
+    r"croatia",
+    r"serbia",
+    r"bulgaria",
+    r"cyprus",
+    r"malta",
+    r"luxembourg",
+    r"armenia",
+    r"azerbaijan",
+    r"kazakhstan",
+    r"uzbekistan",
+    # Continents and trading blocs, the same kind of marker as `emea` and
+    # `apac` above. Two Synthesia roles located simply `Europe` sat in the
+    # owner's top ten after the country list was extended, because a continent
+    # is not a country and nothing here was reading it.
+    #
+    # `Worldwide`, `Global`, `International` and `Anywhere` are deliberately
+    # **not** here. They describe a role open to the owner as much as to
+    # anyone, and `_REMOTE_RE` already treats `anywhere` as remote. Excluding
+    # them would drop jobs that are genuinely available.
+    #
+    # `South America` and `Central America` are safe despite containing
+    # "America": the match is word-boundaried on the whole phrase, and
+    # `_US_COUNTRY_RE` needs `united states`, `usa` or a bare `us`.
+    r"europe",
+    r"asia",
+    r"africa",
+    r"oceania",
+    r"middle east",
+    r"nordics",
+    r"scandinavia",
+    r"benelux",
+    r"iberia",
+    r"balkans",
+    r"baltics",
+    r"south america",
+    r"central america",
+    r"latin america",
+    r"caribbean",
 )
 
 _NON_US_RE = re.compile(r"\b(?:" + "|".join(_NON_US_MARKERS) + r")\b", re.I)
