@@ -243,7 +243,25 @@ def _looks_like_a_label(line: str) -> bool:
 
 
 #: Lowercase words a title may contain without ceasing to be a title.
-_TITLE_CONNECTORS = frozenset("a an and at by for from in of on or the to with via".split())
+_TITLE_CONNECTORS = frozenset(
+    [
+        "a",
+        "an",
+        "and",
+        "at",
+        "by",
+        "for",
+        "from",
+        "in",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+        "via",
+    ]
+)
 
 
 def _reads_as_role_and_employer(line: str) -> bool:
