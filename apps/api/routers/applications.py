@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, status
 from sqlalchemy import select
@@ -111,7 +111,18 @@ async def create_application(body: ApplicationCreate, session: SessionDep) -> Ap
 
 @router.get("", response_model=list[ApplicationOut])
 async def list_applications(
-    session: SessionDep, status_filter: ApplicationStatus | None = None
+    session: SessionDep,
+    # `status` over the wire, `status_filter` in Python. The local name exists
+    # only to avoid shadowing `fastapi.status`, imported above, and that is an
+    # implementation detail no client should have to know.
+    #
+    # Before the alias the parameter was named `status_filter` all the way out
+    # to the HTTP surface, so `?status=needs_review` bound to nothing and
+    # FastAPI ignored it — the caller got *every* application and no error. On
+    # a review queue that is the dangerous direction to be wrong in: the screen
+    # fills with applications that were never parked for review, and the point
+    # of the queue is that everything on it is waiting for a decision.
+    status_filter: Annotated[ApplicationStatus | None, Query(alias="status")] = None,
 ) -> list[Application]:
     stmt = select(Application).order_by(Application.created_at.desc())
     if status_filter is not None:

@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
+        bench-matching gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
 
@@ -198,6 +198,12 @@ crawl:
 #   make rescore re=1        re-encode every posting first — required after an
 #                            EMBEDDING_BACKEND change, since stored vectors are
 #                            otherwise reused and the two are not comparable
+# Rank the scorer variants against seeds/labeled_matches.yaml. Prints the
+# §47 experiment rows and a verdict that is usually "not established" — see
+# docs/ML_EVALUATION.md for why that is the harness working.
+bench-matching:
+	$(PY)/python -m scripts.bench_matching $(ARGS)
+
 rescore:
 	$(PY)/python -m scripts.rescore $(if $(p),--profile $(p),) $(if $(dry),--dry-run,) $(if $(re),--re-embed,)
 

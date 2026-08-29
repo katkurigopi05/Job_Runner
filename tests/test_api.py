@@ -390,3 +390,32 @@ async def test_otp_on_a_queued_application_is_invalid_state(
 
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "invalid_state"
+
+
+async def test_the_status_filter_is_named_status_over_the_wire(
+    client: AsyncClient, complete_candidate: dict
+) -> None:
+    """`?status=` must filter, and an unknown value must be refused.
+
+    The parameter is `status_filter` in Python only because `fastapi.status` is
+    imported in that module. That name used to reach the HTTP surface, so
+    `?status=needs_review` bound to nothing and FastAPI ignored it — the caller
+    got every application and a 200. Found by driving the live API.
+
+    It matters most on the review queue, where the failure is silent and points
+    the wrong way: the screen fills with applications that were never parked,
+    and the queue's whole promise is that everything on it awaits a decision.
+    """
+    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    assert created.status_code == 201
+
+    listed = await client.get("/applications", params={"status": "queued"})
+    assert listed.status_code == 200
+    assert [row["status"] for row in listed.json()] == ["queued"]
+
+    empty = await client.get("/applications", params={"status": "submitted"})
+    assert empty.status_code == 200
+    assert empty.json() == [], "a filter that matches nothing must return nothing"
+
+    refused = await client.get("/applications", params={"status": "nonsense"})
+    assert refused.status_code == 400, "an unknown status must be refused, not ignored"

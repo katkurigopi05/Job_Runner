@@ -107,6 +107,12 @@ def _configured(name: str) -> bool:
         return bool(os.environ.get("ANTHROPIC_API_KEY") or settings.anthropic_api_key)
     if name == "openrouter":
         return bool(os.environ.get("OPENROUTER_API_KEY") or settings.openrouter_api_key)
+    if name == "ollama_cloud":
+        # Named model, not a key. Ollama needs no credential once the local
+        # daemon is signed in, so there is nothing else that could mean "the
+        # owner set this up" — and requiring the model to be named keeps the
+        # provider unreachable until someone types it.
+        return bool(os.environ.get("OLLAMA_CLOUD_MODEL") or settings.ollama_cloud_model)
     return False
 
 
@@ -202,11 +208,18 @@ def cloud_for_tailoring() -> str | None:
 
 #: Remote providers a comparison may be pointed at, in the order shown.
 #:
-#: Wider than `QUALITY_ORDER` by exactly one: `openrouter`. That omission is
-#: deliberate and stays — §7 keeps it out so a key in `.env` cannot make it a
-#: default for anything. This list is not a default; nothing here is used unless
-#: the owner names it for one comparison.
-COMPARABLE_CLOUD = ("anthropic", "gemini", "openrouter")
+#: Wider than `QUALITY_ORDER` by exactly two: `openrouter` and `ollama_cloud`.
+#: Both omissions are deliberate and stay — §7 keeps them out so a line in
+#: `.env` cannot make either a default for anything. This list is not a
+#: default; nothing here is used unless the owner names it for one comparison.
+#:
+#: `ollama_cloud` is the one whose omission is easiest to undo by accident,
+#: because it looks local. It shares the `ollama` base URL, it needs no API
+#: key, and `localhost:11434` appears in the request either way. Putting it in
+#: `QUALITY_ORDER` would send every "auto" task to Ollama's servers the moment
+#: `OLLAMA_CLOUD_MODEL` was set, with nothing in the configuration that reads
+#: as having asked for that.
+COMPARABLE_CLOUD = ("anthropic", "gemini", "openrouter", "ollama_cloud")
 
 
 def comparable_clouds() -> list[str]:

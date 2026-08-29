@@ -61,7 +61,13 @@ LOCAL_PROVIDER = "ollama"
 #: `stub` is absent on purpose — canned text presented as an answer about the
 #: owner's real applications is exactly the failure StubProvider's marker
 #: exists to make visible.
-ALLOWED_PROVIDERS = ("ollama", "gemini", "anthropic", "openrouter")
+#: `ollama_cloud` is here as a *separate name* from `ollama`, which is the
+#: whole mechanism. The refusal below still fires when someone sets
+#: `OLLAMA_MODEL` to a `:cloud` tag and asks for the local model, because that
+#: is a remote answer wearing a local label. Choosing `ollama_cloud` in the
+#: picker is the informed decision §14 asks for, and the reply's `local: false`
+#: says so to the UI.
+ALLOWED_PROVIDERS = ("ollama", "gemini", "anthropic", "openrouter", "ollama_cloud")
 
 #: Defined in packages/llm/prompts.py — see the note there on versioning.
 SYSTEM = CHAT_SYSTEM.text

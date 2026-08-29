@@ -29,6 +29,7 @@ from packages.matching.filters import (
     seniority_ok,
     sponsorship_ok,
 )
+from packages.matching.labels import load_labeled_set
 from packages.matching.score import (
     TITLE_WEIGHT,
     ScoredPosting,
@@ -281,32 +282,24 @@ def test_keyword_overlap_explains_a_match() -> None:
 # Gate 5 — hand-labeled ranking
 # --------------------------------------------------------------------------
 
-#: 20 postings, hand-labeled. `True` means "I would actually apply to this".
+#: The twenty Gate 5 postings, read from the one place they are defined.
+#:
+#: They used to be a literal list here. They moved to `seeds/labeled_matches.yaml`
+#: when the benchmark in `packages/matching/benchmark.py` started needing the
+#: same labels: two copies of a labeled set drift, and a gate asserting against
+#: a stale copy of the corpus the benchmark reports on is worse than either.
+#:
+#: The gate selects by tag rather than taking the whole file. The file also
+#: holds adjacent roles added for the benchmark, and pulling those in here
+#: would silently change what "10 of 20" means.
+#:
+#: `True` means "I would actually apply to this" — the file grades 0-3, and
+#: anything above 0 is wanted.
+_LABELED = load_labeled_set("seeds/labeled_matches.yaml")
+
 HAND_LABELED: list[tuple[bool, str, str]] = [
-    (
-        True,
-        "Senior Backend Engineer",
-        "Python, PostgreSQL, FastAPI, async APIs, distributed systems",
-    ),
-    (True, "Staff Backend Engineer", "Python services, PostgreSQL, Kubernetes, Docker, scale"),
-    (True, "Platform Engineer", "Kubernetes, Docker, Python tooling, backend infrastructure"),
-    (True, "Backend Engineer, APIs", "FastAPI, async Python, PostgreSQL, API design"),
-    (True, "Senior Software Engineer", "Python backend, distributed systems, PostgreSQL, Docker"),
-    (True, "Infrastructure Engineer", "Kubernetes, Docker, Python, deployment, backend systems"),
-    (True, "Senior Python Engineer", "async Python, PostgreSQL, FastAPI, billing systems"),
-    (True, "Database Engineer", "PostgreSQL, MySQL, migrations, query performance, Python"),
-    (True, "Senior Engineer, Payments", "Python, PostgreSQL, billing, distributed systems, async"),
-    (True, "Backend Engineer, Data", "Python, PostgreSQL, events, streaming, backend"),
-    (False, "Pastry Chef", "Croissants, laminated dough, early mornings in our bakery"),
-    (False, "Registered Nurse", "Patient care, clinical rounds, medication administration"),
-    (False, "Warehouse Associate", "Picking, packing, forklift certification, shift work"),
-    (False, "Sales Development Rep", "Cold calling, outbound prospecting, quota, CRM hygiene"),
-    (False, "Graphic Designer", "Adobe Illustrator, brand identity, print layout, typography"),
-    (False, "Mechanical Engineer", "CAD, tolerance analysis, injection moulding, manufacturing"),
-    (False, "Elementary Teacher", "Lesson planning, classroom management, literacy curriculum"),
-    (False, "Financial Analyst", "Excel modelling, forecasting, variance analysis, budgets"),
-    (False, "Truck Driver", "Long haul routes, CDL class A, logbook compliance"),
-    (False, "Barista", "Espresso extraction, latte art, customer service, morning shifts"),
+    (item.relevance > 0, item.title, item.description)
+    for item in sorted(_LABELED.tagged("gate5"), key=lambda i: i.key)
 ]
 
 

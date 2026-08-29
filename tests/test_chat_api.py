@@ -391,3 +391,56 @@ async def test_a_cloud_model_gets_the_mail_when_the_owner_turns_it_on(
     assert answered.status_code == 200
     assert answered.json()["shared_mail"] is True
     assert "recruiter@bigco.example" in seen["user"]
+
+
+async def test_ollama_cloud_is_selectable_by_name(client: AsyncClient, monkeypatch) -> None:
+    """The narrowing the owner asked for, and the shape it landed in.
+
+    The refusal above is keyed on the *label matching*, not on distance — so
+    the way to reach a hosted model was never to loosen it, but to give the
+    remote path its own name. Asked for by name, the same model that is
+    refused as `ollama` answers, and the reply says it was not local.
+    """
+    import apps.api.routers.chat as chat_module
+
+    class HostedModel(StubProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.model = "glm-5.3-flash:cloud"
+
+    monkeypatch.setattr(chat_module.llm_router, "build_provider", lambda name=None: HostedModel())
+
+    answered = await client.post(
+        "/chat", json={"message": "how many are waiting on me?", "provider": "ollama_cloud"}
+    )
+
+    assert answered.status_code == 200
+    body = answered.json()
+    assert body["provider"] == "ollama_cloud"
+    assert body["local"] is False, "a hosted answer must never be reported as local"
+
+
+async def test_asking_for_local_still_refuses_the_same_model(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """The other half, and the reason this is a narrowing rather than a hole.
+
+    Identical model, identical endpoint. Named `ollama_cloud` it answers;
+    asked for as the local model it is still refused, because that request
+    carries a claim about where the answer came from that would be false.
+    """
+    import apps.api.routers.chat as chat_module
+
+    class HostedModel(StubProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.model = "glm-5.3-flash:cloud"
+
+    monkeypatch.setattr(chat_module.llm_router, "build_provider", lambda name=None: HostedModel())
+
+    answered = await client.post(
+        "/chat", json={"message": "how many are waiting on me?", "provider": "ollama"}
+    )
+
+    assert answered.status_code == 400
+    assert "local answer it claims to be" in answered.json()["error"]["message"].lower()

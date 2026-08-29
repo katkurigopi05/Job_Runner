@@ -10,6 +10,10 @@ rows say REFUSED. In short: they carry no equivalent of CLAUDE.md §2.6
 (robots.txt) or the no-paid-services rule, so some of their code is fine there
 and not here.
 
+For the gap register against the job-discovery specification — a different
+source, overlapping only where both want the same thing — see
+[BACKLOG.md](BACKLOG.md).
+
 Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 `providers/` (79 files), cloned and read on 2026-08-19.
 

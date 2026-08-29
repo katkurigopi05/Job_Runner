@@ -52,6 +52,16 @@ const PROVIDERS = [
     hint: "Sends your applications, profile and recruiter mail to OpenRouter, which forwards them to an upstream provider it does not name.",
     local: false,
   },
+  {
+    // Separate from `local` on purpose, and the hint has to work harder here
+    // than anywhere else in this list: this is the only option that reaches a
+    // third party through `localhost:11434`. Someone reading the request would
+    // see the same URL the local model uses.
+    value: "ollama_cloud",
+    label: "ollama cloud",
+    hint: "Sends your applications, profile and recruiter mail to Ollama's servers — not this machine, despite the localhost address. Which model runs is whatever OLLAMA_CLOUD_MODEL names.",
+    local: false,
+  },
 ] as const;
 
 const PROMPTS = [

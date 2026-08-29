@@ -159,6 +159,8 @@ jobrunner/
     ├── TSENTA_ARCHITECTURE.md    teardown of the commercial reference
     ├── REFERENCE.md              what the teardown implies for this build
     ├── PARITY.md                 capability map against career-ops
+    ├── BACKLOG.md                gap register against the job-discovery spec
+    ├── ML_EVALUATION.md          what the ranking numbers may and may not claim
     └── PARALLEL_WORK.md
 ```
 
@@ -245,7 +247,8 @@ class LLMProvider(Protocol):
     async def complete_json(self, system: str, user: str, schema: type[BaseModel]) -> BaseModel: ...
 ```
 
-Implementations: `OllamaProvider`, `GeminiProvider`, `AnthropicProvider`, `StubProvider`.
+Implementations: `OllamaProvider`, `OllamaCloudProvider`, `GeminiProvider`,
+`AnthropicProvider`, `StubProvider`.
 Selected by `LLM_PROVIDER` env var. `StubProvider` returns deterministic canned output and
 is what tests use — no test may hit a network LLM.
 
@@ -692,7 +695,8 @@ correspondence, and §2.8 permits exactly one third-party upload — the tailori
 call — which a chat window is not.
 
 **The owner widened it deliberately.** `ChatRequest.provider` accepts `ollama`,
-`gemini`, `anthropic` or `openrouter`, and the `/chat` UI has a picker. Naming a
+`gemini`, `anthropic`, `openrouter` or `ollama_cloud`, and the `/chat` UI has a
+picker. Naming a
 remote provider sends the context to it. Recording the change rather than
 quietly editing the rule away: this *is* a narrowing of §2.8, it was made
 knowingly, and a reader who finds recruiter mail in a Gemini log should be able
@@ -781,6 +785,53 @@ was sent without becoming a second copy of it.
 
 ---
 
+### Ollama's own hosted models
+
+The owner asked for `glm-5.3-flash:cloud`. Recording how it landed, because the
+obvious implementation was the wrong one and the difference is the whole point.
+
+The obvious one is to let `OLLAMA_MODEL` take a `:cloud` tag. That is precisely
+what the refusal above exists to stop: Ollama serves hosted models through the
+identical `localhost:11434` API, so nothing in the request distinguishes them,
+and a remote answer would carry the label `provider="ollama", local=true`.
+Loosening the check would not have widened a choice, it would have removed the
+owner's ability to know which they got.
+
+So the remote path got **its own provider name**, `ollama_cloud`, and the
+refusal is untouched — `test_asking_for_local_still_refuses_the_same_model`
+runs the same model through both and asserts one answers and one is refused.
+Naming it is the informed decision §14 was protecting; `OLLAMA_MODEL` still
+means "a model on this machine".
+
+Two consequences worth keeping visible:
+
+- **`audit.is_local` is now right by construction rather than by substring.**
+  Under `ollama` a call is presumed local and only "cloud" in the tag rescues
+  the label; under `ollama_cloud` it is presumed remote. A retag cannot make
+  the trail lie.
+- **The provider refuses a *local* model**, which sounds like pedantry and is
+  not. §2.8's trail is worth having only if it is read, and one that reports a
+  résumé leaving when it did not teaches the owner to stop reading it. Both
+  directions of mislabelling are refused, for one reason.
+
+**It is deliberately absent from `router.QUALITY_ORDER`, and that matters more
+here than it does for OpenRouter.** Every other remote provider needs an API
+key, so an absent key keeps it out of "auto" on its own. This one needs no
+credential once the local daemon is signed in — `_configured` is satisfied by
+`OLLAMA_CLOUD_MODEL` naming a model. Were it in the quality order, that single
+line in `.env` would send every "auto" task off the machine, with nothing in
+the configuration that reads as having asked for it. §2.8 permits the upload;
+it does not permit it happening unnoticed.
+
+It is **not** in `CHOOSABLE_TASKS` either, so nothing about the list above
+moved: the assistant is still chosen per question in the UI, never by an
+environment variable.
+
+Unlike an OpenRouter `stealth/*` route, the recipient is nameable — Ollama's
+servers, running the tagged model — so the trail records where the résumé went
+rather than only that it left. Both UI pickers say so at the moment of
+choosing, and both say the quiet part: the address is localhost either way.
+
 ## 15. What the gates do and do not prove
 
 Every gate in §9 passes. Two of them pass against fixtures rather than the real
@@ -806,6 +857,29 @@ Both suites are worth having — they catch regressions. Neither answers the
 question its gate was written to ask, which is whether the scoring and the
 classifier work on *this owner's* material. Swap the fixtures for real data
 before trusting either number.
+
+- **Gate 5's ranking half is now measured rather than asserted.** The gate
+  checks one bit — ten wanted postings in the top ten — which cannot see a
+  match slide from rank 1 to rank 10 and cannot compare two scorers. It also
+  turns out to prove less than it looks: on those twenty postings the shipped
+  scorer and a five-line token-overlap baseline both score a perfect NDCG@10,
+  because the negatives are pastry chefs and truck drivers and every scorer
+  separates those. `make bench-matching` reports NDCG/MAP/MRR/P@K with
+  bootstrap intervals against a constant control, over the same labels plus
+  twelve adjacent roles that actually discriminate. On those twelve NDCG@5
+  falls to 0.577 and the control is statistically tied with everything, which
+  is where the matcher's real weakness lives. The labels are still
+  fixture-grade, so the harness refuses to report a production candidate at
+  all — `docs/ML_EVALUATION.md` says what would have to arrive first.
+
+  Two side findings worth keeping. `seeds/labeled_matches.yaml` is now the one
+  definition of the Gate 5 set, which `tests/test_matching.py` reads by tag —
+  two copies of a labeled corpus drift, and the gate was the copy that would
+  go stale. And `filters.seniority_ok` passes everything when
+  `target_seniority` is unset, which no production caller sets: a Junior
+  Backend Engineer with a perfect technology match ranks in the top ten, and
+  arming the target takes P@10 from 0.900 to 1.000. Whether to arm it by
+  default is a separate decision; it now has a number attached.
 
 - **Gate 1's HAR replay** is now real. `tests/test_greenhouse_har.py` replays
   bytes Greenhouse actually served, offline, and runs in `make gate-1` and in
@@ -845,6 +919,74 @@ an honest untailored résumé beats an application with no résumé — but
 `uploading_base_resume_tailored_file_unusable` is emitted, because sending the
 base while the application record claims a tailored one is exactly how this
 stayed invisible.
+
+### The ATS score was reading the sales pitch
+
+Found by running the guard and the ATS scorer over a rewritten résumé against
+the real crawled postings in `tests/fixtures/golden/`, which is the first time
+either had been pointed at one.
+
+§7 makes the ATS keyword score the *independent second measure* — the referee
+that is not the fabrication guard's own pass rate. On the Palantir Forward
+Deployed Software Engineer posting it was measuring nothing. `job_terms` ranks
+by frequency and keeps forty; in 5,912 characters of narrative, `Python`,
+`Java`, `C++` and `TypeScript/JavaScript` appear exactly once each in a single
+line naming the stack, while `world`, `problems`, `believe` and the company's
+own name recur throughout. The top forty held every one of the latter and none
+of the former, so a tailored résumé was being scored against a vocabulary
+containing no skills at all — and the rewrite's measured gain was, correctly
+and uselessly, zero.
+
+The fix is in `ats._requirements_text`, which cuts to the posting's own
+requirements section before the terms are counted. Across the twelve golden
+postings, prose terms fell from **17% to 8%** of the vocabulary and the term
+count *rose* (372 → 419): it is finding more real terms, not merely filtering.
+On the worst posting it went 43% → 8%. One posting got worse (6% → 11%), which
+is recorded rather than averaged away.
+
+Two things about where the fix lives:
+
+- **On the measurement side only.** `job_terms` output is also
+  `TermReport.missing`, which `rewrite.vet` treats as vocabulary a rewrite may
+  not borrow. Narrowing *that* removes words the model may then introduce
+  unchallenged, so the guard rail is untouched and only the scorer's view of
+  the posting changed. `ats.py` already drew that line; this stays behind it.
+- **Headings rather than a technology list.** Ranking known technologies above
+  prose was tried first and is worse twice over: a second skill vocabulary
+  drifts against the alias table, and no list recognizes the skill it has not
+  heard of — which is the term a posting is most worth reading for. All twelve
+  golden postings carry a requirements heading. A posting without one falls
+  back to being read whole, exactly as before.
+
+### A Skills list moved technologies between employers
+
+The same session, the same method. §2.1 says a rewrite may inject keywords
+"already supported by that résumé entry **or a shared source section**", and it
+separately forbids borrowing one entry's skill onto another. A Skills list makes
+those two clauses contradict each other, and the second one was losing: every
+technology named in Skills was indexed as shared, so it supported a claim on
+*any* employer.
+
+Scoped to an employer that never touched it, `Built Python services on
+Kubernetes` passed while the Skills section existed and was correctly refused
+when that section was deleted. Same claim, same scope, opposite verdicts,
+decided by an unrelated part of the document.
+
+`SourceCorpus.supports` now withdraws a shared token when some entry claims it.
+The three cases, which are the whole design:
+
+- **In this entry** — supported, as before.
+- **In Skills only, claimed by no entry** — still supported anywhere. This is
+  §2.1's shared-section allowance and it is deliberately untouched: a skill the
+  owner lists but never attributed to a job can go anywhere.
+- **In Skills *and* in another entry** — refused here. The résumé has already
+  said where it belongs, and "the owner knows this" is not "the owner did this
+  here".
+
+On a two-job fixture it withdraws 13 of 34 shared tokens — the technologies —
+and leaves 21, being contact details, education, and the skills the résumé
+never attributed to anything. The full suite including Gate 3 passes unchanged,
+so this refuses claims that were wrong rather than claims that were working.
 
 ### Phase 3 scope Gate 3 does not cover
 
