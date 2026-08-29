@@ -18,7 +18,7 @@ from packages.tailor.ats import (
     score,
 )
 from packages.tailor.guard import SourceCorpus
-from packages.tailor.keywords import _supported
+from packages.tailor.keywords import _supported, job_terms
 from packages.tailor.parse import parse_text
 
 RESUME = """\
@@ -320,3 +320,117 @@ def test_a_month_without_a_year_is_not_a_fused_date() -> None:
         "Built payment services in Python and Postgres.", "Shipped the MarTech integration."
     )
     assert "fused_date" not in _codes(score(parse_text(text)))
+
+
+# --------------------------------------------------------------------------
+# The keyword half must read the requirements, not the sales pitch
+# --------------------------------------------------------------------------
+
+#: A posting in the shape that broke this: several paragraphs of narrative,
+#: then a short requirements list naming the stack exactly once. Modelled on
+#: the Palantir posting in `tests/fixtures/golden/`, where `Python`, `Java`,
+#: `C++` and `TypeScript/JavaScript` all lost the top-40-by-frequency cut to
+#: `world`, `problems`, `believe` and the company's own name.
+_NARRATIVE_POSTING = """\
+A World-Changing Company
+
+Acme builds software for a changing world. We believe the world's hardest
+problems are data problems, and we believe the people who solve them should
+have the best tools. Our platforms empower partners across the world to make
+decisions that matter. The world is complicated and our customers rely on us.
+
+The Role
+
+You will work directly with customers to understand their problems and design
+solutions. Our customers rely on our platforms for critical operations, and
+projects often start with an open ended question about the world.
+
+What We Value
+
+Demonstrated proficiency in programming languages such as Python, Java, C++,
+or TypeScript. Experience with Kubernetes and Docker in production.
+A degree in Computer Science, Mathematics or Physics.
+
+What We Offer
+
+Comprehensive health insurance, generous paid leave, equity, and a learning
+stipend. We are an equal opportunity employer.
+"""
+
+
+def test_the_requirements_region_is_what_gets_scored() -> None:
+    region = _requirements_text(_NARRATIVE_POSTING)
+
+    assert "Python" in region
+    assert "believe" not in region, "the narrative introduction is not a requirement"
+    assert "insurance" not in region, "benefits are not requirements"
+    assert "equal opportunity" not in region
+
+
+def test_the_heading_line_itself_is_dropped() -> None:
+    """ "What We Value" contributed `What` and `Value` to the term list."""
+    assert "What We Value" not in _requirements_text(_NARRATIVE_POSTING)
+
+
+def test_the_stack_survives_the_frequency_cut() -> None:
+    """The defect, stated as the thing that must not come back.
+
+    Each of these appears once; the narrative words appear many times. Scoring
+    the whole posting spent the entire term budget on the latter.
+    """
+    terms = {t.lower() for t in job_terms(_requirements_text(_NARRATIVE_POSTING))}
+
+    for skill in ("python", "java", "c++"):
+        assert skill in terms, f"{skill} was dropped from the term list"
+
+
+def test_narrative_vocabulary_no_longer_reaches_the_term_list() -> None:
+    terms = {t.lower() for t in job_terms(_requirements_text(_NARRATIVE_POSTING))}
+
+    for prose in ("believe", "world", "empower", "insurance"):
+        assert prose not in terms
+
+
+def test_a_posting_with_no_recognized_heading_is_read_whole() -> None:
+    """The fallback. A posting shaped differently scores as it always did."""
+    plain = "We need a backend engineer. Python and PostgreSQL. Ship features weekly."
+
+    assert _requirements_text(plain) == plain
+
+
+def test_a_heading_with_almost_nothing_under_it_falls_back() -> None:
+    """A one-line aside is a false positive, not a requirements section.
+
+    Scoring against three words is worse than scoring against the whole
+    posting, so the short match is discarded.
+    """
+    posting = (
+        "We are hiring a backend engineer to work on Python services with "
+        "PostgreSQL, Docker and Kubernetes across a large distributed estate. "
+        "The team ships weekly and owns its own deploys end to end.\n"
+        "What we offer\nSnacks.\n"
+    )
+
+    assert _requirements_text(posting) == _requirements_text(posting)
+    assert "backend engineer" in _requirements_text(posting).lower()
+
+
+def test_the_legal_footer_is_still_removed() -> None:
+    """The behaviour this function had before, unchanged."""
+    posting = (
+        "What We Value\n"
+        + "Strong Python and PostgreSQL experience across distributed systems. " * 4
+        + "\nWe are an equal opportunity employer and consider all qualified applicants."
+    )
+
+    assert "equal opportunity" not in _requirements_text(posting)
+
+
+def test_scoring_a_narrative_posting_finds_real_skills() -> None:
+    """End to end: the score is computed against skills rather than prose."""
+    resume = parse_text(RESUME)
+    report = score(resume, _NARRATIVE_POSTING)
+
+    vocabulary = {t.lower() for t in [*report.supported, *report.missing]}
+    assert "python" in vocabulary
+    assert "believe" not in vocabulary

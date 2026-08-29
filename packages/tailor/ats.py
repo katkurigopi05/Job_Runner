@@ -139,6 +139,49 @@ _EXPECTED: tuple[str, ...] = ("skills",)
 #: none of which anyone is being asked to have.
 #:
 #: Matched case-insensitively against the whole text; the earliest hit wins.
+#: Headings a posting uses to introduce what it wants from a candidate.
+#:
+#: Matched at the start of a line, because these are headings — "what you"
+#: mid-sentence is prose. The family is small and it covers all twelve golden
+#: postings; a posting phrasing it some other way falls back to being read
+#: whole, which is what happened to every posting before this existed.
+_REQUIREMENT_HEADING = re.compile(
+    r"^\s*(?:"
+    r"what (?:we|you)\b"
+    r"|who you are"
+    r"|your background"
+    r"|(?:minimum|basic|preferred|required)? ?qualifications"
+    r"|requirements"
+    r"|about you"
+    r"|our tech stack"
+    r"|tech stack"
+    r"|skills (?:and|&) experience"
+    r"|you (?:will )?(?:have|bring)"
+    r")",
+    re.I,
+)
+
+#: Where the requirements stop and the sell begins. Benefits vocabulary —
+#: insurance, equity, paid leave — is not a skill and counting it as one is the
+#: same defect one section further down the page.
+_BENEFITS_HEADING = re.compile(
+    r"^\s*(?:"
+    r"what we offer"
+    r"|benefits"
+    r"|perks"
+    r"|compensation"
+    r"|pay range"
+    r"|salary"
+    r"|why (?:join|work)"
+    r"|life at\b"
+    r")",
+    re.I,
+)
+
+#: Below this a matched section is a false positive rather than a requirements
+#: list, and the whole posting is the safer read.
+_MIN_REQUIREMENTS_CHARS = 200
+
 _LEGAL_FOOTER_MARKERS: tuple[str, ...] = (
     "equal opportunity employer",
     "equal employment opportunity",
@@ -153,26 +196,93 @@ _LEGAL_FOOTER_MARKERS: tuple[str, ...] = (
 
 
 def _requirements_text(job_description: str) -> str:
-    """The posting with its legal footer removed.
+    """The part of the posting that states requirements.
 
     Scoped to this module on purpose. `keywords.job_terms` would also read
     better on truncated text — its 40-term budget is currently spent partly on
     EEO vocabulary — but its output is `TermReport.missing`, which `rewrite.vet`
-    uses as the terms a rewrite may not borrow. Shortening that list is a change
-    to what the guard refuses and deserves its own evidence, not a side effect
-    of improving a score.
+    uses as the terms a rewrite may not borrow. Shortening *that* list is a
+    change to what the guard refuses and deserves its own evidence, not a side
+    effect of improving a score. Narrowing the text on the measurement side
+    only, as here, cannot move the guard rail.
+
+    ## Why the narrative half has to go
+
+    `job_terms` ranks by frequency, which is the right call for a posting
+    written as a list of requirements and the wrong one for a posting written
+    as prose. Measured on the Palantir Forward Deployed Software Engineer
+    posting in `tests/fixtures/golden/`: 5,912 characters in which `Python`,
+    `Java`, `C++` and `TypeScript/JavaScript` appear exactly once each, in a
+    single line naming the stack, while `world`, `problems`, `believe` and the
+    company's own name recur through several paragraphs of narrative. The top
+    forty by count held every one of the latter and none of the former, so the
+    keyword score — CLAUDE.md §7's independent second measure — was computed
+    against a vocabulary containing no skills at all.
+
+    Cutting to the requirements section fixes that at the cause. The stack
+    sentence and the narrative are no longer competing for the same budget.
+
+    ## Why headings rather than a technology vocabulary
+
+    The other repair is a list of known technologies, ranked above prose
+    whatever the counts say. It was tried first and it is worse in two ways: a
+    second skill vocabulary drifts against the alias table that already exists,
+    and no such list recognizes the skill it has not heard of — which is
+    exactly the term a posting is most worth reading for.
+
+    Headings need no vocabulary. Every one of the twelve golden postings has
+    one, in a small family of phrasings ("What We Value", "Minimum
+    Qualifications", "Who You Are", "Your background looks something like
+    this"), and they mark the boundary the posting's own author drew.
+
+    Falls back to the whole posting whenever the shape is not recognized, so a
+    posting written without headings scores exactly as it did before.
     """
-    lowered = job_description.lower()
-    cuts = [lowered.find(marker) for marker in _LEGAL_FOOTER_MARKERS]
-    hits = [c for c in cuts if c > 0]
+    lines = job_description.split("\n")
+
+    start_line = next(
+        (i for i, line in enumerate(lines) if _REQUIREMENT_HEADING.match(line.strip())),
+        None,
+    )
+    if start_line is None:
+        return _without_footer(job_description)
+
+    # Benefits and perks sit after the requirements and are pure noise —
+    # "insurance", "paid", "equity" are not skills. Only a heading *after* the
+    # requirements start counts; "What we offer" above them would truncate to
+    # nothing.
+    end_line = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if i > start_line and _BENEFITS_HEADING.match(line.strip())
+        ),
+        len(lines),
+    )
+
+    # The heading line itself is dropped: "What We Value" contributed `What`
+    # and `Value` to the term list, which is the same prose noise one line up.
+    section = "\n".join(lines[start_line + 1 : end_line])
+    # A section this thin means the heading was a false positive — a one-line
+    # aside rather than the requirements. Scoring almost nothing is worse than
+    # scoring the whole posting, so fall back.
+    if len(section) < _MIN_REQUIREMENTS_CHARS:
+        return _without_footer(job_description)
+    return _without_footer(section)
+
+
+def _without_footer(text: str) -> str:
+    """`text` with its EEO/pay-transparency footer removed."""
+    lowered = text.lower()
+    hits = [c for c in (lowered.find(marker) for marker in _LEGAL_FOOTER_MARKERS) if c > 0]
     if not hits:
-        return job_description
+        return text
     cut = min(hits)
-    # A posting that is *mostly* footer is one we have misread; keep it whole
+    # A passage that is *mostly* footer is one we have misread; keep it whole
     # rather than scoring almost nothing.
-    if cut < len(job_description) * 0.3:
-        return job_description
-    return job_description[:cut]
+    if cut < len(text) * 0.3:
+        return text
+    return text[:cut]
 
 
 @dataclass(frozen=True)

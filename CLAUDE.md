@@ -920,6 +920,74 @@ an honest untailored résumé beats an application with no résumé — but
 base while the application record claims a tailored one is exactly how this
 stayed invisible.
 
+### The ATS score was reading the sales pitch
+
+Found by running the guard and the ATS scorer over a rewritten résumé against
+the real crawled postings in `tests/fixtures/golden/`, which is the first time
+either had been pointed at one.
+
+§7 makes the ATS keyword score the *independent second measure* — the referee
+that is not the fabrication guard's own pass rate. On the Palantir Forward
+Deployed Software Engineer posting it was measuring nothing. `job_terms` ranks
+by frequency and keeps forty; in 5,912 characters of narrative, `Python`,
+`Java`, `C++` and `TypeScript/JavaScript` appear exactly once each in a single
+line naming the stack, while `world`, `problems`, `believe` and the company's
+own name recur throughout. The top forty held every one of the latter and none
+of the former, so a tailored résumé was being scored against a vocabulary
+containing no skills at all — and the rewrite's measured gain was, correctly
+and uselessly, zero.
+
+The fix is in `ats._requirements_text`, which cuts to the posting's own
+requirements section before the terms are counted. Across the twelve golden
+postings, prose terms fell from **17% to 8%** of the vocabulary and the term
+count *rose* (372 → 419): it is finding more real terms, not merely filtering.
+On the worst posting it went 43% → 8%. One posting got worse (6% → 11%), which
+is recorded rather than averaged away.
+
+Two things about where the fix lives:
+
+- **On the measurement side only.** `job_terms` output is also
+  `TermReport.missing`, which `rewrite.vet` treats as vocabulary a rewrite may
+  not borrow. Narrowing *that* removes words the model may then introduce
+  unchallenged, so the guard rail is untouched and only the scorer's view of
+  the posting changed. `ats.py` already drew that line; this stays behind it.
+- **Headings rather than a technology list.** Ranking known technologies above
+  prose was tried first and is worse twice over: a second skill vocabulary
+  drifts against the alias table, and no list recognizes the skill it has not
+  heard of — which is the term a posting is most worth reading for. All twelve
+  golden postings carry a requirements heading. A posting without one falls
+  back to being read whole, exactly as before.
+
+### A Skills list moved technologies between employers
+
+The same session, the same method. §2.1 says a rewrite may inject keywords
+"already supported by that résumé entry **or a shared source section**", and it
+separately forbids borrowing one entry's skill onto another. A Skills list makes
+those two clauses contradict each other, and the second one was losing: every
+technology named in Skills was indexed as shared, so it supported a claim on
+*any* employer.
+
+Scoped to an employer that never touched it, `Built Python services on
+Kubernetes` passed while the Skills section existed and was correctly refused
+when that section was deleted. Same claim, same scope, opposite verdicts,
+decided by an unrelated part of the document.
+
+`SourceCorpus.supports` now withdraws a shared token when some entry claims it.
+The three cases, which are the whole design:
+
+- **In this entry** — supported, as before.
+- **In Skills only, claimed by no entry** — still supported anywhere. This is
+  §2.1's shared-section allowance and it is deliberately untouched: a skill the
+  owner lists but never attributed to a job can go anywhere.
+- **In Skills *and* in another entry** — refused here. The résumé has already
+  said where it belongs, and "the owner knows this" is not "the owner did this
+  here".
+
+On a two-job fixture it withdraws 13 of 34 shared tokens — the technologies —
+and leaves 21, being contact details, education, and the skills the résumé
+never attributed to anything. The full suite including Gate 3 passes unchanged,
+so this refuses claims that were wrong rather than claims that were working.
+
 ### Phase 3 scope Gate 3 does not cover
 
 §9 Phase 3 lists two things beyond what Gate 3 tests. Both are now built, and

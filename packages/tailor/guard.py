@@ -452,6 +452,19 @@ class SourceCorpus:
     #: education. These describe the person, not one job.
     shared: frozenset[str] = frozenset()
 
+    @property
+    def attributed(self) -> frozenset[str]:
+        """Tokens that some entry claims as its own.
+
+        A token here is not merely true of the owner; the résumé says *where*
+        it is true. `supports` uses that to stop the skills list laundering a
+        sibling's technology onto this entry — see its docstring.
+        """
+        claimed: set[str] = set()
+        for item in self.items:
+            claimed |= item.tokens
+        return frozenset(claimed)
+
     @classmethod
     def from_texts(cls, *texts: str) -> SourceCorpus:
         """Index flat text. Every token is shared, so scoping is a no-op.
@@ -527,7 +540,41 @@ class SourceCorpus:
         return None
 
     def supports(self, entity: Entity, scope: CorpusItem | None = None) -> bool:
-        available = self.tokens if scope is None else (scope.tokens | self.shared)
+        """Whether `entity` is backed by the source, within `scope` if given.
+
+        ## Shared material does not launder a sibling's claim
+
+        §2.1 permits a rewrite to inject a keyword "already supported by that
+        résumé entry **or a shared source section**", and it separately forbids
+        borrowing one entry's skill onto another. A Skills list makes those two
+        clauses contradict each other, and the second one lost: every
+        technology named in Skills became available to every employer, so a
+        bullet could say the owner used Kubernetes at a job that never touched
+        it — sibling borrowing, with the skills list as the alibi.
+
+        Found by running the guard over a rewritten résumé: scoped to an
+        employer that never used it, `Built Python services on Kubernetes`
+        passed while the Skills section existed and was correctly refused when
+        it was deleted. Same claim, same scope, opposite verdicts, decided by
+        an unrelated section of the document.
+
+        So a shared token is withdrawn when some *entry* claims it. The
+        distinction is between "the owner knows this" and "the owner did this
+        here", which is the distinction the whole scoping mechanism exists for:
+
+        - In this entry — supported, as before.
+        - In Skills only, claimed by no entry — still supported anywhere. This
+          is §2.1's shared-section allowance and it is untouched; a skill the
+          owner lists but never attributed to a job can go anywhere.
+        - In Skills *and* in another entry — refused here. The résumé has
+          already said where it belongs.
+
+        An unscoped check is unchanged: it asks whether the fact is true of the
+        owner at all, and the answer does not depend on attribution.
+        """
+        available = (
+            self.tokens if scope is None else (scope.tokens | (self.shared - self.attributed))
+        )
 
         if entity.normalized in available or singular(entity.normalized) in available:
             return True
