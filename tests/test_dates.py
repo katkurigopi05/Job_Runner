@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from packages.tailor.ats import score
-from packages.tailor.dates import contains_date, date_only, is_open_ended, trailing_date
+from packages.tailor.dates import date_only, is_open_ended, trailing_date
 from packages.tailor.parse import parse_text
 
 # --------------------------------------------------------------------------

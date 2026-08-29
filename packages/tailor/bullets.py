@@ -183,6 +183,20 @@ def classify(line: str) -> LineKind:
     # verb: `Python, Scikit-learn, Time-Series Forecasting` is a stack list
     # whose last word looks like an action and is not one. A résumé bullet
     # opens with its verb — that convention is the signal.
+    # `Networking Virtual Intern, EduSkills Foundation` opens with a gerund and
+    # is a job title. So do `Engineering Manager, Acme` and `Marketing Analyst,
+    # Delta`. The opening-verb convention above is a good signal and these are
+    # the exception to it: the gerund is a noun, and the line is a name.
+    #
+    # `_looks_like_a_label` cannot rescue them because it rejects any line
+    # containing a comma, and `Role, Employer` is the shape every job title
+    # takes. Rather than widen that test — it guards an earlier and broader
+    # branch — this one is deliberately narrow: every word capitalized, a
+    # comma present, and no terminal full stop. A bullet fails it on its first
+    # lowercase word, which it reaches almost immediately.
+    if _reads_as_role_and_employer(stripped):
+        return LineKind.ENTRY
+
     if _opens_with_a_verb(stripped):
         return LineKind.BULLET
     if len(words) >= _PROSE_WORDS:
@@ -226,6 +240,34 @@ def _looks_like_a_label(line: str) -> bool:
     if all(c.isupper() for c in letters):
         return True
     return all(word[0].isupper() for word in line.split() if word and word[0].isalpha())
+
+
+#: Lowercase words a title may contain without ceasing to be a title.
+_TITLE_CONNECTORS = frozenset("a an and at by for from in of on or the to with via".split())
+
+
+def _reads_as_role_and_employer(line: str) -> bool:
+    """`Networking Virtual Intern, EduSkills Foundation` — a name, not prose.
+
+    Three conditions together, because any one alone is wrong:
+
+    - **A comma.** This is the `Role, Employer` shape. Without it,
+      `Built Machine Learning Models` would qualify, and that is a bullet.
+    - **No terminal full stop.** A bullet is a sentence and punctuates like one.
+    - **Every word capitalized**, allowing the small connectors a title keeps
+      in lowercase. This is what a bullet fails, usually on its second word.
+    """
+    # A technology line is also title-cased and comma-separated —
+    # `Python, Postgres, Kubernetes` — and is supporting material, not a name.
+    # `_is_list` already draws that line for the branch further down; asking it
+    # here rather than inventing a second notion of "list" keeps the two from
+    # disagreeing.
+    if "," not in line or line.rstrip().endswith(".") or _is_list(line):
+        return False
+    words = [w for w in line.split() if w and w[0].isalpha()]
+    if len(words) < 2:
+        return False
+    return all(word[0].isupper() or word.strip(".,").lower() in _TITLE_CONNECTORS for word in words)
 
 
 def _is_list(line: str) -> bool:

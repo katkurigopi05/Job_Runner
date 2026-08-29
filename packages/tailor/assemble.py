@@ -17,7 +17,6 @@ Two constraints shape the output:
 from __future__ import annotations
 
 import html
-import re
 
 from pydantic import BaseModel, Field
 
@@ -152,7 +151,16 @@ def _render_contact(resume: ParsedResume) -> str:
 
 #: Sections built out of entries — a name, optional supporting line, bullets.
 #: Everything else is a flat list of lines and is rendered as one.
-_ENTRY_SECTIONS: frozenset[str] = frozenset({"experience", "projects", "education"})
+#:
+#: `certifications`, `publications` and `awards` are entry-shaped for the same
+#: reason the first three are: each item is a name, usually a date, and
+#: sometimes a line of detail. Left out, they rendered as an undifferentiated
+#: bullet list — the certificate, the date it was issued and its detail all as
+#: identical rows, which is the exact hierarchy failure `_render_entries` was
+#: written to fix, surviving in the sections nobody had looked at.
+_ENTRY_SECTIONS: frozenset[str] = frozenset(
+    {"experience", "projects", "education", "certifications", "publications", "awards"}
+)
 
 #: Sections whose lines are labelled rows rather than bullets. A `•` in front
 #: of `Languages  Python, TypeScript, Rust` is noise: it is not a claim about
