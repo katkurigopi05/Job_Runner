@@ -43,6 +43,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from packages.tailor.dates import contains_date, is_open_ended
 from packages.tailor.guard import SourceCorpus, normalize
 from packages.tailor.keywords import analyze
 from packages.tailor.parse import ParsedResume, _match_section
@@ -474,15 +475,34 @@ def _date_findings(resume: ParsedResume) -> list[Finding]:
         lines = resume.section(name)
         if not lines:
             continue
-        if any(_DATE_RANGE_RE.search(line) for line in lines):
+        # `contains_date` rather than a range: an internship is normally dated
+        # with a point — `Summer 2024`, `Jun 2023` — and a range-only test told
+        # a résumé dated on every entry that it had no dates at all, charging
+        # it 0.15 for the privilege. See `packages/tailor/dates.py`.
+        if any(contains_date(line) for line in lines):
             continue
         findings.append(
             Finding(
                 code="no_dates",
-                detail=f"no date range found anywhere in {name}; an ATS files these undated",
+                detail=f"no date found anywhere in {name}; an ATS files these undated",
                 cost=0.15,
             )
         )
+
+    for line in resume.raw_lines:
+        if is_open_ended(line):
+            findings.append(
+                Finding(
+                    code="open_ended_date",
+                    detail=(
+                        "a date range with no end — a parser has to guess whether the role "
+                        "is current, and the two readings say different things to an "
+                        "employer. Write the end date, or 'Present' if it is ongoing"
+                    ),
+                    cost=0.05,
+                    line=line,
+                )
+            )
 
     return findings
 

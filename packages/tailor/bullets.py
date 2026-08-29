@@ -53,7 +53,25 @@ _DATE_RANGE_RE = re.compile(
 #: Evidence that a line makes a statement rather than naming a thing.
 #: Deliberately crude — a participle or a gerund is what a résumé bullet opens
 #: with, and one anywhere in the line is enough.
-_VERBAL_RE = re.compile(r"\b\w{3,}(?:ed|ing)\b", re.IGNORECASE)
+#: A verb form, and deliberately **case-sensitive**: only a lowercase one.
+#:
+#: The docstring on `classify` already makes this argument for the *opening*
+#: word — "`-ing` is a gerund as often as a verb" — and the final fallback
+#: below was still matching anywhere, case-insensitively. So the gerund inside
+#: an ordinary job title fired it: `Software Engineering Intern, Acme Corp`,
+#: `Engineering Manager`, `Data Engineering Lead`, `Machine Learning Engineer`
+#: and `Marketing Analyst` were all filed as bullets.
+#:
+#: That is not a typography complaint. `is_rewritable` is this same answer, so
+#: the model was being asked to rewrite those job titles — the defect this
+#: module was written to stop, reappearing on a line it could not see, and on
+#: a line that names an employer and a role.
+#:
+#: Case is the signal that separates the two. A gerund inside a name is
+#: capitalized (`Machine Learning`, `Software Engineering`); a verb in a
+#: sentence is not, unless it opens the line — and `_opens_with_a_verb` has
+#: already had its say by the time this runs.
+_VERBAL_RE = re.compile(r"\b[a-z]\w{2,}(?:ed|ing)\b")
 
 #: Irregular past tenses a résumé bullet opens with that `-ed` misses.
 _IRREGULAR_PAST_TEXT = """

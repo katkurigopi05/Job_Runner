@@ -22,6 +22,7 @@ import re
 from pydantic import BaseModel, Field
 
 from packages.core.models import Project
+from packages.tailor.dates import date_only, trailing_date
 from packages.tailor.parse import ParsedResume
 from packages.tailor.projects import (
     LinkStyle,
@@ -167,29 +168,10 @@ _PLAIN_SECTIONS: frozenset[str] = frozenset({"skills", "languages", "interests"}
 #: `Master of Science in Business Analytics Jan 2025 – Dec 2026` is a degree
 #: and a date. Requiring two spaces instead missed every line the DOCX reader
 #: had repaired, since that inserts one.
-#: A date range: `Mar 2021 - Present`, `2017 - 2021`, `Jun 2017 – Feb 2021`.
-_DATE_BODY = (
-    r"(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\w*\.?\s*)?"
-    r"(?:19|20)\d{2}\s*[-–—]\s*"
-    r"(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\w*\.?\s*)?"
-    r"(?:(?:19|20)\d{2}|present|current)\.?"
-)
-
-#: A date range *following* an entry name on the same line — `Staff Engineer,
-#: Acme   Mar 2021 - Present`. The leading `\s+` is what makes it trailing.
-_TRAILING_DATE_RE = re.compile(rf"\s+({_DATE_BODY})\s*$", re.IGNORECASE)
-
-#: A line that is *nothing but* a date range, which is how most résumés write
-#: it — the employer on one line and the dates on the next.
-#:
-#: Without this the line went through `_render_entry_name`, where the leading
-#: `\s+` of the trailing pattern matched the space after the month: `Mar 2021 -
-#: Present` split into the name `Mar` and the date `2021 - Present`, and
-#: rendered as a bold **Mar** on its own row directly beneath the job title.
-#: A bare `2017 - 2021` matched nothing at all and became a bold entry name,
-#: reading like an employer. Either way the document showed two entries where
-#: there is one job.
-_DATE_ONLY_RE = re.compile(rf"^\s*({_DATE_BODY})\s*$", re.IGNORECASE)
+#: Dates come from `packages/tailor/dates.py`, which is the only definition
+#: of what one looks like. This module used to carry its own, and it and the
+#: ATS scorer disagreed about `Summer 2024` — see that module's docstring for
+#: what the disagreement cost.
 
 
 def _render_lines(lines: list[str]) -> str:
@@ -220,14 +202,14 @@ def _render_entry_name(line: str) -> str:
     never reads `Jan 2021 – Present Acme Corp` and has to guess which half is
     the employer.
     """
-    match = _TRAILING_DATE_RE.search(line)
-    if not match:
+    split = trailing_date(line)
+    if split is None:
         return f"<div class='entry'><span class='entry-name'>{html.escape(line)}</span></div>"
-    name = line[: match.start()].rstrip()
+    name, date = split
     return (
         "<div class='entry'>"
         f"<span class='entry-name'>{html.escape(name)}</span>"
-        f"<span class='entry-date'>{html.escape(match.group(1))}</span>"
+        f"<span class='entry-date'>{html.escape(date)}</span>"
         "</div>"
     )
 
@@ -271,10 +253,10 @@ def _render_entries(lines: list[str]) -> str:
             continue
         flush()
 
-        date_only = _DATE_ONLY_RE.match(line)
-        if date_only is not None:
+        bare_date = date_only(line)
+        if bare_date is not None:
             if open_entry is not None:
-                parts[open_entry] = _with_date(parts[open_entry], date_only.group(1))
+                parts[open_entry] = _with_date(parts[open_entry], bare_date)
                 continue
             # No entry to attach to. Still not a name: rendering a date in bold
             # as though it were an employer is the failure this branch avoids.
