@@ -143,3 +143,65 @@ async def test_a_posting_with_no_text_leaves_the_ats_field_absent(db_session, mo
     payload = await apply_job._tailor(db_session, application, profile, posting)
     if payload is not None:
         assert payload.get("ats") is None
+
+
+@pytest.mark.asyncio
+async def test_the_recruiter_score_reaches_the_review_payload(db_session, monkeypatch) -> None:
+    """The second field down the same path, asserted for the same reason.
+
+    `summarize` computes it, `DiffSummary` carries it, `ResumeDiffView` has a
+    panel for it — and none of that matters unless `_tailor`'s hand-built dict
+    names it. This file exists because that is exactly how `ats` was lost.
+    """
+    from apps.worker import apply_job
+
+    application, profile, posting = await _fixture(db_session)
+
+    async def _capture(session, **kwargs):
+        return None
+
+    monkeypatch.setattr("packages.tailor.publish.publish_tailored", _capture)
+
+    payload = await apply_job._tailor(db_session, application, profile, posting)
+
+    assert payload is not None
+    assert "recruiter" in payload, "the review screen's recruiter panel gets nothing"
+    recruiter = payload["recruiter"]
+    assert recruiter is not None
+
+    for key in (
+        "before",
+        "after",
+        "shortlist_before",
+        "shortlist_after",
+        "scan_after",
+        "qualification_after",
+        "credibility_after",
+        "technical_after",
+        "findings",
+    ):
+        assert key in recruiter, f"the panel reads {key} and the payload does not carry it"
+
+    assert 0.0 <= recruiter["after"] <= 1.0
+    assert recruiter["shortlist_after"], "a score with no verdict is not actionable"
+
+
+@pytest.mark.asyncio
+async def test_the_two_scores_are_carried_apart(db_session, monkeypatch) -> None:
+    """Never merged. They answer different questions and can disagree, and the
+    disagreement is the reason the second one exists."""
+    from apps.worker import apply_job
+
+    application, profile, posting = await _fixture(db_session)
+
+    async def _capture(session, **kwargs):
+        return None
+
+    monkeypatch.setattr("packages.tailor.publish.publish_tailored", _capture)
+
+    payload = await apply_job._tailor(db_session, application, profile, posting)
+
+    assert payload is not None
+    assert payload["ats"] is not None
+    assert payload["recruiter"] is not None
+    assert payload["ats"].keys() != payload["recruiter"].keys()

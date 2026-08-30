@@ -222,9 +222,7 @@ async def deliver(notification: Notification) -> list[str]:
     return delivered
 
 
-async def notify_if_parked(
-    session: AsyncSession, application_id: uuid.UUID
-) -> ParkReason | None:
+async def notify_if_parked(session: AsyncSession, application_id: uuid.UUID) -> ParkReason | None:
     """Tell the owner if this application is now waiting on them.
 
     Call **after** the transaction that parked it has committed. Firing inside

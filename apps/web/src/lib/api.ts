@@ -55,6 +55,18 @@ export interface ResumeChange {
 }
 
 /** What tailoring changed, shown before the owner approves. §2.1. */
+export interface RecruiterChange {
+  before: number;
+  after: number;
+  shortlist_before: string;
+  shortlist_after: string;
+  scan_after: number;
+  qualification_after: number;
+  credibility_after: number;
+  technical_after: number;
+  findings: string[];
+}
+
 export interface ResumeDiff {
   /**
    * Optional because the reuse paths genuinely have none of it. When an
@@ -100,6 +112,17 @@ export interface ResumeDiff {
      */
     still_missing: string[];
   } | null;
+  /**
+   * What a person is likely to make of the résumé, before and after.
+   *
+   * Beside `ats` rather than folded into it: they answer different questions
+   * and can move in opposite directions. A rewrite that packs the posting's
+   * vocabulary into every bullet raises keyword coverage and lowers this, and
+   * one number would hide the trade the owner most needs to see.
+   *
+   * Absent on every diff written before the field existed.
+   */
+  recruiter?: RecruiterChange | null;
   unified?: string;
   changes?: ResumeChange[];
   /** This run attached an already-tailored résumé rather than writing one. */

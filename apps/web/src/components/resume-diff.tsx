@@ -94,6 +94,70 @@ function AtsPanel({ ats }: { ats: NonNullable<ResumeDiff["ats"]> }) {
 }
 
 /**
+ * What a person is likely to make of it.
+ *
+ * Beside the ATS panel and never merged with it. The two answer different
+ * questions and can disagree, and the disagreement is the useful part: a
+ * rewrite that packs the posting's words into every bullet raises keyword
+ * coverage and lowers this. Averaging them would hide exactly the trade the
+ * owner is here to judge.
+ *
+ * Credibility leads the levels because it is the one that ends candidacies and
+ * the one tailoring cannot repair — a Skills list naming technologies the
+ * experience never shows reads as inflation to a person, whatever it scores on
+ * a keyword match.
+ */
+function RecruiterPanel({ recruiter }: { recruiter: NonNullable<ResumeDiff["recruiter"]> }) {
+  const regressed = recruiter.after < recruiter.before;
+  return (
+    <div className="space-y-2 border border-rule bg-paper px-3 py-2.5">
+      <p className="font-mono text-xs uppercase tracking-wide text-ink-faint">
+        How a person reads this
+      </p>
+      <Score label="overall" before={recruiter.before} after={recruiter.after} />
+      <p className="font-mono text-xs text-ink-soft">
+        shortlist: {recruiter.shortlist_before} → {recruiter.shortlist_after}
+      </p>
+
+      {regressed ? (
+        <p className="text-sm text-stop">
+          Tailoring made this read worse to a human than the original did. If the ATS score went
+          up at the same time, the rewrite bought keywords at the cost of the reader — check the
+          document below before approving.
+        </p>
+      ) : null}
+
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs text-ink-soft">
+        <div className="flex justify-between">
+          <dt>credibility</dt>
+          <dd>{Math.round(recruiter.credibility_after * 100)}%</dd>
+        </div>
+        <div className="flex justify-between">
+          <dt>10-second scan</dt>
+          <dd>{Math.round(recruiter.scan_after * 100)}%</dd>
+        </div>
+        <div className="flex justify-between">
+          <dt>qualification</dt>
+          <dd>{Math.round(recruiter.qualification_after * 100)}%</dd>
+        </div>
+        <div className="flex justify-between">
+          <dt>technical</dt>
+          <dd>{Math.round(recruiter.technical_after * 100)}%</dd>
+        </div>
+      </dl>
+
+      {recruiter.findings.length > 0 ? (
+        <ul className="space-y-1 text-sm text-ink-soft">
+          {recruiter.findings.map((finding, index) => (
+            <li key={index}>{finding}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * What tailoring changed, before it is sent.
  *
  * CLAUDE.md §2.1 says a rewrite may rephrase and re-emphasize but may never
@@ -173,6 +237,7 @@ export function ResumeDiffView({ diff }: { diff: ResumeDiff }) {
             matches a fifth of what this posting asks for" are different facts,
             and the second is the one that decides whether to apply at all. */}
         {diff.ats ? <AtsPanel ats={diff.ats} /> : null}
+        {diff.recruiter ? <RecruiterPanel recruiter={diff.recruiter} /> : null}
       </div>
     );
   }
@@ -188,6 +253,7 @@ export function ResumeDiffView({ diff }: { diff: ResumeDiff }) {
       </div>
 
       {diff.ats ? <AtsPanel ats={diff.ats} /> : null}
+      {diff.recruiter ? <RecruiterPanel recruiter={diff.recruiter} /> : null}
 
       <ul className="space-y-4">
         {changes.map((change, index) => (

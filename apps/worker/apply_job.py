@@ -528,6 +528,12 @@ async def _tailor(
             # §15's defect in miniature, so `tests/test_apply_review_payload.py`
             # asserts the payload rather than the model.
             "ats": summary.ats.model_dump() if summary.ats else None,
+            # Added second, to the same list, for the same reason — and this
+            # comment is the whole point of the one above it. A field computed
+            # by `summarize`, carried on `DiffSummary`, typed on the client and
+            # rendered by a component still never arrives unless it is named
+            # here.
+            "recruiter": summary.recruiter.model_dump() if summary.recruiter else None,
             "unified": summary.unified,
             "changes": [change.model_dump() for change in summary.changes],
         }
