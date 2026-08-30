@@ -95,6 +95,25 @@ class Settings(BaseSettings):
     #: case sends no credential at all.
     ollama_api_key: str | None = None
 
+    #: Where to send "an application is waiting on you". Comma separated, any
+    #: of: log, desktop, webhook. Unset means the log line only, which is the
+    #: shipped default and sends nothing anywhere.
+    #:
+    #: `webhook` is the one that leaves the machine. It is opt-in by naming it,
+    #: and `packages/core/notify.py` documents exactly what the payload
+    #: carries — an id, a status, the company and role, and a localhost link.
+    #: Never the résumé, the answers, or the posting body.
+    notify_backends: str | None = None
+
+    #: Where the `webhook` backend POSTs. The owner's own endpoint — ntfy, a
+    #: Telegram bot, a Slack hook — so a phone alert costs this project no
+    #: dependency and no money.
+    notify_webhook_url: str | None = None
+
+    #: Base URL a notification links back to, so the owner can act on it.
+    #: Localhost because §1 says that is where the dashboard lives.
+    dashboard_url: str = "http://localhost:3001"
+
     #: Which provider answers each §7 task that is allowed a choice.
     #:
     #: "auto" keeps `router.best_available()` — the strongest configured

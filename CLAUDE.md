@@ -920,6 +920,49 @@ an honest untailored résumé beats an application with no résumé — but
 base while the application record claims a tailored one is exactly how this
 stayed invisible.
 
+### Nothing told the owner an application was waiting
+
+Three states park and all three were silent: `needs_review` wants an approval,
+`needs_otp` wants a code, and `failed[manual_completion_required]` wants the
+owner to finish the form by hand. The status was recorded and the dashboard
+showed it, which on a queue whose entire promise is "nothing submits without
+you" means the promise is kept only if the owner remembers to go and look.
+
+`packages/core/notify.py` rings the doorbell. Three backends: `log` (the
+shipped default, which goes nowhere), `desktop` (`notify-send` or `osascript`,
+local and free), and `webhook` (the owner's own URL — ntfy, Telegram, Slack —
+so a phone alert costs this project no dependency and no money).
+
+**It is not a softening of §2.5.** The prompt that produced it recommended
+integrating a CAPTCHA-solving service, which §2.5 and §11 both refuse and which
+would also have been a paid API under §3. Nothing here defeats a challenge or
+makes the browser look human. A blocked site still fails as
+`manual_completion_required`; what changed is that the owner hears about it and
+finishes it themselves, as a person, in their own browser. The work moved to a
+human rather than around a control, and the notification links to the local
+dashboard precisely so it cannot read as an automated retry.
+
+Three details are load-bearing:
+
+- **It fires after the commit, never inside `transition()`.** That function is
+  the one place a status changes and would be the obvious hook, but it
+  deliberately does not commit — a notification sent there announces an
+  application that may still roll back. A doorbell that rings for work that did
+  not happen is worse than a late one.
+- **Idempotent on the reason, not the application.** The queue is
+  at-least-once, so a re-run must not tell the owner twice; a `notified` event
+  records delivery. Keyed on the reason so an application that parks, resumes
+  and parks again *does* ring again — that is a second thing to do.
+- **A failed backend never fails the application.** Every delivery is wrapped
+  and logged by name. The exception body is not logged, because a webhook error
+  can echo the URL and the URL can carry a token.
+
+The webhook payload is an id, a status, the company and role, and a localhost
+link. Never the résumé, the answers, or the posting body — §2.8 permits one
+third-party upload and a notification is not it. `test_the_payload_carries_no_application_material`
+asserts the exact key set rather than the absence of any one field, so adding
+one is a deliberate act.
+
 ### The ATS score was reading the sales pitch
 
 Found by running the guard and the ATS scorer over a rewritten résumé against

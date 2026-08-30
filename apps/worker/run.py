@@ -145,6 +145,7 @@ async def _process(session, claimed: ClaimedTask) -> None:
         if not will_retry:
             await _mark_application_failed(session, claimed, message)
             await session.commit()
+            await _notify(session, claimed)
         log.error(
             "task_failed",
             task_id=str(task_id),
@@ -157,6 +158,26 @@ async def _process(session, claimed: ClaimedTask) -> None:
     await complete_task(session, claimed.task)
     await session.commit()
     log.info("task_done", task_id=str(task_id), kind=task_kind)
+    # After the commit, never before: `notify_if_parked` says why.
+    await _notify(session, claimed)
+
+
+async def _notify(session, claimed: ClaimedTask) -> None:
+    """Ring the doorbell if the task left an application waiting on the owner.
+
+    Wrapped whole: the task has already committed and succeeded by the time
+    this runs, and a notification problem must not turn that into a failure.
+    """
+    payload = claimed.task.payload_json or {}
+    raw = payload.get("application_id")
+    if not raw:
+        return
+    try:
+        from packages.core.notify import notify_if_parked
+
+        await notify_if_parked(session, uuid.UUID(str(raw)))
+    except Exception as exc:  # noqa: BLE001 — the work is already done
+        log.warning("notify_failed", error=type(exc).__name__)
 
 
 async def _fail(session, task_id, message: str, *, max_attempts: int | None = None) -> bool:

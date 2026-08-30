@@ -95,6 +95,9 @@ class EventType(StrEnum):
     CREATED = "created"
     TRANSITION = "transition"
     NOTE = "note"
+    #: The owner was told this application is waiting on them. Written after
+    #: delivery so a re-run of an at-least-once task does not tell them twice.
+    NOTIFIED = "notified"
 
 
 class ErrorCode(StrEnum):
