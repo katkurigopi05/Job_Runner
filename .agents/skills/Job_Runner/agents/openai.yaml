@@ -1,0 +1,6 @@
+interface:
+  display_name: "Job Runner"
+  short_description: "Repo-specific patterns and workflows for Job_Runner"
+  default_prompt: "Use the Job_Runner repo skill to follow existing architecture, testing, and workflow conventions."
+policy:
+  allow_implicit_invocation: true
