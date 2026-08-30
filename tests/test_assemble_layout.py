@@ -134,3 +134,99 @@ def test_the_layout_uses_no_tables_or_columns() -> None:
     html = assemble_html(parse_text(RESUME))
     for banned in ("<table", "<td", "column-count", "position: absolute"):
         assert banned not in html
+
+
+# --------------------------------------------------------------------------
+# Dates written on their own line — how most résumés write them
+# --------------------------------------------------------------------------
+
+#: Employer on one line, dates on the next. The format the renderer got wrong.
+_DATES_BELOW = """\
+Dana Whitfield
+dana@example.com
+
+EXPERIENCE
+
+Staff Engineer, Analytical Engines Ltd
+Mar 2021 - Present
+Built async APIs with FastAPI, deployed on Kubernetes.
+
+Senior Software Engineer, Cartwright Data
+2017 - 2021
+Wrote Python services that processed customer events.
+"""
+
+
+def test_a_date_on_its_own_line_does_not_become_an_entry() -> None:
+    """The defect: `Mar 2021 - Present` rendered as a bold **Mar**.
+
+    `_TRAILING_DATE_RE` needs whitespace before the date so it can split
+    `Acme   Mar 2021 - Present`. On a line that is *only* a date that leading
+    `\\s+` matched the space after the month, so the month became the entry
+    name and the rest became its date — a second bold row under the job title,
+    reading like a second employer.
+    """
+    html = assemble_html(parse_text(_DATES_BELOW))
+
+    assert "<span class='entry-name'>Mar</span>" not in html
+    assert "<span class='entry-name'>Jun</span>" not in html
+
+
+def test_a_bare_year_range_is_not_rendered_as_an_employer() -> None:
+    """`2017 - 2021` matched nothing and became a bold entry name."""
+    html = assemble_html(parse_text(_DATES_BELOW))
+
+    assert "<span class='entry-name'>2017 - 2021</span>" not in html
+
+
+def test_the_date_attaches_to_the_job_above_it() -> None:
+    html = assemble_html(parse_text(_DATES_BELOW))
+
+    assert (
+        "<span class='entry-name'>Staff Engineer, Analytical Engines Ltd</span>"
+        "<span class='entry-date'>Mar 2021 - Present</span>"
+    ) in html
+
+
+def test_one_job_renders_as_one_entry() -> None:
+    """Two employers, two entries — not four."""
+    html = assemble_html(parse_text(_DATES_BELOW))
+
+    assert html.count("class='entry'") == 2
+
+
+def test_the_date_survives_into_the_extracted_pdf_text() -> None:
+    """What an ATS actually reads. The employer and its dates on one line.
+
+    The existing float-right note explains why this matters: anything that
+    moves the date out of the text flow leaves the parser with an entry on one
+    line and a date somewhere else, and nothing joining them.
+    """
+    text = extract_text(assemble_pdf(parse_text(_DATES_BELOW)), "resume.pdf")
+
+    assert "Staff Engineer, Analytical Engines Ltd · Mar 2021 - Present" in text
+
+
+def test_a_date_beside_the_title_is_still_split() -> None:
+    """The case the trailing pattern was written for, unchanged."""
+    beside = _DATES_BELOW.replace(
+        "Staff Engineer, Analytical Engines Ltd\nMar 2021 - Present",
+        "Staff Engineer, Analytical Engines Ltd   Mar 2021 - Present",
+    )
+    html = assemble_html(parse_text(beside))
+
+    assert (
+        "<span class='entry-name'>Staff Engineer, Analytical Engines Ltd</span>"
+        "<span class='entry-date'>Mar 2021 - Present</span>"
+    ) in html
+
+
+def test_a_date_is_never_printed_twice() -> None:
+    """Written beside the title *and* below it, the résumé said it twice."""
+    both = _DATES_BELOW.replace(
+        "Staff Engineer, Analytical Engines Ltd\nMar 2021 - Present",
+        "Staff Engineer, Analytical Engines Ltd   Mar 2021 - Present\nMar 2021 - Present",
+    )
+    html = assemble_html(parse_text(both))
+
+    assert html.count("Mar 2021 - Present") == 1

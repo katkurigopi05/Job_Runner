@@ -579,6 +579,15 @@ make crawl
 make crawl force=1
 ```
 
+Or from Claude Code, `/spider` — the same crawl with the checks around it that
+`make crawl` leaves to you: that a worker is actually draining the queue, that
+the task got claimed, and what the sweep added when it finishes. It also reads
+the worker log before calling a zero result "nothing new", because a board the
+crawler could not reach reports the same zero as one that had no new postings.
+
+```bash
+```
+
 Polls the company registry for new postings, then embeds and re-scores whatever
 it finds. This is what makes `/matches` current; without it the feed keeps
 describing whenever a crawl last ran.

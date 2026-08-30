@@ -17,11 +17,11 @@ Two constraints shape the output:
 from __future__ import annotations
 
 import html
-import re
 
 from pydantic import BaseModel, Field
 
 from packages.core.models import Project
+from packages.tailor.dates import date_only, trailing_date
 from packages.tailor.parse import ParsedResume
 from packages.tailor.projects import (
     LinkStyle,
@@ -151,7 +151,16 @@ def _render_contact(resume: ParsedResume) -> str:
 
 #: Sections built out of entries — a name, optional supporting line, bullets.
 #: Everything else is a flat list of lines and is rendered as one.
-_ENTRY_SECTIONS: frozenset[str] = frozenset({"experience", "projects", "education"})
+#:
+#: `certifications`, `publications` and `awards` are entry-shaped for the same
+#: reason the first three are: each item is a name, usually a date, and
+#: sometimes a line of detail. Left out, they rendered as an undifferentiated
+#: bullet list — the certificate, the date it was issued and its detail all as
+#: identical rows, which is the exact hierarchy failure `_render_entries` was
+#: written to fix, surviving in the sections nobody had looked at.
+_ENTRY_SECTIONS: frozenset[str] = frozenset(
+    {"experience", "projects", "education", "certifications", "publications", "awards"}
+)
 
 #: Sections whose lines are labelled rows rather than bullets. A `•` in front
 #: of `Languages  Python, TypeScript, Rust` is noise: it is not a claim about
@@ -167,13 +176,10 @@ _PLAIN_SECTIONS: frozenset[str] = frozenset({"skills", "languages", "interests"}
 #: `Master of Science in Business Analytics Jan 2025 – Dec 2026` is a degree
 #: and a date. Requiring two spaces instead missed every line the DOCX reader
 #: had repaired, since that inserts one.
-_TRAILING_DATE_RE = re.compile(
-    r"\s+((?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\w*\.?\s*)?"
-    r"(?:19|20)\d{2}\s*[-–—]\s*"
-    r"(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\w*\.?\s*)?"
-    r"(?:(?:19|20)\d{2}|present|current)\.?)\s*$",
-    re.IGNORECASE,
-)
+#: Dates come from `packages/tailor/dates.py`, which is the only definition
+#: of what one looks like. This module used to carry its own, and it and the
+#: ATS scorer disagreed about `Summer 2024` — see that module's docstring for
+#: what the disagreement cost.
 
 
 def _render_lines(lines: list[str]) -> str:
@@ -204,14 +210,14 @@ def _render_entry_name(line: str) -> str:
     never reads `Jan 2021 – Present Acme Corp` and has to guess which half is
     the employer.
     """
-    match = _TRAILING_DATE_RE.search(line)
-    if not match:
+    split = trailing_date(line)
+    if split is None:
         return f"<div class='entry'><span class='entry-name'>{html.escape(line)}</span></div>"
-    name = line[: match.start()].rstrip()
+    name, date = split
     return (
         "<div class='entry'>"
         f"<span class='entry-name'>{html.escape(name)}</span>"
-        f"<span class='entry-date'>{html.escape(match.group(1))}</span>"
+        f"<span class='entry-date'>{html.escape(date)}</span>"
         "</div>"
     )
 
@@ -234,11 +240,17 @@ def _render_entries(lines: list[str]) -> str:
 
     parts: list[str] = []
     pending_bullets: list[str] = []
+    #: Index of the entry a bare date line would belong to, or None when there
+    #: is no open entry — the date of a job is written under its title, so once
+    #: bullets have been emitted the entry above is finished.
+    open_entry: int | None = None
 
     def flush() -> None:
+        nonlocal open_entry
         if pending_bullets:
             parts.append(_render_lines(pending_bullets))
             pending_bullets.clear()
+            open_entry = None
 
     for line in lines:
         if not line.strip():
@@ -248,13 +260,44 @@ def _render_entries(lines: list[str]) -> str:
             pending_bullets.append(line)
             continue
         flush()
+
+        bare_date = date_only(line)
+        if bare_date is not None:
+            if open_entry is not None:
+                parts[open_entry] = _with_date(parts[open_entry], bare_date)
+                continue
+            # No entry to attach to. Still not a name: rendering a date in bold
+            # as though it were an employer is the failure this branch avoids.
+            parts.append(f"<p class='entry-meta'>{html.escape(line)}</p>")
+            continue
+
         if kind is LineKind.ENTRY:
             parts.append(_render_entry_name(line))
+            open_entry = len(parts) - 1
         else:
             parts.append(f"<p class='entry-meta'>{html.escape(line)}</p>")
 
     flush()
     return "\n".join(parts)
+
+
+def _with_date(entry_html: str, date: str) -> str:
+    """Attach a date to an already-rendered entry.
+
+    A no-op when the entry carries one already: a résumé that writes the dates
+    beside the title *and* on the line below has said it twice, and printing
+    both is worse than either.
+    """
+    if "entry-date" in entry_html:
+        return entry_html
+    closing = "</div>"
+    if not entry_html.endswith(closing):
+        return entry_html
+    return (
+        entry_html[: -len(closing)]
+        + f"<span class='entry-date'>{html.escape(date)}</span>"
+        + closing
+    )
 
 
 def _render_body(name: str, lines: list[str]) -> str:
