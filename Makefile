@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
+        bench-matching review-resume gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
 
@@ -201,6 +201,13 @@ crawl:
 # Rank the scorer variants against seeds/labeled_matches.yaml. Prints the
 # §47 experiment rows and a verdict that is usually "not established" — see
 # docs/ML_EVALUATION.md for why that is the harness working.
+# make review-resume r=path/to/resume.pdf j=path/to/jd.txt
+# Scores a résumé against a posting and reports what to fix, from the
+# deterministic scorers rather than a model's opinion.
+review-resume:
+	@test -n "$(r)" || (echo "set r=<résumé path>" && exit 1)
+	$(PY)/python -m scripts.review_resume --resume "$(r)" $(if $(j),--posting-file "$(j)",) $(if $(g),--golden "$(g)",)
+
 bench-matching:
 	$(PY)/python -m scripts.bench_matching $(ARGS)
 
