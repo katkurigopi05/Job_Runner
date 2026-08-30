@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass, field
 
 from packages.core.models import Posting, Profile
+from packages.matching.locality import locality_of, reachable, reads_as_remote
 
 #: Seniority ladder, lowest first. Used to reject a mismatch in either
 #: direction — an intern posting and a principal posting are both wrong for a
@@ -27,7 +28,6 @@ SENIORITY_LEVELS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("principal", ("principal", "distinguished", "architect", "director", "vp", "head of")),
 )
 
-_REMOTE_RE = re.compile(r"\bremote\b|\bwork from home\b|\banywhere\b", re.I)
 _SPONSORSHIP_RE = re.compile(
     r"no visa sponsorship|not able to sponsor|unable to sponsor|"
     r"without sponsorship|cannot provide sponsorship|no sponsorship",
@@ -58,28 +58,34 @@ def detect_seniority(text: str) -> str | None:
 
 
 def is_remote(posting: Posting) -> bool:
-    haystack = " ".join(filter(None, [posting.location, posting.title]))
-    return bool(_REMOTE_RE.search(haystack))
+    """Whether this posting offers remote work. See `locality.reads_as_remote`."""
+    return reads_as_remote(
+        title=posting.title, location=posting.location, description=posting.description_raw
+    )
 
 
-def location_matches(profile: Profile, posting: Posting) -> bool:
-    """Whether the owner could plausibly hold this role's location.
+def location_ok(posting: Posting) -> bool:
+    """Whether the posting sits inside the owner's search area.
 
-    Remote always qualifies. Otherwise the posting's location must mention
-    something from the profile's — city or region, matched loosely because
-    boards write locations every way imaginable.
+    California on-site or remote, the rest of the United States remote only,
+    nothing abroad. `locality.reachable` holds the reasoning; this is the
+    plumbing.
+
+    **It does not read the profile, and that is the fix.** The previous
+    version compared the posting's location against `profile.location` as a
+    substring, after short-circuiting to True for anything remote — so
+    "Canada - Remote (ON, AB, BC)" was kept for a US-based owner, as were
+    "Remote (India only)" and "Remote - EMEA". Remoteness was allowed to
+    override the region, which is backwards: a remote job you are not
+    eligible to hold is still a job you cannot hold.
+
+    Reading the profile was the second half of the mistake. §1: a search area
+    is the owner's input, not a reading of their profile — conflating them
+    means moving house silently rewrites the feed, and it made this filter
+    answer a question ("is this near where I live") that nobody had asked in
+    place of the one that matters ("did I ask to see this").
     """
-    if is_remote(posting):
-        return True
-    if not profile.location or not posting.location:
-        # Nothing to contradict, so do not exclude on a guess.
-        return True
-
-    profile_parts = {
-        part.strip().lower() for part in re.split(r"[,/|]", profile.location) if part.strip()
-    }
-    posting_location = posting.location.lower()
-    return any(part and part in posting_location for part in profile_parts)
+    return reachable(locality_of(posting.location), remote=is_remote(posting))
 
 
 def sponsorship_ok(profile: Profile, posting: Posting) -> bool:
@@ -130,8 +136,8 @@ def apply_filters(
 
     if require_open and posting.closed_at is not None:
         reasons.append("posting is closed")
-    if not location_matches(profile, posting):
-        reasons.append(f"location {posting.location!r} does not match {profile.location!r}")
+    if not location_ok(posting):
+        reasons.append(f"location {posting.location!r} is outside the search area")
     if not sponsorship_ok(profile, posting):
         reasons.append("posting states it cannot sponsor and the profile needs sponsorship")
     if not clearance_ok(posting):

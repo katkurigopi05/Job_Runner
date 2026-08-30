@@ -167,6 +167,12 @@ class Settings(BaseSettings):
     #: for a single call, which is how you look outside without editing a file.
     search_us_only: bool = True
 
+    #: The second half of that preference: on-site is wanted in California and
+    #: nowhere else, so every other state has to offer remote. Separate from
+    #: `search_us_only` because it is separately reversible — someone willing
+    #: to relocate wants the first without the second.
+    search_remote_outside_california: bool = True
+
     #: Which embedder scores the feed — "lexical" or "sentence-transformers".
     #: Read here rather than from os.environ for the same reason the provider
     #: credentials above are: `.env` is loaded into *this object*, never into

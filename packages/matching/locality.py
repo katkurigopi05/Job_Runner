@@ -73,6 +73,91 @@ _RANK = {
 #: Everything the owner's search treats as domestic.
 US_LOCALITIES = frozenset({Locality.BAY_AREA, Locality.CALIFORNIA, Locality.UNITED_STATES})
 
+#: Words that describe how a job is worked, not where. A location made only
+#: of these names no place at all, which is `UNKNOWN` — silence — rather than
+#: `UNPLACED`. The distinction matters because `UNPLACED` is treated as
+#: probably-foreign, and "Remote" is the commonest way a *domestic* board
+#: writes a job the owner most wants to see.
+_WORKING_MODE_RE = re.compile(
+    r"\b(?:remote|hybrid|on[- ]?site|onsite|in[- ]?office|in[- ]?person|"
+    r"work from home|home[- ]?based|wfh|telecommute|virtual|distributed|"
+    r"flexible|anywhere|any location|multiple locations|various)\b",
+    re.I,
+)
+
+#: Punctuation and filler a board leaves between a mode word and nothing else:
+#: "Remote - ", "(Remote)", "Remote / Anywhere".
+_LOCATION_FILLER_RE = re.compile(r"[\s,;/|()\[\]{}.\-—–:*]+")
+
+
+#: An explicit on-site marker, which overrides a stray "remote" in the body.
+_ONSITE_MARKER_RE = re.compile(r"\b(?:on[- ]?site|onsite|in[- ]?office|hybrid)\b", re.I)
+
+#: Remote proper, as a *location or title* declares it. A subset of
+#: `_WORKING_MODE_RE`: "hybrid" and "flexible" describe a mode without
+#: promising the owner never has to be in the office.
+_REMOTE_RE = re.compile(
+    r"\b(?:remote|work from home|wfh|telecommute|home[- ]?based|distributed|anywhere)\b",
+    re.I,
+)
+
+#: Remote as *prose* states it, which is a narrower vocabulary than a location
+#: field needs — and the difference is not academic.
+#:
+#: "distributed" was in the shared pattern and the body was searched with it,
+#: so **"distributed systems" made a posting remote**. That phrase is in a
+#: large share of backend descriptions, which is exactly the corpus this
+#: filter is pointed at; under the search-area rule it silently converted
+#: on-site roles in every state into reachable ones. "anywhere" goes the same
+#: way: a location field reading "Anywhere" is a declaration, the word in a
+#: sentence is not.
+#:
+#: A location field is a declaration about the job. Prose is not, so it only
+#: counts where it says so unambiguously.
+_REMOTE_PROSE_RE = re.compile(
+    r"\b(?:remote|work from home|wfh|telecommute|home[- ]?based)\b"
+    r"|\b(?:fully|geographically)? ?distributed "
+    r"(?:team|workforce|company|organisation|organization)\b"
+    r"|\bwork from anywhere\b",
+    re.I,
+)
+
+
+def reads_as_remote(
+    *, title: str | None, location: str | None, description: str | None = None
+) -> bool:
+    """Whether a posting offers remote work.
+
+    One definition, because there were two. The scoring gate read only the
+    title and location while the feed also read the body, so the same posting
+    could be remote in the feed and on-site to the filter that decides whether
+    it is scored at all — and under `reachable` that disagreement is the
+    difference between a kept job and a dropped one.
+
+    The body is weaker evidence than a location that says so, so an explicit
+    on-site marker in the title or location overrides it: a posting headed
+    "Hybrid" whose benefits blurb mentions remote work is not remote.
+    """
+    haystack = f"{title or ''} {location or ''}"
+    if _REMOTE_RE.search(haystack):
+        return True
+    return bool(_REMOTE_PROSE_RE.search(description or "")) and not _ONSITE_MARKER_RE.search(
+        haystack
+    )
+
+
+def names_no_place(location: str | None) -> bool:
+    """Whether a location string describes only *how* a job is worked.
+
+    "Remote", "Hybrid / Flexible" and "" all name no place. "Remote - EMEA"
+    and "Remote — CA" do, and are left for the rules below to classify.
+    """
+    if not location:
+        return True
+    stripped = _WORKING_MODE_RE.sub(" ", location)
+    return not _LOCATION_FILLER_RE.sub("", stripped)
+
+
 _BAY_AREA_CITIES = (
     "san francisco",
     "bay area",
@@ -588,7 +673,11 @@ def locality_of(location: str | None) -> Locality:
     this order and not a more obvious one.
     """
     original = (location or "").strip()
-    if not original:
+    # Silence, and its close cousin: text that names a working mode and no
+    # place. Both are "no evidence about where", which is what `UNKNOWN`
+    # means. Falling through would reach `UNPLACED` and read a bare "Remote"
+    # as probably-foreign.
+    if names_no_place(original):
         return Locality.UNKNOWN
 
     text = original.lower()
@@ -650,3 +739,44 @@ def rank(locality: Locality) -> int:
 def is_domestic(locality: Locality) -> bool:
     """Whether this counts as inside the owner's search area."""
     return locality in US_LOCALITIES
+
+
+#: Where the owner will work on-site. California only — everywhere else in the
+#: United States has to be remote, because a job in another state is a move,
+#: not a commute.
+ONSITE_LOCALITIES = frozenset({Locality.BAY_AREA, Locality.CALIFORNIA})
+
+
+def onsite_ok(locality: Locality) -> bool:
+    """Whether the owner would take a role sited here without it being remote."""
+    return locality in ONSITE_LOCALITIES
+
+
+def reachable(locality: Locality, *, remote: bool) -> bool:
+    """Whether the owner's standing search area covers this posting.
+
+    The area is one sentence — *California in any working mode, the rest of
+    the United States remote only, nothing abroad* — and this is the whole of
+    it. Three classes and the reasoning for each:
+
+    - **California** is reachable either way. It is the one place an on-site
+      role costs nothing to accept.
+    - **Elsewhere in the US** is reachable only remotely. This is the half
+      that was missing: without it a filter that already refused Frankfurt
+      happily kept an on-site role in Chicago, which the owner cannot take
+      for the same reason.
+    - **Abroad** is never reachable, remote or not. `Remote (India only)` and
+      `Canada - Remote (ON, AB, BC)` are remote jobs the owner is not eligible
+      for, so remoteness must not be allowed to override the region — the bug
+      this function replaces.
+
+    `UNKNOWN` is kept. It means the posting named no place, and silence is not
+    evidence of a foreign office; callers that would rather be strict have
+    `allow_unknown_location`. `UNPLACED` is dropped, because an unrecognized
+    place *name* is evidence — see the class docstring.
+    """
+    if locality is Locality.UNKNOWN:
+        return True
+    if not is_domestic(locality):
+        return False
+    return remote or onsite_ok(locality)

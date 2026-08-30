@@ -9,7 +9,16 @@ from __future__ import annotations
 
 import pytest
 
-from packages.matching.locality import Locality, is_domestic, locality_of, rank
+from packages.matching.locality import (
+    Locality,
+    is_domestic,
+    locality_of,
+    names_no_place,
+    onsite_ok,
+    rank,
+    reachable,
+    reads_as_remote,
+)
 
 # --------------------------------------------------------------------------
 # The two-letter problems
@@ -195,3 +204,113 @@ def test_domestic_is_exactly_the_three_us_tiers() -> None:
     assert not is_domestic(Locality.UNKNOWN)
     assert not is_domestic(Locality.UNPLACED)
     assert not is_domestic(Locality.ELSEWHERE)
+
+
+# --------------------------------------------------------------------------
+# A working mode is not a place
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["Remote", "remote", "REMOTE", "(Remote)", "Remote -", "Hybrid / Flexible", "Anywhere"],
+)
+def test_a_mode_only_location_names_no_place(location: str) -> None:
+    assert names_no_place(location)
+    assert locality_of(location) is Locality.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "location", ["Remote - EMEA", "Remote — CA", "Canada - Remote (ON)", "Remote, USA"]
+)
+def test_a_mode_word_beside_a_place_still_places(location: str) -> None:
+    """Only a string that is *entirely* mode words names no place."""
+    assert not names_no_place(location)
+    assert locality_of(location) is not Locality.UNKNOWN
+
+
+def test_bare_remote_is_unknown_rather_than_unplaced() -> None:
+    """`UNPLACED` means an unrecognized place *name*, and the corpus says those
+    are foreign — so landing "Remote" there dropped the commonest way a
+    domestic board writes the job the owner most wants."""
+    assert locality_of("Remote") is Locality.UNKNOWN
+    assert locality_of("Mapbox Minsk") is not Locality.UNKNOWN
+
+
+# --------------------------------------------------------------------------
+# One definition of remote
+# --------------------------------------------------------------------------
+
+
+def test_a_location_or_title_declaring_remote_is_remote() -> None:
+    assert reads_as_remote(title="Backend Engineer", location="Remote - US")
+    assert reads_as_remote(title="Backend Engineer (Remote)", location="Austin, TX")
+    assert not reads_as_remote(title="Backend Engineer", location="Austin, TX")
+
+
+def test_distributed_systems_is_not_remote_work() -> None:
+    """The false positive that this vocabulary split exists for.
+
+    "distributed" was matched in the body, so any description mentioning
+    distributed systems — most backend postings — read as offering remote
+    work. Under the search-area rule that turned on-site roles in every state
+    into reachable ones.
+    """
+    assert not reads_as_remote(
+        title="Senior Backend Engineer",
+        location="Chicago, IL",
+        description="Python, PostgreSQL, distributed systems at scale.",
+    )
+    assert reads_as_remote(
+        title="Senior Backend Engineer",
+        location="Chicago, IL",
+        description="We are a fully distributed team.",
+    )
+
+
+def test_prose_remote_counts_but_an_on_site_marker_overrides_it() -> None:
+    assert reads_as_remote(
+        title="Backend Engineer", location="Austin, TX", description="This role is remote."
+    )
+    assert not reads_as_remote(
+        title="Backend Engineer (Hybrid)",
+        location="Austin, TX",
+        description="Some remote work is possible.",
+    )
+
+
+# --------------------------------------------------------------------------
+# The search area
+# --------------------------------------------------------------------------
+
+
+def test_onsite_is_california_only() -> None:
+    assert onsite_ok(Locality.BAY_AREA)
+    assert onsite_ok(Locality.CALIFORNIA)
+    assert not onsite_ok(Locality.UNITED_STATES)
+    assert not onsite_ok(Locality.ELSEWHERE)
+
+
+@pytest.mark.parametrize("remote", [True, False])
+def test_california_is_reachable_either_way(remote: bool) -> None:
+    assert reachable(Locality.BAY_AREA, remote=remote)
+    assert reachable(Locality.CALIFORNIA, remote=remote)
+
+
+def test_the_rest_of_the_us_is_reachable_only_remotely() -> None:
+    assert reachable(Locality.UNITED_STATES, remote=True)
+    assert not reachable(Locality.UNITED_STATES, remote=False)
+
+
+@pytest.mark.parametrize("remote", [True, False])
+def test_abroad_is_never_reachable(remote: bool) -> None:
+    """Remoteness must not override the region: a remote job the owner is not
+    eligible to hold is still one they cannot hold."""
+    assert not reachable(Locality.ELSEWHERE, remote=remote)
+    assert not reachable(Locality.UNPLACED, remote=remote)
+
+
+@pytest.mark.parametrize("remote", [True, False])
+def test_a_posting_naming_no_place_is_kept(remote: bool) -> None:
+    """Silence is not evidence of a foreign office."""
+    assert reachable(Locality.UNKNOWN, remote=remote)

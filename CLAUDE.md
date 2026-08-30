@@ -1212,3 +1212,74 @@ The approve form no longer wraps the document panels. Its button and note bind
 to it by `form` id instead, and `Submitting` takes `pending` explicitly because
 `useFormStatus` reads the enclosing form and a detached button has none. Served
 HTML for `/review` now has form nesting depth 1.
+
+### Remoteness was allowed to override the region
+
+The owner's search area is one sentence — **California on-site or remote, the
+rest of the United States remote only, nothing abroad** — and until now no
+single place in the code held it.
+
+`filters.location_matches` was the hard filter that decides whether a `Match`
+row is written at all, and it began `if is_remote(posting): return True`. So
+the word "remote" anywhere in a location bought a posting past the region
+check entirely. Against the twelve crawled postings the one survivor for a US
+profile was **`Canada - Remote (ON, AB, BC, or NS Only)`**; `Remote (India
+only)` and `Remote - EMEA` pass the same way. A remote job the owner is not
+eligible to hold is still a job they cannot hold, so remoteness is the wrong
+thing to short-circuit on.
+
+The other half of the filter compared the posting against `profile.location`
+as a substring, which §1 rules out directly: a search area is the owner's
+input, not a reading of their profile. It also answered the wrong question —
+"is this near where I live" rather than "did I ask to see this" — and made
+moving house silently rewrite the feed.
+
+`locality.reachable` is now the single statement of the area, and both the
+scoring gate (`filters.location_ok`) and the feed (`search.matches`) call it.
+`Settings.search_remote_outside_california` supplies the standing preference
+and `?remote_outside_california=false` turns it off for one call, which is
+what relocating would want. It is a separate setting from `search_us_only`
+because it is separately reversible.
+
+Three findings came out of pointing it at real data rather than fixtures:
+
+- **A bare "Remote" was classified as probably-foreign.** `locality_of` had no
+  case for a location that names a working mode and no place, so "Remote" fell
+  through to `UNPLACED` — the class the corpus says is foreign — and `us_only`
+  dropped it. That is the commonest way a *domestic* board writes exactly the
+  job the owner is looking for. A mode-only string is now `UNKNOWN`, which is
+  what it means: no evidence about where. `UNPLACED` still means an
+  unrecognized place *name*, and is still dropped.
+- **"distributed systems" meant remote work.** `distributed` was in the remote
+  vocabulary and that vocabulary was matched against the *description*, so any
+  posting mentioning distributed systems read as offering remote work — and
+  under the area rule that converts an on-site role in any state into a
+  reachable one. On the twelve crawled postings the old vocabulary called
+  **7 of 12 remote and the new one calls 4**; all three that flipped mention
+  "distributed", and one of them — `Sr. Manager, Field Engineering`,
+  `Northeast - United States` — was kept by the area filter purely on that
+  misreading. A location field is a declaration about the job and prose is
+  not, so the two now have separate vocabularies: the body needs "distributed
+  team", "work from anywhere", or "remote" proper.
+- **There were two definitions of remote.** The feed read the description with
+  an on-site override; the scoring gate read only title and location. Under
+  this rule that disagreement is the difference between a kept job and a
+  dropped one, so `locality.reads_as_remote` is now the only definition and
+  both call it.
+
+On the twelve crawled postings the area keeps **none of them**, and that is the
+right answer rather than a regression: the board is a Palantir sweep with no
+Californian and no US-remote roles on it — every posting is abroad or on-site
+in another state. Worth stating plainly, because "0 kept" and "the filter is
+broken" look identical from the summary line.
+
+Two things this did **not** fix, filed rather than papered over:
+
+- `rescore` leaves a `Match` row behind when a posting newly fails a hard
+  filter, so its own "top 1" still prints the Canadian role it just excluded.
+  The feed re-filters at read time and drops it, so nothing user-facing shows
+  it — but the summary contradicts itself.
+- The US city and non-US city lists in `locality.py` are hand-written, so a
+  posting in a US city on neither list reads as `UNPLACED` and is dropped.
+  `Frankfurt` lands correctly by accident this way. A domestic city that is
+  missing fails closed, which is the wrong direction for a job search.

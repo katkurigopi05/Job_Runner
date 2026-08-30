@@ -89,6 +89,10 @@ async def list_matches(
     #: None means "use the standing preference" (Settings.search_us_only).
     #: Pass false to look outside the US for one call.
     us_only: bool | None = None,
+    #: None means "use the standing preference"
+    #: (Settings.search_remote_outside_california). Pass false to see on-site
+    #: roles nationwide, which is what relocating would want.
+    remote_outside_california: bool | None = None,
     allow_unknown_location: bool = True,
     allow_unknown_seniority: bool = False,
 ) -> list[MatchOut]:
@@ -110,6 +114,11 @@ async def list_matches(
         posted_within_days=posted_within_days,
         include_closed=include_closed,
         us_only=get_settings().search_us_only if us_only is None else us_only,
+        remote_outside_california=(
+            get_settings().search_remote_outside_california
+            if remote_outside_california is None
+            else remote_outside_california
+        ),
         allow_unknown_location=allow_unknown_location,
         allow_unknown_seniority=allow_unknown_seniority,
     )
