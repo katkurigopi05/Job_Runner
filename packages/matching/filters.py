@@ -14,8 +14,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from packages.core.config import get_settings
 from packages.core.models import Posting, Profile
-from packages.matching.locality import locality_of, reachable, reads_as_remote
+from packages.matching.locality import (
+    Locality,
+    is_domestic,
+    locality_of,
+    names_us_region,
+    onsite_ok,
+    reads_as_remote,
+)
 
 #: Seniority ladder, lowest first. Used to reject a mismatch in either
 #: direction — an intern posting and a principal posting are both wrong for a
@@ -58,34 +66,119 @@ def detect_seniority(text: str) -> str | None:
 
 
 def is_remote(posting: Posting) -> bool:
-    """Whether this posting offers remote work. See `locality.reads_as_remote`."""
+    """Whether this posting offers remote work. See `locality.reads_as_remote`.
+
+    One definition, because there were two: this read only the title and
+    location while `search.matches` also read the body, so the same posting
+    could be remote in the feed and on-site to the filter that decides whether
+    it is scored at all.
+    """
     return reads_as_remote(
         title=posting.title, location=posting.location, description=posting.description_raw
     )
 
 
-def location_ok(posting: Posting) -> bool:
-    """Whether the posting sits inside the owner's search area.
+def location_matches(
+    profile: Profile,
+    posting: Posting,
+    *,
+    remote_outside_california: bool | None = None,
+) -> bool:
+    """Whether the owner could hold this role's location.
 
-    California on-site or remote, the rest of the United States remote only,
-    nothing abroad. `locality.reachable` holds the reasoning; this is the
-    plumbing.
+    Two questions, in order: is it abroad, and — if not — is it somewhere the
+    owner would go in person.
 
-    **It does not read the profile, and that is the fix.** The previous
-    version compared the posting's location against `profile.location` as a
-    substring, after short-circuiting to True for anything remote — so
-    "Canada - Remote (ON, AB, BC)" was kept for a US-based owner, as were
-    "Remote (India only)" and "Remote - EMEA". Remoteness was allowed to
-    override the region, which is backwards: a remote job you are not
-    eligible to hold is still a job you cannot hold.
+    ## Country
 
-    Reading the profile was the second half of the mistake. §1: a search area
-    is the owner's input, not a reading of their profile — conflating them
-    means moving house silently rewrites the feed, and it made this filter
-    answer a question ("is this near where I live") that nobody had asked in
-    place of the one that matters ("did I ask to see this").
+    This stopped being a substring test. It split the profile's location on
+    commas and asked whether any part appeared anywhere in the posting's. On a
+    profile reading `san fransico , ca,usa` that produced exactly the wrong
+    answer in both directions:
+
+        'Canada'                 -> kept, because 'ca' is inside 'canada'
+        'Costa Rica'             -> kept, because 'ca' is inside 'costa'
+        'Vancouver, Canada'      -> kept
+        'United States - Remote' -> rejected
+
+    Every Canadian and Costa Rican role passed as California while American
+    ones did not. It was the top of the owner's match feed after a real crawl:
+    four Elastic roles in Canada and a finance manager in Costa Rica.
+
+    Country is read *before* remoteness. "Remote" is not a place, and on a
+    foreign posting it does not mean remote-from-anywhere — it means remote
+    within that country. `Spain (Remote)`, `United Kingdom (Remote)` and
+    `Republic of Ireland (Remote)` were the three highest-scoring matches in
+    the owner's feed once the substring bug was fixed, all kept by an
+    `is_remote` short-circuit that ran first. `Remote - US or Canada` is
+    unaffected: `locality_of` yields a foreign country name to an explicit US
+    signal, so it classifies as UNITED_STATES.
+
+    ## Region
+
+    The owner's search area is one sentence — **California on-site or remote,
+    the rest of the United States remote only, nothing abroad** — and the
+    second clause is a hard filter because they asked for it to be. An on-site
+    role in another state is a move, not a commute.
+
+    This overrode an earlier reading, and the earlier one is worth keeping
+    visible because it is right in general: *which part* of the US a posting is
+    in is normally a ranking question, and `locality.rank` already orders Bay
+    Area above California above the rest. Excluding on region hides a Texan
+    posting the owner would love in order to keep a Californian one they would
+    not. That trade is the owner's to make, and they made it — so it is a
+    filter here, and `remote_outside_california=False` (or
+    `SEARCH_REMOTE_OUTSIDE_CALIFORNIA=false`) restores ranking-only behaviour
+    without a code change.
+
+    ## What still passes
+
+    `UNKNOWN` and `UNPLACED` both pass, for the region check as well as the
+    country one. Silence is not evidence, and this is a hard filter: a posting
+    whose city no rule recognizes should be ranked down, not hidden. Only an
+    explicit foreign signal excludes.
+
+    That matters more than it looks. An earlier version of the region rule
+    dropped `UNPLACED`, which made every gap in the hand-written city lists a
+    silently discarded job — and 143 of 205 Californian cities did not classify
+    from a bare name. The lists are much longer now, but the filter no longer
+    depends on their being complete.
     """
-    return reachable(locality_of(posting.location), remote=is_remote(posting))
+    if not profile.location or not posting.location:
+        # Nothing to contradict, so do not exclude on a guess.
+        return True
+
+    # The profile's own location decides whether this US-shaped reading applies
+    # at all. `locality.py` is explicit that it answers one owner's question —
+    # United States only, California first — so a profile located outside it
+    # gets no opinion from this filter rather than a wrong one.
+    if not is_domestic(locality_of(profile.location)):
+        return True
+
+    where = locality_of(posting.location)
+    if where is Locality.ELSEWHERE:
+        return False
+
+    if remote_outside_california is None:
+        remote_outside_california = get_settings().search_remote_outside_california
+    if not remote_outside_california:
+        return True
+
+    # UNKNOWN and UNPLACED reach here and are kept: neither is evidence about
+    # which part of the country this is, and guessing would hide real jobs.
+    if not is_domestic(where):
+        return True
+    if onsite_ok(where):
+        return True
+
+    # `UNITED_STATES` covers two different facts. `Austin, TX` names a place
+    # the owner will not commute to; a bare `United States` names no place at
+    # all and is no more evidence than silence. Only the first is on-site
+    # outside California.
+    if not names_us_region(posting.location):
+        return True
+
+    return is_remote(posting)
 
 
 def sponsorship_ok(profile: Profile, posting: Posting) -> bool:
@@ -136,7 +229,7 @@ def apply_filters(
 
     if require_open and posting.closed_at is not None:
         reasons.append("posting is closed")
-    if not location_ok(posting):
+    if not location_matches(profile, posting):
         reasons.append(f"location {posting.location!r} is outside the search area")
     if not sponsorship_ok(profile, posting):
         reasons.append("posting states it cannot sponsor and the profile needs sponsorship")

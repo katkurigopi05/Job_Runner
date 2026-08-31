@@ -475,6 +475,77 @@ _NON_US_MARKERS = (
     r"apac",
     r"latam",
     r"cemea",
+    # Added after a real crawl put "Sr. Manager, Finance Transformation —
+    # Costa Rica" near the top of the owner's match feed. Absent from the list,
+    # it classified as UNPLACED rather than ELSEWHERE, and UNPLACED passes the
+    # hard filter by design.
+    #
+    # **Four countries are deliberately not here**, because their names are
+    # American places and rule 1 runs before any US state *name* is read:
+    # `georgia` (Savannah, Georgia), `panama` (Panama City, FL), `lebanon`
+    # (Lebanon, PA / NH) and `jordan`. A comma-position state code rescues
+    # each of those, but a spelled-out state name does not, so adding them
+    # would hide American postings to catch rare foreign ones.
+    r"costa rica",
+    r"ukraine",
+    r"peru",
+    r"uruguay",
+    r"ecuador",
+    r"guatemala",
+    r"dominican republic",
+    r"morocco",
+    r"tunisia",
+    r"ghana",
+    r"uganda",
+    r"tanzania",
+    r"kuwait",
+    r"bahrain",
+    r"oman",
+    r"nepal",
+    r"iceland",
+    r"estonia",
+    r"latvia",
+    r"lithuania",
+    r"slovakia",
+    r"slovenia",
+    r"croatia",
+    r"serbia",
+    r"bulgaria",
+    r"cyprus",
+    r"malta",
+    r"luxembourg",
+    r"armenia",
+    r"azerbaijan",
+    r"kazakhstan",
+    r"uzbekistan",
+    # Continents and trading blocs, the same kind of marker as `emea` and
+    # `apac` above. Two Synthesia roles located simply `Europe` sat in the
+    # owner's top ten after the country list was extended, because a continent
+    # is not a country and nothing here was reading it.
+    #
+    # `Worldwide`, `Global`, `International` and `Anywhere` are deliberately
+    # **not** here. They describe a role open to the owner as much as to
+    # anyone, and `_REMOTE_RE` already treats `anywhere` as remote. Excluding
+    # them would drop jobs that are genuinely available.
+    #
+    # `South America` and `Central America` are safe despite containing
+    # "America": the match is word-boundaried on the whole phrase, and
+    # `_US_COUNTRY_RE` needs `united states`, `usa` or a bare `us`.
+    r"europe",
+    r"asia",
+    r"africa",
+    r"oceania",
+    r"middle east",
+    r"nordics",
+    r"scandinavia",
+    r"benelux",
+    r"iberia",
+    r"balkans",
+    r"baltics",
+    r"south america",
+    r"central america",
+    r"latin america",
+    r"caribbean",
 )
 
 _NON_US_RE = re.compile(r"\b(?:" + "|".join(_NON_US_MARKERS) + r")\b", re.I)
@@ -944,6 +1015,43 @@ def locality_of(location: str | None) -> Locality:
     return Locality.UNPLACED
 
 
+#: US macro-regions that are unambiguously *not* California. "West Coast",
+#: "Pacific" and "Southwest" are deliberately absent — each can include
+#: California, and under the on-site rule a wrong exclusion hides exactly the
+#: jobs the owner most wants.
+_NON_CA_US_REGION_RE = re.compile(
+    r"\b(?:northeast|north east|new england|mid[- ]?atlantic|midwest|mid west|"
+    r"great lakes|southeast|south east|gulf coast|east coast|tri[- ]state)\b",
+    re.I,
+)
+
+
+def names_us_region(location: str | None) -> bool:
+    """Whether a domestic location says *which part* of the country it is in.
+
+    `locality_of` answers "is this the United States", and returns
+    `UNITED_STATES` for both `Austin, TX` and a bare `United States`. Those are
+    different facts, and the on-site rule turns on the difference: the first
+    names a place the owner will not commute to, the second names no place at
+    all and is no more evidence than silence.
+
+    Getting this wrong is not theoretical — a bare `United States` was dropped
+    as "on-site outside California" purely because nothing in the string said
+    remote.
+    """
+    if not location:
+        return False
+    return bool(
+        _US_STATE_CODE_RE.search(location)
+        or _US_STATE_NAME_RE.search(location)
+        or _US_CITY_RE.search(location)
+        or _BAY_AREA_RE.search(location)
+        or _CALIFORNIA_CITY_RE.search(location)
+        or _CALIFORNIA_RE.search(location)
+        or _NON_CA_US_REGION_RE.search(location)
+    )
+
+
 def rank(locality: Locality) -> int:
     """Feed order: Bay Area, then California, then the rest of the US."""
     return _RANK[locality]
@@ -983,13 +1091,26 @@ def reachable(locality: Locality, *, remote: bool) -> bool:
       for, so remoteness must not be allowed to override the region — the bug
       this function replaces.
 
-    `UNKNOWN` is kept. It means the posting named no place, and silence is not
-    evidence of a foreign office; callers that would rather be strict have
-    `allow_unknown_location`. `UNPLACED` is dropped, because an unrecognized
-    place *name* is evidence — see the class docstring.
+    `UNKNOWN` and `UNPLACED` are both kept, and only `ELSEWHERE` — an explicit
+    foreign signal — excludes.
+
+    `UNPLACED` used to be dropped here, on the class docstring's evidence that
+    every unplaceable string in an early sweep was foreign. Two things
+    overturned that. A later crawl of the full registry extended the foreign
+    vocabulary by thirty-odd countries plus continents and trading blocs, so
+    most of what used to land in `UNPLACED` now lands in `ELSEWHERE` where it
+    belongs — which leaves `UNPLACED` meaning something much closer to "a town
+    nobody listed". And the hand-written city lists turned out to be missing
+    143 of 205 Californian cities, so dropping `UNPLACED` made every gap in
+    them a silently discarded job. The lists are far longer now; the point is
+    that this no longer depends on their being complete.
+
+    A posting whose city no rule recognizes should be ranked down, not hidden.
+    Callers that would rather be strict have `allow_unknown_location`.
     """
-    if locality is Locality.UNKNOWN:
-        return True
     if not is_domestic(locality):
-        return False
+        # UNKNOWN and UNPLACED included: neither is evidence about where this
+        # is, and a hard filter should not guess. ELSEWHERE is the one class
+        # that carries real evidence, and it is handled by the caller.
+        return locality is not Locality.ELSEWHERE
     return remote or onsite_ok(locality)

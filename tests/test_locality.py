@@ -308,7 +308,20 @@ def test_abroad_is_never_reachable(remote: bool) -> None:
     """Remoteness must not override the region: a remote job the owner is not
     eligible to hold is still one they cannot hold."""
     assert not reachable(Locality.ELSEWHERE, remote=remote)
-    assert not reachable(Locality.UNPLACED, remote=remote)
+
+
+@pytest.mark.parametrize("remote", [True, False])
+def test_an_unrecognized_place_name_is_kept(remote: bool) -> None:
+    """Reversed on better evidence, and worth stating why.
+
+    `UNPLACED` was dropped here because every unplaceable string in an early
+    66-posting sweep was foreign. A later crawl of the full registry moved
+    thirty-odd countries plus continents and blocs into `ELSEWHERE`, so what
+    reaches `UNPLACED` now is much closer to "a town nobody listed" — and
+    dropping it turned every gap in the hand-written city lists into a
+    silently discarded job. Only an explicit foreign signal excludes.
+    """
+    assert reachable(Locality.UNPLACED, remote=remote)
 
 
 @pytest.mark.parametrize("remote", [True, False])

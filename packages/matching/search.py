@@ -25,6 +25,7 @@ from packages.matching.locality import (
     is_us_state,
     locality_of,
     location_aliases,
+    names_us_region,
     onsite_ok,
     reads_as_remote,
 )
@@ -251,7 +252,15 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
                 reasons.append("no location given")
         elif not is_domestic(where):
             reasons.append(f"location {posting.location!r} is outside the United States")
-        elif filters.remote_outside_california and not onsite_ok(where) and not is_remote(posting):
+        elif (
+            filters.remote_outside_california
+            and not onsite_ok(where)
+            # A bare "United States" names no region and is no more evidence
+            # than silence; `Austin, TX` names a place the owner will not
+            # commute to. Only the second is on-site outside California.
+            and names_us_region(posting.location)
+            and not is_remote(posting)
+        ):
             # Domestic, but on-site somewhere the owner will not move to.
             # Rides with `us_only` because it is the same standing preference
             # read one level finer, and separating them would let the feed

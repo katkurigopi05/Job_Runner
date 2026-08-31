@@ -25,7 +25,7 @@ from packages.matching.filters import (
     clearance_ok,
     detect_seniority,
     is_remote,
-    location_ok,
+    location_matches,
     seniority_ok,
     sponsorship_ok,
 )
@@ -159,25 +159,25 @@ def test_remote_is_detected() -> None:
 )
 def test_california_is_reachable_on_site(location: str) -> None:
     """The one place an on-site role costs nothing to accept."""
-    assert location_ok(posting(location=location))
+    assert location_matches(profile(), posting(location=location))
 
 
 @pytest.mark.parametrize("location", ["Remote — CA", "Remote (California)"])
 def test_california_is_reachable_remotely_too(location: str) -> None:
-    assert location_ok(posting(location=location))
+    assert location_matches(profile(), posting(location=location))
 
 
 @pytest.mark.parametrize("location", ["Austin, TX", "Chicago, IL", "New York, NY", "Seattle, WA"])
 def test_another_state_on_site_is_excluded(location: str) -> None:
     """A job in another state is a move, not a commute."""
-    assert not location_ok(posting(location=location))
+    assert not location_matches(profile(), posting(location=location))
 
 
 @pytest.mark.parametrize(
     "location", ["Remote - US", "Remote, USA", "Remote - United States", "US Remote"]
 )
 def test_another_state_remotely_is_reachable(location: str) -> None:
-    assert location_ok(posting(location=location))
+    assert location_matches(profile(), posting(location=location))
 
 
 @pytest.mark.parametrize(
@@ -199,12 +199,24 @@ def test_remoteness_does_not_override_the_region(location: str) -> None:
     one: it came out of the crawled Palantir board and was the single posting
     that survived the filter for an Austin profile.
     """
-    assert not location_ok(posting(location=location))
+    assert not location_matches(profile(), posting(location=location))
 
 
 @pytest.mark.parametrize("location", ["Berlin, Germany", "London", "Sydney, Australia"])
 def test_abroad_is_excluded(location: str) -> None:
-    assert not location_ok(posting(location=location))
+    assert not location_matches(profile(), posting(location=location))
+
+
+def test_an_unrecognized_place_name_is_kept_rather_than_hidden() -> None:
+    """Reversed after the crawl that extended the foreign vocabulary.
+
+    `UNPLACED` used to be dropped on the evidence that every unplaceable
+    string in an early sweep was foreign. Thirty-odd countries plus continents
+    and blocs have since moved into `ELSEWHERE`, so `UNPLACED` now means
+    closer to "a town nobody listed" — and dropping it made every gap in the
+    hand-written city lists a silently discarded job.
+    """
+    assert location_matches(profile(), posting(location="Wakanda City"))
 
 
 @pytest.mark.parametrize("location", ["Remote", "", "Hybrid / Flexible"])
@@ -216,7 +228,7 @@ def test_a_posting_that_names_no_place_is_kept(location: str) -> None:
     corpus says are foreign — and so was dropped, losing the commonest way a
     domestic board writes exactly the job the owner is looking for.
     """
-    assert location_ok(posting(location=location))
+    assert location_matches(profile(), posting(location=location))
 
 
 def test_the_search_area_does_not_read_the_profile() -> None:
@@ -226,8 +238,8 @@ def test_the_search_area_does_not_read_the_profile() -> None:
     house silently rewrote the feed. The area is now stated once, and where
     the owner happens to live does not enter into it.
     """
-    assert location_ok(posting(location="San Francisco, CA"))
-    assert not location_ok(posting(location="Austin, TX"))
+    assert location_matches(profile(), posting(location="San Francisco, CA"))
+    assert not location_matches(profile(), posting(location="Austin, TX"))
 
 
 def test_sponsorship_exclusion_only_on_an_explicit_statement() -> None:

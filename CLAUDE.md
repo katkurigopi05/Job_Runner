@@ -1262,8 +1262,8 @@ Three findings came out of pointing it at real data rather than fixtures:
   through to `UNPLACED` — the class the corpus says is foreign — and `us_only`
   dropped it. That is the commonest way a *domestic* board writes exactly the
   job the owner is looking for. A mode-only string is now `UNKNOWN`, which is
-  what it means: no evidence about where. `UNPLACED` still means an
-  unrecognized place *name*, and is still dropped.
+  what it means: no evidence about where. `UNPLACED` **is now kept too** —
+  see the merge note at the end of this section.
 - **"distributed systems" meant remote work.** `distributed` was in the remote
   vocabulary and that vocabulary was matched against the *description*, so any
   posting mentioning distributed systems read as offering remote work — and
@@ -1303,9 +1303,51 @@ Two things this did **not** fix, filed rather than papered over:
   `test_a_decided_match_is_kept_even_when_it_stops_qualifying` holds that line.
 - ~~The US city and non-US city lists in `locality.py` are hand-written, so a
   posting in a US city on neither list reads as `UNPLACED` and is dropped.~~
-  Measured and closed; see below. `Frankfurt` still lands correctly by
-  accident this way, and the lists are still hand-written — the failure mode
-  is narrowed, not removed.
+  Measured and closed twice over — the lists were extended, and then
+  `UNPLACED` stopped being dropped at all, which removes the failure mode
+  rather than narrowing it. The lists are still hand-written and still matter
+  for *precision*: an unplaced Californian city is kept, but as a maybe rather
+  than as California.
+
+### Merging with the country fix that landed on main
+
+Two sessions fixed the same filter from different ends, and the merge is worth
+recording because each caught what the other could not see.
+
+**main had the better data.** It ran against a real crawl of all 119 companies
+and found that `location_matches` was a substring test: the owner's profile
+reads `san fransico , ca,usa`, and `ca` is inside `canada`, `costa rica` and
+`vancouver` and inside none of `united states`. Every Canadian role passed as
+Californian while American ones were dropped — the top of the feed was four
+Elastic roles in Canada and a finance manager in Costa Rica. It also found
+`Spain (Remote)`, `United Kingdom (Remote)` and `Republic of Ireland (Remote)`
+sitting in the top three, and two Synthesia roles located simply `Europe`. Its
+`locality.py` gained thirty-odd countries plus continents and blocs, and
+deliberately left out `georgia`, `panama`, `lebanon` and `jordan` because
+those names are American places and rule 1 runs before any state *name* is
+read.
+
+This branch had only the twelve-posting Palantir sweep, so none of that was
+visible here.
+
+**Three things were reconciled rather than picked:**
+
+- **`UNPLACED` is kept.** main's argument — only an explicit foreign signal
+  should exclude, a city no rule recognizes should be ranked down rather than
+  hidden — is right, and its own country work is what makes it right: most of
+  what used to land in `UNPLACED` now lands in `ELSEWHERE`. It also dissolves
+  the 143-missing-cities problem instead of managing it.
+- **The region rule stays, because the owner asked for it.** main read *which
+  part* of the US as a ranking question, which is correct in general and is
+  what `locality.rank` already does. The owner overrode it: on-site outside
+  California is a move, not a commute. `remote_outside_california=False`
+  restores main's reading exactly, and the test that used to assert it now
+  asserts both halves.
+- **A bare `United States` is not "outside California".** main's test caught
+  this: `UNITED_STATES` covers both `Austin, TX` and a bare `United States`,
+  and the region rule was dropping the second. `locality.names_us_region`
+  separates them — a location that names no region is no more evidence than
+  silence.
 
 ### The city lists failed closed, and California was the worst of it
 
