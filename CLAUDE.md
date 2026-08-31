@@ -1465,12 +1465,48 @@ now answers "how many have never been checked" on its own: today, **119 of
   blocked by a captcha. §2.5 makes captcha-solving a hard scope boundary, so
   making this gate pass *is* the prohibited thing. It should stay red forever;
   what it proves is that the refusal works.
-- **Gate 2's live half, Gate 5's real labels, Gate 6's real emails.** Each
-  needs material that cannot be manufactured without lying: a real posting, the
-  owner's own relevance judgements, real recruiter correspondence.
-  `inbound_messages` is still 0. Writing any of it would make the numbers agree
-  with themselves and mean nothing, which is the failure §15 was opened to
-  record. The mechanisms are ready; the data is the owner's to supply.
+- **Gate 2's live half.** Needs a real posting reached over the network, and
+  a real profile. `make gate-2-live URL=...` is the other half.
 - **The 90 unvalidated boards.** `--write` exists; the sweep needs network
   egress and has to be run from the owner's machine.
+
+### Getting real data in, for the two gates that need it
+
+Gate 5's labels and Gate 6's emails cannot be written — that is the whole
+point of §15. What *was* missing is the path from the owner's actual material
+to the number, and both ends of it existed with nothing joining them.
+
+**Gate 5: the judgements were already being collected.** `Provenance.OWNER`
+and `FEEDBACK` were defined when `labels.py` was written and nothing ever
+produced one, so every label in the repo is a `FIXTURE`. Meanwhile `/swipe`
+has been writing `Match.decision` on every yes and no — which *is* a relevance
+judgement about a real posting. `make export-labels` reads them back out as a
+`LabeledSet` the benchmark can run on.
+
+It exports as `FEEDBACK`, not `OWNER`, and `packages/matching/feedback.py`
+says why at length. Two limits are load-bearing. A swipe is **binary**, so it
+can only produce relevance 0 or 2 — it cannot express the gap between "would
+apply" and "would drop everything for", which is exactly the gap NDCG's
+`2**rel` gain exists to reward. And a swipe is **taken in feed order**, so it
+is only ever recorded for postings the ranker already surfaced: nothing it
+buried is ever labeled, and the model ends up graded on its own shortlist.
+Real judgements about real postings, and not interchangeable with graded ones.
+
+**Gate 6: `make import-mail src=<mbox|eml|dir>`.** Reads a Gmail export into a
+worksheet — one row per message, the classifier's guess beside an **empty**
+label field — and `make score-mail ws=...` reports accuracy over the rows the
+owner filled in.
+
+`guess` and `label` are deliberately separate fields, and a row with no label
+is excluded from scoring entirely. Collapsing them would let the classifier
+grade its own homework: accuracy would be 100% by construction, which is the
+self-evaluating referee §45 and the master spec both refuse.
+`test_the_worksheet_leaves_every_label_empty` holds that line.
+
+The worksheet stores sender, subject, body and date and nothing else. It is a
+second copy of other people's writing about the owner (§14), so it holds the
+minimum a classification decision needs.
+
+Neither of these produces a number on its own. They turn "this gate needs data
+that does not exist" into two commands and an afternoon.
 

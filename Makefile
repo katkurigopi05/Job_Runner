@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
+        bench-matching export-labels import-mail score-mail review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
 
@@ -233,6 +233,25 @@ review-resume:
 
 bench-matching:
 	$(PY)/python -m scripts.bench_matching $(ARGS)
+
+# Export the owner's swipe decisions as a labeled set. Gate 5 asks whether the
+# ranker works on this owner's material and every label in the repo is a
+# fixture; /swipe has been recording real judgements all along and nothing
+# read them back out. See packages/matching/feedback.py for what a binary,
+# feed-ordered label does and does not license.
+export-labels:
+	$(PY)/python -m scripts.export_labels $(if $(p),--profile $(p),) $(if $(out),--out $(out),)
+
+# Gate 6 asks for 30 hand-labeled *real* recruiter emails; inbound_messages is
+# 0 and the fixtures were written beside the patterns that read them. Export
+# your recruiter mail, label it, and score against it.
+import-mail:
+	@test -n "$(src)" || (echo "set src=<mbox|eml|dir>" && exit 1)
+	$(PY)/python -m scripts.import_mail --src "$(src)" $(if $(out),--out $(out),)
+
+score-mail:
+	@test -n "$(ws)" || (echo "set ws=<worksheet.yaml>" && exit 1)
+	$(PY)/python -m scripts.import_mail --score "$(ws)"
 
 rescore:
 	$(PY)/python -m scripts.rescore $(if $(p),--profile $(p),) $(if $(dry),--dry-run,) $(if $(re),--re-embed,)
