@@ -22,6 +22,7 @@ import pytest
 
 from packages.core.models import Posting, Profile
 from packages.matching.filters import location_matches
+from packages.matching.locality import Locality, is_domestic, locality_of
 
 #: The owner's profile, spelled correctly.
 OWNER = "San Francisco, CA, USA"
@@ -33,6 +34,13 @@ def _posting(location: str, description: str = "") -> Posting:
 
 def _keeps(location: str, profile_location: str = OWNER) -> bool:
     return location_matches(Profile(location=profile_location), _posting(location))
+
+
+def _keeps_ignoring_region(location: str) -> bool:
+    """Country only — the filter with the on-site rule switched off."""
+    return location_matches(
+        Profile(location=OWNER), _posting(location), remote_outside_california=False
+    )
 
 
 # --------------------------------------------------------------------------
@@ -79,12 +87,33 @@ def test_american_postings_are_kept(location: str) -> None:
     "location",
     ["New York, NY", "Austin, TX", "Portland, OR", "Seattle, WA", "Chicago, IL"],
 )
-def test_a_us_posting_outside_california_is_not_excluded(location: str) -> None:
-    """`locality.rank` orders Bay Area first; this filter only asks the country.
+def test_an_onsite_posting_outside_california_is_excluded(location: str) -> None:
+    """The owner asked for this, and it reverses what this test used to assert.
 
-    Excluding here would hide a Texan posting the owner would love in order to
-    keep a Californian one they would not.
+    The original reading is worth keeping, because it is right in general:
+    *which part* of the US a posting is in is normally a ranking question,
+    `locality.rank` already orders Bay Area first, and excluding on region
+    hides a Texan posting the owner would love in order to keep a Californian
+    one they would not.
+
+    They overrode it. The search area is "California on-site or remote, the
+    rest of the United States remote only", so an on-site role in another
+    state is a move rather than a commute and is not wanted at all. That trade
+    is theirs to make.
+
+    It stays one setting away: the ranking-only reading is exactly
+    `remote_outside_california=False`, asserted directly below.
     """
+    assert not _keeps(location)
+    assert _keeps_ignoring_region(location), "the country reading must still keep it"
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["Remote - New York, NY", "Austin, TX (Remote)", "Chicago, IL — Remote"],
+)
+def test_the_same_posting_is_kept_when_it_is_remote(location: str) -> None:
+    """The region rule excludes the commute, not the state."""
     assert _keeps(location)
 
 
@@ -97,14 +126,21 @@ def test_a_us_posting_outside_california_is_not_excluded(location: str) -> None:
     "location",
     ["Savannah, Georgia", "Atlanta, GA", "Panama City, FL", "Lebanon, PA", "Lebanon, NH"],
 )
-def test_us_places_named_after_countries_are_kept(location: str) -> None:
+def test_us_places_named_after_countries_are_not_sent_abroad(location: str) -> None:
     """Why four country names are deliberately absent from `_NON_US_MARKERS`.
 
     Rule 1 in `locality_of` runs before any US state *name* is read, so adding
     `georgia` would send `Savannah, Georgia` abroad. A comma-position state
     code rescues `Atlanta, GA`; a spelled-out state name does not.
+
+    Asserted against the country question directly. Each of these is on-site
+    outside California, so the region rule drops them — for a reason that has
+    nothing to do with the one this test exists to catch, and would mask a
+    regression in it.
     """
-    assert _keeps(location)
+    assert is_domestic(locality_of(location))
+    assert locality_of(location) is not Locality.ELSEWHERE
+    assert _keeps_ignoring_region(location)
 
 
 # --------------------------------------------------------------------------

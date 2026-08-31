@@ -543,12 +543,26 @@ content-hash change detection and per-host rate limiting. Posting extraction per
 Embedding of postings and profile. Hard filters (location, seniority, work authorization,
 sponsorship). Cosine scoring. Match feed in the dashboard.
 
-The registry started at 50 and is now 29. `make validate-seeds` found that 21
-of the original entries returned 404 from both the board API and the rendered
-page — those companies have left Greenhouse. They are listed at the bottom of
-`seeds/companies.yaml` with the evidence rather than deleted, because a 404
-board is worse than an absent one: it yields zero postings, which reads
-identically to "nothing new since the last poll".
+The registry started at 50. `make validate-seeds` found that 21 of those
+returned 404 from both the board API and the rendered page — those companies
+have left Greenhouse — and they were removed, taking it to 29. A 404 board is
+worse than an absent one: it yields zero postings, which reads identically to
+"nothing new since the last poll".
+
+**It is now 119**, and this paragraph said 29 until someone counted. The
+import of career-ops' company list added 90 entries and superseded the number
+without updating the sentence that carried it. Two things follow, and both
+matter more than the count:
+
+- The paragraph also claimed the 21 dead boards were "listed at the bottom of
+  `seeds/companies.yaml` with the evidence rather than deleted". They were
+  deleted. There is no retired section in that file and never has been. The
+  argument for keeping them is still right; it was simply never implemented.
+- **The 90 imported entries have never been validated.** The 404 sweep ran
+  against the original 50. So the registry today is 29 checked boards and 90
+  unchecked ones, and on the evidence of the first sweep — 21 of 50 dead —
+  a meaningful share of the newcomers are polling nothing. Run
+  `make validate-seeds` before trusting a quiet crawl.
 
 **Gate 5:** crawler runs a full cycle over the seed list without exceeding rate limits;
 second run emits zero postings (change detection works); match scores are sane against a
@@ -1212,3 +1226,174 @@ The approve form no longer wraps the document panels. Its button and note bind
 to it by `form` id instead, and `Submitting` takes `pending` explicitly because
 `useFormStatus` reads the enclosing form and a detached button has none. Served
 HTML for `/review` now has form nesting depth 1.
+
+### Remoteness was allowed to override the region
+
+The owner's search area is one sentence — **California on-site or remote, the
+rest of the United States remote only, nothing abroad** — and until now no
+single place in the code held it.
+
+`filters.location_matches` was the hard filter that decides whether a `Match`
+row is written at all, and it began `if is_remote(posting): return True`. So
+the word "remote" anywhere in a location bought a posting past the region
+check entirely. Against the twelve crawled postings the one survivor for a US
+profile was **`Canada - Remote (ON, AB, BC, or NS Only)`**; `Remote (India
+only)` and `Remote - EMEA` pass the same way. A remote job the owner is not
+eligible to hold is still a job they cannot hold, so remoteness is the wrong
+thing to short-circuit on.
+
+The other half of the filter compared the posting against `profile.location`
+as a substring, which §1 rules out directly: a search area is the owner's
+input, not a reading of their profile. It also answered the wrong question —
+"is this near where I live" rather than "did I ask to see this" — and made
+moving house silently rewrite the feed.
+
+`locality.reachable` is now the single statement of the area, and both the
+scoring gate (`filters.location_ok`) and the feed (`search.matches`) call it.
+`Settings.search_remote_outside_california` supplies the standing preference
+and `?remote_outside_california=false` turns it off for one call, which is
+what relocating would want. It is a separate setting from `search_us_only`
+because it is separately reversible.
+
+Three findings came out of pointing it at real data rather than fixtures:
+
+- **A bare "Remote" was classified as probably-foreign.** `locality_of` had no
+  case for a location that names a working mode and no place, so "Remote" fell
+  through to `UNPLACED` — the class the corpus says is foreign — and `us_only`
+  dropped it. That is the commonest way a *domestic* board writes exactly the
+  job the owner is looking for. A mode-only string is now `UNKNOWN`, which is
+  what it means: no evidence about where. `UNPLACED` **is now kept too** —
+  see the merge note at the end of this section.
+- **"distributed systems" meant remote work.** `distributed` was in the remote
+  vocabulary and that vocabulary was matched against the *description*, so any
+  posting mentioning distributed systems read as offering remote work — and
+  under the area rule that converts an on-site role in any state into a
+  reachable one. On the twelve crawled postings the old vocabulary called
+  **7 of 12 remote and the new one calls 4**; all three that flipped mention
+  "distributed", and one of them — `Sr. Manager, Field Engineering`,
+  `Northeast - United States` — was kept by the area filter purely on that
+  misreading. A location field is a declaration about the job and prose is
+  not, so the two now have separate vocabularies: the body needs "distributed
+  team", "work from anywhere", or "remote" proper.
+- **There were two definitions of remote.** The feed read the description with
+  an on-site override; the scoring gate read only title and location. Under
+  this rule that disagreement is the difference between a kept job and a
+  dropped one, so `locality.reads_as_remote` is now the only definition and
+  both call it.
+
+On the twelve crawled postings the area keeps **none of them**, and that is the
+right answer rather than a regression: the board is a Palantir sweep with no
+Californian and no US-remote roles on it — every posting is abroad or on-site
+in another state. Worth stating plainly, because "0 kept" and "the filter is
+broken" look identical from the summary line.
+
+Two things this did **not** fix, filed rather than papered over:
+
+- ~~`rescore` leaves a `Match` row behind when a posting newly fails a hard
+  filter, so its own "top 1" still prints the Canadian role it just
+  excluded.~~ Fixed: `score_and_store` withdraws the stale row and `rescore`
+  reports the count, so the live run now reads "0 kept (12 excluded by a hard
+  filter, 1 withdrawn)" above "top 0" rather than above the role it excluded.
+
+  Withdrawn **only when the row holds nothing of the owner's**. `decision` is
+  their swipe and `tailored_resume_id` is a résumé some provider call already
+  paid for; deleting either to tidy up a score would throw away the more
+  valuable half of the row to fix a cosmetic one. Those rows stay, and the
+  read-time filter goes on hiding them —
+  `test_a_decided_match_is_kept_even_when_it_stops_qualifying` holds that line.
+- ~~The US city and non-US city lists in `locality.py` are hand-written, so a
+  posting in a US city on neither list reads as `UNPLACED` and is dropped.~~
+  Measured and closed twice over — the lists were extended, and then
+  `UNPLACED` stopped being dropped at all, which removes the failure mode
+  rather than narrowing it. The lists are still hand-written and still matter
+  for *precision*: an unplaced Californian city is kept, but as a maybe rather
+  than as California.
+
+### Merging with the country fix that landed on main
+
+Two sessions fixed the same filter from different ends, and the merge is worth
+recording because each caught what the other could not see.
+
+**main had the better data.** It ran against a real crawl of all 119 companies
+and found that `location_matches` was a substring test: the owner's profile
+reads `san fransico , ca,usa`, and `ca` is inside `canada`, `costa rica` and
+`vancouver` and inside none of `united states`. Every Canadian role passed as
+Californian while American ones were dropped — the top of the feed was four
+Elastic roles in Canada and a finance manager in Costa Rica. It also found
+`Spain (Remote)`, `United Kingdom (Remote)` and `Republic of Ireland (Remote)`
+sitting in the top three, and two Synthesia roles located simply `Europe`. Its
+`locality.py` gained thirty-odd countries plus continents and blocs, and
+deliberately left out `georgia`, `panama`, `lebanon` and `jordan` because
+those names are American places and rule 1 runs before any state *name* is
+read.
+
+This branch had only the twelve-posting Palantir sweep, so none of that was
+visible here.
+
+**Three things were reconciled rather than picked:**
+
+- **`UNPLACED` is kept.** main's argument — only an explicit foreign signal
+  should exclude, a city no rule recognizes should be ranked down rather than
+  hidden — is right, and its own country work is what makes it right: most of
+  what used to land in `UNPLACED` now lands in `ELSEWHERE`. It also dissolves
+  the 143-missing-cities problem instead of managing it.
+- **The region rule stays, because the owner asked for it.** main read *which
+  part* of the US as a ranking question, which is correct in general and is
+  what `locality.rank` already does. The owner overrode it: on-site outside
+  California is a move, not a commute. `remote_outside_california=False`
+  restores main's reading exactly, and the test that used to assert it now
+  asserts both halves.
+- **A bare `United States` is not "outside California".** main's test caught
+  this: `UNITED_STATES` covers both `Austin, TX` and a bare `United States`,
+  and the region rule was dropping the second. `locality.names_us_region`
+  separates them — a location that names no region is no more evidence than
+  silence.
+
+### The city lists failed closed, and California was the worst of it
+
+Filed as a footnote to the search area and measured immediately after, because
+"a domestic city that is missing fails closed" turned out to describe most of
+California. Of 205 Californian cities, **143 did not classify** as Californian
+from a bare name — Santa Ana, Stockton, Chula Vista, Palm Springs, Beverly
+Hills among them. Under the area rule that is precisely an on-site Californian
+job, the one category the owner most wants, dropped in silence.
+
+Three distinct failures, which is why counting them separately mattered:
+
+- **Simply absent** — `Santa Ana` → `UNPLACED` → dropped.
+- **Claimed by a substring of another US city** — `Manhattan Beach` matched
+  `manhattan` and `La Mesa` matched `mesa`, so both read as `UNITED_STATES`.
+  Right country, wrong state, and on-site outside California is dropped.
+- **Claimed by a foreign city** — `Dublin` → `ELSEWHERE`.
+
+The first two are now fixed: 135 Californian and 37 other US city names added,
+and 177 of 178 unambiguous Californian cities place correctly (Menifee was the
+one that got away in the first pass and is in too).
+
+The third is deliberately *not* fixed. `Dublin`, `Ontario`, `Orange`,
+`Fairfield`, `Norwalk`, `Westminster`, `Brentwood`, `Carson`, `Davis`,
+`Martinez` and a dozen more are real Californian cities whose bare name reads
+as somewhere else at least as often. Adding them trades a missed job for a
+false positive, and here the false positive is worse: it puts a Dublin,
+Ireland role in a feed whose on-site tier is supposed to mean California. Every
+one of them classifies correctly the moment a board writes ", CA", which is how
+the smaller ones are almost always written. `_AMBIGUOUS_CALIFORNIA_CITIES`
+records the decision so the next reader knows it was one.
+
+Two things worth keeping visible:
+
+- **The non-California half matters only because of remote.** An on-site job
+  in Bentonville is dropped by the area rule regardless. But `UNPLACED` is
+  dropped *even when remote*, so a missing US city name costs exactly the
+  remote roles the owner would take. 42 of 88 checked names were missing.
+- **A de-duplication pass silently moved `richmond` and `santa rosa` out of
+  California.** A name in both a Californian list and the US list is
+  unreachable in the second, since California is checked first — so removing
+  "the duplicate" removed the live one and both cities became merely American.
+  `test_no_city_is_claimed_by_two_lists` now fails on that, which is how it
+  was caught.
+
+This does not make the approach right. Hand-written lists are still the reason
+a city can be missing at all, and the honest fix is a real place-name dataset
+rather than a longer tuple. What changed is the size of the hole and whether
+a regression in it is visible.

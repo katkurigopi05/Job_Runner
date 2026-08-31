@@ -199,6 +199,16 @@ def _bench_profile() -> Profile:
     and the comparison measures nothing. Filters are evaluated separately —
     `adj-junior-backend` is in the labeled set precisely so a seniority filter
     has something to be right about.
+
+    `location` no longer does that work: the search-area filter reads the
+    *posting*, not the profile (§1). What keeps the location rule out of the
+    way now is that all 32 labeled postings say "Remote", which names a
+    working mode and no place, so each classifies as `UNKNOWN` and is kept —
+    32/32, measured. That holds only because a mode-only string reads as
+    `UNKNOWN`; while it read as `UNPLACED` the area filter would have dropped
+    the entire labeled set. The field is left as it is because the rest of
+    `apply_filters` still takes a profile, and a labeled set that starts
+    naming cities will need this re-checked rather than assumed.
     """
     return Profile(
         id=uuid.uuid5(uuid.NAMESPACE_DNS, "benchmark-profile"),

@@ -72,6 +72,10 @@ class ScoredPosting:
     #: The score broken into dimensions — packages/matching/rubric.py. An
     #: explanation of the ranking, never an input to it.
     rubric: dict[str, object] = field(default_factory=dict)
+    #: A stale `Match` row was removed because this posting now fails a hard
+    #: filter. Only ever set for an excluded posting, and only when the row
+    #: carried nothing of the owner's — see `score_and_store`.
+    withdrawn: bool = False
 
     @property
     def excluded(self) -> bool:
@@ -247,6 +251,22 @@ async def score_and_store(
         scored.append(result)
 
         if result.excluded and not store_excluded:
+            # A posting that *newly* fails a hard filter leaves its old Match
+            # row behind, and re-scoring silently kept it: rescore reported
+            # "0 kept" while its own top-1 line still printed the posting it
+            # had just excluded. The feed re-filters on read so nothing
+            # user-facing showed it, but a summary that contradicts itself is
+            # how a filter change gets believed to have not worked.
+            #
+            # Withdrawn only when the row holds nothing of the owner's.
+            # `decision` is their swipe and `tailored_resume_id` is a résumé
+            # some provider call already paid for; deleting either to tidy up
+            # a score would destroy the more valuable half of the row. Those
+            # stay, and the read-time filter goes on hiding them.
+            stale = existing.get(result.posting_id)
+            if stale is not None and stale.decision is None and stale.tailored_resume_id is None:
+                await session.delete(stale)
+                result.withdrawn = True
             continue
 
         match = existing.get(result.posting_id)
@@ -270,6 +290,7 @@ async def score_and_store(
         profile_id=str(profile.id),
         total=len(postings),
         excluded=sum(1 for s in scored if s.excluded),
+        withdrawn=sum(1 for s in scored if s.withdrawn),
         embedder=active.name,
     )
     return scored

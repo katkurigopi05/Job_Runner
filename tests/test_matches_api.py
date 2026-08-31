@@ -284,11 +284,15 @@ async def spread(client: AsyncClient, worker_session: AsyncSession, complete_can
     The Texan role is the best match and the Bay Area one the worst, which is
     the only arrangement that can tell "California first" apart from "the
     ordering happened to already be right".
+
+    The Texan role is *remote* because the search area only reaches on-site
+    into California; on-site in Austin is filtered out before ranking, and
+    this fixture is about the ordering rather than the cut.
     """
     profile_id = uuid.UUID(complete_candidate["profile_id"])
 
     rows = [
-        ("Austin Engineer", "Austin, TX", 0.95),
+        ("Austin Engineer", "Remote - Austin, TX", 0.95),
         ("Bangalore Engineer", "Bengaluru, India", 0.93),
         ("LA Engineer", "Los Angeles, CA", 0.60),
         ("SF Engineer", "San Francisco, CA", 0.40),
@@ -353,12 +357,56 @@ async def test_the_filter_can_be_turned_off_for_one_call(client: AsyncClient, sp
     assert "Bangalore Engineer" in await _feed(client, spread, us_only="false")
 
 
+# --------------------------------------------------------------------------
+# On-site is California only
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def onsite(client: AsyncClient, worker_session: AsyncSession, complete_candidate) -> str:
+    """Two on-site roles and one remote, all domestic."""
+    profile_id = uuid.UUID(complete_candidate["profile_id"])
+    rows = [
+        ("SF Desk", "San Francisco, CA", 0.50),
+        ("Chicago Desk", "Chicago, IL", 0.95),
+        ("Anywhere US", "Remote - US", 0.60),
+    ]
+    for index, (title, location, score) in enumerate(rows):
+        posting = Posting(
+            url=f"https://boards.greenhouse.io/onsite/jobs/{index}",
+            title=title,
+            location=location,
+            description_raw="Python.",
+        )
+        worker_session.add(posting)
+        await worker_session.flush()
+        worker_session.add(
+            Match(profile_id=profile_id, posting_id=posting.id, score=score, reasons_json={})
+        )
+    await worker_session.commit()
+    return str(profile_id)
+
+
+async def test_an_onsite_role_outside_california_is_dropped(client: AsyncClient, onsite) -> None:
+    """A job in another state is a move, not a commute — and the Chicago role
+    is the best-scoring of the three, so nothing but the area rule drops it."""
+    feed = await _feed(client, onsite)
+    assert "Chicago Desk" not in feed
+    assert feed == ["SF Desk", "Anywhere US"]
+
+
+async def test_the_onsite_rule_can_be_turned_off_for_one_call(client: AsyncClient, onsite) -> None:
+    """What someone willing to relocate would ask for."""
+    assert "Chicago Desk" in await _feed(client, onsite, remote_outside_california="false")
+
+
 async def test_a_posting_with_no_location_is_kept_but_ranks_last(
     client: AsyncClient, worker_session: AsyncSession, complete_candidate
 ) -> None:
     """Silence is not evidence of a foreign office."""
     profile_id = uuid.UUID(complete_candidate["profile_id"])
-    for index, (title, location) in enumerate([("Placed", "Austin, TX"), ("Unsaid", None)]):
+    rows = [("Placed", "Remote - Austin, TX"), ("Unsaid", None)]
+    for index, (title, location) in enumerate(rows):
         posting = Posting(
             url=f"https://boards.greenhouse.io/blank/jobs/{index}", title=title, location=location
         )

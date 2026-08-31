@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from packages.core.models import Candidate, Posting, Profile, Resume, User
+from packages.core.models import Candidate, Match, Posting, Profile, Resume, User
 from packages.matching.rescore import rescore
 
 pytestmark = pytest.mark.asyncio
@@ -176,3 +176,72 @@ async def test_re_embed_recomputes_a_vector_that_already_exists(db_session) -> N
 
     assert report.embedded == 1, "the existing vector should have been recomputed"
     assert list(posting.description_embedding) != original
+
+
+# --------------------------------------------------------------------------
+# A posting that newly fails a hard filter
+# --------------------------------------------------------------------------
+
+
+async def test_a_match_is_withdrawn_when_the_posting_stops_qualifying(db_session) -> None:
+    """The summary used to contradict itself.
+
+    A posting scored before a filter change keeps its Match row, and
+    re-scoring only ever skipped excluded postings — so rescore reported
+    "0 kept" while its own top-1 line printed the posting it had just
+    excluded. The feed re-filters on read, so nothing user-facing showed it;
+    a summary that argues with itself is still how a working filter gets
+    believed broken.
+    """
+    profile, _ = await _owner(db_session, resume_lines=["Backend engineer."])
+    posting = await _posting(
+        db_session, title="Backend Engineer", body="Python.", location="San Francisco, CA"
+    )
+
+    first = await rescore(db_session, label=profile.label)
+    assert first.profiles[0].created == 1
+    assert await db_session.get(Match, (await _match_id(db_session, profile, posting))) is not None
+
+    # The same posting, now outside the search area.
+    posting.location = "Berlin, Germany"
+    await db_session.flush()
+
+    second = await rescore(db_session, label=profile.label)
+    entry = second.profiles[0]
+    assert entry.excluded == 1
+    assert entry.withdrawn == 1
+    assert await _match_id(db_session, profile, posting) is None
+    assert entry.after_top == [], "the excluded posting must not still head the feed"
+
+
+async def test_a_decided_match_is_kept_even_when_it_stops_qualifying(db_session) -> None:
+    """`decision` is the owner's swipe, not a score. Tidying a stale row must
+    not delete the more valuable half of it — the read-time filter goes on
+    hiding the posting either way."""
+    profile, _ = await _owner(db_session, resume_lines=["Backend engineer."])
+    posting = await _posting(
+        db_session, title="Backend Engineer", body="Python.", location="San Francisco, CA"
+    )
+    await rescore(db_session, label=profile.label)
+
+    match_id = await _match_id(db_session, profile, posting)
+    match = await db_session.get(Match, match_id)
+    assert match is not None
+    match.decision = "interested"
+    posting.location = "Berlin, Germany"
+    await db_session.flush()
+
+    entry = (await rescore(db_session, label=profile.label)).profiles[0]
+    assert entry.excluded == 1
+    assert entry.withdrawn == 0
+    assert await _match_id(db_session, profile, posting) is not None
+
+
+async def _match_id(session, profile, posting):
+    from sqlalchemy import select
+
+    return (
+        await session.scalars(
+            select(Match.id).where(Match.profile_id == profile.id, Match.posting_id == posting.id)
+        )
+    ).one_or_none()

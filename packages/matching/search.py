@@ -25,6 +25,9 @@ from packages.matching.locality import (
     is_us_state,
     locality_of,
     location_aliases,
+    names_us_region,
+    onsite_ok,
+    reads_as_remote,
 )
 from packages.matching.roles import canonical
 
@@ -39,9 +42,6 @@ _SENIORITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("staff", re.compile(r"\b(staff|lead|architect)\b", re.I)),
     ("senior", re.compile(r"\b(senior|sr\.?)\b", re.I)),
 ]
-
-_REMOTE_RE = re.compile(r"\b(remote|work from home|wfh|distributed|anywhere)\b", re.I)
-_ONSITE_RE = re.compile(r"\b(on[- ]?site|in[- ]office|hybrid)\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -83,6 +83,14 @@ class SearchFilters:
     #: per-search whim, so `Settings.search_us_only` supplies the default —
     #: but it stays a *filter* (§1), never a term in the score.
     us_only: bool = False
+    #: On-site is wanted in California and nowhere else; every other state has
+    #: to offer remote. Rides with `us_only` — it is the same standing
+    #: preference at a finer grain, and `Settings.search_remote_outside_california`
+    #: supplies the default.
+    #:
+    #: Set False to see on-site roles nationwide, which is what someone willing
+    #: to relocate would want.
+    remote_outside_california: bool = True
     #: A posting with no location at all is kept by default: silence is not
     #: evidence of a foreign office, and dropping it loses real US jobs. An
     #: unrecognized place *name* is dropped regardless — that is where foreign
@@ -111,6 +119,7 @@ class SearchFilters:
         if self.us_only:
             parts.append(
                 "United States only, California first"
+                + (", remote outside California" if self.remote_outside_california else "")
                 + ("" if self.allow_unknown_location else ", located postings only")
             )
         return parts
@@ -185,13 +194,16 @@ def _location_mentions(location: str, wanted: str) -> bool:
 
 
 def is_remote(posting: Posting) -> bool:
-    haystack = f"{posting.title or ''} {posting.location or ''}"
-    if _REMOTE_RE.search(haystack):
-        return True
-    # A description mentioning remote is weaker evidence than a location that
-    # says so, but an explicit on-site marker in the same text overrides it.
-    body = posting.description_raw or ""
-    return bool(_REMOTE_RE.search(body)) and not _ONSITE_RE.search(haystack)
+    """Whether this posting offers remote work. See `locality.reads_as_remote`.
+
+    The definition moved to `locality.py` because `filters.py` had a second,
+    weaker copy that read only the title and location. Under the search-area
+    rule that disagreement decides whether a posting is kept, so the two
+    cannot be allowed to drift.
+    """
+    return reads_as_remote(
+        title=posting.title, location=posting.location, description=posting.description_raw
+    )
 
 
 def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
@@ -240,6 +252,20 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
                 reasons.append("no location given")
         elif not is_domestic(where):
             reasons.append(f"location {posting.location!r} is outside the United States")
+        elif (
+            filters.remote_outside_california
+            and not onsite_ok(where)
+            # A bare "United States" names no region and is no more evidence
+            # than silence; `Austin, TX` names a place the owner will not
+            # commute to. Only the second is on-site outside California.
+            and names_us_region(posting.location)
+            and not is_remote(posting)
+        ):
+            # Domestic, but on-site somewhere the owner will not move to.
+            # Rides with `us_only` because it is the same standing preference
+            # read one level finer, and separating them would let the feed
+            # offer a Chicago desk it already knows is unreachable.
+            reasons.append(f"location {posting.location!r} is on-site outside California")
 
     if filters.remote is not None and is_remote(posting) is not filters.remote:
         reasons.append("remote only" if filters.remote else "on-site only")

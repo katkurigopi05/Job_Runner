@@ -36,6 +36,10 @@ class ProfileRescore:
     scored: int = 0
     #: Failed a hard filter, so scored but deliberately not stored.
     excluded: int = 0
+    #: Matches deleted because the posting now fails a hard filter. A subset
+    #: of `excluded`, and the number that explains a feed shrinking without
+    #: the crawler having found anything.
+    withdrawn: int = 0
     #: Matches whose score moved by more than `MOVED_THRESHOLD`. The count that
     #: answers "did replacing the résumé actually do anything".
     moved: int = 0
@@ -59,7 +63,9 @@ class RescoreReport:
             kept = entry.scored - entry.excluded
             lines.append(
                 f"  {entry.label}: {entry.scored} scored, {kept} kept "
-                f"({entry.excluded} excluded by a hard filter), "
+                f"({entry.excluded} excluded by a hard filter"
+                + (f", {entry.withdrawn} withdrawn" if entry.withdrawn else "")
+                + "), "
                 f"{entry.created} new, {entry.moved} moved"
             )
         return "\n".join(lines)
@@ -135,6 +141,7 @@ async def rescore(
             # created Match reports 9,069 new rows on a run that wrote none.
             if result.excluded:
                 entry.excluded += 1
+                entry.withdrawn += result.withdrawn
                 continue
             previous = before.get(result.posting_id)
             if previous is None:
@@ -148,6 +155,7 @@ async def rescore(
             "profile_rescored",
             profile=profile.label,
             scored=entry.scored,
+            withdrawn=entry.withdrawn,
             created=entry.created,
             moved=entry.moved,
         )
