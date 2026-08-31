@@ -49,6 +49,7 @@ __all__ = [
     "LabeledPosting",
     "LabeledSet",
     "Provenance",
+    "dump_labeled_set",
     "load_labeled_set",
 ]
 
@@ -190,6 +191,38 @@ def _require(raw: dict[str, Any], key: str, where: str) -> Any:
     if key not in raw:
         raise ValueError(f"{where}: missing required field {key!r}")
     return raw[key]
+
+
+def dump_labeled_set(labeled: LabeledSet, path: str | Path) -> Path:
+    """Write a labeled set as YAML that `load_labeled_set` reads back.
+
+    A writer next to the reader, so the two cannot drift into disagreeing
+    about the schema — the round trip is asserted in the tests.
+    """
+    location = Path(path)
+    payload = {
+        "name": labeled.name,
+        "version": labeled.version,
+        "profile_text": labeled.profile_text,
+        "description": labeled.description,
+        "postings": [
+            {
+                "key": item.key,
+                "title": item.title,
+                "description": item.description,
+                "relevance": item.relevance,
+                "provenance": item.provenance.value,
+                "company": item.company,
+                "location": item.location,
+                "note": item.note,
+                "tags": list(item.tags),
+            }
+            for item in labeled.items
+        ],
+    }
+    location.parent.mkdir(parents=True, exist_ok=True)
+    location.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True))
+    return location
 
 
 def load_labeled_set(path: str | Path) -> LabeledSet:
