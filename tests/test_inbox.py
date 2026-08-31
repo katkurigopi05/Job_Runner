@@ -647,18 +647,80 @@ Sent via Greenhouse. Unsubscribe: https://my.greenhouse.io/notifications/x
 )
 
 
-def test_the_rules_abstain_on_a_realistically_worded_rejection() -> None:
-    """One word, and the pattern misses.
+def test_the_rules_now_catch_a_realistically_worded_rejection() -> None:
+    """This used to assert the opposite, and the reason is worth keeping.
 
-    The fixtures say "with other candidates" and the pattern matches. Recruiters
-    write "with another candidate", and it does not. Before the fallback chain
-    this abstention became `noise`, so the application's status never moved.
+    The fixtures say "with other candidates" and the pattern matched.
+    Recruiters write "with another candidate", and it did not — one word, and
+    the rules abstained on the commonest rejection there is. Measured across
+    fourteen phrasings recruiters actually use, the old pattern caught two.
+
+    That mattered most where there is no model to fall through to. Ollama is
+    not always running, and the chain's lower tiers are what an inbox poll
+    actually has: Bayes reads this message as `interview` at a margin of
+    0.073, far below the threshold to adopt, so without the rules it resolved
+    to `noise` and the application sat in the tracker looking live.
     """
     from packages.inbox.classify import RuleClassifier
 
     verdict = RuleClassifier().classify(*REALISTIC_REJECTION)
 
-    assert verdict.abstained
+    assert not verdict.abstained
+    assert verdict.classification is Classification.REJECTION
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "We've decided to move forward with another candidate.",
+        "We have chosen to pursue other applicants for this role.",
+        "We've decided to go in a different direction.",
+        "After careful consideration, we have decided not to proceed with your application.",
+        "We won't be progressing your application at this time.",
+        "We've selected another candidate whose experience aligns more closely.",
+        "We are unable to move forward with your candidacy.",
+        "Your application was not successful on this occasion.",
+        "We will not be advancing your application.",
+        "The role has been filled.",
+        "We decided to proceed with a different candidate.",
+        "We're moving forward with candidates whose background is a closer match.",
+    ],
+)
+def test_the_rules_read_the_phrasings_recruiters_actually_use(body: str) -> None:
+    """Twelve rejections, none phrased the way the fixture corpus phrases them.
+
+    Gate 6's fixtures were written beside the patterns that read them, so they
+    agree with each other and prove less than the gate asks. These were
+    written against the pattern instead.
+    """
+    from packages.inbox.classify import RuleClassifier
+
+    verdict = RuleClassifier().classify("Re: your application", body)
+
+    assert verdict.classification is Classification.REJECTION, body
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "We would like to invite you to a technical interview next week.",
+        "We are pleased to offer you the position of Senior Backend Engineer.",
+        "Please schedule a time with the hiring manager to move forward with your application.",
+        "We are moving forward with your candidacy and would like to set up a call.",
+        "Thanks for applying! We are reviewing applications and will be in touch.",
+    ],
+)
+def test_widening_the_rejection_rule_did_not_swallow_the_good_news(body: str) -> None:
+    """Rejection is matched first, so a loose pattern here mis-files everything.
+
+    "Moving forward with your application" is an interview and has to stay
+    one; only "forward with another/other/a different" reads as a refusal.
+    """
+    from packages.inbox.classify import RuleClassifier
+
+    verdict = RuleClassifier().classify("Re: your application", body)
+
+    assert verdict.classification is not Classification.REJECTION, body
 
 
 async def test_the_model_tier_catches_what_the_rules_and_bayes_miss() -> None:
@@ -720,7 +782,13 @@ async def test_the_rules_still_win_when_they_are_certain() -> None:
 
 
 async def test_a_model_outage_does_not_mis_file_a_message() -> None:
-    """An inbox poll must survive Ollama being down."""
+    """An inbox poll must survive Ollama being down.
+
+    It used to survive by filing this as `noise`, which is survival in the
+    sense that nothing crashed: the rejection landed nowhere and the
+    application stayed open. Now the rules read it before any provider is
+    consulted, so the outage costs nothing at all.
+    """
     from packages.inbox.classify import classify_message
 
     class Down:
@@ -729,4 +797,4 @@ async def test_a_model_outage_does_not_mis_file_a_message() -> None:
 
     verdict = await classify_message(*REALISTIC_REJECTION, provider=Down())
 
-    assert verdict.classification is Classification.NOISE
+    assert verdict.classification is Classification.REJECTION

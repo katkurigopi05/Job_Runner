@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from packages.core.enums import ApplicationStatus, EmailMode, FailureReason
+from packages.core.enums import ApplicationStatus, EmailMode, FailureReason, SeniorityLevel
 
 
 class ErrorDetail(BaseModel):
@@ -63,6 +63,11 @@ class ProfileCreate(BaseModel):
     answers: dict[str, Any] = Field(default_factory=dict)
     min_match_score: float = Field(default=0.75, ge=0.0, le=1.0)
     auto_submit: bool = False
+    #: The rung to apply at — one of `filters.SENIORITY_LEVELS`. None means
+    #: "do not filter on level", which is the shipped default. Stated by the
+    #: owner rather than read off the résumé: §1 keeps a search filter separate
+    #: from the profile's description of the applicant.
+    target_seniority: SeniorityLevel | None = None
 
 
 class ProfileUpdate(BaseModel):
@@ -84,6 +89,7 @@ class ProfileUpdate(BaseModel):
     answers: dict[str, Any] | None = None
     min_match_score: float | None = Field(default=None, ge=0.0, le=1.0)
     auto_submit: bool | None = None
+    target_seniority: SeniorityLevel | None = None
 
 
 class ProfileOut(BaseModel):
@@ -102,6 +108,7 @@ class ProfileOut(BaseModel):
     salary_expectation: str | None
     min_match_score: float
     auto_submit: bool
+    target_seniority: str | None
     created_at: datetime
 
 

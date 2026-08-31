@@ -224,7 +224,18 @@ def apply_filters(
     target_seniority: str | None = None,
     require_open: bool = True,
 ) -> FilterResult:
-    """Run every hard filter, collecting all reasons rather than the first."""
+    """Run every hard filter, collecting all reasons rather than the first.
+
+    `target_seniority` falls back to the profile's own rung. It lives here
+    rather than in `score_and_store` so that every caller of the hard filters
+    gets it — until this existed no production path set a target at all, so
+    `seniority_ok` returned True in every real run and the rung filter was
+    reachable only from the benchmark. NULL still means "do not filter on
+    level".
+    """
+    if target_seniority is None:
+        target_seniority = profile.target_seniority
+
     reasons: list[str] = []
 
     if require_open and posting.closed_at is not None:

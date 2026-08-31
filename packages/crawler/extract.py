@@ -485,6 +485,15 @@ class CompanySeed(BaseModel):
     #: Per-company override. Never goes below the global floor.
     poll_interval_s: int = 3600
     tags: list[str] = Field(default_factory=list)
+    #: ISO date of the last `make validate-seeds --write`, or None for never.
+    #:
+    #: The registry grew from 50 to 119 by import, and the only 404 sweep ran
+    #: against the original 50. Without this the two are indistinguishable in
+    #: the file, and a board that yields nothing because it is dead reads
+    #: exactly like one that yields nothing because there is nothing new.
+    checked: str | None = None
+    #: What that check found — a `validate.SeedState` value.
+    state: str | None = None
 
 
 def default_seed_path() -> Path:
