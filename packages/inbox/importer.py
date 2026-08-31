@@ -34,6 +34,7 @@ from __future__ import annotations
 import mailbox
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -94,7 +95,9 @@ def _sources(path: Path) -> list[Path]:
     return [path]
 
 
-def build_worksheet(messages: list[InboundEmail], guesses: list[Classification | None]) -> dict:
+def build_worksheet(
+    messages: list[InboundEmail], guesses: list[Classification | None]
+) -> dict[str, Any]:
     """A worksheet the owner fills in. `label` starts empty on every row."""
     return {
         "note": (
@@ -150,7 +153,7 @@ class ScoreReport:
         return "\n".join(lines)
 
 
-def score_worksheet(worksheet: dict, classify: object) -> ScoreReport:
+def score_worksheet(worksheet: dict[str, Any], classify: object) -> ScoreReport:
     """Re-classify every labeled row and compare. `classify(subject, body)`."""
     report = ScoreReport()
     for row in worksheet.get("messages") or []:
@@ -168,13 +171,13 @@ def score_worksheet(worksheet: dict, classify: object) -> ScoreReport:
     return report
 
 
-def write_worksheet(worksheet: dict, path: Path) -> Path:
+def write_worksheet(worksheet: dict[str, Any], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(worksheet, sort_keys=False, allow_unicode=True))
     return path
 
 
-def read_worksheet(path: Path) -> dict:
+def read_worksheet(path: Path) -> dict[str, Any]:
     raw = yaml.safe_load(Path(path).read_text())
     if not isinstance(raw, dict) or "messages" not in raw:
         raise ValueError(f"{path}: expected a mapping with a `messages:` list")
