@@ -47,6 +47,7 @@ from packages.core.storage import get_storage, receipt_key
 from packages.github.select import relevant_for_posting
 from packages.llm import router as llm_router
 from packages.matching.embed import get_embedder
+from packages.matching.pick_resume import choose_base_resume
 from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
 
@@ -339,6 +340,51 @@ def _answered_by(provider: Any | None) -> str | None:
     return getattr(provider, "answered_by", None) or getattr(provider, "name", None)
 
 
+async def _base_resume_id(
+    session: AsyncSession,
+    application: Application,
+    profile: Profile,
+    posting: Any,
+) -> Any | None:
+    """Which of the owner's résumés this application starts from.
+
+    Every path used to read `profile.base_resume_id` and nothing else, so a
+    candidate with a backend résumé, a data one and an ML one had two of them
+    unreachable. Nothing failed and nothing was logged — the tailorer did its
+    whole job on the wrong document, and the employer got a competent ML
+    résumé for a backend role.
+
+    **The choice is recorded and then reused**, which is the half that is easy
+    to leave out. Approving a parked application re-enters the pipeline from
+    the top, so re-deciding here would let an upload between the two runs
+    silently swap the document the owner reviewed — the same defect as
+    `resume_pinned`, one screen earlier.
+    """
+    recorded = (application.review_json or {}).get("base_resume")
+    if isinstance(recorded, dict) and recorded.get("resume_id"):
+        return uuid.UUID(str(recorded["resume_id"]))
+
+    # `posting` is a parsed page here, not a stored row — the parameter is
+    # `Any` for that reason — so the text is assembled where that is known
+    # rather than inside the selector.
+    haystack = f"{getattr(posting, 'title', '') or ''}\n{posting.description_raw or ''}"
+    choice = await choose_base_resume(session, profile, haystack)
+    if choice is None:
+        return profile.base_resume_id
+
+    application.review_json = {
+        **(application.review_json or {}),
+        "base_resume": choice.as_dict(),
+    }
+    log.info(
+        "base_resume_selected",
+        version=choice.version,
+        reason=choice.reason,
+        considered=len(choice.considered),
+    )
+    return choice.resume_id
+
+
 async def _tailor(
     session: AsyncSession,
     application: Application,
@@ -397,7 +443,8 @@ async def _tailor(
         return stored
 
     posting_text = posting.description_raw or ""
-    if profile.base_resume_id is None or not posting_text.strip():
+    base_id = await _base_resume_id(session, application, profile, posting)
+    if base_id is None or not posting_text.strip():
         return None
 
     # A batch run may already have tailored this posting overnight
@@ -417,7 +464,7 @@ async def _tailor(
             "answered_by": prepared_row.tailored_by if prepared_row else None,
         }
 
-    resume = await session.get(Resume, profile.base_resume_id)
+    resume = await session.get(Resume, base_id)
     if resume is None or not resume.parsed_json:
         return None
 
@@ -601,10 +648,13 @@ async def _cover_letter(
         return {**reused, "reused": True}
 
     posting_text = posting.description_raw or ""
-    if profile.base_resume_id is None or not posting_text.strip():
+    base_id = await _base_resume_id(session, application, profile, posting)
+    if base_id is None or not posting_text.strip():
         return None
 
-    resume = await session.get(Resume, profile.base_resume_id)
+    # The same document the résumé was tailored from. A letter written off a
+    # different résumé than the one attached would contradict it.
+    resume = await session.get(Resume, base_id)
     if resume is None or not resume.parsed_json:
         return None
 

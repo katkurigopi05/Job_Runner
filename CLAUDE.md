@@ -1510,3 +1510,48 @@ minimum a classification decision needs.
 Neither of these produces a number on its own. They turn "this gate needs data
 that does not exist" into two commands and an afternoon.
 
+### Every path read one résumé, and two of three were unreachable
+
+`docs/BACKLOG.md` P2, and the smallest real defect in the register. Every path
+read `profile.base_resume_id`: upload a backend résumé, a data one and an ML
+one, and the application always starts from whichever the profile happens to
+point at.
+
+Silent, which is what makes it worth recording rather than just fixing.
+Nothing raises, nothing is logged, and the tailorer does its whole job — the
+guard runs, the projects are selected, the diff renders. It rewrites the wrong
+document well, and the employer receives a competent ML résumé for a backend
+role. The only way to notice is to remember which résumé the profile points
+at.
+
+`packages/matching/pick_resume.py` scores each of the owner's base résumés
+against the posting and takes the closest. Four things are load-bearing:
+
+- **Tailored rows are excluded.** They live in the same table, and a résumé
+  already bent toward another job is the one selection that would be actively
+  harmful. `tailored_for_posting_id` is the discriminator — `publish.py` sets
+  it on every tailored row including the uncacheable ones where
+  `tailored_key` is NULL, `revise.py` carries it across an owner's edit, and
+  it is a foreign key, so a tailored résumé always names a posting that
+  exists and can never read as an upload by accident.
+- **A win inside the noise is not a win.** Two résumés for adjacent roles
+  score within thousandths of each other on most postings, and letting that
+  decide would change the document an employer receives between two runs of
+  the same posting. Below `MIN_MARGIN` the profile's own `base_resume_id`
+  wins — the owner's standing choice is the tie-break, not the float.
+- **The choice is recorded and then reused.** Approving a parked application
+  re-enters the pipeline from the top, so re-deciding would let an upload
+  between the two runs swap the document the owner reviewed. Same defect as
+  `resume_pinned`, one screen earlier.
+- **It takes the posting's text, not a `Posting`.** The apply pipeline hands
+  `_tailor` a parsed page rather than a stored row — the parameter is `Any`
+  for that reason — so depending on the model would have failed on the one
+  caller that matters. Two existing tests caught it.
+
+`/review` names the résumé it started from, its reason, and the runners-up
+with their scores. A selection with no alternatives shown is unauditable, and
+this decides which document an employer reads first.
+
+The cover letter is written from the same document. A letter drafted off a
+different résumé than the one attached would contradict it.
+

@@ -187,6 +187,25 @@ export function ReviewCard({
         )}
       </form>
 
+      {review.base_resume ? (
+          <div className="border-b border-rule px-6 py-3">
+            <p className="font-mono text-xs uppercase tracking-widest text-ink-soft">
+              Started from
+            </p>
+            <p className="mt-1 text-sm">
+              Résumé v{review.base_resume.version}
+              <span className="text-ink-soft"> — {review.base_resume.reason}</span>
+            </p>
+            {review.base_resume.considered && review.base_resume.considered.length > 1 ? (
+              <p className="mt-1 font-mono text-xs text-ink-soft">
+                {review.base_resume.considered
+                  .map((c) => `v${c.version} ${c.score.toFixed(3)}`)
+                  .join("  ·  ")}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
       {review.resume_diff ? (
           <details className="border-b border-rule px-6 py-4" open>
             <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">

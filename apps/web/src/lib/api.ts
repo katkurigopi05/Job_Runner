@@ -192,6 +192,14 @@ export interface CoverLetter {
   reused?: boolean;
 }
 
+export interface BaseResumeChoice {
+  resume_id: string;
+  version: number;
+  score: number;
+  reason: string;
+  considered?: { version: number; score: number }[];
+}
+
 export interface ReviewRecord {
   fill_rate?: number;
   filled?: FilledField[];
@@ -199,6 +207,8 @@ export interface ReviewRecord {
   unanswered?: UnansweredQuestion[];
   screenshot_ref?: string | null;
   resume_diff?: ResumeDiff | null;
+  /** Which of the owner's résumés this application tailored from, and why. */
+  base_resume?: BaseResumeChoice | null;
   /** Present once the owner has asked for a local-vs-cloud comparison. */
   tailoring_comparison?: TailoringCandidate[] | null;
   /** Null when the form never asked for a letter, which most do not. */
