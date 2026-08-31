@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from packages.matching import locality as _locality
 from packages.matching.locality import (
     Locality,
     is_domestic,
@@ -314,3 +315,105 @@ def test_abroad_is_never_reachable(remote: bool) -> None:
 def test_a_posting_naming_no_place_is_kept(remote: bool) -> None:
     """Silence is not evidence of a foreign office."""
     assert reachable(Locality.UNKNOWN, remote=remote)
+
+
+# --------------------------------------------------------------------------
+# The hand-written city lists
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "city",
+    [
+        "Santa Ana",
+        "Stockton",
+        "Chula Vista",
+        "Modesto",
+        "Oxnard",
+        "Palmdale",
+        "Salinas",
+        "Escondido",
+        "Visalia",
+        "Fullerton",
+        "Thousand Oaks",
+        "Simi Valley",
+        "Victorville",
+        "Vallejo",
+        "Temecula",
+        "Downey",
+        "Inglewood",
+        "El Cajon",
+        "Compton",
+        "Redding",
+        "Chico",
+        "Newport Beach",
+        "Alhambra",
+        "Napa",
+        "Encinitas",
+        "Petaluma",
+        "Palm Springs",
+        "Poway",
+        "Los Gatos",
+        "Beverly Hills",
+        "Manhattan Beach",
+        "La Mesa",
+        "Oceanside",
+        "Menifee",
+        "Santa Rosa",
+    ],
+)
+def test_a_bare_california_city_places_in_california(city: str) -> None:
+    """The area rule only reaches on-site into California, so a Californian
+    city that does not classify is an on-site job silently dropped — the
+    costliest direction of error for this owner's search."""
+    assert locality_of(city) in {Locality.CALIFORNIA, Locality.BAY_AREA}
+
+
+@pytest.mark.parametrize(
+    "city", ["Frisco", "Bentonville", "Cary", "Greensboro", "Kirkland", "Tysons", "Littleton"]
+)
+def test_a_bare_us_city_places_in_the_united_states(city: str) -> None:
+    """`UNPLACED` is dropped even when remote, so a missing US city costs a
+    remote job the owner would take."""
+    assert locality_of(city) is Locality.UNITED_STATES
+
+
+@pytest.mark.parametrize(
+    ("location", "expected"),
+    [
+        ("Manhattan, NY", Locality.UNITED_STATES),
+        ("Mesa, AZ", Locality.UNITED_STATES),
+        ("Pasadena, TX", Locality.UNITED_STATES),
+        ("Glendale, AZ", Locality.UNITED_STATES),
+        ("Riverside, IL", Locality.UNITED_STATES),
+        ("Dublin, Ireland", Locality.ELSEWHERE),
+        ("Ontario, Canada", Locality.ELSEWHERE),
+    ],
+)
+def test_widening_the_city_lists_did_not_claim_other_places(
+    location: str, expected: Locality
+) -> None:
+    """ "Manhattan Beach" and "La Mesa" have to beat the bare US-city rule
+    without dragging Manhattan or Mesa into California with them."""
+    assert locality_of(location) is expected
+
+
+@pytest.mark.parametrize("city", ["Dublin", "Ontario", "Orange", "Fairfield", "Brentwood"])
+def test_an_ambiguous_name_needs_the_state_code(city: str) -> None:
+    """Deliberately absent from the California list: the bare word names
+    somewhere else at least as often, and a false positive puts an out-of-state
+    or foreign role in a feed whose on-site tier means California. Writing
+    ", CA" resolves every one of them."""
+    assert locality_of(city) not in {Locality.CALIFORNIA, Locality.BAY_AREA}
+    assert locality_of(f"{city}, CA") is Locality.CALIFORNIA
+
+
+def test_no_city_is_claimed_by_two_lists() -> None:
+    """A name in both a California list and the US list is unreachable in the
+    second, because California is checked first — so it reads as a rule that
+    does something when it does not. This caught a bad de-duplication that
+    moved `richmond` and `santa rosa` out of California entirely.
+    """
+    californian = set(_locality._BAY_AREA_CITIES) | set(_locality._CALIFORNIA_CITIES)
+    assert not (californian & set(_locality._US_CITIES))
+    assert not (californian & set(_locality._AMBIGUOUS_CALIFORNIA_CITIES))

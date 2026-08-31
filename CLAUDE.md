@@ -1279,7 +1279,57 @@ Two things this did **not** fix, filed rather than papered over:
   filter, so its own "top 1" still prints the Canadian role it just excluded.
   The feed re-filters at read time and drops it, so nothing user-facing shows
   it — but the summary contradicts itself.
-- The US city and non-US city lists in `locality.py` are hand-written, so a
-  posting in a US city on neither list reads as `UNPLACED` and is dropped.
-  `Frankfurt` lands correctly by accident this way. A domestic city that is
-  missing fails closed, which is the wrong direction for a job search.
+- ~~The US city and non-US city lists in `locality.py` are hand-written, so a
+  posting in a US city on neither list reads as `UNPLACED` and is dropped.~~
+  Measured and closed; see below. `Frankfurt` still lands correctly by
+  accident this way, and the lists are still hand-written — the failure mode
+  is narrowed, not removed.
+
+### The city lists failed closed, and California was the worst of it
+
+Filed as a footnote to the search area and measured immediately after, because
+"a domestic city that is missing fails closed" turned out to describe most of
+California. Of 205 Californian cities, **143 did not classify** as Californian
+from a bare name — Santa Ana, Stockton, Chula Vista, Palm Springs, Beverly
+Hills among them. Under the area rule that is precisely an on-site Californian
+job, the one category the owner most wants, dropped in silence.
+
+Three distinct failures, which is why counting them separately mattered:
+
+- **Simply absent** — `Santa Ana` → `UNPLACED` → dropped.
+- **Claimed by a substring of another US city** — `Manhattan Beach` matched
+  `manhattan` and `La Mesa` matched `mesa`, so both read as `UNITED_STATES`.
+  Right country, wrong state, and on-site outside California is dropped.
+- **Claimed by a foreign city** — `Dublin` → `ELSEWHERE`.
+
+The first two are now fixed: 135 Californian and 37 other US city names added,
+and 177 of 178 unambiguous Californian cities place correctly (Menifee was the
+one that got away in the first pass and is in too).
+
+The third is deliberately *not* fixed. `Dublin`, `Ontario`, `Orange`,
+`Fairfield`, `Norwalk`, `Westminster`, `Brentwood`, `Carson`, `Davis`,
+`Martinez` and a dozen more are real Californian cities whose bare name reads
+as somewhere else at least as often. Adding them trades a missed job for a
+false positive, and here the false positive is worse: it puts a Dublin,
+Ireland role in a feed whose on-site tier is supposed to mean California. Every
+one of them classifies correctly the moment a board writes ", CA", which is how
+the smaller ones are almost always written. `_AMBIGUOUS_CALIFORNIA_CITIES`
+records the decision so the next reader knows it was one.
+
+Two things worth keeping visible:
+
+- **The non-California half matters only because of remote.** An on-site job
+  in Bentonville is dropped by the area rule regardless. But `UNPLACED` is
+  dropped *even when remote*, so a missing US city name costs exactly the
+  remote roles the owner would take. 42 of 88 checked names were missing.
+- **A de-duplication pass silently moved `richmond` and `santa rosa` out of
+  California.** A name in both a Californian list and the US list is
+  unreachable in the second, since California is checked first — so removing
+  "the duplicate" removed the live one and both cities became merely American.
+  `test_no_city_is_claimed_by_two_lists` now fails on that, which is how it
+  was caught.
+
+This does not make the approach right. Hand-written lists are still the reason
+a city can be missing at all, and the honest fix is a real place-name dataset
+rather than a longer tuple. What changed is the size of the hole and whether
+a regression in it is visible.
