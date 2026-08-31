@@ -543,12 +543,26 @@ content-hash change detection and per-host rate limiting. Posting extraction per
 Embedding of postings and profile. Hard filters (location, seniority, work authorization,
 sponsorship). Cosine scoring. Match feed in the dashboard.
 
-The registry started at 50 and is now 29. `make validate-seeds` found that 21
-of the original entries returned 404 from both the board API and the rendered
-page — those companies have left Greenhouse. They are listed at the bottom of
-`seeds/companies.yaml` with the evidence rather than deleted, because a 404
-board is worse than an absent one: it yields zero postings, which reads
-identically to "nothing new since the last poll".
+The registry started at 50. `make validate-seeds` found that 21 of those
+returned 404 from both the board API and the rendered page — those companies
+have left Greenhouse — and they were removed, taking it to 29. A 404 board is
+worse than an absent one: it yields zero postings, which reads identically to
+"nothing new since the last poll".
+
+**It is now 119**, and this paragraph said 29 until someone counted. The
+import of career-ops' company list added 90 entries and superseded the number
+without updating the sentence that carried it. Two things follow, and both
+matter more than the count:
+
+- The paragraph also claimed the 21 dead boards were "listed at the bottom of
+  `seeds/companies.yaml` with the evidence rather than deleted". They were
+  deleted. There is no retired section in that file and never has been. The
+  argument for keeping them is still right; it was simply never implemented.
+- **The 90 imported entries have never been validated.** The 404 sweep ran
+  against the original 50. So the registry today is 29 checked boards and 90
+  unchecked ones, and on the evidence of the first sweep — 21 of 50 dead —
+  a meaningful share of the newcomers are polling nothing. Run
+  `make validate-seeds` before trusting a quiet crawl.
 
 **Gate 5:** crawler runs a full cycle over the seed list without exceeding rate limits;
 second run emits zero postings (change detection works); match scores are sane against a
@@ -1275,10 +1289,18 @@ broken" look identical from the summary line.
 
 Two things this did **not** fix, filed rather than papered over:
 
-- `rescore` leaves a `Match` row behind when a posting newly fails a hard
-  filter, so its own "top 1" still prints the Canadian role it just excluded.
-  The feed re-filters at read time and drops it, so nothing user-facing shows
-  it — but the summary contradicts itself.
+- ~~`rescore` leaves a `Match` row behind when a posting newly fails a hard
+  filter, so its own "top 1" still prints the Canadian role it just
+  excluded.~~ Fixed: `score_and_store` withdraws the stale row and `rescore`
+  reports the count, so the live run now reads "0 kept (12 excluded by a hard
+  filter, 1 withdrawn)" above "top 0" rather than above the role it excluded.
+
+  Withdrawn **only when the row holds nothing of the owner's**. `decision` is
+  their swipe and `tailored_resume_id` is a résumé some provider call already
+  paid for; deleting either to tidy up a score would throw away the more
+  valuable half of the row to fix a cosmetic one. Those rows stay, and the
+  read-time filter goes on hiding them —
+  `test_a_decided_match_is_kept_even_when_it_stops_qualifying` holds that line.
 - ~~The US city and non-US city lists in `locality.py` are hand-written, so a
   posting in a US city on neither list reads as `UNPLACED` and is dropped.~~
   Measured and closed; see below. `Frankfurt` still lands correctly by
