@@ -1397,3 +1397,80 @@ This does not make the approach right. Hand-written lists are still the reason
 a city can be missing at all, and the honest fix is a real place-name dataset
 rather than a longer tuple. What changed is the size of the hole and whether
 a regression in it is visible.
+
+### Closing the gate gaps §15 had only described
+
+Four of the gaps recorded above were fixable without new data. They are, and
+this section says what changed and what deliberately did not.
+
+**Gate 3 now runs the rest of Phase 3.** The gate tested fabrication and the
+PDF round trip; the cover letter and the tailoring cache were built, tested,
+and never run by it. `make gate-3` now also runs `test_cover_letter`,
+`test_apply_cover_letter`, `test_tailor_cache` and `test_apply_uploads_tailored`
+— 170 tests rather than the fabrication suite alone. The last of those is in
+for the reason the others are: it asserts the tailored file is the one that
+reaches the employer, which is the defect that survived a green Gate 3 for as
+long as nothing checked it.
+
+**Gate 6's rules read English now, not the fixtures.** The rejection pattern
+was written beside the corpus that exercises it, so it matched "with other
+candidates" and missed "with another candidate" — the same sentence as
+recruiters write it. Measured against fourteen phrasings taken from how
+rejections are actually worded, **it caught 2**. It now catches 14, and the
+labeled 30 are unchanged at 29 correct, 0 wrong.
+
+Two things made that safe to widen. Rejection is matched *first*, so a loose
+pattern there mis-files everything else — every new alternative therefore names
+an outcome ("not successful", "has been filled") or somebody else getting it
+("forward with another"), never a bare verb; "moving forward with your
+application" is an interview and stays one, and a test holds that line. And it
+matters most where there is no model: Ollama is not always running, Bayes reads
+the realistic rejection as `interview` at a margin of 0.073 and is correctly
+refused, so before this the chain resolved to `noise` and the application sat
+in the tracker looking live.
+
+**The seniority filter is reachable from a real run.** `filters.seniority_ok`
+could always reject a rung mismatch and never did: no production caller set
+`target_seniority`, so it defaulted to None and returned True in every crawl,
+discover and rescore. It was reachable only from the benchmark — which is
+where the number comes from: arming it takes P@10 from 0.900 to 1.000 on the
+Gate 5 set, and the posting it removes is a Junior Backend Engineer with an
+excellent technology match, exactly what a cosine cannot refuse on its own.
+
+`profiles.target_seniority` is the owner's statement of their rung, and the
+fallback lives in `apply_filters` rather than `score_and_store` so every caller
+of the hard filters gets it. **NULL means "do not filter on level"**, which is
+what every existing row gets and what the migration deliberately does not
+backfill: §1 keeps a search filter separate from the profile's description of
+the applicant, and inferring a rung from a résumé would narrow the feed on an
+inference nobody made. It is a `SeniorityLevel` enum rather than a string
+because a typo does not raise — `seniority_ok` passes everything for a target
+it cannot place in the ladder, so `"Senior"` would read as "no preference" and
+the feed would look unfiltered with nothing to explain it.
+
+**Validation records itself.** `make validate-seeds` printed its verdict and
+stopped, so which entries anyone had checked lived in a terminal scrollback.
+`--write` (or `make validate-seeds-write`) stamps `checked` and `state` on each
+entry and moves a dead board into `retired:` **with the statuses that condemned
+it, rather than deleting it** — which is what this file has claimed happened
+since the first sweep and never did. A slug that 404s today may be a rename
+rather than a departure, and the evidence is what tells those apart later.
+`load_seed` reads `companies:` only, so a retired board is not polled. The file
+now answers "how many have never been checked" on its own: today, **119 of
+119**, because the stamp is new even for the 29 that were swept.
+
+### What is still not fixed, and why
+
+- **Gate 1's live half is refused, not pending.** It reaches the form and is
+  blocked by a captcha. §2.5 makes captcha-solving a hard scope boundary, so
+  making this gate pass *is* the prohibited thing. It should stay red forever;
+  what it proves is that the refusal works.
+- **Gate 2's live half, Gate 5's real labels, Gate 6's real emails.** Each
+  needs material that cannot be manufactured without lying: a real posting, the
+  owner's own relevance judgements, real recruiter correspondence.
+  `inbound_messages` is still 0. Writing any of it would make the numbers agree
+  with themselves and mean nothing, which is the failure §15 was opened to
+  record. The mechanisms are ready; the data is the owner's to supply.
+- **The 90 unvalidated boards.** `--write` exists; the sweep needs network
+  egress and has to be run from the owner's machine.
+

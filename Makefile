@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching review-resume load-golden gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
+        bench-matching review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
 
@@ -81,6 +81,12 @@ doctor:
 validate-seeds:
 	$(PY)/python -m packages.crawler.validate seeds/companies.yaml
 
+# Same sweep, but records every verdict in the registry: `checked` and
+# `state` per entry, and dead boards moved to `retired:` with the statuses
+# that condemned them rather than deleted. Needs network egress.
+validate-seeds-write:
+	$(PY)/python -m packages.crawler.validate seeds/companies.yaml --write
+
 # make worktree NAME=workable BRANCH=feat/workable-adapter
 #
 # A worktree for a second agent, set up so `make gate-0` actually runs there.
@@ -143,11 +149,22 @@ gate-2-live:
 	@test -n "$(URL)" || (echo "set URL=<greenhouse posting url>" && exit 1)
 	$(PY)/python -m scripts.live_check "$(URL)"
 
-# Gate 3 — CLAUDE.md §9. The fabrication merge gate: 20 job descriptions
-# crossed with 3 résumés, plus adversarial cases the guard must reject and
-# legitimate rewrites it must allow, plus the tailored-PDF round trip.
+# Gate 3 — CLAUDE.md §9 Phase 3. The fabrication merge gate: 20 job descriptions
+# crossed with 3 resumes, plus the two deliverables the gate's own wording asks
+# for and never checked. The cover letter and the per-company tailoring cache
+# were both built, both tested, and neither ran here — so "gate-3 passes" meant
+# less than "Phase 3 works", which is exactly the gap CLAUDE.md §15 exists to
+# stop. test_apply_uploads_tailored is in for the same reason: it asserts the
+# tailored file is the one that reaches the employer, which is the defect that
+# survived a green Gate 3 for as long as nothing checked it.
+#
+# The fabrication half is unchanged: 20 job descriptions crossed with 3
+# résumés, plus adversarial cases the guard must reject and legitimate
+# rewrites it must allow, plus the tailored-PDF round trip.
 gate-3: gate-0
-	REQUIRE_DB=1 $(PY)/pytest -q tests/test_no_fabrication.py
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_no_fabrication.py \
+	  tests/test_cover_letter.py tests/test_apply_cover_letter.py \
+	  tests/test_tailor_cache.py tests/test_apply_uploads_tailored.py
 	@echo "gate-3 passed"
 
 # Gate 5 — CLAUDE.md §9. A full cycle inside the rate limit, a second run
