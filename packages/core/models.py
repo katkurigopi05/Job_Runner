@@ -32,6 +32,8 @@ EMBEDDING_DIM = 384
 
 
 class Base(DeclarativeBase):
+    """Base class for all SQLAlchemy models."""
+
     pass
 
 
@@ -48,6 +50,8 @@ def _created_at() -> Mapped[datetime]:
 
 
 class User(Base):
+    """A user account owning one or more candidates."""
+
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -58,6 +62,8 @@ class User(Base):
 
 
 class Candidate(Base):
+    """A person applying to jobs, owned by a user."""
+
     __tablename__ = "candidates"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -80,6 +86,8 @@ class Candidate(Base):
 
 
 class Profile(Base):
+    """A candidate's profile containing resume and application preferences."""
+
     __tablename__ = "profiles"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -126,6 +134,8 @@ class Profile(Base):
 
 
 class Resume(Base):
+    """A candidate's resume, either base or tailored for a posting."""
+
     __tablename__ = "resumes"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -167,6 +177,8 @@ class Resume(Base):
 
 
 class Company(Base):
+    """A company with a careers page to poll."""
+
     __tablename__ = "companies"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -186,6 +198,8 @@ class Company(Base):
 
 
 class Posting(Base):
+    """A job posting from a company's careers page."""
+
     __tablename__ = "postings"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -258,6 +272,8 @@ class CorpusStats(Base):
 
 
 class Match(Base):
+    """A scored posting paired with a profile."""
+
     __tablename__ = "matches"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -305,6 +321,8 @@ class Match(Base):
 
 
 class Application(Base):
+    """A job application in the pipeline."""
+
     __tablename__ = "applications"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -369,6 +387,8 @@ class ApplicationEvent(Base):
 
 
 class InboundMessage(Base):
+    """A recruiter reply received via email."""
+
     __tablename__ = "inbound_messages"
 
     id: Mapped[uuid.UUID] = _pk()

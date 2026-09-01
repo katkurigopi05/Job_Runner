@@ -92,9 +92,11 @@ class Vault:
         return loaded
 
     def exists(self, ref: str) -> bool:
+        """Check if a vault entry exists."""
         return self._path(ref).is_file()
 
     def delete(self, ref: str) -> None:
+        """Delete a vault entry."""
         path = self._path(ref)
         if path.is_file():
             path.unlink()

@@ -10,6 +10,8 @@ from enum import StrEnum
 
 
 class ApplicationStatus(StrEnum):
+    """Application pipeline status values."""
+
     QUEUED = "queued"
     RUNNING = "running"
     NEEDS_REVIEW = "needs_review"
@@ -25,6 +27,8 @@ TERMINAL_STATUSES: frozenset[ApplicationStatus] = frozenset(
 
 
 class FailureReason(StrEnum):
+    """Reasons an application failed."""
+
     JOB_CLOSED = "job_closed"
     UNSUPPORTED_SITE = "unsupported_site"
     INCOMPLETE_CANDIDATE = "incomplete_candidate"
@@ -78,11 +82,15 @@ OUTCOME_FOR_CLASSIFICATION: dict[Classification, Outcome] = {
 
 
 class EmailMode(StrEnum):
+    """Email management mode for candidates."""
+
     MANAGED = "managed"
     SELF = "self"
 
 
 class QueueTaskStatus(StrEnum):
+    """Queue task status values."""
+
     PENDING = "pending"
     RUNNING = "running"
     DONE = "done"
