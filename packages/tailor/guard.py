@@ -123,6 +123,8 @@ your
 my me we us those whose another still why though hire hiring company letter
 dear sincerely regards please thank thanks
 
+server servers host hosts node nodes
+
 match closest background position way fit interest attention detail focus
 side front back reason point place kind sort number amount level
 
@@ -146,6 +148,23 @@ standardizing test tested validate validated validating
 # These carry no factual claim in any position; the claim is the object, and
 # the object is still checked — "Deployed Kubernetes" still has to trace
 # Kubernetes. Verbs that *do* assert seniority stay out: see _SCOPE_CLAIMS.
+#
+# `server servers host hosts node nodes` close a gap in the same list rather
+# than widening it. `service`, `services`, `system`, `systems`,
+# `infrastructure`, `platform`, `database`, `databases`, `pipeline` and
+# `pipelines` were already here on the argument that a generic category noun
+# asserts nothing — the claim is *which* one, and that is still checked. The
+# machine words were simply missing, which the noun-phrase extractor made
+# visible: it refused "cluster administration on bare metal servers" as a
+# rewrite of "cluster administration on bare metal", on the noun "servers",
+# while the identical sentence written with "systems" passed.
+#
+# `cluster` and `machine` are deliberately *not* added. `cluster` is load-
+# bearing in `packages/tailor/recombination.py`'s own test — "Kubernetes
+# cluster administration" is the recombined claim it exists to catch — and
+# `machine` is half of "machine learning", which the alias table handles as a
+# phrase. Removing either from the checked set would cost a real check to buy
+# a cosmetic one.
 
 _COMMON_WORDS: frozenset[str] = frozenset(_COMMON_WORDS_TEXT.split())
 
