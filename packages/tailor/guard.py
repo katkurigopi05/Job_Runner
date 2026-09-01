@@ -451,6 +451,12 @@ class SourceCorpus:
     #: Tokens available to every item — contact details, the skills list,
     #: education. These describe the person, not one job.
     shared: frozenset[str] = frozenset()
+    #: Technologies the résumé lists for itself — see
+    #: `packages/tailor/technologies.py`. Unlike everything else here, this is
+    #: not used to decide what a rewrite may *say*: it is what a rewrite may
+    #: not silently drop. Empty for a flat corpus, which disables that check
+    #: rather than guessing at an inventory from unstructured text.
+    technologies: frozenset[str] = frozenset()
 
     @property
     def attributed(self) -> frozenset[str]:
@@ -520,8 +526,19 @@ class SourceCorpus:
         for item in items:
             tokens |= item.tokens
 
+        # Local import: `technologies` reads `bullets.classify`, which imports
+        # `parse`, and `parse` is imported here. Deferred the same way the
+        # alias table is in `_index` above.
+        from packages.tailor.technologies import inventory
+
         full = "\n".join([*resume.raw_lines, *extra_texts])
-        return cls(tokens=tokens, text=full.lower(), items=tuple(items), shared=shared)
+        return cls(
+            tokens=tokens,
+            text=full.lower(),
+            items=tuple(items),
+            shared=shared,
+            technologies=inventory(resume),
+        )
 
     def locate(self, snippet: str) -> CorpusItem | None:
         """The item a piece of source text came from, or None if unknown.
