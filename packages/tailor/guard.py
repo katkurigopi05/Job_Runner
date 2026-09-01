@@ -657,6 +657,46 @@ def _split_entries(lines: list[str]) -> list[str]:
     return ["\n".join(entry) for entry in entries]
 
 
+def _spelled_out_forms(
+    output: str, corpus: SourceCorpus, scope: CorpusItem | None
+) -> frozenset[str]:
+    """Words the output may use because it wrote out what the source shortened.
+
+    `_index` already handles the indexing direction: a source saying "machine
+    learning" makes the token `ml` available, via `aliases.expand_phrases`. The
+    mirror was missing. `expand_tokens` deliberately keeps phrases out of a
+    token index — "a phrase is not a token and would never match one" — so a
+    source saying `ML` never made "machine" or "learning" available, and an
+    output spelling the term out failed on its individual words.
+
+    That gap was invisible while the guard matched on capitalization, because
+    "machine learning" is lowercase and carried no entity at all. The
+    noun-phrase extractor reads every noun, so it surfaced immediately — as a
+    fabrication verdict on a rewrite that used the résumé's own vocabulary,
+    which is the failure `packages/tailor/aliases.py` exists to prevent.
+
+    Only true equivalences pass, because only the alias table is consulted: the
+    output has to contain a phrase whose group the source already asserts in
+    some other form. §2.1 is untouched — the claim is identical and only the
+    spelling changed, which is the argument the alias table's own docstring
+    makes for the other direction.
+    """
+    from packages.tailor.aliases import phrase_groups
+
+    normalized = " ".join(normalize(m.group(0)) for m in _TOKEN_RE.finditer(output))
+    if not normalized:
+        return frozenset()
+
+    available = corpus.tokens if scope is None else (scope.tokens | corpus.shared)
+    covered: set[str] = set()
+    for phrase, forms in phrase_groups():
+        if phrase not in normalized:
+            continue
+        if any(form in available for form in forms if " " not in form):
+            covered |= set(phrase.split())
+    return frozenset(covered)
+
+
 def check(output: str, corpus: SourceCorpus, *, scope: CorpusItem | None = None) -> GuardReport:
     """Verify every claim in `output` traces to `corpus`.
 
@@ -671,10 +711,11 @@ def check(output: str, corpus: SourceCorpus, *, scope: CorpusItem | None = None)
         if scope is None
         else f"does not appear in {scope.ref} or the shared sections"
     )
+    spelled_out = _spelled_out_forms(output, corpus, scope)
     violations = [
         Violation(entity=entity, reason=reason)
         for entity in entities
-        if not corpus.supports(entity, scope)
+        if not corpus.supports(entity, scope) and entity.normalized not in spelled_out
     ]
     return GuardReport(
         ok=not violations,

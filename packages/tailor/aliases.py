@@ -154,6 +154,17 @@ def expand_phrases(normalized_text: str) -> set[str]:
     return found
 
 
+def phrase_groups() -> tuple[tuple[str, frozenset[str]], ...]:
+    """Every multi-word member, with the group it belongs to.
+
+    `expand_phrases` answers "what tokens does this source text imply", which
+    is the indexing direction. This exposes the table itself so the guard can
+    ask the mirror question about *output* text — see
+    `guard._spelled_out_forms`.
+    """
+    return _PHRASES
+
+
 def known_phrases() -> tuple[str, ...]:
     """Multi-word members of the table, longest first.
 
