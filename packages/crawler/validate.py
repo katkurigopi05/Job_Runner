@@ -12,9 +12,12 @@ import argparse
 import asyncio
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 
 import structlog
+import yaml
 
 from packages.crawler.extract import CompanySeed, extractor_for, load_seed
 from packages.crawler.fetch import Blocked, FetchResult, PoliteFetcher, build_fetcher
@@ -134,23 +137,88 @@ def _line(result: SeedValidation) -> str:
     return f"{result.state.value:13} {result.company} ({result.slug}, {result.ats}){statuses}"
 
 
-async def _run(path: str) -> int:
-    results = await validate_seeds(load_seed(path), build_fetcher())
+def record(
+    path: str, results: list[SeedValidation], *, today: str | None = None
+) -> tuple[int, int]:
+    """Write each verdict back into the registry. Returns (kept, retired).
+
+    Validation used to print and stop, so the verdict lived in a terminal
+    scrollback and the file could not answer "which of these has anyone
+    checked". That is not a cosmetic gap: the registry grew from 50 to 119 by
+    import and the only 404 sweep ran against the original 50, which leaves 90
+    entries whose silence is unexplained. A dead board yields zero postings,
+    and zero postings is exactly what a live board with nothing new yields.
+
+    A `MISSING` entry moves to a `retired:` block rather than being deleted,
+    with the statuses that condemned it. CLAUDE.md has claimed this happened
+    since the first sweep; it never did, the entries were simply removed, and
+    the argument for keeping them was right all along — a slug that 404s today
+    may be a rename rather than a departure, and the evidence is what tells
+    those apart later.
+
+    `retired:` is not read by `load_seed`, so a retired board is not polled.
+    """
+    stamp = today or datetime.now(UTC).date().isoformat()
+    verdicts = {(r.slug, r.ats): r for r in results}
+
+    location = Path(path)
+    raw = yaml.safe_load(location.read_text()) or {}
+    entries = raw.get("companies") or []
+    retired = raw.get("retired") or []
+
+    kept: list[dict[str, object]] = []
+    for entry in entries:
+        verdict = verdicts.get((entry.get("slug"), entry.get("ats", "greenhouse")))
+        if verdict is None:
+            # Not part of this run — leave whatever it already carried.
+            kept.append(entry)
+            continue
+        entry["checked"] = stamp
+        entry["state"] = verdict.state.value
+        if verdict.state is SeedState.MISSING:
+            entry["api_status"] = verdict.api_status
+            entry["rendered_status"] = verdict.rendered_status
+            retired.append(entry)
+        else:
+            kept.append(entry)
+
+    raw["companies"] = kept
+    if retired:
+        raw["retired"] = retired
+    location.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True))
+    return len(kept), len(retired)
+
+
+async def _run(path: str, *, write: bool = False) -> int:
+    seeds = load_seed(path)
+    never = sum(1 for seed in seeds if seed.checked is None)
+    if never:
+        print(f"{never} of {len(seeds)} entries have never been validated.")
+
+    results = await validate_seeds(seeds, build_fetcher())
     for result in results:
         print(_line(result))
 
     missing = [result for result in results if result.state is SeedState.MISSING]
-    if missing:
+    if write:
+        kept, retired = record(path, results)
+        print(f"Wrote {path}: {kept} active, {retired} retired.")
+    elif missing:
         print("Missing entries require a current slug or ats update; none were deleted.")
-        return 1
-    return 0
+        print("Re-run with --write to record every verdict and retire the dead boards.")
+    return 1 if missing and not write else 0
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate curated company ATS seeds")
     parser.add_argument("path", nargs="?", default="seeds/companies.yaml")
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help="record each verdict in the registry and move dead boards to `retired:`",
+    )
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(_run(args.path)))
+    raise SystemExit(asyncio.run(_run(args.path, write=args.write)))
 
 
 if __name__ == "__main__":

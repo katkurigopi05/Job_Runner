@@ -16,6 +16,54 @@ APPLY_URL = "https://boards.greenhouse.io/acme/jobs/12345"
 async def test_health(client: AsyncClient) -> None:
     r = await client.get("/health")
     assert r.status_code == 200
+    assert r.json() == {"status": "ok", "api": "ok", "database": "ok"}
+
+
+async def test_an_unmatched_path_uses_the_shared_envelope(client: AsyncClient) -> None:
+    """§10 promises one error shape. A 404 had two.
+
+    `ApiError(NOT_FOUND, ...)` produced the envelope; a 404 for a path with no
+    route fell through to FastAPI's `{"detail": "Not Found"}`. A client parsing
+    errors got a different shape for the same status depending on how the 404
+    arose.
+    """
+    r = await client.get("/no-such-route")
+
+    assert r.status_code == 404
+    assert r.json() == {"error": {"code": "not_found", "message": "Not Found"}}
+
+
+async def test_a_wrong_method_keeps_its_own_status(client: AsyncClient) -> None:
+    """405 is derived from the status, not routed back through STATUS_BY_CODE.
+
+    Mapping the code back to a status would rewrite this into a 400.
+    """
+    r = await client.delete("/health")
+
+    assert r.status_code == 405
+    assert r.json()["error"]["code"] == "invalid_request"
+
+
+async def test_health_reports_a_database_it_cannot_reach(client: AsyncClient, monkeypatch) -> None:
+    """The check has to be able to fail, or it is not a check.
+
+    `/health` returned a hardcoded `{"status": "ok"}`, so Postgres could be
+    stopped and it still said ok — and the dashboard indicator built on it would
+    have reported healthy while every page that loads data threw.
+    """
+    from packages.core import db as core_db
+
+    def broken():
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(core_db, "get_sessionmaker", broken)
+
+    r = await client.get("/health")
+
+    # Still 200: the process is answering, and a 503 would make the indicator
+    # unreachable exactly when it has something to report.
+    assert r.status_code == 200
+    assert r.json() == {"status": "degraded", "api": "ok", "database": "down"}
 
 
 async def test_create_candidate_and_profile(client: AsyncClient) -> None:
@@ -342,3 +390,32 @@ async def test_otp_on_a_queued_application_is_invalid_state(
 
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "invalid_state"
+
+
+async def test_the_status_filter_is_named_status_over_the_wire(
+    client: AsyncClient, complete_candidate: dict
+) -> None:
+    """`?status=` must filter, and an unknown value must be refused.
+
+    The parameter is `status_filter` in Python only because `fastapi.status` is
+    imported in that module. That name used to reach the HTTP surface, so
+    `?status=needs_review` bound to nothing and FastAPI ignored it — the caller
+    got every application and a 200. Found by driving the live API.
+
+    It matters most on the review queue, where the failure is silent and points
+    the wrong way: the screen fills with applications that were never parked,
+    and the queue's whole promise is that everything on it awaits a decision.
+    """
+    created = await client.post("/applications", json={**complete_candidate, "url": APPLY_URL})
+    assert created.status_code == 201
+
+    listed = await client.get("/applications", params={"status": "queued"})
+    assert listed.status_code == 200
+    assert [row["status"] for row in listed.json()] == ["queued"]
+
+    empty = await client.get("/applications", params={"status": "submitted"})
+    assert empty.status_code == 200
+    assert empty.json() == [], "a filter that matches nothing must return nothing"
+
+    refused = await client.get("/applications", params={"status": "nonsense"})
+    assert refused.status_code == 400, "an unknown status must be refused, not ignored"

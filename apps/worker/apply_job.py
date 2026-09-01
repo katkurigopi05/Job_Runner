@@ -20,11 +20,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.worker.browser import browser_page
-from packages.ats.answers import build_answers
+from packages.ats.answers import asks_for_cover_letter, build_answers
 from packages.ats.base import (
     FillReport,
     ManualCompletionRequired,
-    QuestionKind,
+    Question,
     SiteError,
     UnsupportedSiteError,
 )
@@ -47,6 +47,7 @@ from packages.core.storage import get_storage, receipt_key
 from packages.github.select import relevant_for_posting
 from packages.llm import router as llm_router
 from packages.matching.embed import get_embedder
+from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
 
 log = structlog.get_logger(__name__)
@@ -134,7 +135,30 @@ async def _run_pipeline(
     application.ats = adapter.name
 
     async with browser_page(adapter.name) as page:
-        await page.goto(application.url, wait_until="domcontentloaded")
+        response = await page.goto(application.url, wait_until="domcontentloaded")
+
+        # A withdrawn posting is `job_closed`, not `site_error`.
+        #
+        # The adapters read "closed" from on-page text — "this posting is
+        # closed", "position has been filled" — which a 404 page does not
+        # carry. So a job taken down entirely got as far as `enumerate_fields`,
+        # found no form, and was recorded as `site_error`: a code that says
+        # *our side is broken* and invites a retry, for the one outcome that is
+        # both expected and permanent.
+        #
+        # Checked here rather than per adapter because the HTTP status is the
+        # authoritative signal and is the same for every ATS. 410 says removed;
+        # 404 on a board URL that we hold a record of means the same thing. 403
+        # is deliberately not included — that is usually automation being
+        # blocked, which §2.5 makes `manual_completion_required`.
+        if response is not None and response.status in (404, 410):
+            await _fail(
+                session,
+                application,
+                FailureReason.JOB_CLOSED,
+                f"posting returned HTTP {response.status} — it has been taken down",
+            )
+            return
 
         posting = await adapter.parse_posting(page)
         if posting.closed:
@@ -163,13 +187,15 @@ async def _run_pipeline(
         # anything worth uploading.
         diff = await _tailor(session, application, profile, posting)
 
-        # A letter only when the form has somewhere to put one. Writing one
-        # unconditionally would spend a model call, and §2.8 an upload, on
-        # something no employer asked for.
+        # Same rule as the résumé above, for the same reason: the document has
+        # to exist before there is anything to put in the field. Reads
+        # `questions` because most forms never ask for a letter, and writing
+        # one for a form with nowhere to put it is a provider call spent on a
+        # document no employer sees.
         #
         # After `_tailor` rather than before it: the two are independent —
         # `_cover_letter` grounds on the base résumé's `parsed_json`, not on
-        # the tailored file — but tailoring is the one with a §15 ordering
+        # the tailored file — but tailoring is the one carrying a §15 ordering
         # constraint, and running it first means a failure there costs no
         # letter.
         letter = await _cover_letter(session, application, profile, posting, questions)
@@ -180,7 +206,8 @@ async def _run_pipeline(
             profile,
             extra=owner_answers,
             resume_path=await _resume_path(session, application, profile),
-            cover_letter=letter,
+            cover_letter_text=(letter or {}).get("text"),
+            cover_letter_path=_letter_path(application),
         )
         report = await adapter.fill(page, answers)
 
@@ -300,6 +327,24 @@ async def _projects_for(
     return relevant_for_posting(inventory, posting_text, embedder=get_embedder())
 
 
+def _answered_by(provider: Any | None) -> str | None:
+    """Which model actually answered — read *after* the call, never before.
+
+    `FallbackProvider` resets `answered_by` to the primary at the top of every
+    call and rewrites it only once the primary has failed, so a value read
+    ahead of time names the model that did not answer. That is precisely the
+    case worth surfacing: a document produced by llama3.1 after the remote
+    allowance ran out is not the document Gemini would have produced, and the
+    owner approving it should be able to tell.
+
+    None when no provider was ever built, which is honest — an unrecorded model
+    is not a guessed one.
+    """
+    if provider is None:
+        return None
+    return getattr(provider, "answered_by", None) or getattr(provider, "name", None)
+
+
 async def _tailor(
     session: AsyncSession,
     application: Application,
@@ -327,6 +372,36 @@ async def _tailor(
     Returns None when there is nothing to tailor. A failure here must not stop
     the application: the untailored résumé is still a correct résumé.
     """
+    # An owner's choice at review outranks anything this function would compute.
+    #
+    # Approving a parked application resumes the pipeline from the top, so this
+    # runs a second time — and every path below assigns `tailored_resume_id`.
+    # That silently discarded two decisions the owner had already made on the
+    # review screen: a hand-edit of the attached résumé, and a pick from the
+    # model comparison. The screen showed the chosen document, the employer
+    # received the re-tailored one, and nothing anywhere reported the swap. It
+    # is the §15 defect exactly — a review screen describing a file that is not
+    # the file being uploaded.
+    #
+    # The pin is checked against `tailored_resume_id` rather than trusted on its
+    # own: if the row no longer points where the pin says, something else moved
+    # it and re-tailoring is the safer answer.
+    pinned = (application.review_json or {}).get("resume_pinned") or {}
+    pinned_id = pinned.get("resume_id")
+    if pinned_id and str(application.tailored_resume_id) == str(pinned_id):
+        row = await session.get(Resume, application.tailored_resume_id)
+        log.info("tailoring_skipped_owner_pinned", source=pinned.get("source"))
+        # The stored diff is kept rather than recomputed — it still describes
+        # what tailoring did to the document this one came from, which is the
+        # honest account. `owner_pinned` is what tells the review screen the
+        # diff no longer describes the file being sent.
+        stored = dict((application.review_json or {}).get("resume_diff") or {})
+        stored["owner_pinned"] = pinned.get("source") or "owner_edit"
+        stored["reused"] = True
+        if row is not None and row.tailored_by:
+            stored.setdefault("answered_by", row.tailored_by)
+        return stored
+
     posting_text = posting.description_raw or ""
     if profile.base_resume_id is None or not posting_text.strip():
         return None
@@ -339,7 +414,14 @@ async def _tailor(
     prepared = await _prepared_resume(session, application, profile)
     if prepared is not None:
         application.tailored_resume_id = prepared
-        return {"reused": True}
+        # No provider is built on this path, so the model cannot be read live —
+        # it has to come off the row the batch wrote. A reused résumé that
+        # cannot name its model is the case this whole field exists for.
+        prepared_row = await session.get(Resume, prepared)
+        return {
+            "reused": True,
+            "answered_by": prepared_row.tailored_by if prepared_row else None,
+        }
 
     resume = await session.get(Resume, profile.base_resume_id)
     if resume is None or not resume.parsed_json:
@@ -352,7 +434,7 @@ async def _tailor(
         from packages.tailor.rewrite import tailor_bullets
 
         parsed = ParsedResume.model_validate(resume.parsed_json)
-        bullets = [line for line in parsed.section("experience") if line.strip()]
+        _, bullets = tailorable_bullets(parsed)
         if not bullets:
             return None
 
@@ -382,10 +464,34 @@ async def _tailor(
             # audited, and the cheapest upload is the one not made.
             application.tailored_resume_id = cached.id
             log.info("tailored_resume_reused", resume_id=str(cached.id))
-            return {"changed": 0, "unchanged": 0, "rejected": 0, "reused": True}
+            return {
+                "changed": 0,
+                "unchanged": 0,
+                "rejected": 0,
+                "reused": True,
+                # Same reasoning as the batch path above: the call that wrote
+                # this document happened in another run, so the row is the only
+                # source for which model answered it.
+                "answered_by": cached.tailored_by,
+            }
 
         result = await tailor_bullets(provider, bullets, posting_text, corpus)
-        summary = summarize(result)
+        # After the rewrites, never before — see `_answered_by`.
+        answered_by = _answered_by(provider)
+
+        # Scored against the same posting, before and after, so the review
+        # screen can say what tailoring bought rather than only what it
+        # changed. `apply_rewrites` is called here anyway — `publish_tailored`
+        # below does the same thing internally — and the duplicate is cheap
+        # next to re-deriving it on the screen from two stored documents.
+        from packages.tailor.publish import apply_rewrites
+
+        summary = summarize(
+            result,
+            source=parsed,
+            tailored=apply_rewrites(parsed, result, posting_text=posting_text),
+            job_description=posting_text,
+        )
 
         # The file the owner uploads. Rendered even when every rewrite was
         # rejected: that document is the source résumé with the current
@@ -401,6 +507,7 @@ async def _tailor(
             projects=projects,
             posting_text=posting_text,
             tailored_key=cache_key,
+            answered_by=answered_by,
             # From the application, not from `posting`: the adapter's
             # ParsedPosting is read off the page and has no row id.
             posting_id=application.posting_id,
@@ -413,12 +520,176 @@ async def _tailor(
             "unchanged": summary.unchanged,
             # Rewrites the guard refused. Surfaced, not swallowed.
             "rejected": summary.rejected,
+            # And separately, bullets the model never answered at all. Folding
+            # these into `rejected` would report a provider outage as the guard
+            # doing its job.
+            "provider_failures": summary.provider_failures,
+            "answered_by": answered_by,
+            # The ATS score before and after this run. Hand-copied like every
+            # other field here, and that is exactly how it was missed the first
+            # time: `summarize` computed it, `DiffSummary` carried it, and this
+            # dict — which is what actually becomes `review_json["resume_diff"]`
+            # — listed the fields by name and did not list this one. The screen
+            # rendered nothing and reported no error, because there was none.
+            # §15's defect in miniature, so `tests/test_apply_review_payload.py`
+            # asserts the payload rather than the model.
+            "ats": summary.ats.model_dump() if summary.ats else None,
+            # Added second, to the same list, for the same reason — and this
+            # comment is the whole point of the one above it. A field computed
+            # by `summarize`, carried on `DiffSummary`, typed on the client and
+            # rendered by a component still never arrives unless it is named
+            # here.
+            "recruiter": summary.recruiter.model_dump() if summary.recruiter else None,
             "unified": summary.unified,
             "changes": [change.model_dump() for change in summary.changes],
         }
     except Exception as exc:  # noqa: BLE001 - tailoring is an enhancement
         log.warning("tailoring_failed", error=type(exc).__name__)
         return None
+
+
+def _stored_letter(application: Application) -> dict[str, Any] | None:
+    """The letter this application already has, if it still has one.
+
+    A resumed run — the owner approved at review and the pipeline replays —
+    must send the letter that was approved, not a second one written from the
+    same prompt. Any real provider returns different prose the second time, so
+    without this the owner reviews one letter and the employer reads another.
+    That is the tailored-résumé defect exactly, and the check is cheap.
+    """
+    previous = (application.review_json or {}).get("cover_letter") or {}
+    if not previous.get("accepted") or not previous.get("text"):
+        return None
+    ref = application.cover_letter_ref
+    if not ref or not get_storage().path_for(ref).is_file():
+        return None
+    return dict(previous)
+
+
+async def _cover_letter(
+    session: AsyncSession,
+    application: Application,
+    profile: Profile,
+    posting: Any,
+    questions: list[Question],
+) -> dict[str, Any] | None:
+    """Write the letter this posting asks for, vet it, store it.
+
+    §9 Phase 3 lists a cover letter and `packages/tailor/cover.py` writes one:
+    it sifts the sentences that do not trace to the résumé, vets the remainder
+    through the fabrication guard, and returns nothing rather than falling
+    back. Until now nothing called it, `Application.cover_letter_ref` was
+    written by nobody, and no application carried a letter.
+
+    Three refusals, in order of how much they cost:
+
+    - **The form never asked.** Most do not. Writing a letter no field can
+      hold is a provider call spent on a document that goes nowhere, so the
+      questions are read first and the model is not reached at all.
+    - **There is nothing to write from.** No base résumé, or a posting whose
+      description never parsed — a letter about a job we did not read is
+      exactly the invention §2.1 forbids.
+    - **The guard refused it.** Returned with the reason, and no file. A
+      letter has no original to fall back to, so the alternative to a bad one
+      is none; recording *why* is what keeps that different from never trying.
+
+    Returns the record the review screen shows, or None when no letter was
+    called for. Never raises: a failure here leaves an application with a
+    filled form and an empty optional field, which is a worse application and
+    still an application.
+    """
+    if not any(asks_for_cover_letter(question) for question in questions):
+        return None
+
+    reused = _stored_letter(application)
+    if reused is not None:
+        log.info("cover_letter_reused", ref=application.cover_letter_ref)
+        return {**reused, "reused": True}
+
+    posting_text = posting.description_raw or ""
+    if profile.base_resume_id is None or not posting_text.strip():
+        return None
+
+    resume = await session.get(Resume, profile.base_resume_id)
+    if resume is None or not resume.parsed_json:
+        return None
+
+    # Bound before the try so the failure path can still say which provider was
+    # being asked, and say nothing when the failure was building it.
+    provider: Any | None = None
+    try:
+        from packages.tailor.cover import write
+        from packages.tailor.guard import SourceCorpus
+        from packages.tailor.parse import ParsedResume
+        from packages.tailor.publish import publish_cover_letter
+
+        parsed = ParsedResume.model_validate(resume.parsed_json)
+        # The base résumé, not the tailored one. Every fact in a tailored
+        # résumé traces to the base by construction — the guard enforces it —
+        # so the base corpus is the wider of the two nowhere and the safer of
+        # the two here, and it does not depend on tailoring having succeeded.
+        provider = llm_router.write_cover_letter()
+        letter = await write(
+            provider,
+            resume_text=parsed.text,
+            job_description=posting_text,
+            corpus=SourceCorpus.from_resume(parsed),
+            # The one thing outside the résumé the letter may name.
+            company=posting.company,
+        )
+    except Exception as exc:  # noqa: BLE001 - a letter is an enhancement
+        log.warning("cover_letter_failed", error=type(exc).__name__)
+        return {
+            "accepted": False,
+            "rejected_reason": f"error: {type(exc).__name__}",
+            "answered_by": _answered_by(provider),
+        }
+
+    outcome: dict[str, Any] = {
+        "accepted": letter.usable,
+        "rejected_reason": letter.rejected_reason,
+        "word_count": letter.word_count,
+        "entities_checked": letter.entities_checked,
+        # A letter that survived only because most of it was deleted is worth
+        # seeing on the review screen, not just in the accept/refuse bit.
+        "sentences_dropped": letter.sentences_dropped,
+        # §7's fallback applies to `write_cover_letter` exactly as it does to
+        # tailoring, so a letter written by the local model after the allowance
+        # ran out has to be distinguishable from one written by the cloud one.
+        # The résumé records this on its own row; a letter has no row, so it
+        # rides in the review record beside the text it describes.
+        "answered_by": _answered_by(provider),
+    }
+
+    if not letter.usable:
+        # Never the letter itself — §10 keeps résumé-derived text out of logs.
+        log.info("cover_letter_refused", reason=letter.rejected_reason)
+        return outcome
+
+    ref = publish_cover_letter(letter.text, application_id=str(application.id))
+    if ref is None:
+        # Storage failed, so there is no file to attach. The text would still
+        # fill a textarea, but then an approved letter would exist in one
+        # shape and not the other depending on the employer's form — refuse
+        # both rather than ship the inconsistency.
+        return {**outcome, "accepted": False, "rejected_reason": "letter could not be stored"}
+
+    application.cover_letter_ref = ref
+    # Kept alongside the ref because the review screen has to show the letter
+    # the owner is approving, and a PDF is not readable back as text.
+    return {**outcome, "ref": ref, "text": letter.text}
+
+
+def _letter_path(application: Application) -> str | None:
+    """The stored letter as a path, for a field that wants a file upload."""
+    ref = application.cover_letter_ref
+    if not ref:
+        return None
+    path = get_storage().path_for(ref)
+    if not path.is_file():
+        log.warning("cover_letter_file_missing", storage_ref=ref)
+        return None
+    return str(path)
 
 
 async def _capture(page: Any, application: Application, name: str) -> str | None:
@@ -459,7 +730,7 @@ async def _decide(
     page: Any,
     resume_diff: dict[str, Any] | None = None,
     screening: ScreenReport | None = None,
-    cover_letter: str | None = None,
+    cover_letter: dict[str, Any] | None = None,
 ) -> None:
     """Park for review, or submit — the approval gate.
 
@@ -483,9 +754,12 @@ async def _decide(
         "resume_diff": resume_diff,
         # Read off the form before anything was answered.
         "screening": screening.as_dict() if screening else None,
-        # The letter itself, not just a reference to it. §2.3 asks the owner
-        # to approve what gets sent, and a letter they cannot read before
-        # approving is one they are taking on trust.
+        # The letter itself, or the guard's reason there is not one — not just
+        # a reference to it. §2.3 asks the owner to approve what gets sent, and
+        # a letter they cannot read before approving is one they are taking on
+        # trust. A refusal has to be visible for the mirror reason: a form that
+        # asked and got none looks identical to a form that never asked, and
+        # writing it by hand is the owner's call.
         "cover_letter": cover_letter,
     }
 
@@ -608,77 +882,3 @@ async def park_failed(
     if status is not ApplicationStatus.RUNNING:
         await begin_work(session, application)
     await _fail(session, application, reason, message)
-
-
-async def _cover_letter(
-    session: AsyncSession,
-    application: Application,
-    profile: Profile,
-    posting: Any,
-    questions: list[Any],
-) -> str | None:
-    """Write a letter if the form has a field for one, else nothing.
-
-    This is the call CLAUDE.md §15 recorded as missing: `packages/tailor/cover.py`
-    wrote and vetted letters that nothing ever asked for, and
-    `Application.cover_letter_ref` was never written.
-
-    Three ways it declines, all of them fine:
-
-    - **No cover-letter field.** Most forms have none. Writing one anyway
-      spends a model call and, on a remote provider, a §2.8 upload of the
-      résumé, to produce something no employer asked for.
-    - **No résumé to draw on.** The letter is grounded in the same corpus the
-      tailorer uses; without one there is nothing to ground it in.
-    - **The guard refused it.** `write()` never falls back, so a refusal means
-      no letter, and the field goes to the owner unanswered under §2.4 exactly
-      as it did before. A missing letter is a smaller failure than an
-      unsupported one.
-
-    A stored letter is written to storage and referenced on the application,
-    so the review screen shows what would be sent rather than the owner having
-    to trust that something was.
-    """
-    wants_letter = any(
-        getattr(question, "kind", None) is QuestionKind.COVER_LETTER for question in questions
-    )
-    if not wants_letter:
-        return None
-
-    resume = await session.get(Resume, profile.base_resume_id) if profile.base_resume_id else None
-    if resume is None or not resume.parsed_json:
-        log.info("cover_letter_skipped", reason="no parsed résumé to ground it in")
-        return None
-
-    try:
-        from packages.tailor.cover import write
-        from packages.tailor.guard import SourceCorpus
-        from packages.tailor.parse import ParsedResume
-
-        parsed = ParsedResume.model_validate(resume.parsed_json)
-        corpus = SourceCorpus.from_resume(parsed)
-
-        result = await write(
-            llm_router.write_cover_letter(),
-            resume_text=parsed.text,
-            job_description=posting.description_raw or "",
-            corpus=corpus,
-            company=getattr(posting, "company_name", None),
-        )
-    except Exception as exc:  # noqa: BLE001 - a letter is never worth failing an apply for
-        log.warning("cover_letter_failed", error=type(exc).__name__)
-        return None
-
-    if not result.usable:
-        log.info("cover_letter_refused", reason=result.rejected_reason)
-        return None
-
-    key = f"letters/{application.id}.txt"
-    try:
-        get_storage().put(key, result.text.encode("utf-8"))
-        application.cover_letter_ref = key
-    except Exception as exc:  # noqa: BLE001 - the letter still gets filled
-        log.warning("cover_letter_not_stored", error=type(exc).__name__)
-
-    log.info("cover_letter_written", words=result.word_count)
-    return result.text

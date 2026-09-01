@@ -1,0 +1,267 @@
+# Relevance labels for the matching benchmark.
+#
+# Read seeds/labeled_matches.README before adding to this file. The short
+# version: every label declares where it came from, and today every label here
+# says `fixture`, which means it was written next to the code that reads it.
+# CLAUDE.md §15 says why that matters. Nothing in this file is evidence about
+# the owner's real feed until entries appear with `provenance: owner`.
+#
+# relevance scale (packages/matching/labels.py::RELEVANCE_SCALE)
+#   0  irrelevant — would not apply
+#   1  plausible  — would read the posting
+#   2  good       — would apply
+#   3  excellent  — would apply today
+#
+# tags
+#   gate5     the twenty postings CLAUDE.md §9 Gate 5 asserts against. Do not
+#             add to this tag: the gate's meaning is "10 of these 20", and
+#             widening it silently changes what the gate proves.
+#   adjacent  roles near the profile that a feed genuinely confuses. These are
+#             what make the benchmark able to tell two scorers apart at all.
+
+name: backend-profile-v1
+version: "1"
+description: >-
+  One synthetic backend profile against thirty-two postings. Twenty are the
+  original Gate 5 set — ten obvious matches and ten unrelated occupations.
+  Twelve are adjacent roles added for the benchmark, because a set whose
+  negatives are pastry chefs and truck drivers cannot separate a good ranker
+  from a bad one: every scorer gets those right.
+
+profile_text: |
+  Staff Engineer, Analytical Engines Ltd
+  Designed a note-taking subsystem handling millions of events per day in Python.
+  Migrated the billing service from MySQL to PostgreSQL with zero downtime.
+  Built async APIs with FastAPI, deployed on Kubernetes and Docker.
+  Skills: Python, PostgreSQL, FastAPI, Docker, Kubernetes, async, backend, distributed systems
+
+postings:
+  # ---- Gate 5: wanted -----------------------------------------------------
+  - key: g5-senior-backend
+    title: Senior Backend Engineer
+    description: Python, PostgreSQL, FastAPI, async APIs, distributed systems
+    relevance: 3
+    provenance: fixture
+    tags: [gate5]
+    note: Every technology in the profile, at the profile's level.
+  - key: g5-staff-backend
+    title: Staff Backend Engineer
+    description: Python services, PostgreSQL, Kubernetes, Docker, scale
+    relevance: 3
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-platform
+    title: Platform Engineer
+    description: Kubernetes, Docker, Python tooling, backend infrastructure
+    relevance: 2
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-backend-apis
+    title: Backend Engineer, APIs
+    description: FastAPI, async Python, PostgreSQL, API design
+    relevance: 3
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-senior-swe
+    title: Senior Software Engineer
+    description: Python backend, distributed systems, PostgreSQL, Docker
+    relevance: 3
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-infrastructure
+    title: Infrastructure Engineer
+    description: Kubernetes, Docker, Python, deployment, backend systems
+    relevance: 2
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-senior-python
+    title: Senior Python Engineer
+    description: async Python, PostgreSQL, FastAPI, billing systems
+    relevance: 3
+    provenance: fixture
+    tags: [gate5]
+    note: Billing is in the profile's own history.
+  - key: g5-database
+    title: Database Engineer
+    description: PostgreSQL, MySQL, migrations, query performance, Python
+    relevance: 2
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-payments
+    title: Senior Engineer, Payments
+    description: Python, PostgreSQL, billing, distributed systems, async
+    relevance: 3
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-backend-data
+    title: Backend Engineer, Data
+    description: Python, PostgreSQL, events, streaming, backend
+    relevance: 2
+    provenance: fixture
+    tags: [gate5]
+
+  # ---- Gate 5: unrelated occupations --------------------------------------
+  - key: g5-pastry-chef
+    title: Pastry Chef
+    description: Croissants, laminated dough, early mornings in our bakery
+    relevance: 0
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-nurse
+    title: Registered Nurse
+    description: Patient care, clinical rounds, medication administration
+    relevance: 0
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-warehouse
+    title: Warehouse Associate
+    description: Picking, packing, forklift certification, shift work
+    relevance: 0
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-sdr
+    title: Sales Development Rep
+    description: Cold calling, outbound prospecting, quota, CRM hygiene
+    relevance: 0
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-designer
+    title: Graphic Designer
+    description: Adobe Illustrator, brand identity, print layout, typography
+    relevance: 0
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-mechanical
+    title: Mechanical Engineer
+    description: CAD, tolerance analysis, injection moulding, manufacturing
+    relevance: 0
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-teacher
+    title: Elementary Teacher
+    description: Lesson planning, classroom management, literacy curriculum
+    relevance: 0
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-financial-analyst
+    title: Financial Analyst
+    description: Excel modelling, forecasting, variance analysis, budgets
+    relevance: 0
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-truck-driver
+    title: Truck Driver
+    description: Long haul routes, CDL class A, logbook compliance
+    relevance: 0
+    provenance: fixture
+    tags: [gate5]
+  - key: g5-barista
+    title: Barista
+    description: Espresso extraction, latte art, customer service, morning shifts
+    relevance: 0
+    provenance: fixture
+    tags: [gate5]
+
+  # ---- Adjacent roles -----------------------------------------------------
+  # These are the discriminating half. Each shares vocabulary with the profile
+  # and differs on something a person would notice — the language, the
+  # seniority, the actual job. A scorer that ranks these the way the grades
+  # say is doing something a keyword count is not.
+  - key: adj-frontend
+    title: Senior Frontend Engineer
+    description: React, TypeScript, CSS, design systems, component libraries, web performance
+    relevance: 0
+    provenance: fixture
+    tags: [adjacent]
+    note: >-
+      Same seniority, same industry, no overlap in the work. The clearest case
+      of a title-similarity scorer being wrong — "Senior … Engineer" matches
+      almost perfectly and the job does not.
+  - key: adj-data-scientist
+    title: Data Scientist
+    description: Python, pandas, statistics, experiment design, A/B testing, notebooks, SQL
+    relevance: 1
+    provenance: fixture
+    tags: [adjacent]
+    note: >-
+      Shares Python and SQL and nothing else. matching/roles.py deliberately
+      refuses to alias this to a backend role; the grade agrees with it.
+  - key: adj-ml-engineer
+    title: Machine Learning Engineer
+    description: PyTorch, model serving, Python, Kubernetes, Docker, feature pipelines, GPUs
+    relevance: 1
+    provenance: fixture
+    tags: [adjacent]
+    note: Real infrastructure overlap, no modelling experience in the profile.
+  - key: adj-golang-backend
+    title: Backend Engineer (Go)
+    description: Golang, gRPC, microservices, distributed systems, PostgreSQL, Kubernetes
+    relevance: 1
+    provenance: fixture
+    tags: [adjacent]
+    note: >-
+      Right job, wrong language. Transferable per §15 of the master spec —
+      which is a reason to read it, not a reason to claim Go.
+  - key: adj-java-backend
+    title: Senior Backend Engineer, Java
+    description: Java, Spring Boot, JVM tuning, PostgreSQL, Kafka, microservices at scale
+    relevance: 1
+    provenance: fixture
+    tags: [adjacent]
+  - key: adj-devops
+    title: DevOps Engineer
+    description: Terraform, Kubernetes, Docker, CI/CD pipelines, AWS, on-call, observability
+    relevance: 1
+    provenance: fixture
+    tags: [adjacent]
+    note: The Kubernetes and Docker overlap is real; the job is operations.
+  - key: adj-sre
+    title: Site Reliability Engineer
+    description: Kubernetes, Python, incident response, SLOs, monitoring, distributed systems
+    relevance: 2
+    provenance: fixture
+    tags: [adjacent]
+    note: >-
+      Graded above DevOps because the profile's Python and distributed-systems
+      work is the substance of this role rather than adjacent to it.
+  - key: adj-eng-manager
+    title: Engineering Manager, Backend
+    description: Lead a backend team, Python and PostgreSQL stack, hiring, roadmap, 1:1s, headcount
+    relevance: 0
+    provenance: fixture
+    tags: [adjacent]
+    note: >-
+      The strongest keyword overlap of any negative here. Every technology
+      matches and the job is management, which is the failure a body cosine
+      cannot see.
+  - key: adj-junior-backend
+    title: Junior Backend Engineer
+    description: Python, PostgreSQL, FastAPI, REST APIs, mentorship, 0-2 years experience
+    relevance: 0
+    provenance: fixture
+    tags: [adjacent]
+    note: >-
+      Perfect technology match, wrong direction on seniority.
+      matching/filters.py should catch it; the benchmark records whether it did.
+  - key: adj-solutions-architect
+    title: Solutions Architect
+    description: Customer workshops, cloud architecture, AWS, Kubernetes, pre-sales, proposals
+    relevance: 0
+    provenance: fixture
+    tags: [adjacent]
+  - key: adj-qa-automation
+    title: QA Automation Engineer
+    description: pytest, Selenium, Python, test frameworks, CI, regression suites, bug triage
+    relevance: 1
+    provenance: fixture
+    tags: [adjacent]
+  - key: adj-data-engineer
+    title: Data Engineer
+    description: Airflow, dbt, Python, PostgreSQL, Snowflake, ETL pipelines, data warehousing
+    relevance: 2
+    provenance: fixture
+    tags: [adjacent]
+    note: >-
+      Python plus PostgreSQL plus pipeline work. Genuinely applicable, and the
+      one adjacent role where the owner would plausibly disagree with the grade
+      — which is exactly the kind of item worth having in the set.

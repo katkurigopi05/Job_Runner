@@ -18,7 +18,7 @@ from apps.api.errors import ApiError
 from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
 from packages.core.models import Candidate, Profile, Project, Resume
-from packages.core.schemas import ResumeOut, ResumeParsedOut, ResumePreviewOut
+from packages.core.schemas import ResumeEdit, ResumeOut, ResumeParsedOut, ResumePreviewOut
 from packages.core.storage import get_storage, resume_key
 from packages.github.select import select_projects
 from packages.tailor.assemble import describe
@@ -125,6 +125,65 @@ async def get_parsed(resume_id: uuid.UUID, session: SessionDep) -> ResumeParsedO
         line_count=len(parsed.get("raw_lines") or []),
         parsed=parsed,
     )
+
+
+@router.post("/{resume_id}/edit", response_model=ResumeOut, status_code=status.HTTP_201_CREATED)
+async def edit_resume(resume_id: uuid.UUID, body: ResumeEdit, session: SessionDep) -> Resume:
+    """Save an edited résumé as a new version, rendered and adopted.
+
+    Until now the parsed form was read-only: fixing a typo, or a section the
+    parser mis-split, meant editing the source document elsewhere and
+    re-uploading.
+
+    Three things this does that a plain form save would not, each of which is a
+    silent wrong answer if skipped.
+
+    **A new version, never a mutation.** An `Application` may already point at
+    the source résumé and may already have sent it. Rewriting that row in place
+    would leave a receipt describing a document that no longer exists.
+
+    **The PDF is re-rendered from the edit.** `apply_job._resume_path` uploads
+    the *file*, while tailoring renders from `parsed_json`. Storing the edit
+    without a new file would make it invisible on untailored applications and
+    visible on tailored ones — the same divergence that let the base résumé go
+    out while the review screen showed a tailored diff.
+
+    **`raw_lines` is rebuilt**, in `packages/tailor/edit.py`. It is what the
+    fabrication guard treats as "was this in the source", so an edit that added
+    a real employer while leaving it stale would have the guard refuse the
+    owner's own fact and the rewriter would look broken.
+
+    With `adopt` (the default) every profile pointing at the source is moved to
+    the new version. Without it the edit is stored and nothing uses it, which
+    reads as having done nothing.
+    """
+    source = await session.get(Resume, resume_id)
+    if source is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "resume not found")
+
+    from packages.tailor.parse import Contact
+    from packages.tailor.revise import ReviseError, save_edit
+
+    try:
+        resume = await save_edit(
+            session,
+            source,
+            contact=Contact.model_validate(body.contact.model_dump()),
+            sections=body.sections,
+        )
+    except ReviseError as exc:
+        code = ErrorCode.INTERNAL_ERROR if exc.internal else ErrorCode.INVALID_REQUEST
+        raise ApiError(code, str(exc)) from exc
+
+    if body.adopt:
+        for profile in (
+            await session.scalars(select(Profile).where(Profile.base_resume_id == source.id))
+        ).all():
+            profile.base_resume_id = resume.id
+
+    await session.commit()
+    await session.refresh(resume)
+    return resume
 
 
 @router.post("/{resume_id}/set-base", response_model=ResumeOut)

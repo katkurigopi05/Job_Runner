@@ -73,6 +73,91 @@ _RANK = {
 #: Everything the owner's search treats as domestic.
 US_LOCALITIES = frozenset({Locality.BAY_AREA, Locality.CALIFORNIA, Locality.UNITED_STATES})
 
+#: Words that describe how a job is worked, not where. A location made only
+#: of these names no place at all, which is `UNKNOWN` — silence — rather than
+#: `UNPLACED`. The distinction matters because `UNPLACED` is treated as
+#: probably-foreign, and "Remote" is the commonest way a *domestic* board
+#: writes a job the owner most wants to see.
+_WORKING_MODE_RE = re.compile(
+    r"\b(?:remote|hybrid|on[- ]?site|onsite|in[- ]?office|in[- ]?person|"
+    r"work from home|home[- ]?based|wfh|telecommute|virtual|distributed|"
+    r"flexible|anywhere|any location|multiple locations|various)\b",
+    re.I,
+)
+
+#: Punctuation and filler a board leaves between a mode word and nothing else:
+#: "Remote - ", "(Remote)", "Remote / Anywhere".
+_LOCATION_FILLER_RE = re.compile(r"[\s,;/|()\[\]{}.\-—–:*]+")
+
+
+#: An explicit on-site marker, which overrides a stray "remote" in the body.
+_ONSITE_MARKER_RE = re.compile(r"\b(?:on[- ]?site|onsite|in[- ]?office|hybrid)\b", re.I)
+
+#: Remote proper, as a *location or title* declares it. A subset of
+#: `_WORKING_MODE_RE`: "hybrid" and "flexible" describe a mode without
+#: promising the owner never has to be in the office.
+_REMOTE_RE = re.compile(
+    r"\b(?:remote|work from home|wfh|telecommute|home[- ]?based|distributed|anywhere)\b",
+    re.I,
+)
+
+#: Remote as *prose* states it, which is a narrower vocabulary than a location
+#: field needs — and the difference is not academic.
+#:
+#: "distributed" was in the shared pattern and the body was searched with it,
+#: so **"distributed systems" made a posting remote**. That phrase is in a
+#: large share of backend descriptions, which is exactly the corpus this
+#: filter is pointed at; under the search-area rule it silently converted
+#: on-site roles in every state into reachable ones. "anywhere" goes the same
+#: way: a location field reading "Anywhere" is a declaration, the word in a
+#: sentence is not.
+#:
+#: A location field is a declaration about the job. Prose is not, so it only
+#: counts where it says so unambiguously.
+_REMOTE_PROSE_RE = re.compile(
+    r"\b(?:remote|work from home|wfh|telecommute|home[- ]?based)\b"
+    r"|\b(?:fully|geographically)? ?distributed "
+    r"(?:team|workforce|company|organisation|organization)\b"
+    r"|\bwork from anywhere\b",
+    re.I,
+)
+
+
+def reads_as_remote(
+    *, title: str | None, location: str | None, description: str | None = None
+) -> bool:
+    """Whether a posting offers remote work.
+
+    One definition, because there were two. The scoring gate read only the
+    title and location while the feed also read the body, so the same posting
+    could be remote in the feed and on-site to the filter that decides whether
+    it is scored at all — and under `reachable` that disagreement is the
+    difference between a kept job and a dropped one.
+
+    The body is weaker evidence than a location that says so, so an explicit
+    on-site marker in the title or location overrides it: a posting headed
+    "Hybrid" whose benefits blurb mentions remote work is not remote.
+    """
+    haystack = f"{title or ''} {location or ''}"
+    if _REMOTE_RE.search(haystack):
+        return True
+    return bool(_REMOTE_PROSE_RE.search(description or "")) and not _ONSITE_MARKER_RE.search(
+        haystack
+    )
+
+
+def names_no_place(location: str | None) -> bool:
+    """Whether a location string describes only *how* a job is worked.
+
+    "Remote", "Hybrid / Flexible" and "" all name no place. "Remote - EMEA"
+    and "Remote — CA" do, and are left for the rules below to classify.
+    """
+    if not location:
+        return True
+    stripped = _WORKING_MODE_RE.sub(" ", location)
+    return not _LOCATION_FILLER_RE.sub("", stripped)
+
+
 _BAY_AREA_CITIES = (
     "san francisco",
     "bay area",
@@ -101,12 +186,12 @@ _BAY_AREA_CITIES = (
     "emeryville",
     "alameda",
     "san leandro",
+    "richmond",
     "walnut creek",
     "pleasanton",
     "livermore",
     "san ramon",
     "concord",
-    "richmond",
     "novato",
     "san rafael",
     "sausalito",
@@ -143,6 +228,184 @@ _CALIFORNIA_CITIES = (
     "playa vista",
     "marina del rey",
     "west hollywood",
+    "half moon bay",
+    "rancho santa margarita",
+    "san juan capistrano",
+    "aliso viejo",
+    "apple valley",
+    "baldwin park",
+    "beverly hills",
+    "buena park",
+    "cathedral city",
+    "chino hills",
+    "chula vista",
+    "citrus heights",
+    "diamond bar",
+    "downtown la",
+    "el cajon",
+    "el monte",
+    "elk grove",
+    "foster city",
+    "fountain valley",
+    "garden grove",
+    "huntington beach",
+    "huntington park",
+    "la habra",
+    "la mesa",
+    "la mirada",
+    "laguna niguel",
+    "lake elsinore",
+    "lake forest",
+    "los altos",
+    "los gatos",
+    "manhattan beach",
+    "menlo park",
+    "mission viejo",
+    "monterey park",
+    "moreno valley",
+    "morgan hill",
+    "morro bay",
+    "national city",
+    "newport beach",
+    "palm desert",
+    "palm springs",
+    "paso robles",
+    "pico rivera",
+    "pleasant hill",
+    "rancho cordova",
+    "rancho cucamonga",
+    "redondo beach",
+    "san bruno",
+    "san carlos",
+    "san clemente",
+    "san gabriel",
+    "san marcos",
+    "santa ana",
+    "santa clarita",
+    "santa cruz",
+    "santa maria",
+    "simi valley",
+    "south gate",
+    "thousand oaks",
+    "union city",
+    "walnut creek",
+    "west covina",
+    "yorba linda",
+    "yuba city",
+    "alhambra",
+    "arcadia",
+    "atascadero",
+    "azusa",
+    "bellflower",
+    "camarillo",
+    "cerritos",
+    "chico",
+    "clovis",
+    "colton",
+    "compton",
+    "covina",
+    "downey",
+    "encinitas",
+    "escondido",
+    "eureka",
+    "fontana",
+    "fullerton",
+    "gardena",
+    "gilroy",
+    "glendora",
+    "hanford",
+    "hawthorne",
+    "hemet",
+    "hesperia",
+    "indio",
+    "inglewood",
+    "livermore",
+    "lodi",
+    "lompoc",
+    "lynwood",
+    "madera",
+    "menifee",
+    "santa rosa",
+    "oceanside",
+    "manteca",
+    "merced",
+    "modesto",
+    "montebello",
+    "monterey",
+    "murrieta",
+    "napa",
+    "oakley",
+    "oxnard",
+    "palmdale",
+    "perris",
+    "petaluma",
+    "placentia",
+    "pomona",
+    "poway",
+    "redding",
+    "redlands",
+    "rialto",
+    "rocklin",
+    "rosemead",
+    "salinas",
+    "seaside",
+    "sonoma",
+    "stockton",
+    "temecula",
+    "tracy",
+    "truckee",
+    "tulare",
+    "turlock",
+    "tustin",
+    "upland",
+    "vacaville",
+    "vallejo",
+    "victorville",
+    "visalia",
+    "watsonville",
+    "whittier",
+    "yucaipa",
+)
+
+#: Deliberately **not** in the list above, though each is a real Californian
+#: city. A bare name here reads more often as somewhere else, and a false
+#: positive is the expensive direction: it puts a foreign or out-of-state role
+#: in a feed whose whole point is that on-site means California.
+#:
+#: - `Dublin` — Ireland, and Dublin, Ohio, are both likelier on a job board.
+#: - `Ontario` — the Canadian province.
+#: - `Orange`, `Commerce`, `Industry`, `Paramount`, `Vista` — ordinary words.
+#: - `Fairfield`, `Norwalk`, `Westminster`, `Lakewood`, `Roseville`, `Folsom`,
+#:   `Danville`, `Brentwood`, `Antioch`, `Cypress`, `Woodland`, `Carson`,
+#:   `Martinez`, `Davis`, `Pittsburg` — each names a better-known place in
+#:   another state or country.
+#:
+#: All of them classify correctly the moment a board writes ", CA", which is
+#: how the smaller ones are almost always written. This is a decision, not an
+#: omission — adding one needs a reason the bare name reads Californian.
+_AMBIGUOUS_CALIFORNIA_CITIES = (
+    "dublin",
+    "ontario",
+    "orange",
+    "commerce",
+    "industry",
+    "paramount",
+    "vista",
+    "fairfield",
+    "norwalk",
+    "westminster",
+    "lakewood",
+    "roseville",
+    "folsom",
+    "danville",
+    "brentwood",
+    "antioch",
+    "cypress",
+    "woodland",
+    "carson",
+    "martinez",
+    "davis",
+    "pittsburg",
 )
 
 #: Country names and non-US subdivision codes. Unambiguous enough to decide
@@ -212,6 +475,77 @@ _NON_US_MARKERS = (
     r"apac",
     r"latam",
     r"cemea",
+    # Added after a real crawl put "Sr. Manager, Finance Transformation —
+    # Costa Rica" near the top of the owner's match feed. Absent from the list,
+    # it classified as UNPLACED rather than ELSEWHERE, and UNPLACED passes the
+    # hard filter by design.
+    #
+    # **Four countries are deliberately not here**, because their names are
+    # American places and rule 1 runs before any US state *name* is read:
+    # `georgia` (Savannah, Georgia), `panama` (Panama City, FL), `lebanon`
+    # (Lebanon, PA / NH) and `jordan`. A comma-position state code rescues
+    # each of those, but a spelled-out state name does not, so adding them
+    # would hide American postings to catch rare foreign ones.
+    r"costa rica",
+    r"ukraine",
+    r"peru",
+    r"uruguay",
+    r"ecuador",
+    r"guatemala",
+    r"dominican republic",
+    r"morocco",
+    r"tunisia",
+    r"ghana",
+    r"uganda",
+    r"tanzania",
+    r"kuwait",
+    r"bahrain",
+    r"oman",
+    r"nepal",
+    r"iceland",
+    r"estonia",
+    r"latvia",
+    r"lithuania",
+    r"slovakia",
+    r"slovenia",
+    r"croatia",
+    r"serbia",
+    r"bulgaria",
+    r"cyprus",
+    r"malta",
+    r"luxembourg",
+    r"armenia",
+    r"azerbaijan",
+    r"kazakhstan",
+    r"uzbekistan",
+    # Continents and trading blocs, the same kind of marker as `emea` and
+    # `apac` above. Two Synthesia roles located simply `Europe` sat in the
+    # owner's top ten after the country list was extended, because a continent
+    # is not a country and nothing here was reading it.
+    #
+    # `Worldwide`, `Global`, `International` and `Anywhere` are deliberately
+    # **not** here. They describe a role open to the owner as much as to
+    # anyone, and `_REMOTE_RE` already treats `anywhere` as remote. Excluding
+    # them would drop jobs that are genuinely available.
+    #
+    # `South America` and `Central America` are safe despite containing
+    # "America": the match is word-boundaried on the whole phrase, and
+    # `_US_COUNTRY_RE` needs `united states`, `usa` or a bare `us`.
+    r"europe",
+    r"asia",
+    r"africa",
+    r"oceania",
+    r"middle east",
+    r"nordics",
+    r"scandinavia",
+    r"benelux",
+    r"iberia",
+    r"balkans",
+    r"baltics",
+    r"south america",
+    r"central america",
+    r"latin america",
+    r"caribbean",
 )
 
 _NON_US_RE = re.compile(r"\b(?:" + "|".join(_NON_US_MARKERS) + r")\b", re.I)
@@ -238,6 +572,96 @@ _NON_US_CITIES_RE = re.compile(
     r"minsk|kyiv|kiev|moscow|belgrade|zagreb|sofia|tallinn|riga|vilnius)\b",
     re.I,
 )
+
+#: State code to full name, so a search for one finds the other.
+#:
+#: Employers write the same place both ways — "San Francisco, CA" and "San
+#: Francisco, California" sit side by side in this corpus — so a location
+#: filter that knows only the form the owner typed silently drops half the
+#: matches. The module already carries both vocabularies for *classification*;
+#: this is the same knowledge in the form a *search* needs.
+#:
+#: DC is included because postings write it as a state.
+STATE_BY_CODE: dict[str, str] = {
+    "AL": "alabama",
+    "AK": "alaska",
+    "AZ": "arizona",
+    "AR": "arkansas",
+    "CA": "california",
+    "CO": "colorado",
+    "CT": "connecticut",
+    "DE": "delaware",
+    "DC": "district of columbia",
+    "FL": "florida",
+    "GA": "georgia",
+    "HI": "hawaii",
+    "ID": "idaho",
+    "IL": "illinois",
+    "IN": "indiana",
+    "IA": "iowa",
+    "KS": "kansas",
+    "KY": "kentucky",
+    "LA": "louisiana",
+    "ME": "maine",
+    "MD": "maryland",
+    "MA": "massachusetts",
+    "MI": "michigan",
+    "MN": "minnesota",
+    "MS": "mississippi",
+    "MO": "missouri",
+    "MT": "montana",
+    "NE": "nebraska",
+    "NV": "nevada",
+    "NH": "new hampshire",
+    "NJ": "new jersey",
+    "NM": "new mexico",
+    "NY": "new york",
+    "NC": "north carolina",
+    "ND": "north dakota",
+    "OH": "ohio",
+    "OK": "oklahoma",
+    "OR": "oregon",
+    "PA": "pennsylvania",
+    "RI": "rhode island",
+    "SC": "south carolina",
+    "SD": "south dakota",
+    "TN": "tennessee",
+    "TX": "texas",
+    "UT": "utah",
+    "VT": "vermont",
+    "VA": "virginia",
+    "WA": "washington",
+    "WV": "west virginia",
+    "WI": "wisconsin",
+    "WY": "wyoming",
+}
+
+#: The reverse, built rather than typed twice.
+CODE_BY_STATE: dict[str, str] = {name: code for code, name in STATE_BY_CODE.items()}
+
+
+def is_us_state(term: str) -> bool:
+    """Whether `term` names a US state, by either spelling."""
+    cleaned = term.strip().lower()
+    return cleaned.upper() in STATE_BY_CODE or cleaned in CODE_BY_STATE
+
+
+def location_aliases(term: str) -> tuple[str, ...]:
+    """Every spelling of `term` a posting might use, including `term` itself.
+
+    "CA" yields ("ca", "california"); "California" yields ("california", "ca").
+    Anything that is not a US state is returned unchanged — this widens a
+    search, it does not reinterpret it.
+    """
+    cleaned = term.strip().lower()
+    if not cleaned:
+        return ()
+    if (name := STATE_BY_CODE.get(cleaned.upper())) is not None:
+        return (cleaned, name)
+    if (code := CODE_BY_STATE.get(cleaned)) is not None:
+        return (cleaned, code.lower())
+    return (cleaned,)
+
 
 _US_STATE_CODES = (
     "AL",
@@ -463,7 +887,6 @@ _US_CITIES = (
     "boise",
     "anchorage",
     "honolulu",
-    "richmond",
     "virginia beach",
     "norfolk",
     "charleston",
@@ -476,6 +899,42 @@ _US_CITIES = (
     "hoboken",
     "jersey city",
     "newark",
+    "cape coral",
+    "fort wayne",
+    "grand prairie",
+    "little rock",
+    "newport news",
+    "overland park",
+    "sandy springs",
+    "sioux city",
+    "sioux falls",
+    "winston salem",
+    "amarillo",
+    "bentonville",
+    "broomfield",
+    "brownsville",
+    "cary",
+    "chandler",
+    "chesapeake",
+    "fayetteville",
+    "frisco",
+    "garland",
+    "gilbert",
+    "greensboro",
+    "herndon",
+    "irving",
+    "kirkland",
+    "lansing",
+    "laredo",
+    "littleton",
+    "lubbock",
+    "mckinney",
+    "mclean",
+    "peoria",
+    "springfield",
+    "tallahassee",
+    "tysons",
+    "yonkers",
 )
 
 _US_CITY_RE = re.compile(r"\b(?:" + "|".join(re.escape(c) for c in _US_CITIES) + r")\b", re.I)
@@ -498,7 +957,11 @@ def locality_of(location: str | None) -> Locality:
     this order and not a more obvious one.
     """
     original = (location or "").strip()
-    if not original:
+    # Silence, and its close cousin: text that names a working mode and no
+    # place. Both are "no evidence about where", which is what `UNKNOWN`
+    # means. Falling through would reach `UNPLACED` and read a bare "Remote"
+    # as probably-foreign.
+    if names_no_place(original):
         return Locality.UNKNOWN
 
     text = original.lower()
@@ -552,6 +1015,43 @@ def locality_of(location: str | None) -> Locality:
     return Locality.UNPLACED
 
 
+#: US macro-regions that are unambiguously *not* California. "West Coast",
+#: "Pacific" and "Southwest" are deliberately absent — each can include
+#: California, and under the on-site rule a wrong exclusion hides exactly the
+#: jobs the owner most wants.
+_NON_CA_US_REGION_RE = re.compile(
+    r"\b(?:northeast|north east|new england|mid[- ]?atlantic|midwest|mid west|"
+    r"great lakes|southeast|south east|gulf coast|east coast|tri[- ]state)\b",
+    re.I,
+)
+
+
+def names_us_region(location: str | None) -> bool:
+    """Whether a domestic location says *which part* of the country it is in.
+
+    `locality_of` answers "is this the United States", and returns
+    `UNITED_STATES` for both `Austin, TX` and a bare `United States`. Those are
+    different facts, and the on-site rule turns on the difference: the first
+    names a place the owner will not commute to, the second names no place at
+    all and is no more evidence than silence.
+
+    Getting this wrong is not theoretical — a bare `United States` was dropped
+    as "on-site outside California" purely because nothing in the string said
+    remote.
+    """
+    if not location:
+        return False
+    return bool(
+        _US_STATE_CODE_RE.search(location)
+        or _US_STATE_NAME_RE.search(location)
+        or _US_CITY_RE.search(location)
+        or _BAY_AREA_RE.search(location)
+        or _CALIFORNIA_CITY_RE.search(location)
+        or _CALIFORNIA_RE.search(location)
+        or _NON_CA_US_REGION_RE.search(location)
+    )
+
+
 def rank(locality: Locality) -> int:
     """Feed order: Bay Area, then California, then the rest of the US."""
     return _RANK[locality]
@@ -560,3 +1060,57 @@ def rank(locality: Locality) -> int:
 def is_domestic(locality: Locality) -> bool:
     """Whether this counts as inside the owner's search area."""
     return locality in US_LOCALITIES
+
+
+#: Where the owner will work on-site. California only — everywhere else in the
+#: United States has to be remote, because a job in another state is a move,
+#: not a commute.
+ONSITE_LOCALITIES = frozenset({Locality.BAY_AREA, Locality.CALIFORNIA})
+
+
+def onsite_ok(locality: Locality) -> bool:
+    """Whether the owner would take a role sited here without it being remote."""
+    return locality in ONSITE_LOCALITIES
+
+
+def reachable(locality: Locality, *, remote: bool) -> bool:
+    """Whether the owner's standing search area covers this posting.
+
+    The area is one sentence — *California in any working mode, the rest of
+    the United States remote only, nothing abroad* — and this is the whole of
+    it. Three classes and the reasoning for each:
+
+    - **California** is reachable either way. It is the one place an on-site
+      role costs nothing to accept.
+    - **Elsewhere in the US** is reachable only remotely. This is the half
+      that was missing: without it a filter that already refused Frankfurt
+      happily kept an on-site role in Chicago, which the owner cannot take
+      for the same reason.
+    - **Abroad** is never reachable, remote or not. `Remote (India only)` and
+      `Canada - Remote (ON, AB, BC)` are remote jobs the owner is not eligible
+      for, so remoteness must not be allowed to override the region — the bug
+      this function replaces.
+
+    `UNKNOWN` and `UNPLACED` are both kept, and only `ELSEWHERE` — an explicit
+    foreign signal — excludes.
+
+    `UNPLACED` used to be dropped here, on the class docstring's evidence that
+    every unplaceable string in an early sweep was foreign. Two things
+    overturned that. A later crawl of the full registry extended the foreign
+    vocabulary by thirty-odd countries plus continents and trading blocs, so
+    most of what used to land in `UNPLACED` now lands in `ELSEWHERE` where it
+    belongs — which leaves `UNPLACED` meaning something much closer to "a town
+    nobody listed". And the hand-written city lists turned out to be missing
+    143 of 205 Californian cities, so dropping `UNPLACED` made every gap in
+    them a silently discarded job. The lists are far longer now; the point is
+    that this no longer depends on their being complete.
+
+    A posting whose city no rule recognizes should be ranked down, not hidden.
+    Callers that would rather be strict have `allow_unknown_location`.
+    """
+    if not is_domestic(locality):
+        # UNKNOWN and UNPLACED included: neither is evidence about where this
+        # is, and a hard filter should not guess. ELSEWHERE is the one class
+        # that carries real evidence, and it is handled by the caller.
+        return locality is not Locality.ELSEWHERE
+    return remote or onsite_ok(locality)

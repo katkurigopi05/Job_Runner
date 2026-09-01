@@ -270,8 +270,22 @@ def sift(body: str, corpus: SourceCorpus, *, forbidden: tuple[str, ...] = ()) ->
 
 
 def vet(candidate: str, corpus: SourceCorpus) -> tuple[bool, str | None, GuardReport]:
-    """Decide whether a letter may be used. No fallback if it may not."""
-    report = check(candidate, corpus)
+    """Decide whether a letter may be used. No fallback if it may not.
+
+    The addressing is set aside before the guard sees the text, for the reason
+    `_GREETING` gives: "Dear Hiring Manager," asserts nothing about the
+    candidate, and `Manager` traces to no résumé that does not contain the
+    word. `write` already strips it before sifting — and then joined it back
+    on before calling this, so the guard read it anyway and refused clean
+    letters on their first four words. Stripping here rather than there covers
+    both callers, since this is the function that decides.
+
+    Everything else still judges the whole letter: a sign-off that raises
+    salary is §2.2 wherever it sits, and the length bound measures what a
+    reader actually receives.
+    """
+    _, body, _ = _strip_addressing(candidate)
+    report = check(body, corpus)
 
     if not candidate.strip():
         return False, "model returned nothing", report

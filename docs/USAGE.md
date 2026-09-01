@@ -11,7 +11,7 @@ This project has three kinds of “commands.” They are related, but they are n
 | Type | Example | Where to use it |
 |---|---|---|
 | Shell command | `make api` | A terminal opened in the project directory |
-| Dashboard path | `/review` | After `http://localhost:3000`, for example `http://localhost:3000/review` |
+| Dashboard path | `/review` | After `http://localhost:3001`, for example `http://localhost:3001/review` |
 | MCP tool | `review_queue` | Called by an MCP-enabled assistant, usually through a plain-language request |
 
 Job Runner currently has no custom literal slash commands such as `/apply` or `/status`. A slash in this guide normally means a dashboard path. When using Claude Code or another MCP client, ask in plain English; the client selects the appropriate Job Runner tool.
@@ -112,7 +112,39 @@ Terminal 4 — web dashboard:
 make web
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3001`.
+
+Port `3001` because `make web` runs `next dev -p 3001` — `3000` was already taken
+on this machine. The dev server also binds `0.0.0.0`, so the dashboard is
+reachable from a phone on the same network, which is how a review queue gets
+checked away from the desk. That is only defensible on a network you trust: the
+dashboard has no authentication. On a café or conference network, change it back
+in `apps/web/package.json`. `next start` (production) is unchanged and still
+binds localhost on `3000`.
+
+The header shows a status pill. When everything is up it reads `localhost only`;
+it turns amber for `db down` (run `make up`) and red for `api down` (run
+`make api`), so you never have to guess which process stopped.
+
+Beside it is a spider showing what the crawler is doing:
+
+| Spider | Meaning | What to do |
+|---|---|---|
+| 🕷 walking across the top of the window — `crawling` | A crawl is running | Wait; new postings land in `/matches` when it finishes |
+| 🕷 still, amber — `N queued` | Queued, but nothing is draining it | `make worker` |
+| 🕷 asleep with `z z z` — `postings 5d ago` | Nothing crawling | `make crawl` if that age looks wrong |
+
+The idle label carries the age of the newest posting, because that is the number
+that actually answers "are my results current". Only genuine idleness sleeps —
+a queued crawl with no worker stays awake and amber, because that is something
+to fix rather than something to rest through. An empty "posted in the last
+day" search usually means nothing has been *looked for* since the last crawl.
+
+While a crawl runs the spider leaves the header and walks the top edge of the
+page on a thread, left to right. It is the only moving thing on screen, so
+"is anything happening" is answerable without reading a word. It does not appear
+at all if your system asks for reduced motion — the header label still says
+`crawling`.
 
 Optional terminal 5 — local assistant:
 
@@ -126,7 +158,76 @@ In another terminal, pull the default model once:
 ollama pull llama3.1
 ```
 
-The dashboard assistant always uses Ollama locally. Changing `LLM_PROVIDER` does not send dashboard chat to Gemini or Anthropic.
+The dashboard assistant answers locally by default, and `LLM_PROVIDER` never
+changes that — `/chat` ignores it. You can pick a cloud model per question from
+the panel's `model` dropdown; see "Choosing which model answers" below.
+
+### Choosing which model answers
+
+Job Runner uses a model for five things, and you can pick the provider for the
+three that upload your own writing. Set these in `.env`:
+
+```dotenv
+LLM_PROVIDER=stub                # ollama | gemini | anthropic | openrouter | stub
+LLM_TASK_TAILOR=auto             # auto | ollama | gemini | anthropic | openrouter
+LLM_TASK_COVER_LETTER=auto
+LLM_TASK_OPEN_ENDED=auto
+LLM_FALLBACK_LOCAL=true
+```
+
+`auto` picks the strongest provider you have configured, which is what ships.
+Naming one pins that task — so you can tailor locally without deleting the API
+key everything else wants kept.
+
+Only those three are settable. Inbound-email classification is pinned to the
+local model in code and no environment variable can move it: it reads recruiter
+correspondence, and a setting able to redirect that would be a way to opt out of
+a privacy rule by editing a file.
+
+`LLM_FALLBACK_LOCAL=true` answers with the local model when the daily remote
+allowance runs out or a cloud provider is unreachable, instead of refusing.
+Whichever model actually answered is recorded, and the review screen shows it —
+a résumé written by `llama3.1` after the allowance ran out is a different
+document from one written by Gemini, and you should be able to tell before
+approving it.
+
+#### When an OpenRouter route stops working
+
+`OPENROUTER_MODEL` defaults to `stealth/ox-alpha`, and pre-release routes are
+withdrawn without notice — that one now returns 404 for every call. The symptom
+is a tailorer that appears to do nothing on a provider you believe is working.
+
+Set `OPENROUTER_MODEL` in `.env` to a route that still exists;
+`https://openrouter.ai/models` lists them, and free ones end in `:free`. The
+error names this fix when it happens.
+
+Free routes also rate-limit hard. Several calls in quick succession return 429,
+and a comparison run right after another one can fail on the cloud side alone.
+Raise `LLM_CALL_INTERVAL_S` for a real batch.
+
+#### Free and paid providers
+
+```dotenv
+GEMINI_API_KEY=
+ANTHROPIC_API_KEY=
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=                # defaults to stealth/ox-alpha
+```
+
+OpenRouter is deliberately **not** part of `auto`. Setting the key changes
+nothing on its own; it answers only when you name it (`LLM_PROVIDER=openrouter`,
+or `LLM_TASK_TAILOR=openrouter`). One key reaches many upstream models, and on a
+cloaked `stealth/*` route the upstream vendor is undisclosed by design — so the
+audit trail can record that your résumé went to OpenRouter but not who
+ultimately received it. That is a choice worth making on purpose rather than
+inheriting from a key being present. Read the route's data policy first; free
+routes commonly log prompts and share them with the model's creator.
+
+Note that free routes rate-limit hard. A multi-bullet résumé can trip `429` at
+the default `LLM_CALL_INTERVAL_S=4.0`; raise it for a batch.
+
+After editing `.env`, **restart the API**. Settings are cached at startup, so
+`--reload` alone will not pick up a new key.
 
 ## 4. Create your candidate and profile
 
@@ -173,28 +274,154 @@ Copy the returned profile `id`. After this, use the dashboard's `/profile` page 
 
 ### Upload a résumé
 
-Open `http://localhost:3000/resumes` and upload a text-based PDF, DOCX, TXT, or Markdown file. Scanned image-only PDFs will not parse reliably.
+Open `http://localhost:3001/resumes` and upload a text-based PDF, DOCX, TXT, or Markdown file. Scanned image-only PDFs will not parse reliably.
 
 The dashboard makes the upload the first listed profile's base résumé automatically. Then inspect the parsed preview: if Job Runner does not show a section, an ATS may not see it either. If you keep multiple profiles, use `POST /resumes/{resume_id}/set-base?profile_id={profile_id}` to assign the intended base explicitly.
 
 ## 5. Dashboard paths (`/` routes)
 
-The paths below come after `http://localhost:3000`.
+The paths below come after `http://localhost:3001`.
 
 | Path | Purpose |
 |---|---|
 | `/` | Desk: counts, recent activity, top matches, and anything waiting on you |
-| `/review` | Inspect applications parked for approval |
+| `/review` | Inspect applications parked for approval — see below for what it shows |
 | `/finish` | Work through applications and questions that need your action |
 | `/matches` | Browse scored job matches and inspect score breakdowns |
 | `/swipe` | Mark postings as interested or skipped to calibrate your threshold |
 | `/applications` | View the entire application pipeline by status |
 | `/applications/{id}` | Inspect one application and its current state |
 | `/applications/{id}/apply` | Prepare or complete the manual application handoff |
-| `/resumes` | Upload résumés and inspect what the parser extracted |
+| `/resumes` | Upload résumés, inspect what the parser extracted, and edit it in place |
 | `/tracker` | View outcomes, recruiter replies, and follow-up activity |
-| `/chat` | Ask the local Ollama assistant about your stored application data |
+| `/chat` | Ask an assistant about your stored application data — local by default |
 | `/profile` | Edit the answer set copied onto application forms |
+
+### What the review screen shows
+
+Everything the employer would receive, before it is sent:
+
+- **The filled form** — every answer, plus a screenshot, plus the exact text of
+  any question that could not be answered.
+- **Résumé to be sent** — the actual document that will be uploaded, labelled
+  `tailored for this posting` or `profile base, unmodified`, and **editable
+  while the application is parked**. See *Editing the résumé about to be sent*
+  below.
+- **What tailoring changed** — the rewritten bullets against the originals, how
+  many the fabrication guard refused, and which model wrote the document
+  (`written by gemini`, or `ollama:llama3.1` if the allowance ran out mid-run).
+  "not recorded" means the résumé predates that being tracked, never a guess.
+- **Cover letter** — the letter itself, open by default, with its word count,
+  how many sentences the guard stripped, and which model wrote it. Present only
+  when the form actually asked for one, which most do not. A refusal is shown
+  too: a letter has no original to fall back to, so "the guard refused it, here
+  is why" has to look different from "the form never asked".
+- **Compare models** — collapsed by default. Tailors the same posting with the
+  local model *and* the cloud one and shows both side by side, each with its
+  rewrite and refusal counts and a button to make it the version uploaded.
+
+  It runs only when you ask, because each cloud side is another upload of your
+  résumé to a third party. Comparing the same posting twice sends nothing — the
+  tailoring cache is keyed per provider. Both sides are checked by the
+  fabrication guard before either is shown; a side that cannot run (no key,
+  spent allowance, Ollama not started) appears as a column with the reason
+  rather than silently vanishing.
+
+  Once you pick a column it stays picked. Approving re-runs the pipeline, and
+  until recently that re-tailored with the default provider and quietly
+  replaced your choice on the way out — the screen showed one document and the
+  employer got the other.
+
+  **Choose the cloud side per comparison.** The picker above the button names
+  which remote model runs — leave it on "whatever tailoring uses" for the usual
+  question, or pick one. This applies to that comparison only and does not
+  change what your applications tailor with. It exists because OpenRouter is
+  deliberately not in the automatic order, so comparing against it otherwise
+  meant setting `LLM_TASK_TAILOR=openrouter` and adopting it for everything
+  first. Each option says where your résumé goes.
+
+  A column reads `never answered` when the model failed rather than when the
+  guard refused it. The two are counted separately on purpose: "refused by the
+  guard" says the model tried to invent something, and a provider that was down
+  should not be read that way.
+
+### Editing a résumé
+
+`/resumes` shows each résumé as the parser reads it, with an `edit` button in
+the corner. Pressing it turns that same document into the editor — every line
+stays where it will appear and you type in place, rather than filling a form
+beside a preview and mapping between the two.
+
+Per line: hover or focus a line to get a `✕` that removes it, and each section
+has a `+ line`. Boxes grow with their text, so a long bullet is never cut off
+at the end — which is the part most likely to be wrong after tailoring.
+
+Blank lines are dropped and an emptied section is removed, so what gets saved is
+what you see with the empties gone.
+
+Saving does three things worth knowing about:
+
+- It creates a **new version** rather than rewriting the one on screen. An
+  application may already have sent that version, and its receipt has to keep
+  describing what actually went.
+- It **re-renders the PDF**, so the stored file and the parsed text cannot
+  disagree. A failed render refuses the save rather than storing an edit no
+  application could see.
+- It **moves every profile** that used the old version onto the new one, or the
+  edit would change nothing and the screen could not tell you. This last one is
+  specific to `/resumes`; editing from `/review` deliberately does not.
+
+Editing also widens what tailoring is allowed to say, because the guard checks
+rewrites against your résumé's own text. That is intended: the guard exists to
+stop the model inventing, not to stop you writing your own résumé.
+
+### Editing the résumé about to be sent
+
+`/review` has the same editor, on the document that application will upload.
+Open **Résumé to be sent** and press `edit before sending`.
+
+Use it when a tailored bullet reads wrong for one job. Editing the base on
+`/resumes` would not help there: a résumé already tailored for this posting is
+not the base, and the application is not going to send the base.
+
+The difference from `/resumes` is scope. Saving here attaches the new version to
+**that application only** — your base résumé and every other application are
+left alone. A résumé written for one posting is a poor starting point for the
+next, so this is not something to inherit by accident. If the fix is true
+everywhere — a typo, a changed phone number — tick **Also make this my base
+résumé** under the editor, which is off by default.
+
+Two things follow from saving:
+
+- The **tailoring diff above says so**. It still shows what tailoring did, but
+  it now describes the résumé yours was derived from, not the file going out,
+  and it says that rather than letting you read it as current.
+- **Approving sends your version.** Nothing re-tailors over it.
+
+Only available while the application is parked at `needs_review`. A running one
+is mid-fill in a browser and a submitted one has already sent its file, so
+editing either would change the screen and nothing else.
+
+### Choosing who answers in `/chat`
+
+The chat panel has a `model` dropdown: `local` (the default), `gemini`,
+`anthropic`, `openrouter`. Local is the only one where nothing leaves the
+machine, and it is what answers if you never touch the control.
+
+Picking a cloud model sends the context — your application URLs, profile fields
+and recruiter correspondence — to that provider. Two things limit that:
+
+- **Recruiter mail is gated separately** and defaults to *withheld*. A checkbox
+  appears only for cloud models. Your own material still goes; other people's
+  emails about you do not, unless you tick it for that question. Agreeing to
+  send your own data somewhere is not the same as agreeing to send theirs.
+- **Nothing ever falls back.** A local model that is down will not quietly
+  promote your question to a cloud provider, and a cloud provider that fails
+  will not drop to the local one.
+
+Every remote answer is labelled in the transcript with the model, that it left
+the machine, and whether mail went with it. The choice is per question and is
+not remembered.
 
 Useful dashboard assistant prompts include:
 
@@ -250,6 +477,17 @@ Keep repository descriptions and topics accurate if you rely on this feature. Jo
 
 You normally do not call these by hand. They are listed so you know what the assistant can actually do.
 
+One asymmetry is worth knowing. `edit_application_resume` runs every edit
+through the fabrication guard, and the `/review` editor does not. That is not an
+oversight in either direction: §2.1 exists to stop a *model* inventing, and you
+are the authority on your own employers and dates. When you type on `/review`
+the author is you. When an assistant calls the tool the author is a model, so
+the same words get checked.
+
+If you ask an assistant to add something true and the guard refuses it, type it
+on `/review` yourself rather than asking the assistant to reword it past the
+check.
+
 | Tool | What it does |
 |---|---|
 | `detect_ats` | Detect an ATS from a posting URL |
@@ -263,6 +501,10 @@ You normally do not call these by hand. They are listed so you know what the ass
 | `approve_application` | Record approval and optional answers, then resume work |
 | `reject_application` | Reject a parked application permanently |
 | `submit_otp` | Supply a requested one-time verification code |
+| `compare_tailoring` | Tailor a parked application both locally and in the cloud, and return both |
+| `select_tailoring` | Choose which compared résumé that application will upload |
+| `inspect_application_resume` | Show the résumé a parked application will actually upload, line by line |
+| `edit_application_resume` | Edit that résumé — fabrication-guarded, unlike the dashboard editor |
 | `list_candidates` | List candidate records and their IDs |
 | `list_profiles` | List reusable application profiles and their IDs |
 | `list_resumes` | List a candidate's uploaded résumés |
@@ -273,7 +515,24 @@ You normally do not call these by hand. They are listed so you know what the ass
 | `preview_projects` | Rank projects against job text and return matched GitHub evidence terms |
 | `curate_project` | Pin a project or exclude it from future selection |
 
-There is deliberately no `submit_now` tool. Approval releases an application to the worker, which enforces the project's submission rules. There is also no tool named `tailor_resume`; `preview_resume` previews assembly and selected projects.
+There is deliberately no `submit_now` tool. Approval releases an application to
+the worker, which enforces the project's submission rules.
+
+There is also no `tailor_resume` tool, and the reason has changed. Tailoring is
+built and the apply pipeline runs it on every application; what is absent is a
+tool that tailors *without* applying, because the document it produced would
+belong to no application — nothing would upload it, and it would sit in storage
+looking finished. `preview_resume` previews assembly and selected projects
+without writing anything.
+
+`compare_tailoring` costs a real upload: each remote side sends your résumé to a
+third party. Ask for it when you want the comparison, not to browse. Asking
+twice for the same posting sends nothing, because the tailoring cache is keyed
+per provider.
+
+`select_tailoring` and `approve_application` are separate on purpose. Choosing
+which document goes is not the same act as deciding to send it, and the approval
+gate has to stay its own deliberate step.
 
 ## 7. Typical application workflow
 
@@ -286,8 +545,9 @@ There is deliberately no `submit_now` tool. Approval releases an application to 
 7. Let the worker fill the ATS form.
 8. Open `/review` or ask, “What is in my review queue?”
 9. Inspect the job, filled answers, unanswered questions, résumé, and screenshot.
-10. Approve with exact missing answers, reject it, or finish manually if automation is blocked.
-11. Check `/applications` and `/tracker` for status and replies.
+10. Fix anything the résumé got wrong for this job with `edit before sending`, if needed.
+11. Approve with exact missing answers, reject it, or finish manually if automation is blocked.
+12. Check `/applications` and `/tracker` for status and replies.
 
 Application states normally move like this:
 
@@ -313,6 +573,38 @@ make discover
 ```
 
 Runs a broad aggregator discovery pass and promotes resolved company boards into the seed registry. It can be slow and makes network requests.
+
+```bash
+make crawl
+make crawl force=1
+```
+
+Or from Claude Code, `/spider` — the same crawl with the checks around it that
+`make crawl` leaves to you: that a worker is actually draining the queue, that
+the task got claimed, and what the sweep added when it finishes. It also reads
+the worker log before calling a zero result "nothing new", because a board the
+crawler could not reach reports the same zero as one that had no new postings.
+
+```bash
+```
+
+Polls the company registry for new postings, then embeds and re-scores whatever
+it finds. This is what makes `/matches` current; without it the feed keeps
+describing whenever a crawl last ran.
+
+It **enqueues** — `make worker` does the work, and nothing happens until the
+worker drains it. Running it twice while one is still pending is refused rather
+than doubled: two crawls minutes apart poll the same hosts and the later one
+emits nothing, having spent the rate limit to do so.
+
+`force=1` re-emits postings whose content is unchanged. Normally a second run
+emitting nothing is change detection working correctly, so use this only when
+you have reason to distrust the stored hashes.
+
+If postings look stale, this is the command. Check `/matches` and look at how
+old the newest posting is before concluding the job market went quiet — an empty
+"posted in the last day" filter usually means nothing has been *looked for*
+since the last crawl, not that nothing was posted.
 
 ```bash
 make rescore
@@ -405,6 +697,49 @@ ollama pull llama3.1
 
 Ollama is optional for core crawling and application work.
 
+The assistant will not fall back to a cloud provider on its own, so a local
+model that is down is an error rather than a silently remote answer. If you want
+a cloud one, pick it from the `model` dropdown for that question.
+
+### A cloud model says the key is not set
+
+`OPENROUTER_API_KEY environment variable is not set`, or the same for Gemini or
+Anthropic. Add the key to `.env` and **restart the API** — settings are cached
+at startup, so `--reload` alone will not pick it up.
+
+Edit `.env` in an editor rather than `echo >> .env`; the shell version writes
+your key into your command history, which is the one place `.gitignore` cannot
+help.
+
+### A cloud model returns an empty answer
+
+Reasoning models spend the token budget thinking before they write. If a route
+returns nothing, the error will say whether it was cut off at the token limit —
+raise `REASONING_HEADROOM_TOKENS` in `packages/llm/provider.py` if so.
+
+### `429` errors while tailoring
+
+Free routes rate-limit hard. Raise `LLM_CALL_INTERVAL_S` in `.env`; the default
+of `4.0` is not enough for a multi-bullet résumé on some free providers.
+
+### The dashboard or type checker breaks with duplicate files
+
+If this checkout is inside an iCloud-synced folder (Desktop or Documents),
+iCloud will race itself over `node_modules` and write `filename 2.ext`
+duplicates. Symptoms are `TS2688`/`TS2300` from `tsc`, or `MODULE_NOT_FOUND`
+crashing the dev server.
+
+Exclude the churning directories from sync once:
+
+```bash
+xattr -w 'com.apple.fileprovider.ignore#P' 1 apps/web/node_modules
+xattr -w 'com.apple.fileprovider.ignore#P' 1 apps/web/.next
+xattr -w 'com.apple.fileprovider.ignore#P' 1 .venv
+```
+
+None are tracked by Git and all are regenerable, so nothing of value stops being
+backed up. Reverse with `xattr -d`.
+
 ### Playwright cannot find Chromium
 
 Run:
@@ -440,3 +775,6 @@ Finish that application manually. Captcha solving, browser-fingerprint spoofing,
 - Do not expose port `8000` publicly. The API is designed for localhost and has no user authentication.
 - Use the crawler only for postings you genuinely intend to consider, and preserve its robots.txt and rate-limit behavior.
 - Never approve an application until you have inspected the actual answers, résumé, and unresolved questions.
+- The assistant is local unless you pick otherwise, per question. Picking a cloud model sends your applications and profile to it; recruiter mail stays behind unless you also tick the box.
+- OpenRouter's cloaked `stealth/*` routes do not disclose which upstream provider receives your data. The audit trail records the hop, not the destination.
+- Read the model's data policy before pointing a free route at your résumé. Free access is often paid for with your prompts.

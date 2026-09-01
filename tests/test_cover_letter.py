@@ -178,6 +178,55 @@ def test_an_unusable_letter_is_falsy_by_construction() -> None:
     assert not CoverLetter(text="", accepted=True).usable
 
 
+# --------------------------------------------------------------------------
+# The addressing
+# --------------------------------------------------------------------------
+
+
+def test_a_greeting_does_not_refuse_an_otherwise_clean_letter() -> None:
+    """`Manager` is not a claim about the candidate.
+
+    `_GREETING` was added precisely so the guard would stop refusing letters
+    over "Dear Hiring Manager," — and `write` stripped the greeting before
+    sifting, then joined it back on before `vet`, which runs the guard again
+    over the whole thing. So the strip was undone one line later and the
+    refusal came back, on the single most common opening a model produces.
+
+    No test caught it because every test here builds letters with no greeting.
+    """
+    accepted, reason, _ = vet(
+        "Dear Hiring Manager,\n\n" + _letter("Jane Doe, backend engineer."), _corpus()
+    )
+
+    assert accepted, reason
+
+
+async def test_a_greeted_letter_survives_the_whole_writer(monkeypatch) -> None:
+    """The same thing end to end, since `write` is what the pipeline calls."""
+    body = "Dear Hiring Manager,\n\n" + _letter("Jane Doe, backend engineer.")
+    provider = StubProvider(responses={"Write the cover letter": body})
+
+    result = await write(provider, resume_text=RESUME, job_description=JOB, corpus=_corpus())
+
+    assert result.usable, result.rejected_reason
+    assert result.text.startswith("Dear Hiring Manager,")
+
+
+def test_a_signoff_still_cannot_smuggle_a_protected_topic() -> None:
+    """Setting the addressing aside is for the *guard*, not for §2.2.
+
+    The scaffolding is exempt from tracing to the résumé because it asserts
+    nothing. It is not exempt from the salary rule, which is about what the
+    letter says, wherever in the letter it says it.
+    """
+    letter = _letter("Jane Doe.") + "\n\nSincerely, Jane — my salary expectation is $180,000"
+
+    accepted, reason, _ = vet(letter, _corpus())
+
+    assert not accepted
+    assert "salary" in (reason or "")
+
+
 def test_first_person_prose_is_not_read_as_proper_nouns() -> None:
     """The guard's word list was sized for résumé bullets, which are terse
     and third-person. A letter says "My" and "We" at the start of sentences,

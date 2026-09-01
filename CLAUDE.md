@@ -159,6 +159,8 @@ jobrunner/
     ├── TSENTA_ARCHITECTURE.md    teardown of the commercial reference
     ├── REFERENCE.md              what the teardown implies for this build
     ├── PARITY.md                 capability map against career-ops
+    ├── BACKLOG.md                gap register against the job-discovery spec
+    ├── ML_EVALUATION.md          what the ranking numbers may and may not claim
     └── PARALLEL_WORK.md
 ```
 
@@ -245,7 +247,8 @@ class LLMProvider(Protocol):
     async def complete_json(self, system: str, user: str, schema: type[BaseModel]) -> BaseModel: ...
 ```
 
-Implementations: `OllamaProvider`, `GeminiProvider`, `AnthropicProvider`, `StubProvider`.
+Implementations: `OllamaProvider`, `OllamaCloudProvider`, `GeminiProvider`,
+`AnthropicProvider`, `StubProvider`.
 Selected by `LLM_PROVIDER` env var. `StubProvider` returns deterministic canned output and
 is what tests use — no test may hit a network LLM.
 
@@ -268,6 +271,172 @@ original bullet, which looks like the tailorer doing nothing.
 
 The table lives in `packages/llm/router.py::TEMPERATURES`. `complete_json` is
 pinned to 0.0 regardless — the answer has to parse against a schema.
+
+**Local or cloud is now the owner's choice, per task.** The provider column
+above was not settable: `best_available()` walks a hardcoded `QUALITY_ORDER`
+and picks the strongest *configured* provider, so a Gemini key made every
+"best available" task remote and the only way to tailor locally was to delete
+the key that everything else wanted kept. `LLM_TASK_TAILOR`,
+`LLM_TASK_COVER_LETTER` and `LLM_TASK_OPEN_ENDED` take `auto` (the shipped
+behaviour) or a provider name.
+
+Only those three. Classification and the assistant read recruiter mail and
+chat context; §2.8 permits one third-party upload and neither is it, so both
+stay on Ollama in code and `CHOOSABLE_TASKS` does not list them — a setting
+able to move them would be a way to opt out of a non-negotiable by editing
+`.env`. `test_only_the_uploading_tasks_are_choosable` holds that.
+
+The assistant has since gained a cloud option, and it is worth being precise
+about what that did and did not change here. It is **still absent from
+`CHOOSABLE_TASKS`**, and `/chat` still ignores `LLM_PROVIDER`. The owner picks a
+provider per question in the UI (§14); no environment variable redirects the
+assistant, which is the property this list protects. Inbound-email
+classification did not move at all.
+
+**OpenRouter is a fourth provider, and it is opt-in by name.** One key reaches
+many upstream models, and `docs/PARITY.md` had it refused under §3's "no paid
+service without asking" — the owner asked, and the route in use is free, so §11
+is untouched. What is *not* untouched is §2.8. OpenRouter forwards the résumé
+text to an upstream provider, and the audit trail can record the hop but not the
+destination; on a cloaked `stealth/*` route the upstream vendor is undisclosed
+by design, and free routes commonly log prompts and share them with that
+undisclosed creator. So `OpenRouterProvider` is deliberately absent from
+`router.QUALITY_ORDER`: a key in `.env` changes nothing on its own, and the
+provider answers only when named by `LLM_PROVIDER` or one of the three settings
+above. Acquiring a route whose recipient cannot be named should take typing the
+word, not pasting a key.
+
+The endpoint has one property worth knowing before pointing anything at it:
+**reasoning is mandatory and cannot be switched off.** Both `{"enabled": false}`
+and `{"max_tokens": 0}` come back `400 "Reasoning is mandatory for this endpoint
+and cannot be disabled"`. That matters because `max_tokens` there bounds
+reasoning *plus* answer, while every caller here means it as an answer budget —
+`tailor_bullets` passes 300 to keep a bullet bullet-sized. Passed through
+unchanged, a 300-token call returned `finish_reason="length"` with **empty
+content**: the allowance went on thinking and the model was cut off before
+writing. The tailorer caught the error and kept the original line, so the
+symptom was a tailorer that appeared to do nothing on a provider that was
+working fine. `REASONING_HEADROOM_TOKENS` is the fix, and the numbers behind it
+are in the constant's docstring.
+
+Free routes also rate-limit hard: a three-bullet résumé trips 429 at the default
+`LLM_CALL_INTERVAL_S=4.0`. The pacer obeys `Retry-After` and retries, but for a
+real batch raise the interval.
+
+`LLM_FALLBACK_LOCAL` answers with the local model when the daily allowance is
+spent or the remote provider is unreachable, rather than refusing. This is not
+a softening of "nothing falls back to the stub" — that stands, and the stub is
+excluded explicitly. `QuotaExceeded` already told the owner to "raise the
+limit, wait for the reset, or run a local provider"; the third option was an
+instruction to a human, and this is it automated. Which model answered is
+recorded on the provider and in the trail, because a résumé tailored by
+llama3.1 after the allowance ran out is a different document from one tailored
+by Gemini and the owner approving it should be able to tell.
+
+"Should be able to tell" was, until now, only true of someone reading the
+trail. `answered_by` lived on the provider object and died with the run, so the
+review screen — the one place the distinction has consequences, because it is
+where the document gets approved and sent — never showed it. It is now stored
+on the résumé as `resumes.tailored_by` and rendered under the diff.
+
+On the résumé rather than the application, because the reuse paths are the ones
+that would otherwise go blank: an overnight batch and the tailoring cache both
+serve a document written in an earlier run to an application that never calls a
+provider, and the model is a property of the document, not of the run that
+attached it. Read *after* the rewrites too, not before — `FallbackProvider`
+resets `answered_by` to the primary at the top of every call, so a value
+captured early names the model that did not answer, which is precisely the case
+worth seeing.
+
+NULL means unrecorded — a base résumé, or one tailored before the column
+existed — and the screen says "not recorded" rather than showing nothing. A
+blank line reads as "no fallback happened", which is the one thing it must not
+be mistaken for. The migration deliberately does not backfill: there is no
+record of which model wrote the existing rows, and a plausible guess on a
+document about to be sent to an employer is worse than an honest gap.
+
+The cover letter records the same thing, in the review record rather than on a
+row. §7's fallback applies to `write_cover_letter` exactly as it does to
+tailoring, so a letter written by llama3.1 after the allowance ran out is not
+the letter Gemini would have written, and it goes to an employer under the
+owner's name. A tailored résumé has a row to carry `tailored_by`; a letter has
+none, so `answered_by` rides in `review_json["cover_letter"]` beside the text.
+Refusals carry it too — "the guard refused it" reads differently depending on
+which model produced the draft.
+
+The review screen shows the letter itself, open by default. It had been written
+into `review_json` since the wiring landed and rendered nowhere, so a document
+generated by a model was attached to applications the owner approved without
+ever being able to read it — the same failure the untailored résumé had, and
+invisible for the same reason: no test asserted what the approval screen
+displays.
+
+### Comparing two models on one posting
+
+`/review` has a **Compare models** panel: it tailors the same posting with the
+local model and with the cloud one and shows both, each with its rewrite count,
+its guard-refusal count, and a button that makes it the document to upload.
+
+It exists because §7 made the provider settable without making it *decidable*.
+Answering "is the cloud one better for this résumé and this job" meant editing
+`.env`, re-running, and holding the first result in your head.
+
+Three properties are load-bearing:
+
+- **On demand.** Each remote side is another §2.8 upload of the owner's résumé.
+  Running both on every application would double that on every application,
+  including the ones rejected at review. The tailoring cache is consulted per
+  provider, so comparing a posting twice sends nothing.
+- **Both sides are guard-checked before either is shown.** A comparison offers
+  each column as something the owner may choose and send. An unvetted draft
+  presented that way is a fabricated bullet with a button under it. The refusal
+  counts are shown per side — a model that keeps trying to invent should not
+  look identical to one that does not.
+- **A side that cannot run is a reported column, not a missing one.** No key,
+  spent allowance, Ollama not started: each becomes a candidate carrying the
+  reason. A comparison silently missing half of itself reads as a verdict on the
+  half that is there. `CannotCompare` is separate and covers the case where
+  there was never anything to compare — no base résumé, no posting text —
+  because a precondition is not a model outcome.
+
+Selecting is restricted server-side to the two versions actually compared. This
+sets the file an employer receives, and "any résumé id this candidate owns" is a
+wider door than the screen needs.
+
+**It did not always set that file.** Selecting wrote `tailored_resume_id` and
+approving then re-entered `_tailor`, which reattached the default provider's
+cached document over it — so the column the owner picked was shown here and the
+other one was sent. The choice is pinned now; see §15, *The owner's choice at
+review was discarded on the way to the employer*.
+
+**The remote side is nameable per comparison.** `cloud` on the compare request
+picks it for that run only; omitted, it is whatever real tailoring would use.
+
+This exists because the default could not answer the question for OpenRouter.
+§7 keeps `openrouter` out of `QUALITY_ORDER`, so the only way to make it the
+cloud column was `LLM_TASK_TAILOR=openrouter` — which also redirects every real
+tailoring call. The owner had to *adopt* a provider in order to evaluate it,
+which is the friction this panel exists to remove, pointing the wrong way: the
+provider hardest to name is the one whose output most deserves a look first.
+
+It is not a back door into §7. Only a provider with a key configured may be
+named, so pasting a key is still what makes a route reachable at all; nothing
+routes to OpenRouter by default; and naming one here moves no setting, so the
+next application tailors exactly as it did before. That is the same shape as
+§14's per-question provider choice in `/chat`. The picker states where the
+résumé goes for each option, and says outright that OpenRouter forwards to an
+upstream it cannot name — §2.8 permits this upload, it does not excuse making
+the recipient invisible at the moment of choosing.
+
+**A provider that never answered is not a guard refusal.** Found on the first
+real local-vs-cloud run. `tailor_bullet` keeps the original line for either
+reason and set `rejected_reason` for both, so `summarize` counted them
+together — and the comparison rendered "1 refused by the guard" for a model
+that had returned a 404 and never written a word. On a screen whose entire
+purpose is judging two models against each other, that is the wrong verdict
+about the wrong subject: "the guard refused this" describes what a model tried
+to write, and a transport error describes the network. `provider_failures` is
+counted and displayed separately, and the column says so.
 
 Tuning any of these against the guard's own pass rate is the trap in
 `docs/REFERENCE.md` §3.6: it optimises the one referee we control, and a
@@ -374,12 +543,26 @@ content-hash change detection and per-host rate limiting. Posting extraction per
 Embedding of postings and profile. Hard filters (location, seniority, work authorization,
 sponsorship). Cosine scoring. Match feed in the dashboard.
 
-The registry started at 50 and is now 29. `make validate-seeds` found that 21
-of the original entries returned 404 from both the board API and the rendered
-page — those companies have left Greenhouse. They are listed at the bottom of
-`seeds/companies.yaml` with the evidence rather than deleted, because a 404
-board is worse than an absent one: it yields zero postings, which reads
-identically to "nothing new since the last poll".
+The registry started at 50. `make validate-seeds` found that 21 of those
+returned 404 from both the board API and the rendered page — those companies
+have left Greenhouse — and they were removed, taking it to 29. A 404 board is
+worse than an absent one: it yields zero postings, which reads identically to
+"nothing new since the last poll".
+
+**It is now 119**, and this paragraph said 29 until someone counted. The
+import of career-ops' company list added 90 entries and superseded the number
+without updating the sentence that carried it. Two things follow, and both
+matter more than the count:
+
+- The paragraph also claimed the 21 dead boards were "listed at the bottom of
+  `seeds/companies.yaml` with the evidence rather than deleted". They were
+  deleted. There is no retired section in that file and never has been. The
+  argument for keeping them is still right; it was simply never implemented.
+- **The 90 imported entries have never been validated.** The 404 sweep ran
+  against the original 50. So the registry today is 29 checked boards and 90
+  unchecked ones, and on the evidence of the first sweep — 21 of 50 dead —
+  a meaningful share of the newcomers are polling nothing. Run
+  `make validate-seeds` before trusting a quiet crawl.
 
 **Gate 5:** crawler runs a full cycle over the seed list without exceeding rate limits;
 second run emits zero postings (change detection works); match scores are sane against a
@@ -519,22 +702,70 @@ the owner's own data, answered by a model on this machine.
 It was built after §9's phases and is not one of them. Three properties are
 load-bearing and easy to undo by accident.
 
-**Local-only, not configurable.** Chat context carries application URLs,
-profile fields, and recruiter correspondence. §2.8 permits exactly one
-third-party upload — the tailoring call — and a chat window is not it. So
-`apps/api/routers/chat.py` asks for Ollama *by name* rather than reading
-`LLM_PROVIDER`, and when Ollama is down it errors instead of falling back to a
-cloud provider that happens to be configured. Setting `LLM_PROVIDER=gemini`
-changes tailoring and leaves the assistant local.
+**Local by default; remote only when asked, per question.** This paragraph used
+to read "local-only, not configurable", and that was the rule for good reason:
+chat context carries application URLs, profile fields, and recruiter
+correspondence, and §2.8 permits exactly one third-party upload — the tailoring
+call — which a chat window is not.
 
-Asking for Ollama by name stopped being enough to know that. Ollama serves
+**The owner widened it deliberately.** `ChatRequest.provider` accepts `ollama`,
+`gemini`, `anthropic`, `openrouter` or `ollama_cloud`, and the `/chat` UI has a
+picker. Naming a
+remote provider sends the context to it. Recording the change rather than
+quietly editing the rule away: this *is* a narrowing of §2.8, it was made
+knowingly, and a reader who finds recruiter mail in a Gemini log should be able
+to find out why here.
+
+What did not change is what happens when nobody asks:
+
+- Omitting `provider` answers locally. The shipped default still costs nothing.
+- `apps/api/routers/chat.py` still ignores `LLM_PROVIDER` entirely, so nothing
+  about tailoring configuration moves the assistant.
+- The assistant is still **not** in `CHOOSABLE_TASKS`. The choice is a
+  per-request field made in the UI for one question, not an environment
+  variable that silently redirects every future conversation — the `.env`
+  opt-out route §7 warns about stays closed.
+- **No fallback in either direction.** A local model that is down does not get
+  promoted to a cloud provider, and a cloud provider that fails does not drop
+  to the local one. `LLM_FALLBACK_LOCAL` covers tailoring and deliberately does
+  not reach here: there the fallback is recorded on the document, here it would
+  be a different answer wearing the same label.
+- **Inbound-email classification is untouched** and remains local in code. The
+  owner widened the assistant, not the inbox.
+
+The `audit.is_local` check survives, narrowed to the local path. Ollama serves
 cloud-hosted models over the same localhost API — `kimi-k2.6:cloud` and
 `qwen3-coder:480b-cloud` are both in the owner's model list, neither runs on
-this machine, and the base URL is identical either way. So `/chat` checks the
-*model* through `audit.is_local` and refuses a remote one, which matters more
-now that `OLLAMA_MODEL` is a setting: one edit to `.env` could otherwise route
-applications and recruiter mail to a third party while the reply still read
-`provider="ollama"`.
+this machine, and the base URL is identical either way. That check was never
+only about distance; it is about the label matching. Choosing Gemini openly is a
+decision. Asking for the local model and silently getting a third party is not a
+decision at all, so it still refuses.
+
+The reply carries `model` and `local`, both computed rather than inferred from
+the provider name, and the UI marks every remote turn. An answer that cost
+privacy must never look like one that did not.
+
+**Recruiter mail is gated separately, and defaults to withheld.** Choosing a
+cloud provider does not take the inbox with it. `ChatRequest.share_mail` is
+`False` unless the owner ticks the box for that question, and the `/chat` panel
+shows the box only when a remote model is selected.
+
+It is separate from the provider choice because it is a different decision. The
+rest of the context is the owner's own material — their applications, their
+profile. Recruiter correspondence is *other people's writing about them*, sent
+privately, by people who never chose a provider. Consenting to send your own
+data somewhere is not the same as consenting to send theirs, so the two are not
+one switch.
+
+For the local model it is always included and the toggle is not shown. The gate
+is about crossing a boundary; on the side where nothing crosses there is nothing
+to gate, and rendering a control that does nothing would be worse than
+rendering none.
+
+When it is withheld the context says so — `recent replies: withheld` — rather
+than omitting the section. The assistant is told to answer from what it was
+handed and to say when it does not know, so a missing section would read as "no
+replies have arrived", which is a different answer and a wrong one.
 
 The model is **llama3.1**, chosen by benchmarking the six local models against
 this project's own tasks rather than by reputation. On the 30 labeled recruiter
@@ -567,6 +798,53 @@ machine; §10 forbids logging résumé contents. Both hold: the trail proves wha
 was sent without becoming a second copy of it.
 
 ---
+
+### Ollama's own hosted models
+
+The owner asked for `glm-5.3-flash:cloud`. Recording how it landed, because the
+obvious implementation was the wrong one and the difference is the whole point.
+
+The obvious one is to let `OLLAMA_MODEL` take a `:cloud` tag. That is precisely
+what the refusal above exists to stop: Ollama serves hosted models through the
+identical `localhost:11434` API, so nothing in the request distinguishes them,
+and a remote answer would carry the label `provider="ollama", local=true`.
+Loosening the check would not have widened a choice, it would have removed the
+owner's ability to know which they got.
+
+So the remote path got **its own provider name**, `ollama_cloud`, and the
+refusal is untouched — `test_asking_for_local_still_refuses_the_same_model`
+runs the same model through both and asserts one answers and one is refused.
+Naming it is the informed decision §14 was protecting; `OLLAMA_MODEL` still
+means "a model on this machine".
+
+Two consequences worth keeping visible:
+
+- **`audit.is_local` is now right by construction rather than by substring.**
+  Under `ollama` a call is presumed local and only "cloud" in the tag rescues
+  the label; under `ollama_cloud` it is presumed remote. A retag cannot make
+  the trail lie.
+- **The provider refuses a *local* model**, which sounds like pedantry and is
+  not. §2.8's trail is worth having only if it is read, and one that reports a
+  résumé leaving when it did not teaches the owner to stop reading it. Both
+  directions of mislabelling are refused, for one reason.
+
+**It is deliberately absent from `router.QUALITY_ORDER`, and that matters more
+here than it does for OpenRouter.** Every other remote provider needs an API
+key, so an absent key keeps it out of "auto" on its own. This one needs no
+credential once the local daemon is signed in — `_configured` is satisfied by
+`OLLAMA_CLOUD_MODEL` naming a model. Were it in the quality order, that single
+line in `.env` would send every "auto" task off the machine, with nothing in
+the configuration that reads as having asked for it. §2.8 permits the upload;
+it does not permit it happening unnoticed.
+
+It is **not** in `CHOOSABLE_TASKS` either, so nothing about the list above
+moved: the assistant is still chosen per question in the UI, never by an
+environment variable.
+
+Unlike an OpenRouter `stealth/*` route, the recipient is nameable — Ollama's
+servers, running the tagged model — so the trail records where the résumé went
+rather than only that it left. Both UI pickers say so at the moment of
+choosing, and both say the quiet part: the address is localhost either way.
 
 ## 15. What the gates do and do not prove
 
@@ -607,6 +885,28 @@ before trusting either number.
   the guard falls back to the old proxy, `GuardReport.extractor` records which
   one ran, and `make doctor` reports it. A guard that quietly loses a check is
   worse than one that never had it, because nobody re-reads a green test.
+- **Gate 5's ranking half is now measured rather than asserted.** The gate
+  checks one bit — ten wanted postings in the top ten — which cannot see a
+  match slide from rank 1 to rank 10 and cannot compare two scorers. It also
+  turns out to prove less than it looks: on those twenty postings the shipped
+  scorer and a five-line token-overlap baseline both score a perfect NDCG@10,
+  because the negatives are pastry chefs and truck drivers and every scorer
+  separates those. `make bench-matching` reports NDCG/MAP/MRR/P@K with
+  bootstrap intervals against a constant control, over the same labels plus
+  twelve adjacent roles that actually discriminate. On those twelve NDCG@5
+  falls to 0.577 and the control is statistically tied with everything, which
+  is where the matcher's real weakness lives. The labels are still
+  fixture-grade, so the harness refuses to report a production candidate at
+  all — `docs/ML_EVALUATION.md` says what would have to arrive first.
+
+  Two side findings worth keeping. `seeds/labeled_matches.yaml` is now the one
+  definition of the Gate 5 set, which `tests/test_matching.py` reads by tag —
+  two copies of a labeled corpus drift, and the gate was the copy that would
+  go stale. And `filters.seniority_ok` passes everything when
+  `target_seniority` is unset, which no production caller sets: a Junior
+  Backend Engineer with a perfect technology match ranks in the top ten, and
+  arming the target takes P@10 from 0.900 to 1.000. Whether to arm it by
+  default is a separate decision; it now has a number attached.
 
 - **Gate 1's HAR replay** is now real. `tests/test_greenhouse_har.py` replays
   bytes Greenhouse actually served, offline, and runs in `make gate-1` and in
@@ -647,20 +947,152 @@ an honest untailored résumé beats an application with no résumé — but
 base while the application record claims a tailored one is exactly how this
 stayed invisible.
 
-### Phase 3 scope that was not built
+### Nothing told the owner an application was waiting
 
-§9 Phase 3 listed two things Gate 3 does not cover. Both are built now, from
-two different sessions, and the entry stays because what closed a gap is worth
-reading beside the gap:
+Three states park and all three were silent: `needs_review` wants an approval,
+`needs_otp` wants a code, and `failed[manual_completion_required]` wants the
+owner to finish the form by hand. The status was recorded and the dashboard
+showed it, which on a queue whose entire promise is "nothing submits without
+you" means the promise is kept only if the owner remembers to go and look.
 
-- ~~**Cover letter.**~~ **Now built.** `packages/tailor/cover.py` writes and
-  vets one; `apps/worker/apply_job.py::_cover_letter` calls it when — and only
-  when — the form has a cover-letter field, stores the result, writes
-  `Application.cover_letter_ref`, and puts the full text on the review screen
-  so §2.3's approval covers what actually gets sent. It declines quietly in
-  three cases: no such field, no parsed résumé to ground it in, or the guard
-  refused the draft. A missing letter is a smaller failure than an unsupported
-  one, and a letter is never worth failing an application for.
+`packages/core/notify.py` rings the doorbell. Three backends: `log` (the
+shipped default, which goes nowhere), `desktop` (`notify-send` or `osascript`,
+local and free), and `webhook` (the owner's own URL — ntfy, Telegram, Slack —
+so a phone alert costs this project no dependency and no money).
+
+**It is not a softening of §2.5.** The prompt that produced it recommended
+integrating a CAPTCHA-solving service, which §2.5 and §11 both refuse and which
+would also have been a paid API under §3. Nothing here defeats a challenge or
+makes the browser look human. A blocked site still fails as
+`manual_completion_required`; what changed is that the owner hears about it and
+finishes it themselves, as a person, in their own browser. The work moved to a
+human rather than around a control, and the notification links to the local
+dashboard precisely so it cannot read as an automated retry.
+
+Three details are load-bearing:
+
+- **It fires after the commit, never inside `transition()`.** That function is
+  the one place a status changes and would be the obvious hook, but it
+  deliberately does not commit — a notification sent there announces an
+  application that may still roll back. A doorbell that rings for work that did
+  not happen is worse than a late one.
+- **Idempotent on the reason, not the application.** The queue is
+  at-least-once, so a re-run must not tell the owner twice; a `notified` event
+  records delivery. Keyed on the reason so an application that parks, resumes
+  and parks again *does* ring again — that is a second thing to do.
+- **A failed backend never fails the application.** Every delivery is wrapped
+  and logged by name. The exception body is not logged, because a webhook error
+  can echo the URL and the URL can carry a token.
+
+The webhook payload is an id, a status, the company and role, and a localhost
+link. Never the résumé, the answers, or the posting body — §2.8 permits one
+third-party upload and a notification is not it. `test_the_payload_carries_no_application_material`
+asserts the exact key set rather than the absence of any one field, so adding
+one is a deliberate act.
+
+### The ATS score was reading the sales pitch
+
+Found by running the guard and the ATS scorer over a rewritten résumé against
+the real crawled postings in `tests/fixtures/golden/`, which is the first time
+either had been pointed at one.
+
+§7 makes the ATS keyword score the *independent second measure* — the referee
+that is not the fabrication guard's own pass rate. On the Palantir Forward
+Deployed Software Engineer posting it was measuring nothing. `job_terms` ranks
+by frequency and keeps forty; in 5,912 characters of narrative, `Python`,
+`Java`, `C++` and `TypeScript/JavaScript` appear exactly once each in a single
+line naming the stack, while `world`, `problems`, `believe` and the company's
+own name recur throughout. The top forty held every one of the latter and none
+of the former, so a tailored résumé was being scored against a vocabulary
+containing no skills at all — and the rewrite's measured gain was, correctly
+and uselessly, zero.
+
+The fix is in `ats._requirements_text`, which cuts to the posting's own
+requirements section before the terms are counted. Across the twelve golden
+postings, prose terms fell from **17% to 8%** of the vocabulary and the term
+count *rose* (372 → 419): it is finding more real terms, not merely filtering.
+On the worst posting it went 43% → 8%. One posting got worse (6% → 11%), which
+is recorded rather than averaged away.
+
+Two things about where the fix lives:
+
+- **On the measurement side only.** `job_terms` output is also
+  `TermReport.missing`, which `rewrite.vet` treats as vocabulary a rewrite may
+  not borrow. Narrowing *that* removes words the model may then introduce
+  unchallenged, so the guard rail is untouched and only the scorer's view of
+  the posting changed. `ats.py` already drew that line; this stays behind it.
+- **Headings rather than a technology list.** Ranking known technologies above
+  prose was tried first and is worse twice over: a second skill vocabulary
+  drifts against the alias table, and no list recognizes the skill it has not
+  heard of — which is the term a posting is most worth reading for. All twelve
+  golden postings carry a requirements heading. A posting without one falls
+  back to being read whole, exactly as before.
+
+### A Skills list moved technologies between employers
+
+The same session, the same method. §2.1 says a rewrite may inject keywords
+"already supported by that résumé entry **or a shared source section**", and it
+separately forbids borrowing one entry's skill onto another. A Skills list makes
+those two clauses contradict each other, and the second one was losing: every
+technology named in Skills was indexed as shared, so it supported a claim on
+*any* employer.
+
+Scoped to an employer that never touched it, `Built Python services on
+Kubernetes` passed while the Skills section existed and was correctly refused
+when that section was deleted. Same claim, same scope, opposite verdicts,
+decided by an unrelated part of the document.
+
+`SourceCorpus.supports` now withdraws a shared token when some entry claims it.
+The three cases, which are the whole design:
+
+- **In this entry** — supported, as before.
+- **In Skills only, claimed by no entry** — still supported anywhere. This is
+  §2.1's shared-section allowance and it is deliberately untouched: a skill the
+  owner lists but never attributed to a job can go anywhere.
+- **In Skills *and* in another entry** — refused here. The résumé has already
+  said where it belongs, and "the owner knows this" is not "the owner did this
+  here".
+
+On a two-job fixture it withdraws 13 of 34 shared tokens — the technologies —
+and leaves 21, being contact details, education, and the skills the résumé
+never attributed to anything. The full suite including Gate 3 passes unchanged,
+so this refuses claims that were wrong rather than claims that were working.
+
+### Phase 3 scope Gate 3 does not cover
+
+§9 Phase 3 lists two things beyond what Gate 3 tests. Both are now built, and
+both stay recorded here rather than being deleted: the gate still does not
+cover either, so "Gate 3 passes" continues to mean less than "Phase 3 works".
+
+- **Cover letter.** ~~Nothing calls it.~~ Wired. `apps/worker/apply_job.py::_cover_letter`
+  writes one, `Application.cover_letter_ref` is written, and
+  `tests/test_apply_cover_letter.py` asserts the wiring the module's own tests
+  could not: that the letter is written *before* `adapter.fill`, and that it
+  reaches the field. `tests/test_greenhouse.py` types it into the real fixture
+  textarea, because a letter written, vetted, stored and then not typed is the
+  same defect as the résumé that was never uploaded.
+
+  Three things are deliberate. **The form is read first** — the questions
+  decide whether a letter is written at all, because most postings never ask
+  for one and a provider call for a field that does not exist buys nothing.
+  **A refusal is recorded, not swallowed** — the guard offers no fallback
+  here, so `review_json["cover_letter"]` carries the reason; a form that asked
+  and got nothing otherwise looks identical to a form that never asked, and
+  writing it by hand is the owner's call. **A resumed run reuses the stored
+  letter** rather than writing a second one: any real provider returns
+  different prose the second time, and the owner approved a specific letter.
+
+  Wiring it surfaced a defect in the module that no test could see from
+  inside. `cover.py` strips the greeting before sifting — `_GREETING` exists
+  precisely so "Dear Hiring Manager," stops being read as a claim about a
+  `Manager` — and then `write` joined it back on before calling `vet`, which
+  runs the guard over the whole letter again. So the strip was undone one line
+  later and the refusal came back. Every test in `test_cover_letter.py` built
+  letters with no greeting, so all of them passed while the most common
+  opening a model produces was refused on its first four words. `vet` now
+  strips the addressing itself, which covers both callers. §2.2 and the length
+  bound still judge the whole letter: the scaffolding is exempt from tracing
+  to the résumé, not from the salary rule.
 - **Caching of tailored versions.** Built — `packages/tailor/cache.py`. The
   condition it was waiting for arrived: `LLM_PROVIDER=gemini` with a key set,
   and tailoring text now leaves the machine. Keyed on the source résumé, the
@@ -685,6 +1117,467 @@ reading beside the gap:
   does not touch it and should not; a cache there is the follow-up that matches
   the evidence.
 
-Gate 3 passed without either of them, because it tests fabrication and the PDF
-round trip, which is the part with consequences. That is still the reason the
-gate is worth what it is worth — neither of these was ever what it measured.
+Gate 3 passed without either of them for as long as neither existed, because
+it tests fabrication and the PDF round trip — the part with consequences — and
+it still does not test either now that both are built. The cover letter has
+its own tests rather than a gate. Recorded here so a green Gate 3 is not read
+as more than it checks.
+
+### The owner's choice at review was discarded on the way to the employer
+
+The same defect as *The tailored résumé was not the one being sent*, one screen
+further along, and it survived that fix because the fix asserted which résumé
+`adapter.fill` uploads — not which résumé is still attached by the time it runs.
+
+Approving a parked application does not resume mid-flight. It re-enters
+`_run_pipeline` from the top: fresh page, re-`goto`, re-`enumerate_fields`,
+re-`_tailor`. And every path in `_tailor` assigns `tailored_resume_id` — the
+batch-prepared one, the cache hit, the fresh publish. So a decision the owner
+made on the review screen was written to the row, and then quietly overwritten
+by the run their approval started.
+
+**Compare models** is where this had teeth. Choosing the cloud column set
+`tailored_resume_id`; approving re-tailored with the router's *default*
+provider, found that provider's cached document, and attached it instead. The
+screen showed one document, the employer received another, and nothing on
+either side reported the swap. §7 said "this sets the file an employer
+receives", which is what a reader would have checked against.
+
+`review_json["resume_pinned"]` is the fix, and `_tailor` returns before any of
+the assigning paths when it is set. Two details are load-bearing:
+
+- **It is checked against `tailored_resume_id`, not trusted alone.** If the row
+  no longer points where the pin says, something else moved it, and re-tailoring
+  is safer than uploading a document the application is no longer attached to.
+- **The stored diff is marked, not cleared.** It is still the honest account of
+  what tailoring did to the document the owner's version came from, and it
+  carries the guard's refusal count — the one number that says whether the model
+  kept trying to invent. What it must not do is go on reading as a description
+  of the file about to be sent, so it gains `owner_pinned` and the panel says
+  the changes describe the earlier document.
+
+`tests/test_review_resume_edit.py` covers both ways of choosing. They are real
+gates: with the pin removed, three go red and the log shows
+`tailored_resume_published … version=3` landing on top of the owner's pick.
+
+### Editing the résumé on the review screen
+
+The review screen showed the attached document and could not change it. A
+tailored bullet that read wrong left two options — reject the application, or
+send it anyway — and editing the base on the résumés page did not help, because
+a résumé already tailored for this posting is not the base.
+
+`POST /applications/{id}/resume/edit` is the smaller path, and
+`packages/tailor/revise.py` is the reason it is not a second implementation:
+both edit routes render the PDF, rebuild `raw_lines`, and version rather than
+mutate through one function. A second copy of that sequence is how one of them
+ends up storing `parsed_json` with no file — invisible until an employer
+receives the old PDF.
+
+**Scoped to the application, and that is the whole design.** The edit lands on
+`tailored_resume_id`; the profile's base moves only if the owner ticks the box.
+On this screen the subject is one employer, and a résumé written for one posting
+is a poor starting point for the next — adopting it silently would make every
+future application inherit this job's phrasing from a screen that never
+mentioned them. `ApplicationResumeEdit.adopt` defaults to `False` for that
+reason, and is a separate schema from `ResumeEdit` precisely so the two
+defaults can disagree.
+
+Parked only. A `running` application is mid-fill in a browser and a `submitted`
+one has already sent its file; editing either changes a screen without changing
+anything an employer sees.
+
+The guard is not applied to the owner's own edit, and that is deliberate — the
+same reasoning `packages/tailor/edit.py` already records. §2.1 constrains the
+*model*, not the owner writing their own history. `raw_lines` is rebuilt so a
+fact the owner adds is source text for the next tailoring pass, rather than
+something the guard refuses on their behalf.
+
+**Over MCP the author is a model, so there the guard runs.** `edit.py`'s
+reasoning turns on who is typing, and a tool call inverts that: an unguarded
+résumé write handed to an assistant is exactly the door §2.1 closes — it would
+let a model put an employer, a credential or a metric onto a document going to
+a real employer under the owner's name, checked by nothing.
+
+The API cannot tell a person from a model, so the caller declares it:
+`ApplicationResumeEdit.guard`, off for the dashboard, and sent `true` by
+`apps/mcp/server.py` with no parameter that could say otherwise. A settable
+guard would be an opt-out from a non-negotiable by argument, which is the same
+shape as the `.env` opt-out §7 refuses; `test_the_tool_cannot_turn_the_guard_off`
+holds the tool's schema to it.
+
+Only *added* lines are checked. The guard is strict enough that some genuine
+source text does not survive a round trip, so re-judging carried-over lines
+would refuse edits that changed nothing. The check is document-wide rather than
+scoped to one employer's entry — an added line has no entry to be scoped
+against yet — so cross-entry borrowing is not caught on this path and callers
+should not assume it is. `packages/tailor/revise.py::guard_edit` says so at the
+point it matters.
+
+A refusal is not a verdict on the fact. If the owner says it is true, the answer
+is for them to type it on `/review`, where the edit is theirs — not for an
+assistant to reword it past the check. Both the tool docstring and
+`docs/USAGE.md` say that, because it is the one place this design could
+otherwise push a model toward laundering a claim.
+
+`GET /applications/{id}/resume` exists for the same reason `revise.py` does:
+"which résumé is attached" now has three readers — the review screen, the MCP
+tools, and the uploader — and a client working it out for itself is how a screen
+ends up describing a document other than the one being sent.
+
+### Nested forms on the review card
+
+Found while adding the editor, and worth recording because it was silent.
+
+`TailoringCompare` renders forms of its own, and the review card wrapped it in
+the approve `<form>`. An HTML parser drops a nested `<form>` start tag, so on
+the server render those buttons were inert — the feature worked when reached by
+client-side navigation and not on a fresh load, which is the hardest kind of
+bug to believe a report of.
+
+The approve form no longer wraps the document panels. Its button and note bind
+to it by `form` id instead, and `Submitting` takes `pending` explicitly because
+`useFormStatus` reads the enclosing form and a detached button has none. Served
+HTML for `/review` now has form nesting depth 1.
+
+### Remoteness was allowed to override the region
+
+The owner's search area is one sentence — **California on-site or remote, the
+rest of the United States remote only, nothing abroad** — and until now no
+single place in the code held it.
+
+`filters.location_matches` was the hard filter that decides whether a `Match`
+row is written at all, and it began `if is_remote(posting): return True`. So
+the word "remote" anywhere in a location bought a posting past the region
+check entirely. Against the twelve crawled postings the one survivor for a US
+profile was **`Canada - Remote (ON, AB, BC, or NS Only)`**; `Remote (India
+only)` and `Remote - EMEA` pass the same way. A remote job the owner is not
+eligible to hold is still a job they cannot hold, so remoteness is the wrong
+thing to short-circuit on.
+
+The other half of the filter compared the posting against `profile.location`
+as a substring, which §1 rules out directly: a search area is the owner's
+input, not a reading of their profile. It also answered the wrong question —
+"is this near where I live" rather than "did I ask to see this" — and made
+moving house silently rewrite the feed.
+
+`locality.reachable` is now the single statement of the area, and both the
+scoring gate (`filters.location_ok`) and the feed (`search.matches`) call it.
+`Settings.search_remote_outside_california` supplies the standing preference
+and `?remote_outside_california=false` turns it off for one call, which is
+what relocating would want. It is a separate setting from `search_us_only`
+because it is separately reversible.
+
+Three findings came out of pointing it at real data rather than fixtures:
+
+- **A bare "Remote" was classified as probably-foreign.** `locality_of` had no
+  case for a location that names a working mode and no place, so "Remote" fell
+  through to `UNPLACED` — the class the corpus says is foreign — and `us_only`
+  dropped it. That is the commonest way a *domestic* board writes exactly the
+  job the owner is looking for. A mode-only string is now `UNKNOWN`, which is
+  what it means: no evidence about where. `UNPLACED` **is now kept too** —
+  see the merge note at the end of this section.
+- **"distributed systems" meant remote work.** `distributed` was in the remote
+  vocabulary and that vocabulary was matched against the *description*, so any
+  posting mentioning distributed systems read as offering remote work — and
+  under the area rule that converts an on-site role in any state into a
+  reachable one. On the twelve crawled postings the old vocabulary called
+  **7 of 12 remote and the new one calls 4**; all three that flipped mention
+  "distributed", and one of them — `Sr. Manager, Field Engineering`,
+  `Northeast - United States` — was kept by the area filter purely on that
+  misreading. A location field is a declaration about the job and prose is
+  not, so the two now have separate vocabularies: the body needs "distributed
+  team", "work from anywhere", or "remote" proper.
+- **There were two definitions of remote.** The feed read the description with
+  an on-site override; the scoring gate read only title and location. Under
+  this rule that disagreement is the difference between a kept job and a
+  dropped one, so `locality.reads_as_remote` is now the only definition and
+  both call it.
+
+On the twelve crawled postings the area keeps **none of them**, and that is the
+right answer rather than a regression: the board is a Palantir sweep with no
+Californian and no US-remote roles on it — every posting is abroad or on-site
+in another state. Worth stating plainly, because "0 kept" and "the filter is
+broken" look identical from the summary line.
+
+Two things this did **not** fix, filed rather than papered over:
+
+- ~~`rescore` leaves a `Match` row behind when a posting newly fails a hard
+  filter, so its own "top 1" still prints the Canadian role it just
+  excluded.~~ Fixed: `score_and_store` withdraws the stale row and `rescore`
+  reports the count, so the live run now reads "0 kept (12 excluded by a hard
+  filter, 1 withdrawn)" above "top 0" rather than above the role it excluded.
+
+  Withdrawn **only when the row holds nothing of the owner's**. `decision` is
+  their swipe and `tailored_resume_id` is a résumé some provider call already
+  paid for; deleting either to tidy up a score would throw away the more
+  valuable half of the row to fix a cosmetic one. Those rows stay, and the
+  read-time filter goes on hiding them —
+  `test_a_decided_match_is_kept_even_when_it_stops_qualifying` holds that line.
+- ~~The US city and non-US city lists in `locality.py` are hand-written, so a
+  posting in a US city on neither list reads as `UNPLACED` and is dropped.~~
+  Measured and closed twice over — the lists were extended, and then
+  `UNPLACED` stopped being dropped at all, which removes the failure mode
+  rather than narrowing it. The lists are still hand-written and still matter
+  for *precision*: an unplaced Californian city is kept, but as a maybe rather
+  than as California.
+
+### Merging with the country fix that landed on main
+
+Two sessions fixed the same filter from different ends, and the merge is worth
+recording because each caught what the other could not see.
+
+**main had the better data.** It ran against a real crawl of all 119 companies
+and found that `location_matches` was a substring test: the owner's profile
+reads `san fransico , ca,usa`, and `ca` is inside `canada`, `costa rica` and
+`vancouver` and inside none of `united states`. Every Canadian role passed as
+Californian while American ones were dropped — the top of the feed was four
+Elastic roles in Canada and a finance manager in Costa Rica. It also found
+`Spain (Remote)`, `United Kingdom (Remote)` and `Republic of Ireland (Remote)`
+sitting in the top three, and two Synthesia roles located simply `Europe`. Its
+`locality.py` gained thirty-odd countries plus continents and blocs, and
+deliberately left out `georgia`, `panama`, `lebanon` and `jordan` because
+those names are American places and rule 1 runs before any state *name* is
+read.
+
+This branch had only the twelve-posting Palantir sweep, so none of that was
+visible here.
+
+**Three things were reconciled rather than picked:**
+
+- **`UNPLACED` is kept.** main's argument — only an explicit foreign signal
+  should exclude, a city no rule recognizes should be ranked down rather than
+  hidden — is right, and its own country work is what makes it right: most of
+  what used to land in `UNPLACED` now lands in `ELSEWHERE`. It also dissolves
+  the 143-missing-cities problem instead of managing it.
+- **The region rule stays, because the owner asked for it.** main read *which
+  part* of the US as a ranking question, which is correct in general and is
+  what `locality.rank` already does. The owner overrode it: on-site outside
+  California is a move, not a commute. `remote_outside_california=False`
+  restores main's reading exactly, and the test that used to assert it now
+  asserts both halves.
+- **A bare `United States` is not "outside California".** main's test caught
+  this: `UNITED_STATES` covers both `Austin, TX` and a bare `United States`,
+  and the region rule was dropping the second. `locality.names_us_region`
+  separates them — a location that names no region is no more evidence than
+  silence.
+
+### The city lists failed closed, and California was the worst of it
+
+Filed as a footnote to the search area and measured immediately after, because
+"a domestic city that is missing fails closed" turned out to describe most of
+California. Of 205 Californian cities, **143 did not classify** as Californian
+from a bare name — Santa Ana, Stockton, Chula Vista, Palm Springs, Beverly
+Hills among them. Under the area rule that is precisely an on-site Californian
+job, the one category the owner most wants, dropped in silence.
+
+Three distinct failures, which is why counting them separately mattered:
+
+- **Simply absent** — `Santa Ana` → `UNPLACED` → dropped.
+- **Claimed by a substring of another US city** — `Manhattan Beach` matched
+  `manhattan` and `La Mesa` matched `mesa`, so both read as `UNITED_STATES`.
+  Right country, wrong state, and on-site outside California is dropped.
+- **Claimed by a foreign city** — `Dublin` → `ELSEWHERE`.
+
+The first two are now fixed: 135 Californian and 37 other US city names added,
+and 177 of 178 unambiguous Californian cities place correctly (Menifee was the
+one that got away in the first pass and is in too).
+
+The third is deliberately *not* fixed. `Dublin`, `Ontario`, `Orange`,
+`Fairfield`, `Norwalk`, `Westminster`, `Brentwood`, `Carson`, `Davis`,
+`Martinez` and a dozen more are real Californian cities whose bare name reads
+as somewhere else at least as often. Adding them trades a missed job for a
+false positive, and here the false positive is worse: it puts a Dublin,
+Ireland role in a feed whose on-site tier is supposed to mean California. Every
+one of them classifies correctly the moment a board writes ", CA", which is how
+the smaller ones are almost always written. `_AMBIGUOUS_CALIFORNIA_CITIES`
+records the decision so the next reader knows it was one.
+
+Two things worth keeping visible:
+
+- **The non-California half matters only because of remote.** An on-site job
+  in Bentonville is dropped by the area rule regardless. But `UNPLACED` is
+  dropped *even when remote*, so a missing US city name costs exactly the
+  remote roles the owner would take. 42 of 88 checked names were missing.
+- **A de-duplication pass silently moved `richmond` and `santa rosa` out of
+  California.** A name in both a Californian list and the US list is
+  unreachable in the second, since California is checked first — so removing
+  "the duplicate" removed the live one and both cities became merely American.
+  `test_no_city_is_claimed_by_two_lists` now fails on that, which is how it
+  was caught.
+
+This does not make the approach right. Hand-written lists are still the reason
+a city can be missing at all, and the honest fix is a real place-name dataset
+rather than a longer tuple. What changed is the size of the hole and whether
+a regression in it is visible.
+
+### Closing the gate gaps §15 had only described
+
+Four of the gaps recorded above were fixable without new data. They are, and
+this section says what changed and what deliberately did not.
+
+**Gate 3 now runs the rest of Phase 3.** The gate tested fabrication and the
+PDF round trip; the cover letter and the tailoring cache were built, tested,
+and never run by it. `make gate-3` now also runs `test_cover_letter`,
+`test_apply_cover_letter`, `test_tailor_cache` and `test_apply_uploads_tailored`
+— 170 tests rather than the fabrication suite alone. The last of those is in
+for the reason the others are: it asserts the tailored file is the one that
+reaches the employer, which is the defect that survived a green Gate 3 for as
+long as nothing checked it.
+
+**Gate 6's rules read English now, not the fixtures.** The rejection pattern
+was written beside the corpus that exercises it, so it matched "with other
+candidates" and missed "with another candidate" — the same sentence as
+recruiters write it. Measured against fourteen phrasings taken from how
+rejections are actually worded, **it caught 2**. It now catches 14, and the
+labeled 30 are unchanged at 29 correct, 0 wrong.
+
+Two things made that safe to widen. Rejection is matched *first*, so a loose
+pattern there mis-files everything else — every new alternative therefore names
+an outcome ("not successful", "has been filled") or somebody else getting it
+("forward with another"), never a bare verb; "moving forward with your
+application" is an interview and stays one, and a test holds that line. And it
+matters most where there is no model: Ollama is not always running, Bayes reads
+the realistic rejection as `interview` at a margin of 0.073 and is correctly
+refused, so before this the chain resolved to `noise` and the application sat
+in the tracker looking live.
+
+**The seniority filter is reachable from a real run.** `filters.seniority_ok`
+could always reject a rung mismatch and never did: no production caller set
+`target_seniority`, so it defaulted to None and returned True in every crawl,
+discover and rescore. It was reachable only from the benchmark — which is
+where the number comes from: arming it takes P@10 from 0.900 to 1.000 on the
+Gate 5 set, and the posting it removes is a Junior Backend Engineer with an
+excellent technology match, exactly what a cosine cannot refuse on its own.
+
+`profiles.target_seniority` is the owner's statement of their rung, and the
+fallback lives in `apply_filters` rather than `score_and_store` so every caller
+of the hard filters gets it. **NULL means "do not filter on level"**, which is
+what every existing row gets and what the migration deliberately does not
+backfill: §1 keeps a search filter separate from the profile's description of
+the applicant, and inferring a rung from a résumé would narrow the feed on an
+inference nobody made. It is a `SeniorityLevel` enum rather than a string
+because a typo does not raise — `seniority_ok` passes everything for a target
+it cannot place in the ladder, so `"Senior"` would read as "no preference" and
+the feed would look unfiltered with nothing to explain it.
+
+**Validation records itself.** `make validate-seeds` printed its verdict and
+stopped, so which entries anyone had checked lived in a terminal scrollback.
+`--write` (or `make validate-seeds-write`) stamps `checked` and `state` on each
+entry and moves a dead board into `retired:` **with the statuses that condemned
+it, rather than deleting it** — which is what this file has claimed happened
+since the first sweep and never did. A slug that 404s today may be a rename
+rather than a departure, and the evidence is what tells those apart later.
+`load_seed` reads `companies:` only, so a retired board is not polled. The file
+now answers "how many have never been checked" on its own: today, **119 of
+119**, because the stamp is new even for the 29 that were swept.
+
+### What is still not fixed, and why
+
+- **Gate 1's live half is refused, not pending.** It reaches the form and is
+  blocked by a captcha. §2.5 makes captcha-solving a hard scope boundary, so
+  making this gate pass *is* the prohibited thing. It should stay red forever;
+  what it proves is that the refusal works.
+- **Gate 2's live half.** Needs a real posting reached over the network, and
+  a real profile. `make gate-2-live URL=...` is the other half.
+- **The 90 unvalidated boards.** `--write` exists; the sweep needs network
+  egress and has to be run from the owner's machine.
+
+### Getting real data in, for the two gates that need it
+
+Gate 5's labels and Gate 6's emails cannot be written — that is the whole
+point of §15. What *was* missing is the path from the owner's actual material
+to the number, and both ends of it existed with nothing joining them.
+
+**Gate 5: the judgements were already being collected.** `Provenance.OWNER`
+and `FEEDBACK` were defined when `labels.py` was written and nothing ever
+produced one, so every label in the repo is a `FIXTURE`. Meanwhile `/swipe`
+has been writing `Match.decision` on every yes and no — which *is* a relevance
+judgement about a real posting. `make export-labels` reads them back out as a
+`LabeledSet` the benchmark can run on.
+
+It exports as `FEEDBACK`, not `OWNER`, and `packages/matching/feedback.py`
+says why at length. Two limits are load-bearing. A swipe is **binary**, so it
+can only produce relevance 0 or 2 — it cannot express the gap between "would
+apply" and "would drop everything for", which is exactly the gap NDCG's
+`2**rel` gain exists to reward. And a swipe is **taken in feed order**, so it
+is only ever recorded for postings the ranker already surfaced: nothing it
+buried is ever labeled, and the model ends up graded on its own shortlist.
+Real judgements about real postings, and not interchangeable with graded ones.
+
+**Gate 6: `make import-mail src=<mbox|eml|dir>`.** Reads a Gmail export into a
+worksheet — one row per message, the classifier's guess beside an **empty**
+label field — and `make score-mail ws=...` reports accuracy over the rows the
+owner filled in.
+
+`guess` and `label` are deliberately separate fields, and a row with no label
+is excluded from scoring entirely. Collapsing them would let the classifier
+grade its own homework: accuracy would be 100% by construction, which is the
+self-evaluating referee §45 and the master spec both refuse.
+`test_the_worksheet_leaves_every_label_empty` holds that line.
+
+The worksheet stores sender, subject, body and date and nothing else. It is a
+second copy of other people's writing about the owner (§14), so it holds the
+minimum a classification decision needs.
+
+Neither of these produces a number on its own. They turn "this gate needs data
+that does not exist" into two commands and an afternoon.
+
+
+### What the first real comparison showed about the tailorer
+
+The compare panel's first live run — llama3.1 against openrouter, on a real
+Cloudflare posting, both sides answering with zero provider failures — reported
+ollama 11 rewrites against 25 guard refusals, and openrouter 12 against 1. Read
+straight, openrouter won decisively. The content said otherwise, and three
+defects behind that reading are now fixed.
+
+**A skills line is a list however long it runs.** `classify` consulted
+`_is_list` only *after* the length fallback, so `Languages  Python, TypeScript,
+Rust, C, C++, Java, ...` was nineteen words and therefore "prose". It went to
+the model, which returned `Using tools, I have experience with Python and
+GitHub Actions.` — a list rewritten as a sentence, naming fewer things than it
+started with. Two of them also carry a category label, which hid them from the
+plain comma test as well: splitting `Data, DevOps & Tools  Qdrant (Vector DB),
+Docker, ...` on commas puts the label and the first entry in one long fragment.
+`_is_labelled_list` splits at the column gap first.
+
+Moving the list test ahead of the length test is only safe because the verb
+test already ran, and because `_is_list` now requires no terminal full stop —
+otherwise a real bullet built from short clauses would be filed as a stack and
+silently skipped, which CLAUDE.md already records as the harder failure to
+notice. On the owner's résumé this took the lines sent to the model from 37 to
+16, and every one of the 16 is prose.
+
+**A rewrite nobody can see was being counted as a rewrite.** `changed` was
+`candidate.strip() != bullet.strip()`, so a colon added to `Core CS  Data
+Structures` and two spaces removed from `Cloud Data Warehousing & BI Analytics
+[GitHub]` both counted. Three of openrouter's reported 12 were of that kind;
+nine were real. `is_substantive` compares the lines with punctuation dropped and
+spacing collapsed, and a cosmetic answer now keeps the source line so the
+document and the count agree. Case is deliberately *not* folded — a model
+lowercasing a technology name has changed something worth showing.
+
+**Deleting a true thing is not fabrication, and nothing was checking for it.**
+Every test in `guard.py` reads the output and asks whether it says something the
+source does not; none reads what is missing. Both models dropped
+`(Pillow/Tkinter)` from the same bullet and neither was refused, so the résumé
+came out of tailoring with fewer of the keywords an ATS scans for.
+`packages/tailor/technologies.py` reads the technologies the résumé lists for
+itself — the skills section and the stack line under each project — and `vet`
+refuses a rewrite that drops one.
+
+Scoped to *listed* technologies rather than to names, because
+`extract_entities` reads `Filtered`, `Provisioned` and `Designing` as proper
+nouns and rejecting every dropped one would refuse the re-emphasis §2.1 permits.
+Presence is decided through the alias table, so expanding `CI` to `continuous
+integration` keeps the term — that is a rename, not a deletion. A flat corpus
+has no inventory and disables the check rather than guessing one.
+
+**What none of this fixes.** Both models still write worse bullets than the
+source in places — openrouter inserted `using forecasting and clustering tools`
+into a Tableau line and turned `vector retrieval pipeline` into `vector
+retrieval data pipeline`. The refusal count measures how hard a model pushed
+against the guard, not whether the résumé got better, and tuning against it is
+the trap `docs/REFERENCE.md` §3.6 names. These three changes make the counts
+mean what the screen says they mean; they do not make either model good.

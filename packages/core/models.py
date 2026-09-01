@@ -107,6 +107,21 @@ class Profile(Base):
     )
     #: Opt-in per profile, and only above min_match_score. CLAUDE.md §2.3.
     auto_submit: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    #: The rung the owner is applying at — one of `filters.SENIORITY_LEVELS`.
+    #:
+    #: NULL means "do not filter on level", which is the shipped behaviour and
+    #: what every existing row gets. `filters.seniority_ok` returns True for a
+    #: None target, so the hard filter passes everything; until this column
+    #: existed no production caller set a target at all, and `target_seniority`
+    #: was reachable only from the benchmark.
+    #:
+    #: That gap has a number on it. On the Gate 5 labeled set, arming the
+    #: target takes P@10 from 0.900 to 1.000 — the posting it removes is a
+    #: Junior Backend Engineer with an otherwise excellent technology match,
+    #: which is exactly the kind of role a cosine score cannot refuse on its
+    #: own. It stays opt-in because the right rung is the owner's to state,
+    #: not something to infer from a résumé (CLAUDE.md §1).
+    target_seniority: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -138,6 +153,16 @@ class Resume(Base):
     tailored_for_posting_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("postings.id", ondelete="SET NULL"), index=True
     )
+    #: Which model wrote this document — "gemini", or "ollama:llama3.1" when the
+    #: allowance ran out mid-run and §7's fallback answered. Stored on the
+    #: résumé rather than derived at approval time because the run that tailored
+    #: it is gone by the time a cache hit or an overnight batch serves this row
+    #: to a different application, and those are the paths where the review
+    #: screen would otherwise show nothing at all.
+    #: NULL means unrecorded — a base résumé, or one tailored before this
+    #: column existed. Never a guess: a wrong model name is worse than a blank,
+    #: because the owner would have no reason to doubt it.
+    tailored_by: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = _created_at()
 
 

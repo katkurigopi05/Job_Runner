@@ -29,6 +29,7 @@ from packages.matching.filters import (
     seniority_ok,
     sponsorship_ok,
 )
+from packages.matching.labels import load_labeled_set
 from packages.matching.score import (
     TITLE_WEIGHT,
     ScoredPosting,
@@ -146,21 +147,99 @@ def test_remote_is_detected() -> None:
     assert not is_remote(posting(location="New York, NY"))
 
 
-def test_remote_always_matches_location() -> None:
-    assert location_matches(profile(location="Austin, TX"), posting(location="Remote"))
+# --------------------------------------------------------------------------
+# The search area: California in any working mode, the rest of the United
+# States remote only, nothing abroad.
+# --------------------------------------------------------------------------
 
 
-def test_matching_city_passes() -> None:
-    assert location_matches(profile(location="Austin, TX"), posting(location="Austin, TX"))
+@pytest.mark.parametrize(
+    "location",
+    ["San Francisco, CA", "Los Angeles, CA", "San Jose, CA", "San Diego, California"],
+)
+def test_california_is_reachable_on_site(location: str) -> None:
+    """The one place an on-site role costs nothing to accept."""
+    assert location_matches(profile(), posting(location=location))
 
 
-def test_distant_city_is_excluded() -> None:
-    assert not location_matches(profile(location="Austin, TX"), posting(location="Berlin, Germany"))
+@pytest.mark.parametrize("location", ["Remote — CA", "Remote (California)"])
+def test_california_is_reachable_remotely_too(location: str) -> None:
+    assert location_matches(profile(), posting(location=location))
 
 
-def test_unknown_location_is_not_excluded() -> None:
-    """Silence is not evidence against; do not exclude on a guess."""
-    assert location_matches(profile(location=None), posting(location="Berlin"))
+@pytest.mark.parametrize("location", ["Austin, TX", "Chicago, IL", "New York, NY", "Seattle, WA"])
+def test_another_state_on_site_is_excluded(location: str) -> None:
+    """A job in another state is a move, not a commute."""
+    assert not location_matches(profile(), posting(location=location))
+
+
+@pytest.mark.parametrize(
+    "location", ["Remote - US", "Remote, USA", "Remote - United States", "US Remote"]
+)
+def test_another_state_remotely_is_reachable(location: str) -> None:
+    assert location_matches(profile(), posting(location=location))
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "Canada - Remote (ON, AB, BC, or NS Only)",
+        "Remote (India only)",
+        "Remote - EMEA",
+        "Remote - APAC",
+    ],
+)
+def test_remoteness_does_not_override_the_region(location: str) -> None:
+    """The defect this filter was rewritten for.
+
+    Every one of these is a *remote* posting, and the previous version
+    short-circuited to "matches" the moment it saw the word — so a US-based
+    owner was shown Canadian, Indian and EMEA-only roles they are not
+    eligible to hold. `Canada - Remote (ON, AB, BC, or NS Only)` is the real
+    one: it came out of the crawled Palantir board and was the single posting
+    that survived the filter for an Austin profile.
+    """
+    assert not location_matches(profile(), posting(location=location))
+
+
+@pytest.mark.parametrize("location", ["Berlin, Germany", "London", "Sydney, Australia"])
+def test_abroad_is_excluded(location: str) -> None:
+    assert not location_matches(profile(), posting(location=location))
+
+
+def test_an_unrecognized_place_name_is_kept_rather_than_hidden() -> None:
+    """Reversed after the crawl that extended the foreign vocabulary.
+
+    `UNPLACED` used to be dropped on the evidence that every unplaceable
+    string in an early sweep was foreign. Thirty-odd countries plus continents
+    and blocs have since moved into `ELSEWHERE`, so `UNPLACED` now means
+    closer to "a town nobody listed" — and dropping it made every gap in the
+    hand-written city lists a silently discarded job.
+    """
+    assert location_matches(profile(), posting(location="Wakanda City"))
+
+
+@pytest.mark.parametrize("location", ["Remote", "", "Hybrid / Flexible"])
+def test_a_posting_that_names_no_place_is_kept(location: str) -> None:
+    """Silence is not evidence against; do not exclude on a guess.
+
+    A bare "Remote" names a working mode, not a place. It used to classify as
+    `UNPLACED` — the class reserved for unrecognized place *names*, which the
+    corpus says are foreign — and so was dropped, losing the commonest way a
+    domestic board writes exactly the job the owner is looking for.
+    """
+    assert location_matches(profile(), posting(location=location))
+
+
+def test_the_search_area_does_not_read_the_profile() -> None:
+    """§1: filters are the owner's input, not a reading of their profile.
+
+    The old filter compared the posting against `profile.location`, so moving
+    house silently rewrote the feed. The area is now stated once, and where
+    the owner happens to live does not enter into it.
+    """
+    assert location_matches(profile(), posting(location="San Francisco, CA"))
+    assert not location_matches(profile(), posting(location="Austin, TX"))
 
 
 def test_sponsorship_exclusion_only_on_an_explicit_statement() -> None:
@@ -191,7 +270,7 @@ def test_seniority_tolerance() -> None:
 
 def test_filters_collect_every_reason() -> None:
     verdict = apply_filters(
-        profile(location="Austin, TX", needs_sponsorship=True),
+        profile(needs_sponsorship=True),
         posting(
             location="Berlin, Germany",
             description="Requires TS/SCI clearance. We cannot provide sponsorship.",
@@ -281,32 +360,24 @@ def test_keyword_overlap_explains_a_match() -> None:
 # Gate 5 — hand-labeled ranking
 # --------------------------------------------------------------------------
 
-#: 20 postings, hand-labeled. `True` means "I would actually apply to this".
+#: The twenty Gate 5 postings, read from the one place they are defined.
+#:
+#: They used to be a literal list here. They moved to `seeds/labeled_matches.yaml`
+#: when the benchmark in `packages/matching/benchmark.py` started needing the
+#: same labels: two copies of a labeled set drift, and a gate asserting against
+#: a stale copy of the corpus the benchmark reports on is worse than either.
+#:
+#: The gate selects by tag rather than taking the whole file. The file also
+#: holds adjacent roles added for the benchmark, and pulling those in here
+#: would silently change what "10 of 20" means.
+#:
+#: `True` means "I would actually apply to this" — the file grades 0-3, and
+#: anything above 0 is wanted.
+_LABELED = load_labeled_set("seeds/labeled_matches.yaml")
+
 HAND_LABELED: list[tuple[bool, str, str]] = [
-    (
-        True,
-        "Senior Backend Engineer",
-        "Python, PostgreSQL, FastAPI, async APIs, distributed systems",
-    ),
-    (True, "Staff Backend Engineer", "Python services, PostgreSQL, Kubernetes, Docker, scale"),
-    (True, "Platform Engineer", "Kubernetes, Docker, Python tooling, backend infrastructure"),
-    (True, "Backend Engineer, APIs", "FastAPI, async Python, PostgreSQL, API design"),
-    (True, "Senior Software Engineer", "Python backend, distributed systems, PostgreSQL, Docker"),
-    (True, "Infrastructure Engineer", "Kubernetes, Docker, Python, deployment, backend systems"),
-    (True, "Senior Python Engineer", "async Python, PostgreSQL, FastAPI, billing systems"),
-    (True, "Database Engineer", "PostgreSQL, MySQL, migrations, query performance, Python"),
-    (True, "Senior Engineer, Payments", "Python, PostgreSQL, billing, distributed systems, async"),
-    (True, "Backend Engineer, Data", "Python, PostgreSQL, events, streaming, backend"),
-    (False, "Pastry Chef", "Croissants, laminated dough, early mornings in our bakery"),
-    (False, "Registered Nurse", "Patient care, clinical rounds, medication administration"),
-    (False, "Warehouse Associate", "Picking, packing, forklift certification, shift work"),
-    (False, "Sales Development Rep", "Cold calling, outbound prospecting, quota, CRM hygiene"),
-    (False, "Graphic Designer", "Adobe Illustrator, brand identity, print layout, typography"),
-    (False, "Mechanical Engineer", "CAD, tolerance analysis, injection moulding, manufacturing"),
-    (False, "Elementary Teacher", "Lesson planning, classroom management, literacy curriculum"),
-    (False, "Financial Analyst", "Excel modelling, forecasting, variance analysis, budgets"),
-    (False, "Truck Driver", "Long haul routes, CDL class A, logbook compliance"),
-    (False, "Barista", "Espresso extraction, latte art, customer service, morning shifts"),
+    (item.relevance > 0, item.title, item.description)
+    for item in sorted(_LABELED.tagged("gate5"), key=lambda i: i.key)
 ]
 
 

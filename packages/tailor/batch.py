@@ -44,6 +44,7 @@ from packages.core.models import Match, Posting, Profile, Project, Resume
 from packages.github.select import select_projects
 from packages.llm import quota
 from packages.llm.provider import LLMProvider
+from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
 from packages.tailor.evidence import matched_job_terms
 from packages.tailor.guard import SourceCorpus
@@ -141,7 +142,7 @@ async def run(
             continue
 
         parsed = ParsedResume.model_validate(resume.parsed_json)
-        bullets = [line for line in parsed.section("experience") if line.strip()]
+        _, bullets = tailorable_bullets(parsed)
         if not bullets:
             result.failed += 1
             continue
@@ -205,6 +206,15 @@ async def run(
             result.failed += 1
             continue
 
+        # Per posting, and after the call — not `provider_name` from the top of
+        # the run. An overnight batch is the likeliest place to exhaust the
+        # remote allowance partway, which leaves some of the night's résumés
+        # written by Gemini and the rest by the local model. One name captured
+        # once would label every one of them wrong from the exhaustion onward,
+        # and the apply pipeline serves these rows straight to the review
+        # screen without ever calling a provider again.
+        answered_by = getattr(provider, "answered_by", None) or provider_name
+
         result.calls_spent += len(bullets)
 
         # Every rewrite refused means the output is the source résumé. Storing
@@ -224,6 +234,7 @@ async def run(
             projects=relevant_projects,
             tailored_key=cache_key,
             posting_id=posting.id,
+            answered_by=answered_by,
         )
         if published is None:
             result.failed += 1

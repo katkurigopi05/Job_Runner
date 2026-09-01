@@ -22,6 +22,8 @@ order they were produced and leaves blank lines untouched.
 
 from __future__ import annotations
 
+import html
+import re
 import uuid
 
 import structlog
@@ -29,7 +31,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Project, Resume
-from packages.core.storage import get_storage, resume_key
+from packages.core.storage import cover_letter_key, get_storage, resume_key
 from packages.tailor.assemble import AssemblyOptions, assemble_pdf
 from packages.tailor.parse import ParsedResume
 from packages.tailor.rewrite import TailorResult
@@ -41,8 +43,13 @@ log = structlog.get_logger(__name__)
 #: drift from packages/tailor/parse.py::SECTION_PATTERNS.
 SKILLS_SECTION = "skills"
 
-#: The section the tailor rewrites. Kept here rather than inlined so this and
-#: the caller that extracted the bullets cannot drift apart.
+#: The section the tailor rewrites, when a résumé has one.
+#:
+#: Retained for callers that still name it, but `apply_rewrites` no longer uses
+#: it: a résumé with no employment section is tailored on Projects instead, and
+#: writing rewrites back into a fixed section would put project bullets under a
+#: heading the owner does not have. `packages/tailor/bullets.py` is the single
+#: answer to "which section", shared with everything that extracts them.
 TAILORED_SECTION = "experience"
 
 
@@ -61,14 +68,26 @@ def apply_rewrites(
     deliberately left alone, because it is what the guard treats as "was this
     in the source" and reordering is not a change to that answer.
     """
-    lines = parsed.section(TAILORED_SECTION)
+    # The same two functions the extractor used, so the bullets cannot be taken
+    # from one section and written back into another, and cannot be written back
+    # onto lines that were never sent.
+    from packages.tailor.bullets import rewritable_indices, tailorable_section
+
+    section = tailorable_section(parsed)
+    lines = parsed.section(section) if section else []
     if not lines:
         return _with_ordered_skills(parsed.model_copy(deep=True), posting_text)
+    assert section is not None  # non-empty lines only come from a named section
+
+    # A project title and its technology line are in this section and are not
+    # bullets; `tailorable_bullets` does not send them, so consuming a result
+    # for them here would put every rewrite one line off its own bullet.
+    targets = set(rewritable_indices(lines))
 
     pending = iter(result.bullets)
     rewritten: list[str] = []
-    for line in lines:
-        if not line.strip():
+    for index, line in enumerate(lines):
+        if index not in targets:
             rewritten.append(line)
             continue
         bullet = next(pending, None)
@@ -78,7 +97,7 @@ def apply_rewrites(
         rewritten.append(bullet.tailored if bullet is not None else line)
 
     tailored = parsed.model_copy(deep=True)
-    tailored.sections[TAILORED_SECTION] = rewritten
+    tailored.sections[section] = rewritten
     return _with_ordered_skills(tailored, posting_text)
 
 
@@ -111,6 +130,7 @@ async def publish_tailored(
     options: AssemblyOptions | None = None,
     tailored_key: str | None = None,
     posting_id: uuid.UUID | None = None,
+    answered_by: str | None = None,
 ) -> Resume | None:
     """Render the tailored résumé to PDF, store it, and return its row.
 
@@ -124,6 +144,17 @@ async def publish_tailored(
     the application row that points at it land together or not at all.
     """
     tailored = apply_rewrites(parsed, result, posting_text=posting_text)
+
+    # A résumé tailored on its Projects section keeps that section. The GitHub
+    # set is rebuilt per posting and is the right Projects section for an
+    # employment résumé, where it is supporting material — but here it would
+    # overwrite the only substantive thing the document has, discarding every
+    # rewrite this function was called to render. The review screen would report
+    # eighteen changes and the PDF would contain none of them.
+    from packages.tailor.bullets import tailorable_section
+
+    if options is None and tailorable_section(parsed) == "projects":
+        options = AssemblyOptions(include_projects=False, replace_source_projects=False)
 
     try:
         pdf = assemble_pdf(tailored, projects, options)
@@ -158,6 +189,11 @@ async def publish_tailored(
         # readable. A posting with no content hash is uncacheable but still
         # perfectly nameable, so this is set even when the key is not.
         tailored_for_posting_id=posting_id,
+        # Read off the provider *after* the rewrites, so a run that fell back to
+        # the local model records the model that answered rather than the one
+        # that was asked. Left NULL when the caller did not say: unrecorded is
+        # an honest answer, a guessed model name is not.
+        tailored_by=answered_by,
     )
     session.add(resume)
     await session.flush()
@@ -168,5 +204,66 @@ async def publish_tailored(
         version=version,
         bytes=len(pdf),
         rewritten=result.changed_count,
+        tailored_by=answered_by,
     )
     return resume
+
+
+#: A letter is prose, not a résumé — no rules, no small caps, wider leading.
+#: Same face and page box as RESUME_CSS so the two documents an employer opens
+#: together do not look like they came from different people.
+LETTER_CSS = """
+@page { size: Letter; margin: 1in; }
+body { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
+       font-size: 10.5pt; line-height: 1.5; color: #111; }
+p { margin: 0 0 10pt; }
+"""
+
+
+def render_cover_letter(text: str) -> bytes:
+    """The letter as a PDF, laid out one paragraph per blank-line block."""
+    from weasyprint import CSS, HTML
+
+    paragraphs = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
+    body = "\n".join(
+        # Single newlines inside a block are the letter's own line breaks —
+        # a signature block is three lines and one paragraph.
+        "<p>" + "<br/>".join(html.escape(line) for line in block.splitlines()) + "</p>"
+        for block in paragraphs
+    )
+    document = HTML(string=f"<body>{body}</body>")
+    return bytes(document.write_pdf(stylesheets=[CSS(string=LETTER_CSS)]))
+
+
+def publish_cover_letter(text: str, *, application_id: str) -> str | None:
+    """Store the letter and return its storage ref, or None if it could not be.
+
+    Two formats, and the fallback is the point. The PDF is what gets uploaded
+    when the employer offers "Attach"; the `.txt` is what survives a machine
+    without Pango, where WeasyPrint raises. A form that offers a textarea
+    needs neither — the text goes straight into the field — so losing the
+    render must not lose the letter.
+
+    Returns None only when storage itself failed, which is the one case where
+    there is nothing to point `Application.cover_letter_ref` at.
+    """
+    storage = get_storage()
+
+    try:
+        pdf = render_cover_letter(text)
+    except Exception as exc:  # noqa: BLE001 - a render failure must not lose the letter
+        log.warning("cover_letter_render_failed", error=type(exc).__name__)
+        key = cover_letter_key(application_id, "cover-letter.txt")
+        payload = text.encode("utf-8")
+    else:
+        key = cover_letter_key(application_id, "cover-letter.pdf")
+        payload = pdf
+
+    try:
+        storage.put(key, payload)
+    except Exception as exc:  # noqa: BLE001 - same reasoning as the render
+        log.warning("cover_letter_store_failed", error=type(exc).__name__)
+        return None
+
+    log.info("cover_letter_published", key=key, bytes=len(payload))
+    return key

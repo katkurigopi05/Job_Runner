@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 # Aliased: this module has its own `_TOKEN_RE` with a different pattern, and
 # `borrowed_terms` has to tokenize the way the guard does to agree with it.
 from packages.tailor.guard import _TOKEN_RE as _GUARD_TOKEN_RE
-from packages.tailor.guard import SourceCorpus, normalize, stem
+from packages.tailor.guard import SourceCorpus, normalize, singular, stem
 
 #: Grammatical words and posting boilerplate.
 #:
@@ -107,7 +107,17 @@ def job_terms(job_description: str, *, limit: int = 40) -> list[str]:
     Frequency rather than anything cleverer: a posting repeats what it cares
     about, and a term appearing once is as likely to be boilerplate as a
     requirement.
+
+    Known multi-word skills are emitted whole. Tokenizing "machine learning"
+    into "machine" and "learning" asks the wrong question twice: neither word
+    is a skill, a résumé saying "ML" backs neither of them, and the pair went
+    onto the off-limits list — so the model was forbidden from writing the one
+    phrase the posting cared about most, for a skill the owner had. The words a
+    phrase consumed are not also emitted alone, or the same skill appears twice
+    with opposite verdicts.
     """
+    phrases, consumed = _known_phrases(job_description)
+
     counts: Counter[str] = Counter()
     surface: dict[str, str] = {}
 
@@ -117,12 +127,50 @@ def job_terms(job_description: str, *, limit: int = 40) -> list[str]:
             continue
         if key in _STOPWORDS or key in _ROLE_WORDS:
             continue
+        if key in consumed:
+            continue
         counts[key] += 1
         # Keep the first spelling seen, so "PostgreSQL" is not shown as
         # "postgresql" to a human reading the diff.
         surface.setdefault(key, raw.strip(".,;:"))
 
-    return [surface[key] for key, _ in counts.most_common(limit)]
+    singles = [surface[key] for key, _ in counts.most_common(limit)]
+    # Phrases first: a posting that names one is naming a skill, and the
+    # single tokens below it are the long tail.
+    return (phrases + singles)[:limit]
+
+
+def _known_phrases(job_description: str) -> tuple[list[str], set[str]]:
+    """Multi-word skills present in the posting, and the words they used up.
+
+    Drawn from the alias table rather than a second list, because the phrases
+    worth treating as one term are exactly the ones a résumé might write as an
+    abbreviation — which is what that table already enumerates.
+    """
+    from packages.tailor.aliases import equivalents, known_phrases
+
+    normalized = " ".join(normalize(raw) for raw in _TOKEN_RE.findall(job_description))
+    found: list[str] = []
+    consumed: set[str] = set()
+    claimed: set[frozenset[str]] = set()
+    for phrase in known_phrases():
+        if phrase not in normalized:
+            continue
+        # One term per group. "data pipeline" and "data pipelines" are the same
+        # skill written twice, and emitting both would ask the same question
+        # twice and pad the list the model is handed.
+        group = equivalents(phrase)
+        if group in claimed:
+            continue
+        claimed.add(group)
+        found.append(phrase)
+        # Singular and plural both, or "data pipelines" consumes its own words
+        # while "data pipeline tooling" elsewhere in the posting still leaks
+        # "pipeline" out as a separate term — the same skill, asked twice.
+        for word in phrase.split():
+            consumed.add(word)
+            consumed.add(singular(word))
+    return found, consumed
 
 
 def _supported(term: str, corpus: SourceCorpus) -> bool:
@@ -131,11 +179,21 @@ def _supported(term: str, corpus: SourceCorpus) -> bool:
     Token match first, then a substring check on the normalized text — a
     multi-word term like "machine learning" is never a single token, and
     missing it would report the résumé as thinner than it is.
+
+    Equivalent spellings count. A posting asking for "machine learning" is
+    backed by a résumé that says "ML": the same claim, written shorter. Without
+    this the term is reported unsupported, the model is forbidden from using
+    the posting's own word for a skill the owner has, and the résumé loses the
+    keyword an ATS is scanning for. `packages/tailor/aliases.py` holds the two
+    rules that keep the table to true equivalences.
     """
+    from packages.tailor.aliases import equivalents
+
     key = normalize(term)
     if not key:
         return False
-    return key in corpus.tokens or key in corpus.text
+
+    return any(form in corpus.tokens or form in corpus.text for form in equivalents(key) or {key})
 
 
 def analyze(job_description: str, corpus: SourceCorpus, *, limit: int = 40) -> TermReport:

@@ -55,13 +55,141 @@ export interface ResumeChange {
 }
 
 /** What tailoring changed, shown before the owner approves. §2.1. */
+export interface RecruiterChange {
+  before: number;
+  after: number;
+  shortlist_before: string;
+  shortlist_after: string;
+  scan_after: number;
+  qualification_after: number;
+  credibility_after: number;
+  technical_after: number;
+  findings: string[];
+}
+
 export interface ResumeDiff {
+  /**
+   * Optional because the reuse paths genuinely have none of it. When an
+   * overnight batch or the tailoring cache already wrote this document, the
+   * apply run attaches it without rewriting anything, and the payload is a
+   * `reused` marker and the model that wrote it. The old required typing said
+   * otherwise and `ResumeDiffView` believed it, mapping over an undefined
+   * `changes`.
+   */
+  changed?: number;
+  unchanged?: number;
+  /** Rewrites the fabrication guard refused and replaced with the original. */
+  rejected?: number;
+  /**
+   * Bullets the model never answered — a transport error, an empty completion,
+   * a spent allowance.
+   *
+   * Apart from `rejected` deliberately. One says what the model tried to write,
+   * the other says the network failed, and adding them together makes a
+   * provider that was down look like one that kept trying to invent.
+   */
+  provider_failures?: number;
+  /**
+   * How an ATS reads the résumé, before and after this run, against this
+   * posting. Absent when the run had no posting text to score against, and on
+   * every diff written before the field existed.
+   *
+   * Both halves are carried rather than one combined number. They fail
+   * independently: a run that raises keyword coverage while lowering the parse
+   * score has made the document worse in the way that matters most, because a
+   * résumé an ATS cannot segment is a row of empty columns.
+   */
+  ats?: {
+    parse_before: number;
+    parse_after: number;
+    keywords_before: number;
+    keywords_after: number;
+    /** Posting terms the tailored résumé now matches and the source did not. */
+    gained: string[];
+    /**
+     * Terms the posting asks for that the résumé still cannot back. Not a
+     * to-do list — writing one in would be fabrication under §2.1.
+     */
+    still_missing: string[];
+  } | null;
+  /**
+   * What a person is likely to make of the résumé, before and after.
+   *
+   * Beside `ats` rather than folded into it: they answer different questions
+   * and can move in opposite directions. A rewrite that packs the posting's
+   * vocabulary into every bullet raises keyword coverage and lowers this, and
+   * one number would hide the trade the owner most needs to see.
+   *
+   * Absent on every diff written before the field existed.
+   */
+  recruiter?: RecruiterChange | null;
+  unified?: string;
+  changes?: ResumeChange[];
+  /** This run attached an already-tailored résumé rather than writing one. */
+  reused?: boolean;
+  /**
+   * The owner fixed the document after tailoring wrote it — `owner_edit` for a
+   * hand edit, `comparison` for a pick from the model comparison.
+   *
+   * Set means the changes below describe the résumé this one was *derived
+   * from*, not the file that will be uploaded. Rendering the diff without
+   * saying so would repeat the §15 failure in miniature: a review screen
+   * describing a document other than the one being sent.
+   */
+  owner_pinned?: string | null;
+  /**
+   * Which model wrote the document: "gemini", or "ollama:llama3.1" when §7's
+   * fallback answered after the remote allowance ran out. Null or absent means
+   * unrecorded — a résumé tailored before the column existed — never a guess.
+   */
+  answered_by?: string | null;
+}
+
+/**
+ * One model's attempt at the same posting, for the comparison view.
+ *
+ * `requested` and `answered_by` are separate because §7's fallback answers with
+ * the local model when the remote allowance is spent — a column labelled by
+ * what was asked for would compare the local model against itself.
+ *
+ * `error` set means this side could not run: no key, spent quota, provider
+ * unreachable. It is rendered rather than dropped; a comparison missing half of
+ * itself reads as a verdict on the half that is there.
+ */
+export interface TailoringCandidate {
+  requested: string;
+  answered_by?: string | null;
+  resume_id?: string | null;
   changed: number;
   unchanged: number;
-  /** Rewrites the fabrication guard refused and replaced with the original. */
   rejected: number;
-  unified: string;
-  changes: ResumeChange[];
+  /** Bullets the model never answered. Never folded into `rejected`. */
+  provider_failures?: number;
+  unified?: string;
+  changes?: ResumeChange[];
+  reused?: boolean;
+  error?: string | null;
+}
+
+/**
+ * The letter written for this application, if the form asked for one.
+ *
+ * `accepted: false` with a `rejected_reason` is a real outcome, not an absence:
+ * a letter has no original to fall back to, so the alternative to a bad one is
+ * none — and "the guard refused it" has to look different from "never tried".
+ */
+export interface CoverLetter {
+  accepted: boolean;
+  rejected_reason?: string | null;
+  word_count?: number;
+  entities_checked?: number;
+  /** Sentences the guard stripped. A letter that survived only by deletion is worth seeing. */
+  sentences_dropped?: number;
+  /** Which model wrote it — §7's fallback applies here as it does to tailoring. */
+  answered_by?: string | null;
+  ref?: string | null;
+  text?: string | null;
+  reused?: boolean;
 }
 
 export interface ReviewRecord {
@@ -71,6 +199,10 @@ export interface ReviewRecord {
   unanswered?: UnansweredQuestion[];
   screenshot_ref?: string | null;
   resume_diff?: ResumeDiff | null;
+  /** Present once the owner has asked for a local-vs-cloud comparison. */
+  tailoring_comparison?: TailoringCandidate[] | null;
+  /** Null when the form never asked for a letter, which most do not. */
+  cover_letter?: CoverLetter | null;
   owner_answers?: Record<string, unknown>;
   owner_approved?: boolean;
   reason?: string;
@@ -404,7 +536,32 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+/**
+ * What `/health` reports. `status` is `degraded` when the API answers but
+ * cannot reach Postgres — the case a hardcoded "ok" used to hide.
+ */
+export interface Health {
+  status: "ok" | "degraded";
+  api: string;
+  database: "ok" | "down";
+}
+
+/** Whether the crawler is working, waiting, or stuck waiting for a worker. */
+export interface CrawlStatus {
+  running: boolean;
+  pending: number;
+  /** Work queued with nobody holding it — `make worker` is not up. */
+  stalled: boolean;
+  last_finished_at?: string | null;
+  last_status?: string | null;
+  /** Newest posting anyone has seen. This is what staleness actually means. */
+  newest_posting_at?: string | null;
+}
+
 export const api = {
+  health: () => request<Health>("/health"),
+  crawlStatus: () => request<CrawlStatus>("/crawl/status"),
+
   applications: () => request<Application[]>("/applications"),
   application: (id: string) => request<Application>(`/applications/${id}`),
   events: (id: string) => request<ApplicationEvent[]>(`/applications/${id}/events`),
@@ -422,6 +579,25 @@ export const api = {
   resumes: (candidateId: string) =>
     request<Resume[]>(`/resumes?candidate_id=${encodeURIComponent(candidateId)}`),
   resumeParsed: (id: string) => request<ResumeParsed>(`/resumes/${id}/parsed`),
+
+  /**
+   * Save an edited résumé. Creates a new version rather than rewriting the one
+   * an application may already have sent, re-renders the PDF so the file and
+   * the parsed form cannot disagree, and (by default) moves every profile that
+   * used the source onto it.
+   */
+  editResume: (
+    id: string,
+    body: {
+      contact: { name?: string; email?: string; phone?: string; links?: string[] };
+      sections: Record<string, string[]>;
+      adopt?: boolean;
+    },
+  ) =>
+    request<Resume>(`/resumes/${id}/edit`, {
+      method: "POST",
+      body: JSON.stringify({ adopt: true, ...body }),
+    }),
   profiles: () => request<Profile[]>("/profiles"),
   inbox: () => request<InboundMessage[]>("/inbox"),
   matches: (includeApplied = false) =>
@@ -449,6 +625,47 @@ export const api = {
     request<Application>(`/applications/${id}/otp`, {
       method: "POST",
       body: JSON.stringify({ code }),
+    }),
+
+  /**
+   * Tailor this posting with the local model and a cloud one, for a choice.
+   *
+   * `cloud` names the remote half for this comparison only. Omitted, it is
+   * whatever real tailoring would use. Naming one moves no setting — the next
+   * application routes exactly as it did before.
+   */
+  compareTailoring: (id: string, cloud?: string) =>
+    request<Application>(`/applications/${id}/tailoring/compare`, {
+      method: "POST",
+      body: JSON.stringify({ cloud: cloud ?? null }),
+    }),
+
+  /**
+   * Edit the résumé one application is about to send.
+   *
+   * Distinct from `editResume` in what it changes, not in how it saves. Both
+   * version the document rather than mutating it; this one attaches the result
+   * to a single application and leaves the profile's base alone, because on the
+   * review screen the subject is one employer.
+   */
+  editApplicationResume: (
+    id: string,
+    body: {
+      contact: { name?: string; email?: string; phone?: string; links?: string[] };
+      sections: Record<string, string[]>;
+      adopt?: boolean;
+    },
+  ) =>
+    request<Application>(`/applications/${id}/resume/edit`, {
+      method: "POST",
+      body: JSON.stringify({ adopt: false, ...body }),
+    }),
+
+  /** Send this one. Restricted server-side to the versions that were compared. */
+  selectTailoring: (id: string, resumeId: string) =>
+    request<Application>(`/applications/${id}/tailoring/select`, {
+      method: "POST",
+      body: JSON.stringify({ resume_id: resumeId }),
     }),
 };
 

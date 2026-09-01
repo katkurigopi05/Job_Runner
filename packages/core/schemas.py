@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from packages.core.enums import ApplicationStatus, EmailMode, FailureReason
+from packages.core.enums import ApplicationStatus, EmailMode, FailureReason, SeniorityLevel
 
 
 class ErrorDetail(BaseModel):
@@ -63,6 +63,11 @@ class ProfileCreate(BaseModel):
     answers: dict[str, Any] = Field(default_factory=dict)
     min_match_score: float = Field(default=0.75, ge=0.0, le=1.0)
     auto_submit: bool = False
+    #: The rung to apply at — one of `filters.SENIORITY_LEVELS`. None means
+    #: "do not filter on level", which is the shipped default. Stated by the
+    #: owner rather than read off the résumé: §1 keeps a search filter separate
+    #: from the profile's description of the applicant.
+    target_seniority: SeniorityLevel | None = None
 
 
 class ProfileUpdate(BaseModel):
@@ -84,6 +89,7 @@ class ProfileUpdate(BaseModel):
     answers: dict[str, Any] | None = None
     min_match_score: float | None = Field(default=None, ge=0.0, le=1.0)
     auto_submit: bool | None = None
+    target_seniority: SeniorityLevel | None = None
 
 
 class ProfileOut(BaseModel):
@@ -102,6 +108,7 @@ class ProfileOut(BaseModel):
     salary_expectation: str | None
     min_match_score: float
     auto_submit: bool
+    target_seniority: str | None
     created_at: datetime
 
 
@@ -151,6 +158,39 @@ class ReviewDecision(BaseModel):
     #: Answers the owner supplied for questions the agent could not fill.
     answers: dict[str, Any] = Field(default_factory=dict)
     note: str | None = None
+
+
+class TailoringCompareRequest(BaseModel):
+    """Which remote model the comparison should run against.
+
+    Omitted — the shipped case — the remote half is whatever real tailoring
+    would use. That answers the usual question, "would my cloud provider have
+    done better than local".
+
+    Naming one changes this comparison and nothing else. No setting moves and
+    the next application routes exactly as before, the same shape as §14's
+    per-question provider choice in `/chat`.
+
+    It exists because the default could not reach OpenRouter. §7 keeps it out of
+    `QUALITY_ORDER`, so the only way to compare against it was
+    `LLM_TASK_TAILOR=openrouter`, which also redirects every real tailoring call
+    — the owner had to adopt a provider in order to evaluate it. Only providers
+    with a key configured may be named, so pasting a key is still what makes a
+    route reachable; this is the typing §7 asks for, not a bypass of it.
+    """
+
+    cloud: str | None = None
+
+
+class TailoringChoice(BaseModel):
+    """Which of the compared résumés the owner wants sent.
+
+    The id is checked against the comparison stored on the application rather
+    than trusted: this sets the file that reaches an employer, and "any résumé
+    id belonging to this candidate" is a wider door than the screen needs.
+    """
+
+    resume_id: uuid.UUID
 
 
 class OtpSubmission(BaseModel):
@@ -251,6 +291,95 @@ class ResumeOut(BaseModel):
     created_at: datetime
 
 
+class ResumeContactEdit(BaseModel):
+    """Contact details as the owner wants them to read."""
+
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    links: list[str] = Field(default_factory=list)
+
+
+class ResumeEdit(BaseModel):
+    """An owner's edit to a parsed résumé.
+
+    Sections arrive whole — name to lines — rather than as a patch. The editor
+    shows the entire document, so a partial payload would mean the client and
+    the server disagreed about what was on screen, and the resolution of that
+    disagreement would silently delete a section.
+    """
+
+    contact: ResumeContactEdit = Field(default_factory=ResumeContactEdit)
+    sections: dict[str, list[str]] = Field(default_factory=dict)
+    #: Point every profile that used the source résumé at this new version.
+    #:
+    #: Default true because the alternative is an edit that changes nothing:
+    #: profiles keep their old `base_resume_id`, applications keep sending the
+    #: old file, and the owner has no way to tell from the screen. A silent
+    #: no-op is the failure this project keeps having.
+    adopt: bool = True
+
+
+class ApplicationResumeEdit(BaseModel):
+    """An owner's edit to the résumé one application is about to send.
+
+    The same payload as `ResumeEdit`, with `adopt` defaulting the other way.
+    That flip is the whole point of having a separate schema rather than
+    reusing one.
+
+    On the résumés page an edit is to *the document*, and adopting it is what
+    stops the save being a no-op. On the review screen an edit is to *this
+    application's* copy — usually a résumé tailored for one posting. Adopting
+    that as the profile's base would make one job's phrasing the starting point
+    for every future application, silently, from a screen whose subject is a
+    single employer.
+
+    So the default is off, and the owner opts in per edit when the change is one
+    they want everywhere. `ResumeEdit.adopt` keeps its own default for its own
+    reason; a shared field would have had to be wrong on one of the two screens.
+    """
+
+    contact: ResumeContactEdit = Field(default_factory=ResumeContactEdit)
+    sections: dict[str, list[str]] = Field(default_factory=dict)
+    #: Also point every profile using the *base* résumé at this new version.
+    adopt: bool = False
+    #: Hold the edit to the fabrication guard before storing it.
+    #:
+    #: Off for the dashboard and on for MCP, and the difference is *who is
+    #: typing*. §2.1 constrains the model, not the owner writing their own
+    #: history — `packages/tailor/edit.py` says so, and the editor is a person
+    #: at a keyboard. A tool call is not: there the author is a model, and an
+    #: unguarded résumé write handed to one is the exact door §2.1 closes.
+    #:
+    #: The API cannot tell the two apart, so the caller declares it. The MCP
+    #: server always sends `true` and offers no way to send anything else.
+    guard: bool = False
+
+
+class ApplicationResumeOut(BaseModel):
+    """The résumé an application will upload, as the parser reads it.
+
+    Exists so "which résumé is attached" has one definition. The rule — the
+    tailored one when tailoring has run, otherwise the profile's base — is the
+    one `apply_job._resume_path` applies when it picks the file, and a second
+    copy of it in a client is how a screen ends up describing a document other
+    than the one being sent (CLAUDE.md §15).
+
+    `sections` carries the lines themselves, not counts: the caller of this is
+    about to edit them.
+    """
+
+    application_id: uuid.UUID
+    resume_id: uuid.UUID
+    version: int
+    #: False means the profile's base is going as-is — tailoring has not run.
+    is_tailored: bool
+    #: Whether an edit would be accepted. Only parked applications may be edited.
+    editable: bool
+    contact: dict[str, Any] = Field(default_factory=dict)
+    sections: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class ResumeParsedOut(BaseModel):
     """What the parser extracted, so it can be checked before it is trusted."""
 
@@ -338,12 +467,51 @@ class InboundMessageOut(BaseModel):
 # --------------------------------------------------------------------------
 
 
+class CrawlStatusOut(BaseModel):
+    """Whether the crawler is working, for a dashboard that could not tell.
+
+    `running` and `pending` are separate because they need different actions
+    from the owner: pending with no worker means nothing is draining the queue,
+    which looks exactly like a crawl in progress if the two are conflated.
+    """
+
+    #: A crawl is claimed and being worked right now.
+    running: bool
+    #: Crawls queued and not yet claimed.
+    pending: int
+    #: True when work is waiting but no worker holds it — start `make worker`.
+    stalled: bool
+    #: When the last crawl finished, successfully or not. None if none ever has.
+    last_finished_at: datetime | None = None
+    #: Status of that last crawl: "done" or "failed".
+    last_status: str | None = None
+    #: The newest posting anyone has seen, which is what staleness really means.
+    newest_posting_at: datetime | None = None
+
+
 class ChatRequest(BaseModel):
     """A question about the owner's own job search."""
 
     message: str = Field(min_length=1, max_length=4000)
     #: Scopes the answer to one application, so "what is it waiting on?" works.
     application_id: uuid.UUID | None = None
+    #: Which model answers. Omitted means the local one, which is the shipped
+    #: default and the only value that keeps chat context on this machine.
+    #:
+    #: Naming a remote provider sends the context — application URLs, profile
+    #: fields, recruiter correspondence — to that provider. The owner opted
+    #: into that; see CLAUDE.md §14. Per request rather than per environment so
+    #: the choice is visible at the point it is made instead of buried in
+    #: `.env`, and so it never persists past the question it was made for.
+    provider: str | None = None
+    #: Whether recruiter correspondence may go to a *remote* provider.
+    #:
+    #: Ignored for the local model, which always sees it — it never leaves the
+    #: machine, so there is nothing to withhold it from. Defaults to False, so
+    #: choosing a cloud provider does not silently take the mail along: it is
+    #: the most sensitive thing in the context and the only part written by
+    #: people who never chose a provider.
+    share_mail: bool = False
 
 
 class ChatReply(BaseModel):
@@ -351,10 +519,20 @@ class ChatReply(BaseModel):
 
     reply: str
     #: Which provider answered, or "refused" when a §2.2 boundary stopped it.
-    #: Surfaced so the owner can see the assistant really is running locally.
     provider: str
+    #: The exact model, so "ollama" cannot stand in for a cloud-served one and
+    #: a remote answer names the thing that produced it. None when refused.
+    model: str | None = None
     #: False when the answer came from a rule rather than the model.
     grounded: bool
+    #: False when the context left this machine. The dashboard shows this, so
+    #: an answer that cost privacy is never indistinguishable from one that did
+    #: not.
+    local: bool = True
+    #: Whether recruiter correspondence was actually in the context. Reports
+    #: what happened rather than what was asked: the local model always sees it
+    #: regardless of the request field.
+    shared_mail: bool = True
 
 
 # --------------------------------------------------------------------------

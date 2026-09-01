@@ -62,3 +62,134 @@ def test_a_broken_preferred_provider_does_not_fall_back(monkeypatch) -> None:
 
     with pytest.raises(LLMError):
         router.classify_inbound_email()
+
+
+# --- choosing between local and cloud — §7 with a §2.8 boundary --------------
+
+
+def test_only_the_uploading_tasks_are_choosable() -> None:
+    """The tasks an environment variable can redirect. Still these three.
+
+    Inbound-email classification reads recruiter correspondence and cannot be
+    pointed anywhere: a setting able to move it would be a way to opt out of a
+    non-negotiable by editing `.env`.
+
+    The assistant is the case that changed, and it changed *without* joining
+    this set. The owner widened §14 so chat can be answered by a cloud provider
+    — but the choice is a per-request field on `ChatRequest`, made in the UI
+    for one question, not a variable that silently redirects every future
+    conversation. `apps/api/routers/chat.py` still ignores `LLM_PROVIDER`
+    entirely. Whichever way that decision goes, it should not be reachable from
+    here.
+    """
+    assert set(router.CHOOSABLE_TASKS) == {
+        "tailor_resume",
+        "write_cover_letter",
+        "answer_open_ended_question",
+    }
+    assert "classify_inbound_email" not in router.CHOOSABLE_TASKS
+    assert "map_form_field" not in router.CHOOSABLE_TASKS
+
+
+def test_a_locked_task_ignores_the_setting(monkeypatch) -> None:
+    """Even set explicitly, the lock wins — it is a rule, not a default."""
+    from packages.core.config import get_settings
+
+    monkeypatch.setenv("LLM_TASK_TAILOR", "gemini")
+    get_settings.cache_clear()
+
+    assert router._chosen("classify_inbound_email") is None
+    assert router._chosen("map_form_field") is None
+
+
+def test_the_owner_can_pin_tailoring_to_the_local_model(monkeypatch) -> None:
+    """Local tailoring without deleting the API key every other task wants."""
+    from packages.core.config import get_settings
+
+    monkeypatch.setenv("LLM_TASK_TAILOR", "ollama")
+    get_settings.cache_clear()
+
+    assert router._chosen("tailor_resume") == "ollama"
+
+
+def test_auto_keeps_the_shipped_behaviour(monkeypatch) -> None:
+    from packages.core.config import get_settings
+
+    monkeypatch.setenv("LLM_TASK_TAILOR", "auto")
+    get_settings.cache_clear()
+
+    assert router._chosen("tailor_resume") is None
+
+
+async def test_a_spent_quota_falls_back_to_the_local_model() -> None:
+    """The case §7's own QuotaExceeded message describes as a manual step."""
+    from packages.llm.quota import QuotaExceeded
+
+    class Spent:
+        name = "gemini"
+
+        async def complete(self, system, user, **kwargs):
+            raise QuotaExceeded("gemini", 200, 200)
+
+    class Local:
+        name = "ollama"
+        model = "llama3.1"
+
+        async def complete(self, system, user, **kwargs):
+            return "tailored locally"
+
+    fallback = router.FallbackProvider(Spent(), "tailor_resume")
+    fallback._local = lambda: Local()
+
+    answer = await fallback.complete("sys", "user")
+
+    assert answer == "tailored locally"
+    assert fallback.answered_by == "ollama:llama3.1"
+
+
+async def test_the_fallback_is_never_the_stub() -> None:
+    """§7: canned text must not reach a real application.
+
+    StubProvider's marker exists so "nothing is configured" is visible in the
+    diff. A fallback that reached it would hide exactly that.
+    """
+    assert router.LOCAL_PROVIDER == "ollama"
+    assert router.LOCAL_PROVIDER != "stub"
+
+
+async def test_an_unrelated_error_is_not_swallowed() -> None:
+    """Only a spent quota or an unreachable provider retries locally.
+
+    A bug in the prompt or the schema must surface, not quietly produce a
+    second answer from a different model.
+    """
+
+    class Broken:
+        name = "gemini"
+
+        async def complete(self, system, user, **kwargs):
+            raise ValueError("bad prompt")
+
+    fallback = router.FallbackProvider(Broken(), "tailor_resume")
+    fallback._local = lambda: pytest.fail("must not reach the local model")
+
+    with pytest.raises(ValueError):
+        await fallback.complete("sys", "user")
+
+
+async def test_which_model_answered_is_recorded() -> None:
+    """A résumé tailored locally after the allowance ran out is a different
+    document from one tailored by the cloud model, and the owner approving it
+    should be able to tell which they are looking at."""
+
+    class Fine:
+        name = "gemini"
+
+        async def complete(self, system, user, **kwargs):
+            return "tailored remotely"
+
+    fallback = router.FallbackProvider(Fine(), "tailor_resume")
+
+    await fallback.complete("sys", "user")
+
+    assert fallback.answered_by == "gemini"

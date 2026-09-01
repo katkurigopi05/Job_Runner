@@ -156,30 +156,14 @@ async def test_a_provider_failure_does_not_fail_the_application(monkeypatch) -> 
     assert letter is None
 
 
-async def test_an_accepted_letter_is_stored_and_referenced(monkeypatch, tmp_path) -> None:
-    from packages.core import storage as storage_module
-    from packages.tailor.cover import CoverLetter
-
-    async def accept(*args: Any, **kwargs: Any) -> CoverLetter:
-        return CoverLetter(text="A real letter about billing.", accepted=True, word_count=200)
-
-    monkeypatch.setattr("packages.tailor.cover.write", accept)
-    monkeypatch.setattr(
-        storage_module, "get_storage", lambda: storage_module.LocalStorage(tmp_path)
-    )
-    monkeypatch.setattr(apply_job, "get_storage", lambda: storage_module.LocalStorage(tmp_path))
-
-    application = _application()
-    letter = await apply_job._cover_letter(
-        _Session(_resume()),
-        application,
-        _profile(),
-        _Posting(),
-        _questions(QuestionKind.COVER_LETTER),
-    )
-
-    assert letter == "A real letter about billing."
-    assert application.cover_letter_ref == f"letters/{application.id}.txt"
+# `test_an_accepted_letter_is_stored_and_referenced` lived here and was removed
+# in the merge with main. It asserted that an accepted letter is stored and
+# `cover_letter_ref` written, against hand-built session and posting stubs that
+# modelled the string-returning `_cover_letter` this branch had. main's version
+# publishes the file, records which model answered, and reuses a stored letter,
+# and `tests/test_apply_cover_letter.py::test_a_vetted_letter_is_stored_and_referenced`
+# already makes the same assertion against a real session. Two stubs of one
+# implementation is how the weaker one goes stale unnoticed.
 
 
 def test_the_letter_reaches_the_form_only_when_supplied() -> None:
@@ -193,7 +177,7 @@ def test_the_letter_reaches_the_form_only_when_supplied() -> None:
     questions = [Question(key="cl", label="Cover letter", kind=QuestionKind.COVER_LETTER)]
 
     without = build_answers(questions, candidate, profile)
-    with_letter = build_answers(questions, candidate, profile, cover_letter="Dear Globex")
+    with_letter = build_answers(questions, candidate, profile, cover_letter_text="Dear Globex")
 
     assert "cl" not in without
     assert with_letter["cl"] == "Dear Globex"
@@ -208,6 +192,6 @@ def test_a_plain_textarea_is_not_a_cover_letter_field(kind: QuestionKind) -> Non
     candidate = Candidate(id=uuid.uuid4(), user_id=uuid.uuid4(), name="Jane", email="j@x.com")
     questions = [Question(key="q", label="Tell us about a project", kind=kind)]
 
-    answers = build_answers(questions, candidate, _profile(), cover_letter="Dear Globex")
+    answers = build_answers(questions, candidate, _profile(), cover_letter_text="Dear Globex")
 
     assert answers.get("q") != "Dear Globex"

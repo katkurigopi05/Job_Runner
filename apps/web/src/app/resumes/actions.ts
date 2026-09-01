@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { ApiError, api } from "@/lib/api";
 
 const API = process.env.JOBRUNNER_API ?? "http://127.0.0.1:8000";
 
@@ -70,4 +71,48 @@ export async function uploadResume(
     ok: true,
     message: `Uploaded as v${resume.version} and set as the base résumé. Check the parse below — what you see is what an ATS gets.`,
   };
+}
+
+
+/**
+ * Save an edited résumé.
+ *
+ * The lines arrive as one textarea per section, split on newlines. Blank lines
+ * are dropped server-side rather than here, so what the owner sees in the box
+ * is what the server judges — a client that pre-trimmed would disagree with the
+ * emptiness check and refuse an edit the screen showed as filled.
+ */
+export async function saveResumeEdit(
+  resumeId: string,
+  _prev: UploadResult | null,
+  form: FormData,
+): Promise<UploadResult> {
+  const sections: Record<string, string[]> = {};
+  for (const [field, value] of form.entries()) {
+    if (!field.startsWith("section:")) continue;
+    sections[field.slice("section:".length)] = String(value).split("\n");
+  }
+
+  const contact = {
+    name: String(form.get("contact:name") ?? "").trim(),
+    email: String(form.get("contact:email") ?? "").trim(),
+    phone: String(form.get("contact:phone") ?? "").trim(),
+    links: String(form.get("contact:links") ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+  };
+
+  try {
+    const saved = await api.editResume(resumeId, { contact, sections });
+    revalidatePath("/resumes");
+    revalidatePath("/review");
+    return {
+      ok: true,
+      message: `Saved as v${saved.version}. Profiles using the old one now use this.`,
+    };
+  } catch (error) {
+    if (error instanceof ApiError) return { ok: false, message: error.message };
+    throw error;
+  }
 }

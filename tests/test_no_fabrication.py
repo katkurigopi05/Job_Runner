@@ -24,6 +24,7 @@ from packages.llm.provider import StubProvider
 from packages.tailor.cover import mentions_protected, sift
 from packages.tailor.diff import render_html, summarize, unified
 from packages.tailor.guard import (
+    CorpusItem,
     EntityKind,
     FabricationError,
     SourceCorpus,
@@ -726,3 +727,121 @@ def test_section_2_2_topics_are_refused_before_the_guard_is_reached() -> None:
     assert mentions_protected("My salary requirement is 100k") == "salary"
     assert mentions_protected("I do not require visa sponsorship") == "visa"
     assert mentions_protected("I migrated the billing service") is None
+
+
+# --------------------------------------------------------------------------
+# §2.1 — a Skills list must not launder one entry's technology onto another
+# --------------------------------------------------------------------------
+
+#: Two employers with disjoint stacks, and a Skills line naming both. The
+#: shape of nearly every real résumé, and the one that made §2.1's two clauses
+#: contradict each other: "inject keywords supported by a shared source
+#: section" against "may not borrow a project skill into an employer bullet".
+#: Bulleted, so `_split_entries` groups each job into one entry. Without the
+#: markers every line becomes its own entry and the scope is a bare job title,
+#: which is a property of the fixture rather than of the guard.
+_TWO_JOBS = """\
+Dana Whitfield
+dana@example.com
+
+EXPERIENCE
+
+Staff Engineer, Analytical Engines Ltd
+- Built async APIs with FastAPI, deployed on Kubernetes and Docker.
+
+Senior Software Engineer, Cartwright Data
+- Wrote Python services that processed customer event streams into daily reports.
+
+SKILLS
+Python, PostgreSQL, FastAPI, Docker, Kubernetes, Linux, Git
+"""
+
+
+def _entries() -> tuple[SourceCorpus, dict[str, CorpusItem]]:
+    corpus = SourceCorpus.from_resume(parse_text(_TWO_JOBS))
+    return corpus, {item.ref: item for item in corpus.items}
+
+
+def _entry_saying(corpus: SourceCorpus, needle: str) -> CorpusItem:
+    return next(i for i in corpus.items if needle.lower() in i.text.lower())
+
+
+def test_a_skills_list_does_not_move_a_technology_between_employers() -> None:
+    """The defect this was written for.
+
+    Cartwright never touched Kubernetes; Analytical Engines did, and Skills
+    names it. Before this rule the claim passed on either employer, because
+    the shared section supported it everywhere — sibling borrowing with the
+    Skills list as the alibi.
+    """
+    corpus, _ = _entries()
+    cartwright = _entry_saying(corpus, "Cartwright")
+
+    report = check(
+        "Wrote Python services on Kubernetes for daily reports.", corpus, scope=cartwright
+    )
+
+    assert not report.ok
+    assert any("kubernetes" in str(v).lower() for v in report.violations)
+
+
+def test_the_same_technology_is_fine_on_the_entry_that_claims_it() -> None:
+    """The rule withdraws a token from *shared*; it never removes it from its own entry."""
+    corpus, _ = _entries()
+    analytical = _entry_saying(corpus, "Analytical Engines")
+
+    assert check("Deployed FastAPI on Kubernetes and Docker.", corpus, scope=analytical).ok
+
+
+def test_a_skill_no_entry_claims_stays_available_everywhere() -> None:
+    """§2.1's shared-section allowance, untouched.
+
+    Linux and Git appear only in Skills. The résumé never said *where* the
+    owner used them, so there is no attribution to contradict and they remain
+    usable on any entry — which is the clause this change had to preserve.
+    """
+    corpus, _ = _entries()
+    cartwright = _entry_saying(corpus, "Cartwright")
+
+    assert check("Wrote Python services on Linux, tracked in Git.", corpus, scope=cartwright).ok
+
+
+def test_contact_and_education_stay_shared() -> None:
+    corpus, _ = _entries()
+    cartwright = _entry_saying(corpus, "Cartwright")
+
+    assert check("Dana Whitfield wrote Python services.", corpus, scope=cartwright).ok
+
+
+def test_an_unscoped_check_is_unchanged() -> None:
+    """Without a scope the question is "is this true of the owner", and
+    attribution has no bearing on it."""
+    corpus, _ = _entries()
+
+    assert check("Deployed FastAPI on Kubernetes and Docker.", corpus, scope=None).ok
+    assert check("Wrote Python services on Kubernetes.", corpus, scope=None).ok
+
+
+def test_deleting_the_skills_section_no_longer_changes_the_verdict() -> None:
+    """The symptom that exposed it.
+
+    The same claim, the same scope, decided oppositely by whether an unrelated
+    section existed. Both must now refuse.
+    """
+    with_skills = SourceCorpus.from_resume(parse_text(_TWO_JOBS))
+    without = SourceCorpus.from_resume(parse_text(_TWO_JOBS.split("SKILLS")[0]))
+
+    claim = "Wrote Python services on Kubernetes for daily reports."
+    verdicts = {
+        check(claim, corpus, scope=_entry_saying(corpus, "Cartwright")).ok
+        for corpus in (with_skills, without)
+    }
+
+    assert verdicts == {False}, "the Skills section still decides this claim"
+
+
+def test_attributed_names_only_what_an_entry_claims() -> None:
+    corpus, _ = _entries()
+
+    assert "kubernetes" in corpus.attributed
+    assert "linux" not in corpus.attributed, "Skills-only terms are not attributed"

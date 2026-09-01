@@ -12,6 +12,8 @@ prompts are advisory and models disregard them.
 
 from __future__ import annotations
 
+import re
+
 import structlog
 from pydantic import BaseModel, Field
 
@@ -21,6 +23,7 @@ from packages.llm.router import temperature_for
 from packages.tailor.guard import _COMMON_WORDS, GuardReport, SourceCorpus, check, normalize
 from packages.tailor.keywords import TermReport, analyze, borrowed_terms
 from packages.tailor.recombination import find as find_recombinations
+from packages.tailor.technologies import dropped as dropped_technologies
 
 log = structlog.get_logger(__name__)
 
@@ -54,15 +57,35 @@ class BulletRewrite(BaseModel):
     #: Set when the model's attempt was discarded.
     rejected_reason: str | None = None
     entities_checked: int = 0
+    #: The model never answered — a transport error, an empty completion, a
+    #: spent allowance.
+    #:
+    #: Separate from the guard refusing an answer, and the distinction is the
+    #: whole point of reporting refusals at all. "The guard refused this" is a
+    #: statement about what the model tried to write; "the provider failed" is a
+    #: statement about the network. Counted together, a model that never spoke
+    #: is indistinguishable from one that kept trying to invent — which is
+    #: exactly backwards, and on a comparison screen it reads as a verdict on
+    #: the wrong thing.
+    provider_failed: bool = False
 
     @property
     def used_fallback(self) -> bool:
+        """The original line was kept, for either reason."""
         return self.rejected_reason is not None
+
+    @property
+    def guard_refused(self) -> bool:
+        """The model answered and the fabrication guard rejected the answer."""
+        return self.rejected_reason is not None and not self.provider_failed
 
 
 class TailorResult(BaseModel):
     bullets: list[BulletRewrite] = Field(default_factory=list)
+    #: Rewrites the fabrication guard refused. Provider failures are *not* here.
     rejected: int = 0
+    #: Bullets where the model never answered. See `BulletRewrite.provider_failed`.
+    provider_failures: int = 0
 
     @property
     def tailored_lines(self) -> list[str]:
@@ -94,15 +117,81 @@ def _user_prompt(bullet: str, job_description: str, terms: TermReport | None = N
     return "\n\n".join(parts)
 
 
-def _clean(candidate: str) -> str:
-    """Strip the wrappers models add despite being told not to."""
+#: A short label the model put in front of its answer — `Analysis:`, `Note:`,
+#: `Revised bullet:`. At most two words, because three already reaches a real
+#: clause: `Built the parser: fast and small.` is a bullet, and an earlier
+#: version of this stripped it down to `fast and small.`
+_PREAMBLE_RE = re.compile(r"^([A-Z][A-Za-z]*(?: [A-Za-z]+)?):\s+")
+
+
+def _clean(candidate: str, original: str = "") -> str:
+    """Strip the wrappers models add despite being told not to.
+
+    The fixed list was not enough. Running llama3.1 over the owner's own
+    résumé, one rewrite came back as `Analysis: Designing a validated,
+    reversible…` and another opened with `Note:` — which the guard then refused
+    as a fabricated proper noun, so the bullet fell back to its original and
+    the owner saw a refusal whose stated reason was a word the model had used
+    as punctuation.
+
+    Both symptoms are one cause, so this strips any short `Label: ` opening
+    rather than growing the list.
+
+    `original` is what keeps it from eating content. A label made of words the
+    source bullet already uses is not a preamble — it is the bullet's own
+    opening, and `Built the parser: fast and small.` must keep it. A preamble,
+    by contrast, is a word the model reached for on its own and so is absent
+    from the source.
+    """
     text = candidate.strip()
     for prefix in ("Rewritten bullet:", "Bullet:", "-", "*", "•"):
         if text.startswith(prefix):
             text = text[len(prefix) :].strip()
+
+    match = _PREAMBLE_RE.match(text)
+    if match and not _echoes(match.group(1), original):
+        text = text[match.end() :].strip()
+
     if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
         text = text[1:-1].strip()
     return text
+
+
+def _echoes(label: str, original: str) -> bool:
+    """Whether a candidate label repeats a word the source bullet already uses."""
+    if not original.strip():
+        return False
+    source = {word.strip(".,:;()").lower() for word in original.split()}
+    return any(word.lower() in source for word in label.split())
+
+
+#: Punctuation and spacing, which a rewrite may move without saying anything
+#: different. Stripped from both sides before they are compared.
+_COSMETIC_RE = re.compile(r"[^\w\s]+")
+
+
+def _reduced(text: str) -> str:
+    """`text` with punctuation dropped and spacing collapsed."""
+    return " ".join(_COSMETIC_RE.sub("", text).split())
+
+
+def is_substantive(original: str, candidate: str) -> bool:
+    """Whether a rewrite differs in more than punctuation and spacing.
+
+    The count on the review and comparison screens is what the owner judges
+    two models by, and it was counting edits nobody can see. On the first real
+    local-vs-cloud run, 3 of the cloud side's 12 reported rewrites were of this
+    kind: `Core CS  Data Structures` gaining a colon, `Cloud Data Warehousing &
+    BI Analytics   [GitHub]` losing two spaces. Nine were real. A screen whose
+    whole purpose is comparing two models must not pad one side's total with
+    whitespace.
+
+    Case is deliberately *not* folded. Punctuation and spacing carry no claim;
+    capitalization sometimes does — `python` and `Python` are the same skill,
+    but the résumé writes technology names the way their vendors do, and a
+    model quietly lowercasing them is a change worth showing.
+    """
+    return _reduced(original) != _reduced(candidate)
 
 
 def _content_words(text: str) -> set[str]:
@@ -192,6 +281,25 @@ def vet(
             report,
         )
 
+    # Everything above asks whether the rewrite says something the source does
+    # not. This asks the opposite question, and it is the only check here that
+    # reads what is *missing*: a rewrite that quietly deletes a library the
+    # résumé lists passes every test above — nothing was invented — and hands
+    # the employer a document with fewer of the keywords an ATS scans for.
+    # Both models tested dropped `(Pillow/Tkinter)` from the same bullet.
+    #
+    # An equivalent spelling is not a deletion: `technologies.dropped` decides
+    # presence through the alias table, so expanding `CI` to `continuous
+    # integration` keeps the term and is allowed.
+    lost = dropped_technologies(original, candidate, corpus.technologies)
+    if lost:
+        return (
+            False,
+            "drops " + ", ".join(repr(term) for term in lost) + " — the résumé "
+            "lists it and the rewrite does not mention it",
+            report,
+        )
+
     overlap = vocabulary_overlap(original, candidate)
     if overlap < MIN_VOCABULARY_OVERLAP:
         return (
@@ -232,9 +340,10 @@ async def tailor_bullet(
             original=bullet,
             tailored=bullet,
             rejected_reason=f"provider error: {type(exc).__name__}",
+            provider_failed=True,
         )
 
-    candidate = _clean(raw)
+    candidate = _clean(raw, bullet)
     forbidden = tuple(terms.missing) if terms else ()
     accepted, reason, report = vet(bullet, candidate, corpus, forbidden)
 
@@ -248,10 +357,21 @@ async def tailor_bullet(
             entities_checked=report.checked,
         )
 
+    if not is_substantive(bullet, candidate):
+        # Vetted, but it says the same thing. Keep the source line so the
+        # document and the count agree: reporting a rewrite that a reader
+        # cannot see is the same defect as reporting none that they can.
+        return BulletRewrite(
+            original=bullet,
+            tailored=bullet,
+            changed=False,
+            entities_checked=report.checked,
+        )
+
     return BulletRewrite(
         original=bullet,
         tailored=candidate,
-        changed=candidate.strip() != bullet.strip(),
+        changed=True,
         entities_checked=report.checked,
     )
 
@@ -273,5 +393,6 @@ async def tailor_bullets(
     ]
     return TailorResult(
         bullets=rewrites,
-        rejected=sum(1 for r in rewrites if r.used_fallback),
+        rejected=sum(1 for r in rewrites if r.guard_refused),
+        provider_failures=sum(1 for r in rewrites if r.provider_failed),
     )

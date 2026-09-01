@@ -66,11 +66,36 @@ async def test_no_tool_submits_an_application() -> None:
     assert not any("submit" in n for n in names if n != "submit_otp")
 
 
-async def test_no_tool_claims_to_tailor() -> None:
-    """Tailoring is Phase 3; a tool named for it would advertise a lie."""
+async def test_no_tool_tailors_on_its_own() -> None:
+    """There is no standalone `tailor_resume`, and the reason has changed.
+
+    It used to be that tailoring did not exist. It does now — the apply
+    pipeline calls it on every run. What is still absent is a tool that tailors
+    *without* applying, because the document it produced would belong to no
+    application: nothing would upload it, and §9's `tailored_resume_id` would
+    stay null while a résumé sat in storage looking finished.
+
+    `compare_tailoring` is not that tool. It tailors against a real parked
+    application and attaches the result to it, which is what makes the output
+    something the owner can actually send.
+    """
     names = {t.name for t in await mcp_server.server.list_tools()}
     assert "tailor_resume" not in names
     assert "preview_resume" in names
+    assert "compare_tailoring" in names
+
+
+async def test_choosing_a_tailoring_is_not_approving_one() -> None:
+    """§2.3 — picking which résumé goes is upstream of the approval gate.
+
+    Two separate tools on purpose. A single "choose and send" would collapse a
+    decision about the *document* into a decision about *submitting*, and the
+    approval gate is the one thing that must stay its own deliberate act.
+    """
+    tools = {t.name: t for t in await mcp_server.server.list_tools()}
+    assert "select_tailoring" in tools
+    description = (tools["select_tailoring"].description or "").lower()
+    assert "not approving" in description or "stays parked" in description
 
 
 # --------------------------------------------------------------------------
@@ -358,3 +383,90 @@ async def test_not_found_surfaces_the_error_code() -> None:
 
     result = await call("application_status", application_id=str(uuid.uuid4()))
     assert result["code"] == "not_found"
+
+
+# --------------------------------------------------------------------------
+# Editing the attached résumé over the tool surface
+# --------------------------------------------------------------------------
+
+
+async def _parked_application(client, complete_candidate) -> str:
+    """An application at needs_review, which is the only state edits apply to."""
+    import uuid as _uuid
+
+    from packages.core.enums import ApplicationStatus
+    from packages.core.models import Application
+
+    created = await call("apply_to_url", **complete_candidate, url=APPLY_URL)
+    application_id = created["id"]
+
+    from packages.core.db import get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        application = await session.get(Application, _uuid.UUID(application_id))
+        application.status = ApplicationStatus.NEEDS_REVIEW.value
+        await session.commit()
+    return application_id
+
+
+async def test_inspecting_the_attached_resume_returns_its_lines(client, complete_candidate) -> None:
+    """Sections are replaced whole, so an edit has to start from the current set."""
+    application_id = await _parked_application(client, complete_candidate)
+
+    attached = await call("inspect_application_resume", application_id=application_id)
+
+    assert attached["editable"] is True
+    assert isinstance(attached["sections"]["experience"], list)
+
+
+async def test_a_tool_edit_that_invents_a_fact_is_refused(client, complete_candidate) -> None:
+    """The reason this tool is guarded at all.
+
+    The dashboard editor is not: §2.1 constrains the model, not the owner
+    writing their own history. Here the author *is* a model, and an unguarded
+    résumé write handed to one is the door §2.1 exists to close.
+    """
+    application_id = await _parked_application(client, complete_candidate)
+
+    result = await call(
+        "edit_application_resume",
+        application_id=application_id,
+        sections={"experience": ["Principal Engineer at Netflix, cutting latency by 40%."]},
+        contact_name="Ada Lovelace",
+    )
+
+    assert "error" in result
+    assert "does not support" in result["error"]
+    assert "Netflix" in result["error"]
+
+
+async def test_a_relayed_edit_is_stored_and_attached(client, complete_candidate) -> None:
+    """The case the tool is for: the owner said to drop a line."""
+    application_id = await _parked_application(client, complete_candidate)
+    attached = await call("inspect_application_resume", application_id=application_id)
+
+    result = await call(
+        "edit_application_resume",
+        application_id=application_id,
+        sections={"experience": attached["sections"]["experience"]},
+        contact_name=attached["contact"].get("name"),
+        contact_email=attached["contact"].get("email"),
+    )
+
+    assert "error" not in result, result
+    assert result["resume_id"] is not None
+    # Editing is not approving.
+    assert result["status"] == "needs_review"
+    assert result["adopted_as_base"] is False
+
+
+async def test_the_tool_cannot_turn_the_guard_off() -> None:
+    """A settable guard is an opt-out from §2.1 by argument.
+
+    The API takes the flag because it cannot tell a person from a model; this
+    surface knows the answer and must not offer a choice.
+    """
+    tools = {t.name: t for t in await mcp_server.server.list_tools()}
+    schema = tools["edit_application_resume"].input_schema
+
+    assert "guard" not in schema.get("properties", {})

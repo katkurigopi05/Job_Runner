@@ -133,3 +133,14 @@ def receipt_key(application_id: str, name: str) -> str:
 
 def resume_key(candidate_id: str, version: int, filename: str) -> str:
     return f"resumes/{candidate_id}/v{version}/{filename}"
+
+
+def cover_letter_key(application_id: str, filename: str) -> str:
+    """Where an application's cover letter lives.
+
+    Keyed by application rather than by candidate, because a letter is written
+    for exactly one posting and reusing one across applications is the failure
+    `packages/tailor/cache.py` documents for résumés, with less excuse: a
+    résumé is mostly the same document twice, a letter is not.
+    """
+    return f"letters/{application_id}/{filename}"

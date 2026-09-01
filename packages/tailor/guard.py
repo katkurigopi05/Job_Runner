@@ -125,7 +125,27 @@ dear sincerely regards please thank thanks
 
 match closest background position way fit interest attention detail focus
 side front back reason point place kind sort number amount level
+
+automate automated automating consolidate consolidated consolidating
+coach coached coaching coordinate coordinated coordinating debug debugged
+debugging deploy deployed deploying diagnose diagnosed diagnosing document
+documented documenting establish established establishing grew grow growing
+handle handled handling instrument instrumented instrumenting integrate
+integrated integrating monitor monitored monitoring negotiate negotiated
+negotiating operate operated operating ran run running resolve resolved
+resolving review reviewed rewrite rewrote rewriting standardize standardized
+standardizing test tested validate validated validating
 """
+# The block above is the same fix CLAUDE.md records for cover letters, where
+# "My", "We" and "Please" were read as proper nouns and rejected nearly every
+# letter. A résumé bullet opens with a verb, and the guard's proper-noun test is
+# capitalization — so a rewrite that opened with any verb the source did not
+# already use was refused as a fabricated name. "Deployed the pipeline" failed
+# against a source that said "Wrote the pipeline", for the word "Deployed".
+#
+# These carry no factual claim in any position; the claim is the object, and
+# the object is still checked — "Deployed Kubernetes" still has to trace
+# Kubernetes. Verbs that *do* assert seniority stay out: see _SCOPE_CLAIMS.
 
 _COMMON_WORDS: frozenset[str] = frozenset(_COMMON_WORDS_TEXT.split())
 
@@ -142,10 +162,20 @@ class EntityKind(StrEnum):
     SCOPE = "scope"
 
 
+#: Words that assert seniority or ownership rather than describe work.
+#:
+#: Checked like any other claim, because "led the migration" against a source
+#: saying "worked on the migration" is a fabrication — of scope rather than of
+#: fact, and the kind a résumé rewrite is most tempted by.
+#:
+#: The distinction from ordinary verbs is whether the word alone claims rank.
+#: "Deployed" says what was done; "oversaw" says who you were while doing it.
 _SCOPE_CLAIMS_TEXT = """
 architect architected chief direct directed director drive drove head
 lead leader led manage managed manager own owned principal
 scale scaled scalability senior spearhead spearheaded sr staff
+oversee oversaw overseeing found founded founding
+pioneer pioneered pioneering champion championed championing
 """
 
 _SCOPE_CLAIMS: frozenset[str] = frozenset(_SCOPE_CLAIMS_TEXT.split())
@@ -412,6 +442,21 @@ def _index(text: str) -> set[str]:
         # "three" supports an output saying "3".
         if normalized in _NUMBER_WORDS:
             tokens.add(_NUMBER_WORDS[normalized])
+
+    # Equivalent spellings of the same fact — "Postgres" also findable as
+    # "PostgreSQL", "K8s" as "Kubernetes". Indexed here rather than checked at
+    # lookup time so that `keywords.analyze` and `supports()` cannot disagree:
+    # one decides which of the posting's terms the model is invited to use, the
+    # other decides whether the result is a fabrication, and a term ruled safe
+    # by the first and refused by the second is worse than never offering it.
+    #
+    # This widens the corpus, which `SourceCorpus` warns is how a fabrication
+    # becomes permissible — see `packages/tailor/aliases.py` for the two rules
+    # that keep the table to true equivalences rather than related terms.
+    from packages.tailor.aliases import expand_phrases, expand_tokens
+
+    tokens |= expand_tokens(tokens)
+    tokens |= expand_phrases(" ".join(normalize(m.group(0)) for m in _TOKEN_RE.finditer(text)))
     return tokens
 
 
@@ -452,6 +497,25 @@ class SourceCorpus:
     #: Tokens available to every item — contact details, the skills list,
     #: education. These describe the person, not one job.
     shared: frozenset[str] = frozenset()
+    #: Technologies the résumé lists for itself — see
+    #: `packages/tailor/technologies.py`. Unlike everything else here, this is
+    #: not used to decide what a rewrite may *say*: it is what a rewrite may
+    #: not silently drop. Empty for a flat corpus, which disables that check
+    #: rather than guessing at an inventory from unstructured text.
+    technologies: frozenset[str] = frozenset()
+
+    @property
+    def attributed(self) -> frozenset[str]:
+        """Tokens that some entry claims as its own.
+
+        A token here is not merely true of the owner; the résumé says *where*
+        it is true. `supports` uses that to stop the skills list laundering a
+        sibling's technology onto this entry — see its docstring.
+        """
+        claimed: set[str] = set()
+        for item in self.items:
+            claimed |= item.tokens
+        return frozenset(claimed)
 
     @classmethod
     def from_texts(cls, *texts: str) -> SourceCorpus:
@@ -508,8 +572,19 @@ class SourceCorpus:
         for item in items:
             tokens |= item.tokens
 
+        # Local import: `technologies` reads `bullets.classify`, which imports
+        # `parse`, and `parse` is imported here. Deferred the same way the
+        # alias table is in `_index` above.
+        from packages.tailor.technologies import inventory
+
         full = "\n".join([*resume.raw_lines, *extra_texts])
-        return cls(tokens=tokens, text=full.lower(), items=tuple(items), shared=shared)
+        return cls(
+            tokens=tokens,
+            text=full.lower(),
+            items=tuple(items),
+            shared=shared,
+            technologies=inventory(resume),
+        )
 
     def locate(self, snippet: str) -> CorpusItem | None:
         """The item a piece of source text came from, or None if unknown.
@@ -528,7 +603,41 @@ class SourceCorpus:
         return None
 
     def supports(self, entity: Entity, scope: CorpusItem | None = None) -> bool:
-        available = self.tokens if scope is None else (scope.tokens | self.shared)
+        """Whether `entity` is backed by the source, within `scope` if given.
+
+        ## Shared material does not launder a sibling's claim
+
+        §2.1 permits a rewrite to inject a keyword "already supported by that
+        résumé entry **or a shared source section**", and it separately forbids
+        borrowing one entry's skill onto another. A Skills list makes those two
+        clauses contradict each other, and the second one lost: every
+        technology named in Skills became available to every employer, so a
+        bullet could say the owner used Kubernetes at a job that never touched
+        it — sibling borrowing, with the skills list as the alibi.
+
+        Found by running the guard over a rewritten résumé: scoped to an
+        employer that never used it, `Built Python services on Kubernetes`
+        passed while the Skills section existed and was correctly refused when
+        it was deleted. Same claim, same scope, opposite verdicts, decided by
+        an unrelated section of the document.
+
+        So a shared token is withdrawn when some *entry* claims it. The
+        distinction is between "the owner knows this" and "the owner did this
+        here", which is the distinction the whole scoping mechanism exists for:
+
+        - In this entry — supported, as before.
+        - In Skills only, claimed by no entry — still supported anywhere. This
+          is §2.1's shared-section allowance and it is untouched; a skill the
+          owner lists but never attributed to a job can go anywhere.
+        - In Skills *and* in another entry — refused here. The résumé has
+          already said where it belongs.
+
+        An unscoped check is unchanged: it asks whether the fact is true of the
+        owner at all, and the answer does not depend on attribution.
+        """
+        available = (
+            self.tokens if scope is None else (scope.tokens | (self.shared - self.attributed))
+        )
 
         if entity.normalized in available or singular(entity.normalized) in available:
             return True

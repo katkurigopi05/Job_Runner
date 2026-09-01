@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
+        bench-matching export-labels import-mail score-mail review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
 
@@ -81,6 +81,12 @@ doctor:
 validate-seeds:
 	$(PY)/python -m packages.crawler.validate seeds/companies.yaml
 
+# Same sweep, but records every verdict in the registry: `checked` and
+# `state` per entry, and dead boards moved to `retired:` with the statuses
+# that condemned them rather than deleted. Needs network egress.
+validate-seeds-write:
+	$(PY)/python -m packages.crawler.validate seeds/companies.yaml --write
+
 # make worktree NAME=workable BRANCH=feat/workable-adapter
 #
 # A worktree for a second agent, set up so `make gate-0` actually runs there.
@@ -143,11 +149,22 @@ gate-2-live:
 	@test -n "$(URL)" || (echo "set URL=<greenhouse posting url>" && exit 1)
 	$(PY)/python -m scripts.live_check "$(URL)"
 
-# Gate 3 — CLAUDE.md §9. The fabrication merge gate: 20 job descriptions
-# crossed with 3 résumés, plus adversarial cases the guard must reject and
-# legitimate rewrites it must allow, plus the tailored-PDF round trip.
+# Gate 3 — CLAUDE.md §9 Phase 3. The fabrication merge gate: 20 job descriptions
+# crossed with 3 resumes, plus the two deliverables the gate's own wording asks
+# for and never checked. The cover letter and the per-company tailoring cache
+# were both built, both tested, and neither ran here — so "gate-3 passes" meant
+# less than "Phase 3 works", which is exactly the gap CLAUDE.md §15 exists to
+# stop. test_apply_uploads_tailored is in for the same reason: it asserts the
+# tailored file is the one that reaches the employer, which is the defect that
+# survived a green Gate 3 for as long as nothing checked it.
+#
+# The fabrication half is unchanged: 20 job descriptions crossed with 3
+# résumés, plus adversarial cases the guard must reject and legitimate
+# rewrites it must allow, plus the tailored-PDF round trip.
 gate-3: gate-0
-	REQUIRE_DB=1 $(PY)/pytest -q tests/test_no_fabrication.py
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_no_fabrication.py \
+	  tests/test_cover_letter.py tests/test_apply_cover_letter.py \
+	  tests/test_tailor_cache.py tests/test_apply_uploads_tailored.py
 	@echo "gate-3 passed"
 
 # Gate 5 — CLAUDE.md §9. A full cycle inside the rate limit, a second run
@@ -178,6 +195,18 @@ gate-1-live:
 discover:
 	$(PY)/python -m scripts.discover
 
+# make crawl — poll the company registry for new postings.
+#
+# Enqueues; `make worker` does the work. `apps/worker/crawl_job.py` has been
+# wired into the worker since Phase 5 and nothing ever enqueued it, so the
+# registry was polled only when someone inserted a row by hand — which is why
+# postings went stale with nothing looking broken.
+#
+#     make crawl              one cycle over the registry
+#     make crawl force=1      re-emit unchanged postings (rarely wanted)
+crawl:
+	$(PY)/python -m scripts.crawl $(if $(force),--force,)
+
 # make rescore — re-score every open posting against the profiles as they are
 # now. Crawling already re-scores, but returns early when the sweep emitted
 # nothing, so a résumé change on its own never reaches the feed without this.
@@ -186,6 +215,44 @@ discover:
 #   make rescore re=1        re-encode every posting first — required after an
 #                            EMBEDDING_BACKEND change, since stored vectors are
 #                            otherwise reused and the two are not comparable
+# Rank the scorer variants against seeds/labeled_matches.yaml. Prints the
+# §47 experiment rows and a verdict that is usually "not established" — see
+# docs/ML_EVALUATION.md for why that is the harness working.
+# make review-resume r=path/to/resume.pdf j=path/to/jd.txt
+# Scores a résumé against a posting and reports what to fix, from the
+# deterministic scorers rather than a model's opinion.
+# make load-golden — put the twelve crawled fixture postings into the database,
+# so /matches, scoring and the review screen have real job-description prose to
+# work on where the crawler cannot reach a board.
+load-golden:
+	$(PY)/python -m scripts.load_golden
+
+review-resume:
+	@test -n "$(r)" || (echo "set r=<résumé path>" && exit 1)
+	$(PY)/python -m scripts.review_resume --resume "$(r)" $(if $(j),--posting-file "$(j)",) $(if $(g),--golden "$(g)",)
+
+bench-matching:
+	$(PY)/python -m scripts.bench_matching $(ARGS)
+
+# Export the owner's swipe decisions as a labeled set. Gate 5 asks whether the
+# ranker works on this owner's material and every label in the repo is a
+# fixture; /swipe has been recording real judgements all along and nothing
+# read them back out. See packages/matching/feedback.py for what a binary,
+# feed-ordered label does and does not license.
+export-labels:
+	$(PY)/python -m scripts.export_labels $(if $(p),--profile $(p),) $(if $(out),--out $(out),)
+
+# Gate 6 asks for 30 hand-labeled *real* recruiter emails; inbound_messages is
+# 0 and the fixtures were written beside the patterns that read them. Export
+# your recruiter mail, label it, and score against it.
+import-mail:
+	@test -n "$(src)" || (echo "set src=<mbox|eml|dir>" && exit 1)
+	$(PY)/python -m scripts.import_mail --src "$(src)" $(if $(out),--out $(out),)
+
+score-mail:
+	@test -n "$(ws)" || (echo "set ws=<worksheet.yaml>" && exit 1)
+	$(PY)/python -m scripts.import_mail --score "$(ws)"
+
 rescore:
 	$(PY)/python -m scripts.rescore $(if $(p),--profile $(p),) $(if $(dry),--dry-run,) $(if $(re),--re-embed,)
 

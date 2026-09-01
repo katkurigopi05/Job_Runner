@@ -95,6 +95,9 @@ class EventType(StrEnum):
     CREATED = "created"
     TRANSITION = "transition"
     NOTE = "note"
+    #: The owner was told this application is waiting on them. Written after
+    #: delivery so a re-run of an at-least-once task does not tell them twice.
+    NOTIFIED = "notified"
 
 
 class ErrorCode(StrEnum):
@@ -107,3 +110,20 @@ class ErrorCode(StrEnum):
     DUPLICATE_APPLICATION = "duplicate_application"
     INVALID_STATE = "invalid_state"
     INTERNAL_ERROR = "internal_error"
+
+
+class SeniorityLevel(StrEnum):
+    """The rungs `matching.filters.SENIORITY_LEVELS` knows.
+
+    An enum rather than a free string because a typo here does not raise — it
+    silently disables the filter. `filters.seniority_ok` returns True for a
+    target it cannot place in the ladder, so `"Senior"` or `"sr"` would read as
+    "no preference" and the owner would see an unfiltered feed with nothing to
+    explain it.
+    """
+
+    INTERN = "intern"
+    JUNIOR = "junior"
+    MID = "mid"
+    SENIOR = "senior"
+    PRINCIPAL = "principal"

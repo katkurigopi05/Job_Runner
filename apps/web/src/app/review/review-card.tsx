@@ -4,12 +4,41 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import type { Application, ResumeParsed, Screening } from "@/lib/api";
 import { ResumePreview } from "@/components/resume-preview";
+import { ResumeEditor } from "@/components/resume-editor";
 import { ResumeDiffView } from "@/components/resume-diff";
+import { TailoringCompare } from "@/components/tailoring-compare";
+import { CoverLetterView } from "@/components/cover-letter";
 import { FillRate, StatusPill } from "@/components/status";
-import { approve, reject, submitOtp, type ReviewResult } from "./actions";
+import {
+  approve,
+  reject,
+  saveApplicationResume,
+  submitOtp,
+  type ReviewResult,
+} from "./actions";
 
-function Submitting({ children, tone }: { children: React.ReactNode; tone: "go" | "stop" }) {
-  const { pending } = useFormStatus();
+function Submitting({
+  children,
+  tone,
+  form,
+  pending: forced,
+}: {
+  children: React.ReactNode;
+  tone: "go" | "stop";
+  /**
+   * Associates the button with a form it does not sit inside.
+   *
+   * The approve form no longer wraps the document panels — several of those
+   * render forms of their own, and a nested `<form>` is dropped by the HTML
+   * parser on the server render, which silently disables the inner one until
+   * the page is navigated to client-side.
+   */
+  form?: string;
+  /** `useFormStatus` reads the enclosing form, so a detached button passes its own. */
+  pending?: boolean;
+}) {
+  const status = useFormStatus();
+  const busy = forced ?? status.pending;
   const base =
     "rounded-md px-5 py-2.5 font-mono text-xs uppercase tracking-widest transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2";
   const tones = {
@@ -17,8 +46,8 @@ function Submitting({ children, tone }: { children: React.ReactNode; tone: "go" 
     stop: "border border-stop/50 text-stop hover:bg-stop-soft focus-visible:outline-stop",
   };
   return (
-    <button type="submit" disabled={pending} className={`${base} ${tones[tone]}`}>
-      {pending ? "working…" : children}
+    <button type="submit" form={form} disabled={busy} className={`${base} ${tones[tone]}`}>
+      {busy ? "working…" : children}
     </button>
   );
 }
@@ -40,10 +69,12 @@ export function ReviewCard({
   const rejectAction = reject.bind(null, application.id);
   const otpAction = submitOtp.bind(null, application.id);
 
-  const [approveState, runApprove] = useActionState<ReviewResult | null, FormData>(
+  const [approveState, runApprove, approving] = useActionState<ReviewResult | null, FormData>(
     approveAction,
     null,
   );
+  // The approve button lives outside the form it submits — see `Submitting`.
+  const approveFormId = `approve-${application.id}`;
   const [rejectState, runReject] = useActionState<ReviewResult | null, FormData>(rejectAction, null);
   const [otpState, runOtp] = useActionState<ReviewResult | null, FormData>(otpAction, null);
 
@@ -111,7 +142,7 @@ export function ReviewCard({
         </form>
       ) : null}
 
-      <form action={runApprove}>
+      <form id={approveFormId} action={runApprove}>
         {required.length > 0 ? (
           <section className="border-b border-rule px-6 py-6">
             <h3 className="font-mono text-xs uppercase tracking-widest text-attn">
@@ -165,8 +196,9 @@ export function ReviewCard({
             </p>
           </section>
         )}
+      </form>
 
-        {review.resume_diff ? (
+      {review.resume_diff ? (
           <details className="border-b border-rule px-6 py-4" open>
             <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
               What tailoring changed
@@ -177,19 +209,59 @@ export function ReviewCard({
           </details>
         ) : null}
 
-        <AttachedResume resume={resume} tailored={tailored} />
+        {/* Open by default, unlike the comparison below. This is a document
+            about to be sent under the owner's name and it was written by a
+            model — reading it is part of approving, not an optional detail.
+            Absent entirely when the form never asked, which most do not. */}
+        {review.cover_letter ? (
+          <details className="border-b border-rule px-6 py-4" open>
+            <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
+              Cover letter
+            </summary>
+            <div className="mt-4">
+              <CoverLetterView letter={review.cover_letter} />
+            </div>
+          </details>
+        ) : null}
+
+        {/* Below the diff, not instead of it: the diff says what tailoring did
+            to the document being sent, and this asks whether a different model
+            would have done better. Collapsed by default because running it
+            uploads the résumé again. */}
+        <details className="border-b border-rule px-6 py-4">
+          <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
+            Compare models
+          </summary>
+          <div className="mt-4">
+            <TailoringCompare
+              applicationId={application.id}
+              candidates={review.tailoring_comparison}
+              selectedResumeId={application.tailored_resume_id}
+            />
+          </div>
+        </details>
+
+        <AttachedResume
+          applicationId={application.id}
+          resume={resume}
+          tailored={tailored}
+          editable={application.status === "needs_review"}
+        />
 
         <FilledSummary review={review} />
 
         <footer className="flex flex-wrap items-center gap-4 px-6 py-5">
-          <Submitting tone="go">approve &amp; submit</Submitting>
+          {/* Both belong to the approve form above by id, not by nesting. */}
+          <Submitting tone="go" form={approveFormId} pending={approving}>
+            approve &amp; submit
+          </Submitting>
           <input
+            form={approveFormId}
             name="note"
             placeholder="note to self (optional)"
             className="min-w-0 flex-1 rounded-md border border-rule bg-paper px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
           />
         </footer>
-      </form>
 
       <form action={runReject} className="border-t border-rule px-6 py-4">
         <div className="flex items-center gap-4">
@@ -236,7 +308,34 @@ function FilledSummary({ review }: { review: NonNullable<Application["review"]> 
 }
 
 
-function AttachedResume({ resume, tailored }: { resume: ResumeParsed | null; tailored: boolean }) {
+/**
+ * The document that will be uploaded — and, while the application is parked,
+ * the place to change it.
+ *
+ * It was read-only until now, which left a badly-worded tailored bullet with
+ * two outcomes: reject the application, or send it anyway. Editing the base on
+ * the résumés page did not help, because a résumé already tailored for this
+ * posting is not the base.
+ *
+ * The edit is scoped to this application. On this screen the subject is one
+ * employer, and quietly turning one posting's phrasing into the starting point
+ * for every future application is not what fixing a line means — so the
+ * profile's base moves only if the owner says to, below the editor.
+ */
+function AttachedResume({
+  applicationId,
+  resume,
+  tailored,
+  editable,
+}: {
+  applicationId: string;
+  resume: ResumeParsed | null;
+  tailored: boolean;
+  /** Only while parked. A running application is mid-fill; a submitted one has sent its file. */
+  editable: boolean;
+}) {
+  const saveEdit = saveApplicationResume.bind(null, applicationId);
+
   if (resume === null) {
     return (
       <section className="border-b border-rule px-6 py-5">
@@ -257,12 +356,51 @@ function AttachedResume({ resume, tailored }: { resume: ResumeParsed | null; tai
         Résumé to be sent
         <span className="ml-2 text-ink-faint">
           {tailored ? "· tailored for this posting" : "· profile base, unmodified"}
+          {editable ? " · editable" : ""}
         </span>
       </summary>
       <div className="mt-4">
-        <ResumePreview parsed={resume} />
+        {editable ? (
+          <ResumeEditor
+            parsed={resume}
+            action={saveEdit}
+            editLabel="edit before sending"
+            extra={<AdoptBase />}
+            note={
+              <>
+                Blank lines are dropped and an emptied section is removed, so what gets saved is
+                what you see with the empties gone. Saving renders a new PDF and attaches it to
+                this application only — your base résumé and every other application are left
+                alone unless you tick the box above.
+              </>
+            }
+          />
+        ) : (
+          <ResumePreview parsed={resume} />
+        )}
       </div>
     </details>
+  );
+}
+
+/** The opt-in that widens an edit from this application to the profile. */
+function AdoptBase() {
+  return (
+    <label className="flex items-start gap-2.5 text-sm text-ink-soft">
+      <input
+        type="checkbox"
+        name="adopt"
+        className="mt-0.5 size-4 shrink-0 accent-go focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+      />
+      <span>
+        Also make this my base résumé
+        <span className="mt-0.5 block font-mono text-xs text-ink-faint">
+          Off by default. A résumé tailored for this posting makes a poor starting point for the
+          next one — tick this only for a fix that is true everywhere, like a typo or a changed
+          phone number.
+        </span>
+      </span>
+    </label>
   );
 }
 

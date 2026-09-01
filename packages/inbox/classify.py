@@ -60,13 +60,42 @@ RULES: tuple[tuple[Classification, re.Pattern[str]], ...] = (
     # Rejections first: they borrow the vocabulary of every other category.
     (
         Classification.REJECTION,
+        # Widened after measuring it: the original caught 2 of 14 realistic
+        # phrasings. It was written beside the fixtures that exercise it, so
+        # it matched "with other candidates" and missed "with another
+        # candidate" — the same sentence as recruiters write it. Rejection is
+        # the category where a miss costs most: the application sits in the
+        # tracker as live, and the owner waits on a panel nobody will book.
+        #
+        # Widening the *first* rule is where precision goes to die, so the
+        # alternatives all name an outcome ("not successful", "has been
+        # filled") or somebody else getting it ("forward with another"), never
+        # a bare verb. "Moving forward with your application" is an interview
+        # and must stay one; only "forward with another/other/a different"
+        # reads as a refusal.
         re.compile(
-            r"\b(?:unfortunately|regret to inform|we regret|not (?:be )?"
-            r"(?:moving|proceeding) forward|decided (?:to )?(?:move forward |proceed )?"
-            r"with other candidates|will not be (?:moving|proceeding)|"
-            r"no longer under consideration|not selected|"
-            r"pursue other candidates|position has been filled|"
-            r"decided not to move forward)\b",
+            r"(?:"
+            r"\bunfortunately\b|\bregret to inform\b|\bwe regret\b|"
+            r"\b(?:will |wo)?n[o'\u2019]?t be (?:moving forward|going forward|proceeding|"
+            r"progressing|advancing|continuing)\b|"
+            r"\bnot be (?:moving|going) forward\b|"
+            r"\bnot be (?:proceeding|progressing|advancing|continuing)\b|"
+            r"\bdecided not to (?:move forward|proceed|continue|advance|progress)\b|"
+            r"\bunable to (?:move forward|proceed|progress)\b|"
+            r"\bnot (?:be )?(?:moving|proceeding) forward\b|"
+            r"\bno longer under consideration\b|\bnot (?:been )?selected\b|"
+            r"\b(?:was|were) not successful\b|\bnot successful\b|"
+            r"\b(?:position|role|vacancy) has been filled\b|"
+            r"\bfilled (?:the|this) (?:position|role)\b|"
+            r"\bdifferent direction\b|"
+            r"\b(?:move|moving|moved|proceed|proceeding|go|going|continue|continuing) "
+            r"forward with (?:another|other|a different|different|candidates whose|"
+            r"applicants whose)\b|"
+            r"\b(?:pursue|pursuing|considering) other (?:candidates|applicants)\b|"
+            r"\b(?:selected|chosen|chose|hired) (?:another|a different)\b|"
+            r"\bproceed(?:ing)? with (?:another|a different)\b|"
+            r"\bwith other candidates\b"
+            r")",
             re.I,
         ),
     ),

@@ -45,38 +45,48 @@ def test_rewrites_land_on_the_bullets_they_were_written_for() -> None:
     ]
 
 
-def test_blank_lines_do_not_consume_a_rewrite() -> None:
-    """The tailor was handed non-blank lines only.
+def test_blank_lines_and_entry_headers_do_not_consume_a_rewrite() -> None:
+    """The tailor is handed prose bullets only.
 
-    If a blank line ate a result, every bullet after it would shift up by one
-    and land under the wrong employer — each sentence still traceable to the
-    résumé, and the document still a lie.
+    If a blank line or an entry header ate a result, every bullet after it
+    would shift up by one and land under the wrong employer — each sentence
+    still traceable to the résumé, and the document still a lie.
+
+    The header is here rather than in a separate test because it is the same
+    hazard: `packages/tailor/bullets.py` skips it on the way out, so
+    `apply_rewrites` has to skip it on the way back in. It is also preserved
+    verbatim, which is the point — a job title is not a bullet to rewrite.
     """
     resume = _resume(["Acme — Engineer", "", "Shipped the billing service."])
     result = _result(
-        ("Acme — Engineer", "Acme — Senior Engineer"),
         ("Shipped the billing service.", "Shipped and owned the billing service."),
     )
 
     tailored = apply_rewrites(resume, result)
 
     assert tailored.section("experience") == [
-        "Acme — Senior Engineer",
+        "Acme — Engineer",
         "",
         "Shipped and owned the billing service.",
     ]
 
 
 def test_a_short_result_leaves_the_remaining_bullets_alone() -> None:
-    resume = _resume(["First bullet.", "Second bullet.", "Third bullet."])
-    result = _result(("First bullet.", "First bullet, rewritten."))
+    resume = _resume(
+        [
+            "Built the ingest pipeline.",
+            "Shipped the billing service.",
+            "Wrote the migration tool.",
+        ]
+    )
+    result = _result(("Built the ingest pipeline.", "Built and scaled the ingest pipeline."))
 
     tailored = apply_rewrites(resume, result)
 
     assert tailored.section("experience") == [
-        "First bullet, rewritten.",
-        "Second bullet.",
-        "Third bullet.",
+        "Built and scaled the ingest pipeline.",
+        "Shipped the billing service.",
+        "Wrote the migration tool.",
     ]
 
 

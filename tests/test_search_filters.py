@@ -72,11 +72,47 @@ def test_seniority_detection(title: str, expected: str | None) -> None:
     assert detect_seniority(title) == expected
 
 
-def test_unreadable_seniority_is_kept() -> None:
-    """A title that does not state a level is not a reason to hide the job."""
+def test_unreadable_seniority_is_dropped_by_default() -> None:
+    """This reverses an earlier decision, deliberately.
+
+    It used to read: "A title that does not state a level is not a reason to
+    hide the job" — the same argument that keeps `allow_unknown_location` True,
+    and a fair one in the abstract.
+
+    It does not survive contact with the corpus. Roughly 55% of postings here
+    have no readable rung, so keeping them meant `min_seniority=intern` returned
+    mostly Staff and Senior roles: the filter ran, narrowed almost nothing, and
+    the results looked like an answer. A filter that quietly declines to filter
+    is worse than one that is too strict, because nothing about the output says
+    it happened.
+
+    The old behaviour is still available — see the test below — so this is a
+    change of default, not a removal of the option.
+    """
     posting = _posting(title="Backend Engineer", description_raw="")
 
-    assert matches(posting, SearchFilters(min_seniority="senior")).kept
+    assert not matches(posting, SearchFilters(min_seniority="senior")).kept
+
+
+def test_unreadable_seniority_can_still_be_kept_on_request() -> None:
+    """The earlier position, preserved as a flag rather than a default."""
+    posting = _posting(title="Backend Engineer", description_raw="")
+
+    assert matches(
+        posting, SearchFilters(min_seniority="senior", allow_unknown_seniority=True)
+    ).kept
+
+
+def test_no_seniority_filter_keeps_everything() -> None:
+    """Strictness applies only when a bound was actually asked for.
+
+    Without this, tightening the unknown case would have silently dropped every
+    unreadable posting from the default feed — a much larger change than the one
+    intended, and one nobody asked for.
+    """
+    posting = _posting(title="Backend Engineer", description_raw="")
+
+    assert matches(posting, SearchFilters()).kept
 
 
 def test_seniority_range() -> None:
