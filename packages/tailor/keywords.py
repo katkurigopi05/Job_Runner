@@ -71,7 +71,8 @@ _STOPWORDS: frozenset[str] = frozenset(_STOPWORDS_TEXT.split())
 _ROLE_WORDS_TEXT = """
 senior sr junior jr staff principal lead leader director manager head chief
 engineer engineering developer analyst architect scientist specialist
-consultant intern associate officer president vice
+consultant intern internship apprentice apprenticeship trainee associate
+officer president vice
 """
 
 _ROLE_WORDS: frozenset[str] = frozenset(_ROLE_WORDS_TEXT.split())

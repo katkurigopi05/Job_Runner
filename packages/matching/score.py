@@ -26,7 +26,10 @@ if TYPE_CHECKING:
 
 from packages.matching.embed import Embedder, cosine, get_embedder, tokenize
 from packages.matching.filters import apply_filters
+from packages.matching.idf import DocumentFrequencies
 from packages.matching.roles import canonical, roles_in
+from packages.matching.salary import compare
+from packages.matching.titles import expand as expand_title
 
 log = structlog.get_logger(__name__)
 
@@ -72,6 +75,9 @@ class ScoredPosting:
     #: The score broken into dimensions — packages/matching/rubric.py. An
     #: explanation of the ranking, never an input to it.
     rubric: dict[str, object] = field(default_factory=dict)
+    #: Advertised pay against the profile's expectation. A report, never an
+    #: answer — §2.2 keeps salary_expectation verbatim for forms.
+    salary: dict[str, object] = field(default_factory=dict)
     #: A stale `Match` row was removed because this posting now fails a hard
     #: filter. Only ever set for an excluded posting, and only when the row
     #: carried nothing of the owner's — see `score_and_store`.
@@ -91,6 +97,7 @@ class ScoredPosting:
             "missing_terms": self.missing_terms,
             "legitimacy": self.legitimacy,
             "rubric": self.rubric,
+            "salary": self.salary,
         }
 
 
@@ -141,7 +148,12 @@ def _rubric(
     return evaluate(posting, profile, scored, target_seniority=target_seniority).as_dict()
 
 
-def _assess(posting: Posting, *, siblings: list[Posting] | None) -> Assessment:
+def _assess(
+    posting: Posting,
+    *,
+    siblings: list[Posting] | None,
+    frequencies: DocumentFrequencies | None = None,
+) -> Assessment:
     """Imported here rather than at module scope.
 
     `legitimacy` reads `_BOILERPLATE` and `_proper_nouns` from this module, so
@@ -151,7 +163,7 @@ def _assess(posting: Posting, *, siblings: list[Posting] | None) -> Assessment:
     """
     from packages.matching.legitimacy import assess
 
-    return assess(posting, siblings=siblings)
+    return assess(posting, siblings=siblings, frequencies=frequencies)
 
 
 def score_posting(
@@ -163,6 +175,7 @@ def score_posting(
     target_seniority: str | None = None,
     profile_text_value: str = "",
     siblings: list[Posting] | None = None,
+    frequencies: DocumentFrequencies | None = None,
 ) -> ScoredPosting:
     """Score one posting. Filtered-out postings score exactly 0.0.
 
@@ -179,7 +192,11 @@ def score_posting(
         excluded.rubric = _rubric(posting, profile, excluded, target_seniority=target_seniority)
         return excluded
 
-    title_vector = embedder.encode([posting.title or ""])[0]
+    # Abbreviations expanded on both sides. Measured, "Site Reliability
+    # Engineer" against "SRE" scored 0.000 — the same as against "Pastry
+    # Chef" — because an abbreviation shares no tokens with what it stands
+    # for. See packages/matching/titles.py.
+    title_vector = embedder.encode([expand_title(posting.title)])[0]
     body_vector = embedder.encode([posting.description_raw or ""])[0]
 
     title_similarity = cosine(profile_vector, title_vector)
@@ -199,12 +216,17 @@ def score_posting(
         body_similarity=body_similarity,
         role_match=role_match,
         matched_terms=keyword_overlap(profile_text_value, posting) if profile_text_value else [],
-        missing_terms=missing_terms(profile_text_value, posting) if profile_text_value else [],
-        legitimacy=_assess(posting, siblings=siblings).as_dict(),
+        missing_terms=(
+            missing_terms(profile_text_value, posting, frequencies=frequencies)
+            if profile_text_value
+            else []
+        ),
+        legitimacy=_assess(posting, siblings=siblings, frequencies=frequencies).as_dict(),
     )
     # Built from the result rather than inside it: every dimension reads
     # fields the scoring above has already filled in.
     result.rubric = _rubric(posting, profile, result, target_seniority=target_seniority)
+    result.salary = compare(posting.description_raw or "", profile.salary_expectation).as_dict()
     return result
 
 
@@ -227,8 +249,19 @@ async def score_and_store(
     # Kept, not discarded after encoding: the same text is what the matched
     # and missing term lists are computed against, so the vector and the
     # explanation can never describe different inputs.
-    text = await profile_text(session, profile)
+    # Expanded once and used for everything downstream. The other side of the
+    # title comparison needs it — a résumé written "SRE" has to reach a
+    # posting titled "Site Reliability Engineer" — and so does the gap report:
+    # unexpanded, a résumé saying "ML" was told it was missing "machine".
+    text = expand_title(await profile_text(session, profile))
     profile_vector = active.encode([text])[0]
+
+    # One pass over the corpus, reused for every posting in it. Built here
+    # rather than cached anywhere because it is cheap at this size and a
+    # stale copy would silently describe a corpus that no longer exists.
+    frequencies = DocumentFrequencies.from_texts(
+        f"{p.title or ''}\n{p.description_raw or ''}" for p in postings
+    )
 
     existing = {
         str(match.posting_id): match
@@ -247,6 +280,7 @@ async def score_and_store(
             target_seniority=target_seniority,
             profile_text_value=text,
             siblings=postings,
+            frequencies=frequencies,
         )
         scored.append(result)
 
@@ -301,26 +335,60 @@ async def embed_postings(
     postings: list[Posting],
     *,
     embedder: Embedder | None = None,
+    revision: int | None = None,
     force: bool = False,
 ) -> int:
-    """Fill in `description_embedding` for postings that lack one.
+    """Embed postings that lack a vector, or whose vector is from elsewhere.
 
-    `force=True` recomputes vectors that already exist. That is not an
-    optimisation switch — it is what makes an `EMBEDDING_BACKEND` change take
-    effect. Without it a switched backend leaves every stored vector as the
-    old backend wrote it, encodes the profile with the new one, and compares
-    the two. Nothing raises; the ranking is just meaningless.
+    "Elsewhere" is the important half. A vector's identity is the embedder that
+    produced it *and* the corpus statistics it was weighted by, both recorded
+    on the row. A posting embedded by a different model, or under different IDF
+    weights, is not in the same space — and cosine across spaces does not fail,
+    it returns a plausible number that ranks the feed wrongly and reports
+    nothing.
+
+    So a stamp mismatch means re-embed, not compare. Switching
+    `EMBEDDING_BACKEND`, or rebuilding the corpus statistics, quietly costs one
+    pass over the postings rather than silently costing the ranking.
+
+    `force=True` re-embeds regardless of what the stamps say. The stamp check
+    subsumes what this flag was originally for — a backend switch is now
+    detected rather than declared — but it stays because `rescore.py` passes
+    it to mean "redo this pass whatever the rows claim", which is the honest
+    reading when the corpus statistics were rebuilt under a revision number
+    that did not change.
     """
     active = embedder or get_embedder()
+    stamp = getattr(active, "name", "unknown")
+
     pending = [
-        p for p in postings if (force or p.description_embedding is None) and p.description_raw
+        p
+        for p in postings
+        if p.description_raw
+        and (
+            force
+            or p.description_embedding is None
+            or p.embedding_model != stamp
+            or p.embedding_revision != revision
+        )
     ]
     if not pending:
         return 0
 
+    restamped = sum(1 for p in pending if p.description_embedding is not None)
+    if restamped:
+        log.info(
+            "re_embedding_stale_vectors",
+            count=restamped,
+            model=stamp,
+            revision=revision,
+        )
+
     vectors = active.encode([f"{p.title or ''}\n{p.description_raw or ''}" for p in pending])
     for posting, vector in zip(pending, vectors, strict=True):
         posting.description_embedding = vector
+        posting.embedding_model = stamp
+        posting.embedding_revision = revision
 
     await session.flush()
     return len(pending)
@@ -347,7 +415,8 @@ within without would write familiarity plus bonus nice
 
 paid time off medical dental vision equity salary compensation
 
-senior junior staff principal mid entry intern internship
+senior junior staff principal mid entry intern internship apprentice
+apprenticeship trainee
 """
 
 _BOILERPLATE = frozenset(_BOILERPLATE_TEXT.split())
@@ -386,7 +455,13 @@ def _proper_nouns(text: str) -> set[str]:
     return {token for token, total in seen.items() if capitalized.get(token, 0) == total}
 
 
-def missing_terms(profile_text_value: str, posting: Posting, *, limit: int = 12) -> list[str]:
+def missing_terms(
+    profile_text_value: str,
+    posting: Posting,
+    *,
+    limit: int = 12,
+    frequencies: DocumentFrequencies | None = None,
+) -> list[str]:
     """What the posting emphasizes that the profile does not evidence.
 
     The complement of `keyword_overlap`, and the more actionable half. §2.1
@@ -396,6 +471,12 @@ def missing_terms(profile_text_value: str, posting: Posting, *, limit: int = 12)
     for *you* to decide whether it is true of you and worth writing in.
 
     Nothing here goes near the résumé. It is a report, not an edit.
+
+    With `frequencies`, boilerplate is *measured* rather than read off a hand
+    list, and terms are ranked by tf-idf — so a term this corpus puts in every
+    posting stops being reported as a gap, which a fixed list cannot know.
+    Without it, or when the corpus is too small to be a distribution rather
+    than a sample, the hand list stands in.
     """
     profile_tokens = set(tokenize(profile_text_value))
     title_tokens = set(tokenize(posting.title or ""))
@@ -417,16 +498,42 @@ def missing_terms(profile_text_value: str, posting: Posting, *, limit: int = 12)
     # needs the repetition to prove it was not an aside.
     proper = _proper_nouns(posting.description_raw or "")
 
+    measured = frequencies is not None and frequencies.usable
+
+    def is_furniture(token: str) -> bool:
+        if measured:
+            assert frequencies is not None
+            return frequencies.is_boilerplate(token)
+        return token in _BOILERPLATE
+
+    def is_worth_reporting(token: str) -> bool:
+        # Repetition and capitalization are proxies for "does this term carry
+        # weight". With a corpus that question is answered directly, so a rare
+        # term counts at one mention without needing to be shouted or
+        # capitalized — which is how a lowercase tool named once used to slip
+        # through unreported.
+        if measured:
+            assert frequencies is not None
+            if frequencies.is_distinguishing(token):
+                return True
+        return counts[token] >= _MIN_MENTIONS or token in title_tokens or token in proper
+
     candidates = [
         token
         for token in counts
-        if token not in profile_tokens
-        and token not in _BOILERPLATE
-        and (counts[token] >= _MIN_MENTIONS or token in title_tokens or token in proper)
+        if token not in profile_tokens and not is_furniture(token) and is_worth_reporting(token)
     ]
 
-    # Most-emphasized first; ties broken by where the posting first says it.
-    candidates.sort(key=lambda token: (-counts[token], order[token]))
+    if measured:
+        assert frequencies is not None
+        # tf-idf: emphasized *here* and rare across the corpus. A term the
+        # posting repeats but every other posting also repeats is not a gap.
+        candidates.sort(
+            key=lambda token: (-frequencies.weigh(token, max(counts[token], 1)), order[token])
+        )
+    else:
+        # Most-emphasized first; ties broken by where the posting first says it.
+        candidates.sort(key=lambda token: (-counts[token], order[token]))
     return candidates[:limit]
 
 

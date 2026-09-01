@@ -192,6 +192,12 @@ async def _run_pipeline(
         # `questions` because most forms never ask for a letter, and writing
         # one for a form with nowhere to put it is a provider call spent on a
         # document no employer sees.
+        #
+        # After `_tailor` rather than before it: the two are independent —
+        # `_cover_letter` grounds on the base résumé's `parsed_json`, not on
+        # the tailored file — but tailoring is the one carrying a §15 ordering
+        # constraint, and running it first means a failure there costs no
+        # letter.
         letter = await _cover_letter(session, application, profile, posting, questions)
 
         answers = build_answers(
@@ -748,10 +754,12 @@ async def _decide(
         "resume_diff": resume_diff,
         # Read off the form before anything was answered.
         "screening": screening.as_dict() if screening else None,
-        # The letter, or the guard's reason there is not one. A refusal has to
-        # be visible here: a form that asked for a letter and got none looks
-        # identical to a form that never asked, and the owner is the one who
-        # decides whether to write it by hand.
+        # The letter itself, or the guard's reason there is not one — not just
+        # a reference to it. §2.3 asks the owner to approve what gets sent, and
+        # a letter they cannot read before approving is one they are taking on
+        # trust. A refusal has to be visible for the mirror reason: a form that
+        # asked and got none looks identical to a form that never asked, and
+        # writing it by hand is the owner's call.
         "cover_letter": cover_letter,
     }
 

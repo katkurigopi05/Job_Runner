@@ -38,6 +38,7 @@ from enum import StrEnum
 
 from packages.core.models import Posting
 from packages.matching.embed import tokenize
+from packages.matching.idf import DocumentFrequencies
 from packages.matching.score import _BOILERPLATE, _proper_nouns
 from packages.matching.topics import TopicModel, entropy
 
@@ -150,12 +151,26 @@ def _country_of(location: str | None) -> str | None:
     return None
 
 
-def specificity(text: str) -> float:
-    """Share of tokens that are distinctive rather than posting furniture."""
+def specificity(text: str, frequencies: DocumentFrequencies | None = None) -> float:
+    """Share of tokens that are distinctive rather than posting furniture.
+
+    With `frequencies`, "furniture" is measured against the corpus instead of
+    read off a hand list. That matters here more than in the gap report: the
+    threshold below was calibrated on two fixtures written in this repo, which
+    is exactly the circularity docs/REFERENCE.md §3.6 warns about. A corpus
+    statistic does not have that problem.
+    """
     tokens = tokenize(text)
     if not tokens:
         return 0.0
     proper = _proper_nouns(text)
+
+    if frequencies is not None and frequencies.usable:
+        distinctive = {
+            token for token in tokens if token in proper or not frequencies.is_boilerplate(token)
+        }
+        return len(distinctive) / len(tokens)
+
     distinctive = {token for token in tokens if token in proper or token not in _BOILERPLATE}
     # Distinct distinctive terms against total length: a posting that repeats
     # "collaborative" twenty times does not become specific by doing so.
@@ -178,7 +193,9 @@ def _freshness(posting: Posting, now: datetime) -> Signal:
     return Signal("freshness", Weight.POSITIVE, f"first seen {days} days ago")
 
 
-def _description_quality(posting: Posting) -> Signal:
+def _description_quality(
+    posting: Posting, frequencies: DocumentFrequencies | None = None
+) -> Signal:
     text = posting.description_raw or ""
     words = tokenize(text)
 
@@ -189,7 +206,7 @@ def _description_quality(posting: Posting) -> Signal:
             f"description is {len(words)} words; too short to state a scope",
         )
 
-    ratio = specificity(text)
+    ratio = specificity(text, frequencies)
     if ratio < MIN_SPECIFICITY:
         return Signal(
             "description_quality",
@@ -329,6 +346,7 @@ def assess(
     *,
     siblings: list[Posting] | None = None,
     now: datetime | None = None,
+    frequencies: DocumentFrequencies | None = None,
     topics: TopicModel | None = None,
 ) -> Assessment:
     """Tier this posting's legitimacy. Never returns or affects a score.
@@ -342,7 +360,7 @@ def assess(
 
     signals = [
         _freshness(posting, moment),
-        _description_quality(posting),
+        _description_quality(posting, frequencies),
         _reposting(posting, siblings or []),
     ]
     if topics is not None:

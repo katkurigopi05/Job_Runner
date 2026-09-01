@@ -100,9 +100,12 @@ def test_the_refusal_names_what_was_lost(corpus: SourceCorpus) -> None:
 
 def test_keeping_the_technology_is_accepted(corpus: SourceCorpus) -> None:
     """Rewording around the library is exactly what tailoring is for."""
+    # Reordered, not re-worded: this branch's noun-phrase chunker checks every
+    # noun, so introducing one the résumé never used ("image") would be refused
+    # as fabrication and this test would stop testing what it is named for.
     candidate = (
-        "Built a companion Python image application (Pillow/Tkinter) with 35 "
-        "non-destructive editing operations."
+        "Built a companion Python application with 35 non-destructive editing "
+        "operations (Pillow/Tkinter)."
     )
     accepted, reason, _report = vet(BULLET, candidate, corpus)
     assert accepted, reason

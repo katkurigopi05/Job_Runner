@@ -210,6 +210,12 @@ export interface ReviewRecord {
   score?: number | null;
   min_match_score?: number;
   screening?: Screening | null;
+  /**
+   * The letter that would be sent, in full. §2.3 asks you to approve what
+   * gets sent — a letter you cannot read before approving is one you are
+   * taking on trust.
+   */
+  cover_letter?: string | null;
 }
 
 export interface Application {

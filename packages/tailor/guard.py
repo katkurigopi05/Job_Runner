@@ -27,6 +27,13 @@ nouns — enough to reject nearly every letter for saying "My". Those words
 carry no factual claim in any position, so they belong here regardless of
 which surface is being checked.
 
+The last group arrived with noun-phrase extraction. A tagger sees "the closest
+match for this role" as three nouns, and in a bullet that would be three
+claims — but they are the furniture of English prose and assert nothing about
+the applicant. "machine learning" and "message queue" are not on this list and
+are still checked, which is the line: ordinary vocabulary is free, technical
+vocabulary is a claim.
+
 ## Why it is deliberately strict
 
 A guard that misses a fabrication puts a false claim on a real application in
@@ -41,6 +48,8 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from packages.tailor.chunk import available as chunker_available
+from packages.tailor.chunk import claim_words
 from packages.tailor.parse import ParsedResume
 
 # A number keeps its unit: 40TB, 800ms and 2M are single claims, not a
@@ -114,6 +123,9 @@ your
 my me we us those whose another still why though hire hiring company letter
 dear sincerely regards please thank thanks
 
+match closest background position way fit interest attention detail focus
+side front back reason point place kind sort number amount level
+
 automate automated automating consolidate consolidated consolidating
 coach coached coaching coordinate coordinated coordinating debug debugged
 debugging deploy deployed deploying diagnose diagnosed diagnosing document
@@ -143,6 +155,10 @@ class EntityKind(StrEnum):
     PROPER_NOUN = "proper_noun"
     ACRONYM = "acronym"
     YEAR = "year"
+    #: A noun or attached adjective inside a noun phrase. This is the kind §9
+    #: Gate 3 actually asks for; the four above are the capitalization proxy
+    #: that stood in for it, and could not see "machine learning".
+    NOUN = "noun"
     SCOPE = "scope"
 
 
@@ -192,6 +208,11 @@ class GuardReport:
     ok: bool
     violations: list[Violation] = field(default_factory=list)
     checked: int = 0
+    #: Which extractor produced the entities: "noun-phrase" when the tagger
+    #: was available, "capitalization" when it was not. A weaker check has to
+    #: be visible — a guard that quietly loses one is worse than a guard that
+    #: never had it, because nobody re-reads a green test.
+    extractor: str = "capitalization"
     #: Which corpus item the claims were held against. None means the check
     #: was document-wide — correct for a cover letter, too permissive for a
     #: bullet, and recorded either way so the two are never confused.
@@ -348,7 +369,13 @@ def _classify(token: str) -> EntityKind | None:
 
 
 def extract_entities(text: str) -> list[Entity]:
-    """Every claim-carrying token in `text`, in order, deduplicated."""
+    """Every claim-carrying token in `text`, in order, deduplicated.
+
+    Two passes. The capitalization pass catches numbers, years, acronyms and
+    proper nouns. The noun-phrase pass — when the tagger is installed —
+    catches the lowercase claims the first cannot see, which is most technical
+    vocabulary as people actually write it.
+    """
     seen: set[tuple[str, EntityKind]] = set()
     entities: list[Entity] = []
 
@@ -365,6 +392,25 @@ def extract_entities(text: str) -> list[Entity]:
             continue
         seen.add(key)
         entities.append(Entity(text=_strip(token), kind=kind, normalized=normalized))
+
+    # Nouns and their adjectives. Ordinary English is still free — §2.1 allows
+    # rephrasing, and "oversaw" for "maintained" is rephrasing.
+    #
+    # A term the first pass already claimed is skipped rather than emitted
+    # twice: "AWS" is one claim whether it is read as an acronym or as a noun,
+    # and counting it twice inflates `checked` and reports it twice.
+    already = {entity.normalized for entity in entities}
+
+    for word in claim_words(text):
+        normalized = normalize(word)
+        if not normalized or normalized in _COMMON_WORDS or normalized in already:
+            continue
+        key = (normalized, EntityKind.NOUN)
+        if key in seen:
+            continue
+        seen.add(key)
+        already.add(normalized)
+        entities.append(Entity(text=word, kind=EntityKind.NOUN, normalized=normalized))
 
     return entities
 
@@ -634,6 +680,7 @@ def check(output: str, corpus: SourceCorpus, *, scope: CorpusItem | None = None)
         ok=not violations,
         violations=violations,
         checked=len(entities),
+        extractor="noun-phrase" if chunker_available() else "capitalization",
         scope_ref=None if scope is None else scope.ref,
     )
 
