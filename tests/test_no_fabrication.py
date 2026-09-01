@@ -845,3 +845,53 @@ def test_attributed_names_only_what_an_entry_claims() -> None:
 
     assert "kubernetes" in corpus.attributed
     assert "linux" not in corpus.attributed, "Skills-only terms are not attributed"
+
+
+# --------------------------------------------------------------------------
+# Generic category nouns
+# --------------------------------------------------------------------------
+
+
+_GENERIC_RESUME = """
+Globex — Systems Administrator
+Responsible for cluster administration on bare metal.
+"""
+
+
+@pytest.mark.parametrize(
+    "noun",
+    ["servers", "hosts", "nodes", "systems", "services", "pipelines", "databases"],
+)
+def test_a_generic_category_noun_is_not_a_claim(noun: str) -> None:
+    """`servers` has to behave like `systems`, because it says as little.
+
+    The list these live in was already built on the argument that a generic
+    category noun asserts nothing — the claim is *which* one, and that is still
+    checked. `service`, `system`, `infrastructure`, `platform`, `database` and
+    `pipeline` were in it; the machine words were not, and nothing noticed
+    while the guard matched on capitalization, because a lowercase noun carried
+    no entity either way.
+
+    The noun-phrase extractor reads every noun, so the gap became a verdict: it
+    refused "cluster administration on bare metal servers" as a rewrite of
+    "cluster administration on bare metal", while the same sentence written
+    with "systems" passed. Parametrized across both halves so the two cannot
+    drift apart again.
+    """
+    corpus = SourceCorpus.from_texts(_GENERIC_RESUME)
+
+    assert check(f"Deployed {noun} for the cluster.", corpus).ok
+
+
+def test_the_specific_thing_is_still_checked() -> None:
+    """The other half of the argument above, and the reason it is safe.
+
+    Letting the category noun through costs nothing only while whatever
+    qualifies it is still traced. Each of these names something the résumé does
+    not, and each must still be refused.
+    """
+    corpus = SourceCorpus.from_texts(_GENERIC_RESUME)
+
+    assert not check("Deployed Redis servers.", corpus).ok
+    assert not check("Cluster administration on AWS servers.", corpus).ok
+    assert not check("Managed 500 servers.", corpus).ok
