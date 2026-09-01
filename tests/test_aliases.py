@@ -16,7 +16,10 @@ recognize, and the merely-related terms it must keep refusing.
 
 from __future__ import annotations
 
+import pytest
+
 from packages.tailor.aliases import equivalents
+from packages.tailor.chunk import available as chunker_available
 from packages.tailor.guard import SourceCorpus, check
 from packages.tailor.keywords import analyze
 
@@ -196,8 +199,25 @@ def test_the_output_may_spell_out_what_the_source_abbreviated() -> None:
     assert check("Deployed to Kubernetes.", corpus).ok
 
 
+@pytest.mark.skipif(
+    not chunker_available(),
+    reason="the capitalization extractor reads no entity in an all-lowercase "
+    "phrase, so it accepts these trivially and the assertion would prove nothing",
+)
 def test_spelling_out_a_term_the_source_never_had_is_still_refused() -> None:
-    """The check reads the alias table, not the output's own confidence."""
+    """The check reads the alias table, not the output's own confidence.
+
+    Skipped without the noun-phrase chunker, and the skip is the finding rather
+    than an inconvenience: `continuous integration`, `deep learning` and
+    `artificial intelligence` are all lowercase, so the capitalization
+    extractor sees no claim in any of them and returns ok with zero entities
+    checked. Asserting a refusal there would pass for the wrong reason on the
+    machine that has the tagger data and fail on the one that does not.
+
+    The tagger data is a download (`make nltk-data`), and CI does not fetch it.
+    So this whole class of guarantee is unverified in CI while it holds
+    locally — which is worth knowing before trusting a green run.
+    """
     corpus = SourceCorpus.from_texts("Used ML models in production.")
 
     # `ci` is a real alias group; this source simply does not assert it.
