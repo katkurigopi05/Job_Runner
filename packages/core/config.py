@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     #: routes are withdrawn without notice, at which point every call 404s and
     #: this is the one-line fix.
     openrouter_model: str | None = None
+    #: TokenRouter, a second OpenAI-compatible gateway. Held to the same rule
+    #: as the key above and for the same reason: it forwards to an upstream it
+    #: does not name, so a key being present must not make it the answer to
+    #: anything. `router.QUALITY_ORDER` leaves it out; naming it is what
+    #: reaches it.
+    tokenrouter_api_key: str | None = None
+    #: Overrides TokenRouterProvider.DEFAULT_MODEL.
+    tokenrouter_model: str | None = None
     #: Where Ollama listens. Same reason as the keys above: `.env.example`
     #: documents this key, so reading it only from os.environ meant a `.env`
     #: pointing at another host was ignored and the caller fell back to

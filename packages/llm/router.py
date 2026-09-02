@@ -107,6 +107,8 @@ def _configured(name: str) -> bool:
         return bool(os.environ.get("ANTHROPIC_API_KEY") or settings.anthropic_api_key)
     if name == "openrouter":
         return bool(os.environ.get("OPENROUTER_API_KEY") or settings.openrouter_api_key)
+    if name == "tokenrouter":
+        return bool(os.environ.get("TOKENROUTER_API_KEY") or settings.tokenrouter_api_key)
     if name == "ollama_cloud":
         # Named model, not a key. Ollama needs no credential once the local
         # daemon is signed in, so there is nothing else that could mean "the
@@ -219,7 +221,7 @@ def cloud_for_tailoring() -> str | None:
 #: `QUALITY_ORDER` would send every "auto" task to Ollama's servers the moment
 #: `OLLAMA_CLOUD_MODEL` was set, with nothing in the configuration that reads
 #: as having asked for that.
-COMPARABLE_CLOUD = ("anthropic", "gemini", "openrouter", "ollama_cloud")
+COMPARABLE_CLOUD = ("anthropic", "gemini", "openrouter", "tokenrouter", "ollama_cloud")
 
 
 def comparable_clouds() -> list[str]:

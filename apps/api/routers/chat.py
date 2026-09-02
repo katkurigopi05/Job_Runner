@@ -67,7 +67,14 @@ LOCAL_PROVIDER = "ollama"
 #: is a remote answer wearing a local label. Choosing `ollama_cloud` in the
 #: picker is the informed decision §14 asks for, and the reply's `local: false`
 #: says so to the UI.
-ALLOWED_PROVIDERS = ("ollama", "gemini", "anthropic", "openrouter", "ollama_cloud")
+ALLOWED_PROVIDERS = (
+    "ollama",
+    "gemini",
+    "anthropic",
+    "openrouter",
+    "tokenrouter",
+    "ollama_cloud",
+)
 
 #: Defined in packages/llm/prompts.py — see the note there on versioning.
 SYSTEM = CHAT_SYSTEM.text

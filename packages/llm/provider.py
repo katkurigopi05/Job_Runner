@@ -216,9 +216,18 @@ _KEY_HEADER_RE = re.compile(r"((?i:x-api-key|authorization|bearer)[\"\' :=]+)[A-
 
 
 def _scrubbed(exc: Exception) -> str:
-    """An exception's text with any `key=` query value removed."""
+    """An exception's text with any `key=` query value removed.
+
+    Falls back to the class name when the text is empty. Several httpx
+    timeouts carry no message at all, and the caller interpolates this into
+    "<service> call failed: {…}" — which then ends in a colon and tells the
+    owner nothing about what went wrong. Found on a slow free route, where the
+    real answer was a read timeout and the log said only "TokenRouter call
+    failed:".
+    """
     scrubbed = _KEY_QUERY_RE.sub(r"\1***", str(exc))
-    return _KEY_HEADER_RE.sub(r"\1***", scrubbed)
+    scrubbed = _KEY_HEADER_RE.sub(r"\1***", scrubbed)
+    return scrubbed.strip() or type(exc).__name__
 
 
 class OllamaCloudProvider(OllamaProvider):
@@ -520,34 +529,64 @@ _REASONING_EXCLUDED = {"reasoning": {"exclude": True}}
 REASONING_HEADROOM_TOKENS = 1024
 
 
-class OpenRouterProvider:
-    """OpenRouter's OpenAI-compatible chat completions endpoint.
+class _OpenAICompatibleProvider:
+    """Shared machinery for an OpenAI-compatible `/chat/completions` gateway.
 
-    One key reaches many upstream models, which is the appeal and also the
-    thing to be careful about. §2.8 permits exactly one third-party upload —
-    the tailoring call — and asks that it be *audited*, so the owner can prove
-    what left the machine. The audit trail records `openrouter` and the model
-    id, and that is genuinely where its knowledge stops: OpenRouter forwards to
-    an upstream provider, and for a cloaked `stealth/*` route the identity of
-    that provider is undisclosed by design. Anyone choosing one should know the
-    trail can name the hop but not the destination, and should read that
-    model's data policy — free routes commonly log prompts and share them with
-    the undisclosed creator, which for résumé PII is a different bargain from a
-    paid tier.
+    Not selectable itself — `name` is empty and `build_provider` never returns
+    one. A subclass supplies the endpoint, the key it reads, and the service
+    name that appears in errors.
 
-    Deliberately absent from `router.QUALITY_ORDER`, so `best_available()` will
-    never select it on its own. Setting a key must not silently redirect every
-    "auto" task to a model whose vendor is unknown — this provider answers when
-    it is asked for by name, via `LLM_PROVIDER` or one of §7's per-task
-    settings, and not otherwise.
+    It exists because the second such gateway would otherwise have been a
+    hundred and fifty copied lines: the pacing, the 429 retry, and the
+    empty-content handling below were each written for a defect we hit in
+    production, and two copies means fixing the next one twice. What is
+    deliberately *not* shared is identity — every gateway is its own named
+    provider, because §2.8 asks the audit trail to say where a résumé went and
+    a base class with a settable base URL would make that "wherever `.env` last
+    pointed".
 
-    The optional `HTTP-Referer` and `X-Title` headers are not sent. They exist
-    to list an app on OpenRouter's public leaderboards, and §1 is a private
-    single-user tool on localhost; appearing in a public ranking is not a
-    default this should choose for the owner.
+    What every subclass inherits, and must keep true of itself:
+
+    - **Absent from `router.QUALITY_ORDER`.** These forward to an upstream they
+      do not name. Setting a key must not silently redirect every "auto" task
+      to a model whose vendor is unknown; the provider answers when asked for
+      by name, via `LLM_PROVIDER` or one of §7's per-task settings.
+    - **Free routes are the ones to read the data policy for.** They commonly
+      log prompts and share them with the upstream creator, which for résumé
+      PII is a different bargain from a paid tier.
+    - **No leaderboard headers.** `HTTP-Referer` and `X-Title` list an app on a
+      public ranking, and §1 is a private single-user tool.
     """
 
-    name = "openrouter"
+    #: Set by each subclass. Empty here so the base is never selectable.
+    name = ""
+    #: Human-readable service name, used only in error messages.
+    SERVICE = ""
+    #: The `/chat/completions` prefix.
+    BASE_URL = ""
+    #: Environment variable holding the key, and the `Settings` fields to
+    #: fall back to. Named rather than derived so a typo is a NameError
+    #: here instead of a provider that silently reads nothing.
+    KEY_ENV = ""
+    KEY_SETTING = ""
+    MODEL_ENV = ""
+    MODEL_SETTING = ""
+    #: Seconds to wait for one completion. A class attribute rather than a
+    #: literal because these gateways are not comparable: a paid route answers
+    #: a bullet in seconds, and a free one queues behind everyone else using
+    #: it. Too low is the worse failure — the call is abandoned after the
+    #: upstream has already done the work, so the owner pays the latency and
+    #: gets nothing.
+    REQUEST_TIMEOUT_S = 120.0
+    #: Tokens added to the caller's `max_tokens` to pay for reasoning.
+    #:
+    #: Per provider because the routes are not comparable, and getting it wrong
+    #: is silent: the call returns 200 with empty content and the tailorer keeps
+    #: the original line, so the symptom is a tailorer that appears to do
+    #: nothing. Measured per route on a *real* tailoring prompt — a toy prompt
+    #: reasons far less and will happily suggest a number that fails in
+    #: production.
+    REASONING_HEADROOM = REASONING_HEADROOM_TOKENS
 
     #: Pinned for the same reason Gemini's is — the trail should name what ran.
     #: `stealth/*` routes are pre-release and get withdrawn without notice, at
@@ -560,19 +599,33 @@ class OpenRouterProvider:
         from packages.core.config import get_settings
 
         settings = get_settings()
-        self.api_key = os.environ.get("OPENROUTER_API_KEY") or settings.openrouter_api_key
+        self.api_key = os.environ.get(self.KEY_ENV) or getattr(settings, self.KEY_SETTING, None)
         if not self.api_key:
-            raise LLMError("OPENROUTER_API_KEY environment variable is not set")
+            raise LLMError(f"{self.KEY_ENV} environment variable is not set")
         self.model = (
-            model or os.environ.get("OPENROUTER_MODEL") or settings.openrouter_model
+            model or os.environ.get(self.MODEL_ENV) or getattr(settings, self.MODEL_SETTING, None)
         ) or self.DEFAULT_MODEL
-        self.base_url = "https://openrouter.ai/api/v1"
+        self.base_url = self.BASE_URL
 
     def _headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+
+    def _missing_route_message(self) -> str:
+        """What a 404 means on this gateway, and the one line that fixes it.
+
+        Overridden per subclass because the remedy differs: OpenRouter
+        withdraws pre-release routes, TokenRouter has a paid model whose id
+        differs from the free one by a suffix. A generic "404 not found" reads
+        as a bug in this code or a bad key, and the tailorer turns that into a
+        résumé that silently went untailored.
+        """
+        return (
+            f"{self.SERVICE} has no model named {self.model!r} (404). Set "
+            f"{self.MODEL_ENV} in .env to one it serves."
+        )
 
     async def complete(
         self,
@@ -590,7 +643,7 @@ class OpenRouterProvider:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "max_tokens": max_tokens + REASONING_HEADROOM_TOKENS,
+                "max_tokens": max_tokens + self.REASONING_HEADROOM,
                 "temperature": temperature,
                 **_REASONING_EXCLUDED,
             }
@@ -610,7 +663,7 @@ class OpenRouterProvider:
         try:
             message = payload["choices"][0]["message"]
         except (KeyError, IndexError) as exc:
-            raise LLMError(f"OpenRouter returned no choices: {_scrubbed(exc)}") from exc
+            raise LLMError(f"{self.SERVICE} returned no choices: {_scrubbed(exc)}") from exc
 
         content = (message.get("content") or "").strip()
         if not content:
@@ -640,9 +693,11 @@ class OpenRouterProvider:
             await pacer.wait_turn()
             async with httpx.AsyncClient() as client:
                 try:
-                    resp = await client.post(url, json=body, headers=self._headers(), timeout=120.0)
+                    resp = await client.post(
+                        url, json=body, headers=self._headers(), timeout=self.REQUEST_TIMEOUT_S
+                    )
                 except Exception as exc:
-                    raise LLMError(f"OpenRouter call failed: {_scrubbed(exc)}") from exc
+                    raise LLMError(f"{self.SERVICE} call failed: {_scrubbed(exc)}") from exc
 
                 if resp.status_code == 429 and attempt < MAX_RETRIES:
                     await pacer.back_off(attempt, retry_after_seconds(resp.headers))
@@ -657,21 +712,16 @@ class OpenRouterProvider:
                     # tailorer's own error handling turns it into a résumé that
                     # silently went untailored. The remedy is one line in
                     # `.env`, so the error should say which line.
-                    raise LLMError(
-                        f"OpenRouter has no route named {self.model!r} (404). Pre-release "
-                        "and stealth routes are withdrawn without notice, and every call "
-                        "404s once that happens. Set OPENROUTER_MODEL in .env to a route "
-                        "that still exists — https://openrouter.ai/models lists them."
-                    )
+                    raise LLMError(self._missing_route_message())
 
                 try:
                     resp.raise_for_status()
                 except Exception as exc:
-                    raise LLMError(f"OpenRouter call failed: {_scrubbed(exc)}") from exc
+                    raise LLMError(f"{self.SERVICE} call failed: {_scrubbed(exc)}") from exc
                 return dict(resp.json())
 
         raise LLMError(
-            f"OpenRouter refused {MAX_RETRIES + 1} times with 429 — this route's rate limit is "
+            f"{self.SERVICE} refused {MAX_RETRIES + 1} times with 429 — this route's rate limit is "
             "lower than this workload. Raise LLM_CALL_INTERVAL_S, or run a smaller batch."
         )
 
@@ -689,7 +739,7 @@ class OpenRouterProvider:
                 # ignores it silently returns prose that fails validation with
                 # no hint as to why.
                 "response_format": {"type": "json_object"},
-                "max_tokens": 1024 + REASONING_HEADROOM_TOKENS,
+                "max_tokens": 1024 + self.REASONING_HEADROOM,
                 "temperature": JSON_TEMPERATURE,
                 **_REASONING_EXCLUDED,
             }
@@ -699,7 +749,95 @@ class OpenRouterProvider:
         except LLMError:
             raise
         except Exception as exc:
-            raise LLMError(f"OpenRouter JSON call failed: {_scrubbed(exc)}") from exc
+            raise LLMError(f"{self.SERVICE} JSON call failed: {_scrubbed(exc)}") from exc
+
+
+class OpenRouterProvider(_OpenAICompatibleProvider):
+    """openrouter.ai — one key, many upstream models.
+
+    The audit trail records `openrouter` and the model id, and that is
+    genuinely where its knowledge stops: OpenRouter forwards to an upstream
+    provider, and for a cloaked `stealth/*` route the identity of that provider
+    is undisclosed by design. The trail can name the hop but not the
+    destination.
+    """
+
+    name = "openrouter"
+    SERVICE = "OpenRouter"
+    BASE_URL = "https://openrouter.ai/api/v1"
+    KEY_ENV = "OPENROUTER_API_KEY"
+    KEY_SETTING = "openrouter_api_key"
+    MODEL_ENV = "OPENROUTER_MODEL"
+    MODEL_SETTING = "openrouter_model"
+    DEFAULT_MODEL = "stealth/ox-alpha"
+
+    def _missing_route_message(self) -> str:
+        return (
+            f"OpenRouter has no route named {self.model!r} (404). Pre-release "
+            "and stealth routes are withdrawn without notice, and every call "
+            "404s once that happens. Set OPENROUTER_MODEL in .env to a route "
+            "that still exists — https://openrouter.ai/models lists them."
+        )
+
+
+class TokenRouterProvider(_OpenAICompatibleProvider):
+    """api.tokenrouter.com — a second gateway, same bargain as the first.
+
+    Added because its `z-ai/glm-5.3-free` route is genuinely free, which the
+    GLM routes on OpenRouter are not: of eighteen `z-ai/*` ids there, exactly
+    one prices at zero. Both gateways being reachable is also the point of
+    §7's comparison panel — two free routes are two columns.
+
+    **Reasoning is on and is billed against `max_tokens`,** the same trap
+    `REASONING_HEADROOM_TOKENS` was written for on OpenRouter, and measured
+    again here before this class existed. A trivial "reply OK" call spent 48 of
+    50 completion tokens thinking. At the tailorer's 300 the model spent all
+    300 on reasoning and returned `finish_reason="length"` with **empty
+    content** — a tailorer that appears to do nothing. The same call at
+    300 + 1024 headroom returns `finish_reason="stop"`, 398 reasoning tokens
+    and a real bullet, so the existing constant is sufficient and is not
+    re-tuned here.
+
+    It is slow: ~26s for a two-token answer, and a bullet rewrite is longer.
+    A résumé is one call per bullet, so a batch wants patience or a smaller one.
+    """
+
+    name = "tokenrouter"
+    SERVICE = "TokenRouter"
+    BASE_URL = "https://api.tokenrouter.com/v1"
+    KEY_ENV = "TOKENROUTER_API_KEY"
+    KEY_SETTING = "tokenrouter_api_key"
+    MODEL_ENV = "TOKENROUTER_MODEL"
+    MODEL_SETTING = "tokenrouter_model"
+    #: The free GLM route. Named rather than inherited from a shorter alias
+    #: because the paid `z-ai/glm-5.3` differs from it by one suffix, and the
+    #: cost of confusing them lands on the owner's card.
+    DEFAULT_MODEL = "z-ai/glm-5.3-free"
+    #: Measured, not guessed. A two-token answer took 26s; a bullet rewrite
+    #: with the reasoning headroom exceeded the inherited 120s and failed as a
+    #: read timeout *after* the upstream had generated the answer. Free routes
+    #: queue, so the wait is the price of the route rather than a fault.
+    REQUEST_TIMEOUT_S = 300.0
+    #: Three times the inherited allowance, and measured on the real prompt
+    #: rather than a toy one — which is the mistake that made this necessary.
+    #:
+    #: A 89-character probe reasoned for 398 tokens, so 1024 looked ample. The
+    #: actual tailoring prompt is ~6k characters (the posting, plus the
+    #: supported and off-limits term lists), and on that this route spends
+    #: **2,982 reasoning tokens to write a 48-token bullet**. At the inherited
+    #: allowance every real call returned `finish_reason="length"` with empty
+    #: content, and all three test bullets fell back to the original line —
+    #: a tailorer that appears to do nothing, exactly as the constant above
+    #: warns.
+    REASONING_HEADROOM = 4096
+
+    def _missing_route_message(self) -> str:
+        return (
+            f"TokenRouter has no model named {self.model!r} (404). Set "
+            "TOKENROUTER_MODEL in .env to one it serves — GET /v1/models lists "
+            "them. Note the free GLM route is 'z-ai/glm-5.3-free'; dropping the "
+            "'-free' suffix selects the paid model of the same name."
+        )
 
 
 def build_provider(name: str | None = None) -> LLMProvider:
@@ -720,6 +858,8 @@ def build_provider(name: str | None = None) -> LLMProvider:
         return AnthropicProvider()
     elif selected == "openrouter":
         return OpenRouterProvider()
+    elif selected == "tokenrouter":
+        return TokenRouterProvider()
     elif selected == "ollama_cloud":
         return OllamaCloudProvider()
     else:
