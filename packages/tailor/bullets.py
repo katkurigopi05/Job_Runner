@@ -331,6 +331,37 @@ def _is_list(line: str) -> bool:
 _LABEL_GAP_RE = re.compile(r"\s{2,}|\t")
 
 
+def list_payload(line: str) -> str:
+    """The entries of a list line, without the category label in front of it.
+
+    `Data, DevOps & Tools  Qdrant (Vector DB), Docker, Git` names three tools;
+    the words before the column gap name the *category*, and they are ordinary
+    English — Data, DevOps, Tools, Web, Frameworks, Languages. A caller reading
+    a résumé's technologies off these lines wants the entries and not the
+    heading, or it ends up treating "web" as a technology the owner claims.
+
+    Returns the line unchanged when there is no label to strip, so callers can
+    use it unconditionally.
+    """
+    stripped = line.strip()
+    # Two ways a résumé writes the label: a column gap left over from a
+    # two-column layout, and a plain colon. `Languages (Spoken): English
+    # (Professional), Telugu (Native), Hindi (Conversational)` is the second,
+    # and without it "languages" and "spoken" read as things the owner claims.
+    for candidate in (_LABEL_GAP_RE.split(stripped, maxsplit=1), stripped.split(":", 1)):
+        if len(candidate) != 2:
+            continue
+        label, tail = candidate[0].strip(), candidate[1].strip()
+        if not label or not tail:
+            continue
+        fragments = [part.strip() for part in tail.split(",")]
+        if len(fragments) < 3:
+            continue
+        if all(0 < len(part.split()) <= _LIST_FRAGMENT_WORDS for part in fragments):
+            return tail
+    return line
+
+
 def _is_labelled_list(line: str) -> bool:
     """`Data, DevOps & Tools  Qdrant (Vector DB), Docker, Git, pytest`.
 

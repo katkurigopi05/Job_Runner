@@ -149,3 +149,40 @@ def test_a_flat_corpus_disables_the_check() -> None:
     flat = SourceCorpus.from_texts(RESUME)
     assert flat.technologies == frozenset()
     assert dropped(BULLET, "Built a companion application.", flat.technologies) == ()
+
+
+# --------------------------------------------------------------------------
+# The category label is not a technology
+# --------------------------------------------------------------------------
+
+
+LABELLED = """Skills
+Frameworks & Web  FastAPI, React, Streamlit, Node.js, Tauri
+Data, DevOps & Tools  Qdrant (Vector DB), Docker, Git, pytest, Pillow
+Languages (Spoken): English (Professional), Telugu (Native), Hindi (Conversational)
+"""
+
+
+def test_the_heading_above_a_list_is_not_read_as_a_skill() -> None:
+    """`Frameworks & Web  FastAPI, React, ...` lists frameworks.
+
+    "Frameworks" and "Web" are the category. Reading them in made `web` a
+    technology the résumé was held to keep, and a real rewrite by Gemini was
+    refused for "dropping" it — a false refusal produced by the guard, on a
+    word the owner never claimed as a skill.
+
+    Both label shapes are covered: the column gap left over from a two-column
+    layout, and a plain colon.
+    """
+    listed = inventory(parse_text(LABELLED))
+
+    for heading in ("web", "frameworks", "data", "devops", "tools", "languages", "spoken"):
+        assert heading not in listed, heading
+
+
+def test_the_entries_after_the_heading_still_are() -> None:
+    """The other half — stripping the label must not strip the list."""
+    listed = inventory(parse_text(LABELLED))
+
+    for tech in ("fastapi", "react", "streamlit", "tauri", "qdrant", "docker", "pytest", "pillow"):
+        assert tech in listed, tech

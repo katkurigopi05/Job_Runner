@@ -398,3 +398,139 @@ async def test_a_guard_refusal_is_still_counted_as_one() -> None:
     assert result.rejected == 1
     assert result.provider_failures == 0
     assert summarize(result).rejected == 1
+
+
+# --------------------------------------------------------------------------
+# More than two columns
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_it_compares_every_cloud_the_owner_named(db_session, monkeypatch) -> None:
+    """One local model against three cloud ones, in a single run.
+
+    The question changes once more than one free route is configured. `cloud`
+    answers "would my cloud provider have done better than local"; naming
+    several answers "which of these should I be using", and that is not
+    reachable by running the two-column comparison three times — the counts
+    have to sit beside each other to be read against each other.
+
+    Local stays first for the reason it always did: it costs nothing and cannot
+    fail on quota, so a refused remote leaves the owner with a document rather
+    than an empty screen.
+    """
+    profile, _ = await _profile(db_session)
+    posting = await _posting(db_session)
+
+    for name in ("gemini", "openrouter", "tokenrouter"):
+        monkeypatch.setenv(f"{name.upper()}_API_KEY", "k")
+    asked = _sides_are(
+        monkeypatch,
+        {
+            "ollama": Side(requested="ollama", answered_by="ollama:llama3.1", changed=2),
+            "gemini": Side(requested="gemini", answered_by="gemini", changed=3),
+            "openrouter": Side(requested="openrouter", answered_by="openrouter", changed=4),
+            "tokenrouter": Side(requested="tokenrouter", answered_by="tokenrouter", changed=5),
+        },
+    )
+
+    candidates = await compare_tailorings(
+        db_session,
+        profile=profile,
+        posting=posting,
+        clouds=["gemini", "openrouter", "tokenrouter"],
+    )
+
+    assert asked == ["ollama", "gemini", "openrouter", "tokenrouter"]
+    assert [c.requested for c in candidates] == [
+        "ollama",
+        "gemini",
+        "openrouter",
+        "tokenrouter",
+    ]
+    # Each column keeps its own numbers — the whole point of showing them together.
+    assert [c.changed for c in candidates] == [2, 3, 4, 5]
+
+
+@pytest.mark.asyncio
+async def test_naming_a_provider_twice_does_not_upload_twice(db_session, monkeypatch) -> None:
+    """Duplicates are dropped rather than obeyed.
+
+    Every extra name is another §2.8 upload of the résumé to a third party, and
+    a repeated one buys nothing — the second call would ask the same provider
+    the same question about the same posting.
+    """
+    profile, _ = await _profile(db_session)
+    posting = await _posting(db_session)
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    asked = _sides_are(
+        monkeypatch,
+        {
+            "ollama": Side(requested="ollama", answered_by="ollama"),
+            "gemini": Side(requested="gemini", answered_by="gemini"),
+        },
+    )
+
+    await compare_tailorings(
+        db_session, profile=profile, posting=posting, clouds=["gemini", "gemini"]
+    )
+
+    assert asked == ["ollama", "gemini"]
+
+
+@pytest.mark.asyncio
+async def test_the_explicit_list_wins_over_the_single_choice(db_session, monkeypatch) -> None:
+    """`clouds` is the more specific request, so it decides.
+
+    Honouring both would run a column the caller did not list, which is the
+    surprise upload the whole design avoids.
+    """
+    profile, _ = await _profile(db_session)
+    posting = await _posting(db_session)
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    asked = _sides_are(
+        monkeypatch,
+        {
+            "ollama": Side(requested="ollama", answered_by="ollama"),
+            "openrouter": Side(requested="openrouter", answered_by="openrouter"),
+        },
+    )
+
+    await compare_tailorings(
+        db_session,
+        profile=profile,
+        posting=posting,
+        cloud="gemini",
+        clouds=["openrouter"],
+    )
+
+    assert asked == ["ollama", "openrouter"]
+    assert "gemini" not in asked
+
+
+@pytest.mark.asyncio
+async def test_one_unusable_name_stops_the_whole_comparison(db_session, monkeypatch) -> None:
+    """A precondition, not a model outcome — so it raises rather than becoming
+    a failed column.
+
+    The owner asked for a specific set and would not be getting it, and a
+    column reading "tokenrouter: unavailable" beside three that ran would look
+    like a verdict on TokenRouter instead of a missing key.
+    """
+    profile, _ = await _profile(db_session)
+    posting = await _posting(db_session)
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.delenv("TOKENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(compare_mod, "is_comparable_cloud", lambda n: n == "gemini")
+
+    with pytest.raises(CannotCompare, match="tokenrouter"):
+        await compare_tailorings(
+            db_session,
+            profile=profile,
+            posting=posting,
+            clouds=["gemini", "tokenrouter"],
+        )

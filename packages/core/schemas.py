@@ -194,6 +194,18 @@ class TailoringCompareRequest(BaseModel):
     """
 
     cloud: str | None = None
+    #: Several remote halves at once, for "which of these should I use".
+    #:
+    #: Separate from `cloud` because the cost is different in kind, not degree:
+    #: each name is another §2.8 upload of the résumé to another third party,
+    #: so a four-way comparison sends it three times. That has to be typed out
+    #: rather than inferred from "every provider with a key", which is why
+    #: there is no `all` flag here.
+    #:
+    #: Wins over `cloud` when both are sent — it is the more specific request,
+    #: and quietly adding a column the caller did not list would be the exact
+    #: surprise upload this design avoids.
+    clouds: list[str] | None = None
 
 
 class TailoringChoice(BaseModel):

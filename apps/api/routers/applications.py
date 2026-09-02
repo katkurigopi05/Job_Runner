@@ -231,6 +231,11 @@ async def compare_tailoring(
     `cloud` names the remote half for this comparison only — it moves no
     setting and leaves real tailoring routed exactly as it was. Omitted, the
     remote half is whatever real tailoring would use.
+
+    `clouds` names several, for "which of these should I use" rather than "is
+    the cloud one better". Each name is another upload under §2.8, so a
+    four-way comparison sends the résumé three times and the list has to be
+    written out — there is deliberately no "every provider I have a key for".
     """
     application = await session.get(Application, application_id)
     if application is None:
@@ -264,6 +269,7 @@ async def compare_tailoring(
             profile=profile,
             posting=posting,
             cloud=(body.cloud if body else None),
+            clouds=(body.clouds if body else None),
         )
     except CannotCompare as exc:
         raise ApiError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
