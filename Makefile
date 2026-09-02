@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching export-labels import-mail score-mail review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
+        bench-matching export-labels import-csv import-mail score-mail review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
 
@@ -245,6 +245,13 @@ export-labels:
 # Gate 6 asks for 30 hand-labeled *real* recruiter emails; inbound_messages is
 # 0 and the fixtures were written beside the patterns that read them. Export
 # your recruiter mail, label it, and score against it.
+# Sort a CSV of companies + careers URLs into what we can crawl today. Offline,
+# so 3,000 rows take seconds. The bespoke remainder is written out as the work
+# queue for a generic extractor rather than counted and dropped.
+import-csv:
+	@test -n "$(src)" || (echo "set src=<companies.csv>" && exit 1)
+	$(PY)/python -m scripts.import_companies "$(src)" $(if $(out),--out $(out),) $(if $(write),--write,)
+
 import-mail:
 	@test -n "$(src)" || (echo "set src=<mbox|eml|dir>" && exit 1)
 	$(PY)/python -m scripts.import_mail --src "$(src)" $(if $(out),--out $(out),)

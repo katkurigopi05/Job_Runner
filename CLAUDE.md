@@ -1555,3 +1555,74 @@ this decides which document an employer reads first.
 The cover letter is written from the same document. A letter drafted off a
 different résumé than the one attached would contradict it.
 
+### Three thousand careers URLs, and how many are actually a problem
+
+The owner has a CSV of ~3,000 companies with careers URLs.
+`scripts/import_portals.py` already stated why they cannot simply be added:
+
+> A company whose careers page is its own site (`twilio.com/careers`) is
+> reported and skipped: we have no extractor for a bespoke page, so adding it
+> to the registry would mean a crawl cycle that fetches and parses nothing
+> every hour, forever.
+
+So the first question is not "how do we scrape 3,000 sites". It is **how many
+of them are bespoke at all** — careers URLs very often already *are* a
+Greenhouse, Lever, Ashby or Workable board, and each of those needs no new
+code: it is a registry row the existing crawler polls first-hand, through the
+rate limiter and robots.
+
+`make import-csv src=companies.csv` answers that. Four things are deliberate:
+
+- **Offline.** No network, so 3,000 rows sort in **0.02s** (measured, and
+  asserted at that size). A probe per row would make the answer depend on
+  which sites happen to be up, and turn a question worth re-asking while
+  cleaning the sheet into an hours-long crawl.
+- **The remainder is a file, not a number.** Bespoke rows are written to a CSV
+  with every original column preserved — a sheet carrying a sector or a
+  headcount keeps it, because whatever reads it next may want the biggest
+  companies first. A count tells you the size of the problem; the list is what
+  the next tool takes as input.
+- **"No URL" and "cannot read this page" are separate buckets.** They need
+  different fixes, so collapsing them would hide the cheaper one.
+- **It never writes to the registry.** `scripts/import_companies.py` appends
+  through `import_portals.append_to_registry`, so there is one door. The test
+  checks the AST rather than the source text, because the module docstring
+  names that function to say it is somebody else's job and a grep would read
+  the explanation as the violation.
+
+A link to one posting still yields the board — `board_root` anchors to the
+front page on purpose, and a hand-assembled sheet is full of deep links, so
+discarding those would count companies we *can* crawl as bespoke, which is the
+one number this exists to produce.
+
+### On Scrapling for the bespoke remainder
+
+Recorded because the library is a reasonable idea whose headline feature §2.5
+forbids outright. Its README: *"Its fetchers bypass anti-bot systems like
+Cloudflare Turnstile out of the box"*, plus a spider with *"automatic proxy
+rotation"* that *"backs off when it starts blocking you"*, and
+`StealthyFetcher.fetch(...)  # Fetch website under the radar!`. That is
+captcha bypass, bot-detection evasion and proxy rotation — three of §2.5's
+clauses, and not incidentally: it is the pitch.
+
+Its *parser* is a different matter and is BSD-3, so §3's cost rule is fine. If
+it is ever adopted it must be as a parser only, behind `PoliteFetcher`:
+Scrapling's fetchers honour neither robots.txt nor our per-host floor, so
+letting it fetch turns §2.6 from a control into a comment.
+
+Two further limits worth keeping visible:
+
+- **Adaptive selectors are wrong inside an ATS form.** Its value proposition
+  is "if the element moved, find one that looks similar". §2.2 makes
+  work-authorization answers verbatim because they have legal consequences,
+  and §2.4 says an unanswerable question parks rather than guesses. A drifted
+  selector must fail loudly, not find a plausible neighbour.
+- **It buys nothing on the boards we already read.** The crawler fetches
+  `boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true` — JSON. There
+  is no HTML to adapt to.
+
+For a bespoke careers page the higher-yield path is **JSON-LD**: career sites
+publish schema.org `JobPosting` for Google Jobs, already structured, with no
+selector to drift. That is the next build, and `seeds/bespoke_careers.csv` is
+its input.
+
