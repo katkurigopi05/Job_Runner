@@ -17,11 +17,13 @@ from packages.core.config import get_settings
 
 @lru_cache
 def get_engine() -> AsyncEngine:
+    """Get the cached async database engine."""
     return create_async_engine(get_settings().async_database_url, pool_pre_ping=True)
 
 
 @lru_cache
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    """Get the cached async session factory."""
     return async_sessionmaker(get_engine(), expire_on_commit=False)
 
 

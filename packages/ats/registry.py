@@ -42,6 +42,7 @@ def adapter_for(url: str) -> ATSAdapter:
 
 
 def adapter_by_name(name: str) -> ATSAdapter:
+    """Get an adapter instance by its name."""
     for adapter in ADAPTERS:
         if adapter.name == name:
             return adapter()
@@ -49,4 +50,5 @@ def adapter_by_name(name: str) -> ATSAdapter:
 
 
 def supported() -> list[str]:
+    """List of supported ATS names."""
     return [adapter.name for adapter in ADAPTERS]

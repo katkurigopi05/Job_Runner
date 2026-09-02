@@ -266,6 +266,7 @@ async def release_task(session: AsyncSession, task: QueueTask) -> None:
 
 
 async def pending_count(session: AsyncSession, *, kind: str | None = None) -> int:
+    """Count pending tasks, optionally filtered by kind."""
     stmt = select(QueueTask).where(QueueTask.status == QueueTaskStatus.PENDING.value)
     if kind:
         stmt = stmt.where(QueueTask.kind == kind)
