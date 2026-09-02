@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import re
 
-from packages.tailor.bullets import LineKind, classify, tailorable_section
+from packages.tailor.bullets import LineKind, classify, list_payload, tailorable_section
 from packages.tailor.guard import _COMMON_WORDS, _TOKEN_RE, _index, normalize, singular
 from packages.tailor.parse import ParsedResume
 
@@ -69,7 +69,12 @@ def inventory(parsed: ParsedResume) -> frozenset[str]:
         lines.extend(line for line in parsed.section(section) if classify(line) is LineKind.META)
 
     terms: set[str] = set()
-    for line in lines:
+    for raw in lines:
+        # The entries, not the heading above them. `Frameworks & Web  FastAPI,
+        # React, ...` lists three frameworks; "Frameworks" and "Web" are the
+        # category, and reading them in made `web` a technology the résumé was
+        # held to keep. A real rewrite was refused for "dropping" it.
+        line = list_payload(raw)
         for fragment in _FRAGMENT_SPLIT_RE.split(line):
             for match in _TOKEN_RE.finditer(fragment):
                 term = normalize(match.group(0))
