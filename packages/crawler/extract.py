@@ -462,6 +462,10 @@ class WorkableExtractor:
         return postings
 
 
+#: The board APIs, whose URL is derivable from a company slug. Callers that
+#: iterate this — `scripts/adhoc/find_sde_roles.py`, the registry-parity test —
+#: mean exactly these. `jsonld` has no slug rule and is deliberately not in
+#: here; `extractor_for` below is where it is reached.
 EXTRACTORS: dict[str, PostingExtractor] = {
     GreenhouseExtractor.ats: GreenhouseExtractor(),
     LeverExtractor.ats: LeverExtractor(),
@@ -469,8 +473,27 @@ EXTRACTORS: dict[str, PostingExtractor] = {
     WorkableExtractor.ats: WorkableExtractor(),
 }
 
+#: A bespoke careers page read through its schema.org data. Deliberately kept
+#: out of `EXTRACTORS`: it takes a page URL where the four take a slug, so a
+#: caller that iterates the board APIs and builds a URL from a slug would ask
+#: it the one question it cannot answer.
+#:
+#: Imported on first use rather than at module scope because
+#: `packages.crawler.jsonld` imports this module — at module scope the cycle
+#: would break whichever of the two was imported first.
+JSONLD_ATS = "jsonld"
+
+_jsonld_extractor: PostingExtractor | None = None
+
 
 def extractor_for(ats: str) -> PostingExtractor | None:
+    global _jsonld_extractor
+    if ats == JSONLD_ATS:
+        if _jsonld_extractor is None:
+            from packages.crawler.jsonld import JsonLdExtractor
+
+            _jsonld_extractor = JsonLdExtractor()
+        return _jsonld_extractor
     return EXTRACTORS.get(ats)
 
 
