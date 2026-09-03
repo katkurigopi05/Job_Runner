@@ -16,6 +16,7 @@ const NAV = [
   { href: "/finish", label: "Finish" },
   { href: "/matches", label: "Matches" },
   { href: "/swipe", label: "Rate" },
+  { href: "/label", label: "Grade" },
   { href: "/applications", label: "Pipeline" },
   { href: "/resumes", label: "Résumés" },
   { href: "/tracker", label: "Tracker" },

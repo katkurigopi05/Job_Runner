@@ -53,7 +53,7 @@ Same as PARITY.md, plus one:
 | §2, §47 | Ranking metrics, experiment records | **HAVE** | `matching/metrics.py`, `benchmark.py` — see [ML_EVALUATION.md](ML_EVALUATION.md) |
 | §4 | Leak-safe splits, versioned datasets | **HAVE** | `matching/labels.py` |
 | §45 | Blind evaluation | **PARTIAL** | Enforced for ranking variants; the résumé evaluators are blind by construction but nothing asserts it → **P4** |
-| §2, §58 | Real labeled data | **BUILD** | 32 fixture labels, one profile. **The blocker on every ML claim here** → **P1** |
+| §2, §58 | Real labeled data | **PARTIAL** | The loop is built — `/label`, `matching/active.py`, `make export-labels kind=owner`. The corpus is still empty: grading needs the owner and real crawled postings → **P1** |
 | §3, §46 | Model bake-off: LR, XGBoost, LightGBM, LTR, cross-encoder | **BLOCKED** | The harness is model-agnostic and ready; 32 fixture labels cannot fit any of them → **P10**, needs P1 |
 | §12 | Feature engineering, four categories | **PARTIAL** | Structured and semantic features exist inside `score.py`; nothing is extracted as a reusable feature vector, so no model can consume them → **P10** |
 | §16 | Full initial-fit breakdown | **PARTIAL** | `matching/rubric.py` gives named dimensions 1–5; the spec's percentage-per-dimension format is not produced |
@@ -123,17 +123,32 @@ The one thing standing between this system and honest ML numbers. 32 fixture
 labels for one synthetic profile cannot support any trained model, and
 `docs/ML_EVALUATION.md` refuses to report a production candidate because of it.
 
-**Build:** a `/label` screen that serves a real crawled posting and takes a
-0–3 grade, writing to `seeds/labeled_matches.yaml` with `provenance: owner`.
-Then active learning (§59): serve the postings the scorer is least certain
-about first, so 100 labels buy more than 100 random ones would.
+**Built.** `/label` serves a real crawled posting and takes a 0–3 grade;
+`packages/matching/active.py` chooses which posting; `make export-labels
+kind=owner` writes the corpus out as `Provenance.OWNER`.
 
-**Reuse:** `matching/labels.py` (schema, provenance, leak-safe splits) is
-built and tested. `/swipe` already serves postings one at a time — this is
-that interaction with a four-point scale instead of two.
+**It is not "`/swipe` with a four-point scale", and that was the design
+decision.** `packages/matching/feedback.py` records two weaknesses in
+swipe-derived labels: a swipe is binary, *and* it is taken in feed order, so
+only postings the ranker already surfaced are ever judged. Fixing only the
+first would stamp `provenance: owner` — the grade a benchmark trusts most — on
+a corpus that still carried the sampling bias, making it less visible than it
+is today rather than more.
 
-**Done when:** ≥100 postings carry `provenance: owner`, and
-`make bench-matching` stops printing the fixture-only blocker.
+So selection draws from three streams: `uncertain` (near the middle of the
+observed score range, §59's active learning), `unseen` (crawled but never
+scored for this profile, including postings a hard filter dropped — the only
+labels that can measure what the ranker buried), and `confident` (its own top
+picks, because if those grade 0 no boundary tuning helps). The stream is
+stored per label, so a finished corpus can be *audited* for the bias rather
+than assumed clean, and `/labels/summary` says so when no `unseen` grade
+exists yet.
+
+**Still to do, and it needs the owner:** the corpus is empty. Grading is a
+person reading real postings, and no amount of code produces that.
+
+**Done when:** ≥100 postings carry `provenance: owner` **across more than one
+stream**, and `make bench-matching` stops printing the fixture-only blocker.
 
 ---
 

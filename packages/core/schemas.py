@@ -767,6 +767,69 @@ class MatchDecision(BaseModel):
     decision: str
 
 
+class LabelCandidateOut(BaseModel):
+    """One posting offered for grading, with why it was offered."""
+
+    posting_id: uuid.UUID
+    title: str | None = None
+    location: str | None = None
+    url: str
+    description: str | None = None
+    first_seen_at: datetime
+    #: `uncertain`, `unseen` or `confident`. Shown because it is the audit
+    #: trail for the sampling bias the loop exists to avoid: a corpus that
+    #: turns out to be all `uncertain` is graded on the ranker's own shortlist.
+    stream: str
+    #: The ranker's score, or null when it has no opinion. Null is not zero —
+    #: it means this posting never reached the scorer, which is the case only
+    #: this loop can produce a label for.
+    score: float | None = None
+
+
+class LabelIn(BaseModel):
+    """A relevance grade, on `labels.RELEVANCE_SCALE`."""
+
+    posting_id: uuid.UUID
+    profile_id: uuid.UUID | None = None
+    relevance: int = Field(ge=0, le=3)
+    note: str | None = None
+
+
+class LabelOut(BaseModel):
+    """Confirmation that a grade was recorded."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    posting_id: uuid.UUID
+    relevance: int
+    note: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class LabelSummaryOut(BaseModel):
+    """Where the corpus stands against what P1 asks for.
+
+    `by_stream` is the part that matters as much as the count: labels drawn
+    only from the ranker's own shortlist carry the bias `provenance: owner`
+    is supposed to have escaped.
+    """
+
+    profile_id: uuid.UUID
+    profile: str
+    total: int
+    #: relevance grade -> count.
+    by_grade: dict[int, int] = Field(default_factory=dict)
+    #: stream -> count, over the postings graded so far.
+    by_stream: dict[str, int] = Field(default_factory=dict)
+    target: int
+    remaining: int
+    #: True once the corpus can support the metrics, not merely once it is big.
+    usable: bool = False
+    notes: list[str] = Field(default_factory=list)
+
+
 class CalibrationOut(BaseModel):
     """What the owner's swipes say the score threshold should be."""
 
