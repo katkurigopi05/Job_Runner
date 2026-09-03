@@ -1523,6 +1523,174 @@ minimum a classification decision needs.
 Neither of these produces a number on its own. They turn "this gate needs data
 that does not exist" into two commands and an afternoon.
 
+### Every path read one résumé, and two of three were unreachable
+
+`docs/BACKLOG.md` P2, and the smallest real defect in the register. Every path
+read `profile.base_resume_id`: upload a backend résumé, a data one and an ML
+one, and the application always starts from whichever the profile happens to
+point at.
+
+Silent, which is what makes it worth recording rather than just fixing.
+Nothing raises, nothing is logged, and the tailorer does its whole job — the
+guard runs, the projects are selected, the diff renders. It rewrites the wrong
+document well, and the employer receives a competent ML résumé for a backend
+role. The only way to notice is to remember which résumé the profile points
+at.
+
+`packages/matching/pick_resume.py` scores each of the owner's base résumés
+against the posting and takes the closest. Four things are load-bearing:
+
+- **Tailored rows are excluded.** They live in the same table, and a résumé
+  already bent toward another job is the one selection that would be actively
+  harmful. `tailored_for_posting_id` is the discriminator — `publish.py` sets
+  it on every tailored row including the uncacheable ones where
+  `tailored_key` is NULL, `revise.py` carries it across an owner's edit, and
+  it is a foreign key, so a tailored résumé always names a posting that
+  exists and can never read as an upload by accident.
+- **A win inside the noise is not a win.** Two résumés for adjacent roles
+  score within thousandths of each other on most postings, and letting that
+  decide would change the document an employer receives between two runs of
+  the same posting. Below `MIN_MARGIN` the profile's own `base_resume_id`
+  wins — the owner's standing choice is the tie-break, not the float.
+- **The choice is recorded and then reused.** Approving a parked application
+  re-enters the pipeline from the top, so re-deciding would let an upload
+  between the two runs swap the document the owner reviewed. Same defect as
+  `resume_pinned`, one screen earlier.
+- **It takes the posting's text, not a `Posting`.** The apply pipeline hands
+  `_tailor` a parsed page rather than a stored row — the parameter is `Any`
+  for that reason — so depending on the model would have failed on the one
+  caller that matters. Two existing tests caught it.
+
+`/review` names the résumé it started from, its reason, and the runners-up
+with their scores. A selection with no alternatives shown is unauditable, and
+this decides which document an employer reads first.
+
+The cover letter is written from the same document. A letter drafted off a
+different résumé than the one attached would contradict it.
+
+### Three thousand careers URLs, and how many are actually a problem
+
+The owner has a CSV of ~3,000 companies with careers URLs.
+`scripts/import_portals.py` already stated why they cannot simply be added:
+
+> A company whose careers page is its own site (`twilio.com/careers`) is
+> reported and skipped: we have no extractor for a bespoke page, so adding it
+> to the registry would mean a crawl cycle that fetches and parses nothing
+> every hour, forever.
+
+So the first question is not "how do we scrape 3,000 sites". It is **how many
+of them are bespoke at all** — careers URLs very often already *are* a
+Greenhouse, Lever, Ashby or Workable board, and each of those needs no new
+code: it is a registry row the existing crawler polls first-hand, through the
+rate limiter and robots.
+
+`make import-csv src=companies.csv` answers that. Four things are deliberate:
+
+- **Offline.** No network, so 3,000 rows sort in **0.02s** (measured, and
+  asserted at that size). A probe per row would make the answer depend on
+  which sites happen to be up, and turn a question worth re-asking while
+  cleaning the sheet into an hours-long crawl.
+- **The remainder is a file, not a number.** Bespoke rows are written to a CSV
+  with every original column preserved — a sheet carrying a sector or a
+  headcount keeps it, because whatever reads it next may want the biggest
+  companies first. A count tells you the size of the problem; the list is what
+  the next tool takes as input.
+- **"No URL" and "cannot read this page" are separate buckets.** They need
+  different fixes, so collapsing them would hide the cheaper one.
+- **It never writes to the registry.** `scripts/import_companies.py` appends
+  through `import_portals.append_to_registry`, so there is one door. The test
+  checks the AST rather than the source text, because the module docstring
+  names that function to say it is somebody else's job and a grep would read
+  the explanation as the violation.
+
+A link to one posting still yields the board — `board_root` anchors to the
+front page on purpose, and a hand-assembled sheet is full of deep links, so
+discarding those would count companies we *can* crawl as bespoke, which is the
+one number this exists to produce.
+
+### On Scrapling for the bespoke remainder
+
+Recorded because the library is a reasonable idea whose headline feature §2.5
+forbids outright. Its README: *"Its fetchers bypass anti-bot systems like
+Cloudflare Turnstile out of the box"*, plus a spider with *"automatic proxy
+rotation"* that *"backs off when it starts blocking you"*, and
+`StealthyFetcher.fetch(...)  # Fetch website under the radar!`. That is
+captcha bypass, bot-detection evasion and proxy rotation — three of §2.5's
+clauses, and not incidentally: it is the pitch.
+
+Its *parser* is a different matter and is BSD-3, so §3's cost rule is fine. If
+it is ever adopted it must be as a parser only, behind `PoliteFetcher`:
+Scrapling's fetchers honour neither robots.txt nor our per-host floor, so
+letting it fetch turns §2.6 from a control into a comment.
+
+Two further limits worth keeping visible:
+
+- **Adaptive selectors are wrong inside an ATS form.** Its value proposition
+  is "if the element moved, find one that looks similar". §2.2 makes
+  work-authorization answers verbatim because they have legal consequences,
+  and §2.4 says an unanswerable question parks rather than guesses. A drifted
+  selector must fail loudly, not find a plausible neighbour.
+- **It buys nothing on the boards we already read.** The crawler fetches
+  `boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true` — JSON. There
+  is no HTML to adapt to.
+
+For a bespoke careers page the higher-yield path is **JSON-LD**: career sites
+publish schema.org `JobPosting` for Google Jobs, already structured, with no
+selector to drift. That is the next build, and `seeds/bespoke_careers.csv` is
+its input.
+
+### What two outside specs were worth
+
+The owner supplied a job-tracker prompt (MERN/TypeScript LinkedIn scraper) and
+an AI-résumé-analyzer prompt (MERN + Gemini). Both are build-from-scratch
+specs for other stacks, so nearly all of it is either irrelevant here or
+already done better. Three things were not, and this records which — so the
+next person does not re-read forty pages to find out.
+
+**An assessment is its own kind of message.** The tracker's pipeline carried
+`ONLINE_ASSIGNMENT` as a stage of its own; ours had no equivalent, and the
+three commonest phrasings landed badly:
+
+    "Complete your online assessment ... within 5 days"  -> info_request
+    "Coding challenge ... Codility link. 72 hours."      -> abstained
+    "Take-home exercise ... return within a week"        -> abstained
+
+`info_request` reads as paperwork and an abstention resolves to `noise`, so
+either way the window expires while the tracker looks calm. That is a worse
+failure than a missed rejection — a rejection is already over, an assessment
+is an opportunity with a deadline. `Classification.ASSESSMENT` and
+`Outcome.ASSESSMENT` now exist, ranked above `info_requested` and below
+`interview`, because an assessment is a real advance that almost always
+precedes an interview rather than replacing one.
+
+The rule sits *before* `INTERVIEW` — an assessment invite borrows the same
+"next step" vocabulary — and every alternative names the artefact or a
+platform rather than a bare "assessment", so "we will assess your
+application" is not a coding test. The labeled 30 are unchanged at 29 correct,
+0 wrong.
+
+**Three Gemini facts worth having before a key lands**, from the analyzer
+spec's list of failures that cost someone a build. They are in
+`.env.example`: keys beginning `AQ.` are as valid as `AIzaSy...` so nothing
+should format-check them; setting `GOOGLE_API_KEY` alongside `GEMINI_API_KEY`
+makes the SDK silently prefer the former; and `GOOGLE_GENAI_USE_VERTEXAI=true`
+switches to Vertex, which wants application-default credentials instead.
+
+**A landmine in `GeminiProvider.complete_json`.** The spec's hardest-won
+lesson is that Gemini treats every schema property as optional unless named
+in `required`, and returns a partial object with no error otherwise. Pydantic's
+`model_json_schema()` already emits `required` at every level, so that half is
+covered. What it *also* emits, for a nested model, is `$defs`/`$ref` — which
+`responseSchema` has not historically resolved. No caller passes a nested
+schema today (`complete_json` has no production caller at all), so this is
+recorded at the call site rather than fixed: the first nested schema should
+check the response before trusting it.
+
+Everything else was skipped deliberately. The tracker's space-padded substring
+matching solves a problem `locality.py` already solves with word boundaries;
+its match formula is a weighted keyword count where we have embeddings plus a
+rubric; and both specs assume a greenfield MERN app.
+
 
 ### What the first real comparison showed about the tailorer
 

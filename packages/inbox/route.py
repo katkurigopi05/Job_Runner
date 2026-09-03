@@ -235,9 +235,10 @@ _OUTCOME_RANK: dict[str, int] = {
     "awaiting": 0,
     "acknowledged": 1,
     "info_requested": 2,
-    "interview": 3,
-    "rejected": 4,
-    "offer": 4,
+    "assessment": 3,
+    "interview": 4,
+    "rejected": 5,
+    "offer": 5,
 }
 
 
