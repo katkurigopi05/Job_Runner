@@ -19,10 +19,11 @@ export interface GradeResult {
 export async function recordGrade(
   postingId: string,
   relevance: number,
+  servedStream?: string,
   note?: string,
 ): Promise<GradeResult> {
   try {
-    await api.recordLabel(postingId, relevance, note);
+    await api.recordLabel(postingId, relevance, servedStream, note);
   } catch (error) {
     if (error instanceof ApiError) return { ok: false, message: error.message };
     throw error;

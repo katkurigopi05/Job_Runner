@@ -135,7 +135,7 @@ async def record_label(body: LabelIn, session: SessionDep) -> PostingLabel:
     score = await session.scalar(
         select(Match.score).where(Match.profile_id == profile.id, Match.posting_id == posting.id)
     )
-    stream = await _stream_for(session, profile.id, score)
+    stream = await _stream_for(session, profile.id, score, body.served_stream)
 
     # An upsert rather than read-then-insert. Two writes racing both saw no
     # existing row, and the unique constraint then failed one of them — so a
@@ -172,12 +172,22 @@ async def record_label(body: LabelIn, session: SessionDep) -> PostingLabel:
     return label
 
 
-async def _stream_for(session: SessionDep, profile_id: uuid.UUID, score: float | None) -> str:
-    """Which stream this posting would have come from.
+async def _stream_for(
+    session: SessionDep,
+    profile_id: uuid.UUID,
+    score: float | None,
+    served_stream: str | None = None,
+) -> str:
+    """Which stream this posting came from.
 
     Recomputed rather than taken from the client. The stream is the audit trail
     for sampling bias, and a value the caller supplies is one a caller can get
     wrong — or, on a corpus someone wants to look clean, right on purpose.
+
+    `served_stream` is the one concession, and it is deliberately one-way: it
+    can only ever make the recorded stream *weaker*, never stronger. A client
+    cannot use it to claim `unseen`; it can only withdraw the server's own
+    claim to `unseen`. Forging it costs the forger accuracy and buys nothing.
     """
     # UNSEEN means one thing only: the ranker never scored this posting. It is
     # the single fact the bias check in `/labels/summary` reads, so a scored
@@ -185,6 +195,18 @@ async def _stream_for(session: SessionDep, profile_id: uuid.UUID, score: float |
     # that would report a shortlist-only corpus as having escaped the
     # shortlist, which is the one wrong answer this column exists to prevent.
     if score is None:
+        # ...and "no score now" is not "never scored". `score.score_and_store`
+        # withdraws a stale `Match` row when a posting newly fails a hard
+        # filter, so a card served as `uncertain` can arrive here with its row
+        # already gone. Reproduced: served `uncertain`, stored `unseen`.
+        #
+        # When the screen says it was served as something else, the server
+        # cannot prove this posting was never scored, so it does not claim so.
+        # `unknown` reads as "not counted as unseen", which errs toward
+        # reporting more bias than there is — the safe direction for a number
+        # whose whole job is to certify the absence of bias.
+        if served_stream and served_stream != active.Stream.UNSEEN.value:
+            return active.Stream.UNKNOWN.value
         return active.Stream.UNSEEN.value
 
     span = await active.score_range(session, profile_id)

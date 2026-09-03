@@ -49,7 +49,11 @@ export function LabelDeck({ initial }: { initial: LabelCandidate[] }) {
       setPending(relevance);
       setError(null);
       try {
-        const result = await recordGrade(current.posting_id, relevance);
+        // The stream this card was served as. A rescore can withdraw the
+        // posting's Match row between serving and grading, and without this
+        // the server would see no score and record `unseen` — inflating the
+        // one number that certifies the corpus escaped the shortlist bias.
+        const result = await recordGrade(current.posting_id, relevance, current.stream);
         if (!result.ok) {
           setError(result.message);
           return;

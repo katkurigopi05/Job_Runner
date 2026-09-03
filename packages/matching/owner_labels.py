@@ -79,6 +79,13 @@ class OwnerReport:
                 "  One grade only — every metric is degenerate until the corpus "
                 "disagrees with itself somewhere."
             )
+        unknown = self.streams.get(Stream.UNKNOWN.value, 0)
+        if unknown:
+            lines.append(
+                f"  {unknown} label(s) with an unrecoverable stream: the posting's "
+                "score was withdrawn between serving and grading, so they are not "
+                "counted as unseen."
+            )
         if self.total and not self.streams.get(Stream.UNSEEN.value):
             lines.append(
                 "  No labels from the unseen stream. This corpus can only measure "

@@ -66,6 +66,14 @@ class Stream(StrEnum):
     UNCERTAIN = "uncertain"
     UNSEEN = "unseen"
     CONFIDENT = "confident"
+    #: Never served — recorded when the server cannot prove which stream a
+    #: posting came from. A rescore between serving a card and grading it can
+    #: withdraw the posting's `Match` row (`score.score_and_store` deletes a
+    #: stale row that carries nothing of the owner's), and the recompute would
+    #: then see no score and claim `unseen`. `unseen` is the number that
+    #: certifies the corpus escaped the shortlist, so over-claiming it is the
+    #: one error that matters. This is what we say instead.
+    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True)

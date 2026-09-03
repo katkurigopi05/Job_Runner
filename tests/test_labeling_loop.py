@@ -428,3 +428,82 @@ async def test_the_export_report_names_the_stream_mix(
 
     assert "streams:" in report.summary()
     assert "unseen stream" in report.summary()
+
+
+async def test_a_withdrawn_score_is_not_counted_as_unseen(
+    client: AsyncClient, worker_session: AsyncSession, corpus
+) -> None:
+    """`score.score_and_store` deletes a stale `Match` row when a posting newly
+    fails a hard filter. So a card served as `uncertain` can reach the grade
+    with its row already gone, and the recompute would see no score and record
+    `unseen` — inflating the one number that certifies the corpus escaped the
+    shortlist bias. Reproduced before the fix: served `uncertain`, stored
+    `unseen`.
+
+    `unknown` is the honest answer: not proven unseen, so not counted as it.
+    """
+    served = (await client.get("/labels/next", params={"size": 10})).json()
+    target = next(c for c in served if c["stream"] != active.Stream.UNSEEN.value)
+
+    stale = await worker_session.scalar(
+        select(Match).where(Match.posting_id == uuid.UUID(target["posting_id"]))
+    )
+    await worker_session.delete(stale)
+    await worker_session.commit()
+
+    await client.post(
+        "/labels",
+        json={
+            "posting_id": target["posting_id"],
+            "relevance": 2,
+            "served_stream": target["stream"],
+        },
+    )
+
+    stored = await worker_session.scalar(
+        select(PostingLabel).where(PostingLabel.posting_id == uuid.UUID(target["posting_id"]))
+    )
+    assert stored is not None
+    assert stored.stream == active.Stream.UNKNOWN.value
+
+    summary = (await client.get("/labels/summary")).json()
+    assert not summary["by_stream"].get(active.Stream.UNSEEN.value)
+
+
+async def test_the_hint_can_never_be_used_to_claim_unseen(
+    client: AsyncClient, worker_session: AsyncSession, corpus
+) -> None:
+    """`served_stream` is one-way. A client claiming `unseen` for a posting the
+    ranker did score gets the server's answer, not its own — otherwise the hint
+    would be a way to manufacture the very coverage it exists to protect."""
+    posting_id = corpus["scored"][0]
+
+    await client.post(
+        "/labels",
+        json={"posting_id": posting_id, "relevance": 2, "served_stream": "unseen"},
+    )
+
+    stored = await worker_session.scalar(
+        select(PostingLabel).where(PostingLabel.posting_id == uuid.UUID(posting_id))
+    )
+    assert stored is not None
+    assert stored.stream != active.Stream.UNSEEN.value
+
+
+async def test_a_genuinely_unseen_posting_is_still_recorded_as_unseen(
+    client: AsyncClient, worker_session: AsyncSession, corpus
+) -> None:
+    """The fail-safe must not cost the real thing. A posting the ranker never
+    scored, graded with the hint the screen actually showed, still counts."""
+    posting_id = corpus["unscored"][0]
+
+    await client.post(
+        "/labels",
+        json={"posting_id": posting_id, "relevance": 3, "served_stream": "unseen"},
+    )
+
+    stored = await worker_session.scalar(
+        select(PostingLabel).where(PostingLabel.posting_id == uuid.UUID(posting_id))
+    )
+    assert stored is not None
+    assert stored.stream == active.Stream.UNSEEN.value
