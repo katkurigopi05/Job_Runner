@@ -255,3 +255,46 @@ def test_three_thousand_rows_are_sorted_without_the_network(tmp_path: Path) -> N
     assert len(report.promotable) == 2000
     assert len(report.bespoke) == 1000
     assert dict(report.by_vendor) == {"greenhouse": 1000, "lever": 1000}
+
+
+# --------------------------------------------------------------------------
+# The portal importer shares this matcher
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://apply.workable.com/acme", "https://jobs.workable.com/acme"],
+)
+def test_the_portal_importer_recognises_workable(url: str) -> None:
+    """It did not, for as long as `packages/ats/workable.py` has existed.
+
+    `import_portals.identify` carried its own three-pattern list — Greenhouse,
+    Lever, Ashby — so every Workable company in a portal list was filed as "a
+    bespoke careers page we have no extractor for". A company we can both
+    crawl and apply to, skipped for no reason. It delegates here now.
+    """
+    from scripts.import_portals import identify
+
+    assert identify(url) == ("workable", "acme")
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://boards-api.greenhouse.io/v1/boards/stripe/jobs", ("greenhouse", "stripe")),
+        ("https://api.lever.co/v0/postings/globex", ("lever", "globex")),
+    ],
+)
+def test_the_api_endpoint_forms_still_resolve(url: str, expected: tuple[str, str]) -> None:
+    """A portal list carries API endpoints, which a careers-page matcher has
+    no reason to know. Delegating must not lose them."""
+    from scripts.import_portals import identify
+
+    assert identify(url) == expected
+
+
+def test_a_bespoke_page_is_still_unidentified() -> None:
+    from scripts.import_portals import identify
+
+    assert identify("https://twilio.com/careers") is None

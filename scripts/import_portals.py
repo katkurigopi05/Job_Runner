@@ -37,6 +37,7 @@ from pathlib import Path
 
 import yaml
 
+from packages.crawler.company_csv import classify_url
 from packages.crawler.extract import CompanySeed, default_seed_path, load_seed
 
 #: Board URLs we can read an ATS and a slug out of. Ordered most specific
@@ -72,14 +73,32 @@ class Skipped:
 
 
 def identify(*urls: str | None) -> tuple[str, str] | None:
-    """Read `(ats, slug)` off the first URL that is a board we support."""
+    """Read `(ats, slug)` off the first URL that is a board we support.
+
+    Two matchers, in order. `_PATTERNS` above covers the *API* endpoint forms
+    a portal list carries (`boards-api.greenhouse.io/v1/boards/{slug}`,
+    `api.lever.co/v0/postings/{slug}`), which a careers-page matcher has no
+    reason to know about. `company_csv.classify_url` covers the human-facing
+    board URLs, including Workable and links to a single posting.
+
+    Workable is why this delegates rather than growing a fourth pattern.
+    `packages/ats/workable.py` has existed the whole time and this list never
+    mentioned it, so every Workable company in a portal list was silently
+    filed as "bespoke careers page we cannot read" — a company we can both
+    crawl and apply to, skipped for no reason. One matcher is how that stops
+    happening again.
+    """
     for url in urls:
         if not url:
             continue
+        cleaned = url.strip()
         for ats, pattern in _PATTERNS:
-            match = pattern.match(url.strip())
+            match = pattern.match(cleaned)
             if match:
                 return ats, match.group("slug")
+        found = classify_url(cleaned)
+        if found:
+            return found
     return None
 
 
