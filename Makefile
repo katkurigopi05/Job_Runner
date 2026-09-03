@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching export-labels import-csv import-mail score-mail review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
+        bench-matching export-labels import-csv probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
 
 PY := .venv/bin
 
@@ -169,8 +169,14 @@ gate-3: gate-0
 
 # Gate 5 — CLAUDE.md §9. A full cycle inside the rate limit, a second run
 # emitting zero postings, and hand-labeled postings ranking sanely.
+#
+# The JSON-LD suites are in for the reason the tailored-résumé one is in
+# gate-3: they assert wiring the module's own tests cannot see — that the
+# crawler reaches a bespoke page at all, and that validation does not condemn
+# every live one.
 gate-5: gate-0
-	REQUIRE_DB=1 $(PY)/pytest -q tests/test_crawler.py tests/test_matching.py
+	REQUIRE_DB=1 $(PY)/pytest -q tests/test_crawler.py tests/test_matching.py \
+	  tests/test_jsonld.py tests/test_bespoke_probe.py
 	@echo "gate-5 passed"
 
 # Gate 4 — CLAUDE.md §9. A full apply-to-review cycle driven by tool calls
@@ -251,6 +257,19 @@ export-labels:
 import-csv:
 	@test -n "$(src)" || (echo "set src=<companies.csv>" && exit 1)
 	$(PY)/python -m scripts.import_companies "$(src)" $(if $(out),--out $(out),) $(if $(write),--write,)
+
+# The other end of import-csv. Fetches each bespoke careers page once and asks
+# whether it publishes schema.org JobPosting data; only the pages that answer
+# become registry rows, because a page with none is a crawl cycle that parses
+# nothing forever. Needs network egress, like validate-seeds.
+#   make probe-bespoke n=50        sample first
+#   make probe-bespoke write=1     promote the ones that publish
+# `filter 1` rather than `$(if $(write),...)`: make reads any nonempty value as
+# true, so `write=0` passed --write and mutated the registry. Strict, and it
+# fails safe — an unrecognised value reports instead of writing, and the script
+# prints "report only — pass write=1" so a typo is visible rather than silent.
+probe-bespoke:
+	$(PY)/python -m scripts.probe_bespoke $(if $(csv),--csv $(csv),) $(if $(n),-n $(n),) $(if $(filter 1,$(write)),--write,)
 
 import-mail:
 	@test -n "$(src)" || (echo "set src=<mbox|eml|dir>" && exit 1)

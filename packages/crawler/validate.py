@@ -19,8 +19,9 @@ from pathlib import Path
 import structlog
 import yaml
 
-from packages.crawler.extract import CompanySeed, extractor_for, load_seed
+from packages.crawler.extract import JSONLD_ATS, CompanySeed, extractor_for, load_seed
 from packages.crawler.fetch import Blocked, FetchResult, PoliteFetcher, build_fetcher
+from packages.crawler.jsonld import job_postings
 
 log = structlog.get_logger(__name__)
 
@@ -36,6 +37,10 @@ _BOARD_MARKERS = ("<title", "greenhouse", "open position", "open role", "/jobs/"
 class SeedState(StrEnum):
     API = "api"
     RENDERED_ONLY = "rendered_only"
+    #: A bespoke careers page still publishing schema.org JobPosting data.
+    #: Separate from API because the stamp is read months later and "api" on a
+    #: company's own careers page would describe something that never existed.
+    STRUCTURED = "structured"
     MISSING = "missing"
     OTHER_ATS = "other_ats"
     #: robots.txt said no, or could not be read. Not a verdict on the slug.
@@ -50,6 +55,18 @@ class SeedValidation:
     state: SeedState
     api_status: int | None = None
     rendered_status: int | None = None
+
+
+def _page_publishes_jobs(response: FetchResult) -> bool:
+    """A bespoke careers page is alive when it still publishes JobPosting data.
+
+    `_api_is_board` cannot answer this: a careers page returns HTML, so a live
+    one would read as MISSING and the sweep would condemn every entry it was
+    added to check. What makes a `jsonld` seed dead is the page having stopped
+    publishing structured data — the same thing that makes the crawler stop
+    finding jobs there — so that is what is measured.
+    """
+    return bool(response.ok and job_postings(response.text))
 
 
 def _api_is_board(response: FetchResult) -> bool:
@@ -90,6 +107,13 @@ async def validate_seeds(seeds: list[CompanySeed], fetcher: PoliteFetcher) -> li
             log.info("seed_validation_blocked", company=seed.name, reason=str(exc))
             results.append(SeedValidation(seed.name, seed.slug, seed.ats, SeedState.BLOCKED))
             continue
+        if seed.ats == JSONLD_ATS:
+            state = SeedState.STRUCTURED if _page_publishes_jobs(api) else SeedState.MISSING
+            results.append(
+                SeedValidation(seed.name, seed.slug, seed.ats, state, api_status=api.status)
+            )
+            continue
+
         if _api_is_board(api):
             results.append(
                 SeedValidation(

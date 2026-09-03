@@ -1636,8 +1636,62 @@ Two further limits worth keeping visible:
 
 For a bespoke careers page the higher-yield path is **JSON-LD**: career sites
 publish schema.org `JobPosting` for Google Jobs, already structured, with no
-selector to drift. That is the next build, and `seeds/bespoke_careers.csv` is
-its input.
+selector to drift. ~~That is the next build~~ — built, below.
+
+### Reading a bespoke careers page
+
+`packages/crawler/jsonld.py` is that extractor, and `seeds/bespoke_careers.csv`
+— the remainder `make import-csv` writes — is its input.
+
+Structured data rather than selectors because career sites publish
+`JobPosting` **so that machines read it**: it is what Google Jobs indexes, and
+a site that wants its roles found keeps it accurate. That makes it the one
+part of a bespoke page with a stable contract. §15 already records what the
+alternative costs — a Greenhouse fixture had native `<select>` while the live
+board had moved to react-select, and the suite stayed green while the adapter
+misread every dropdown. Multiply that by three thousand sites and it is not a
+maintenance burden, it is the whole project.
+
+Four things are load-bearing:
+
+- **A page with no JSON-LD yields nothing, and that is the answer.** Not a
+  reason to start guessing at markup. The count of pages that yield nothing is
+  the measurement that says whether a second strategy — sitemaps, then
+  rendered HTML — is worth building, and `make probe-bespoke` is what produces
+  that count.
+- **`import_portals.py`'s rule survives having an extractor.** It refused
+  bespoke pages because "adding it to the registry would mean a crawl cycle
+  that fetches and parses nothing every hour, forever". A page that publishes
+  no structured data is still exactly that, so `make probe-bespoke` promotes
+  only the pages that answered — and a board yielding zero postings reads
+  identically to a board with nothing new, which is the failure §9 Phase 5
+  already recorded for the 21 dead Greenhouse slugs.
+- **A fetch failure is not a verdict.** Blocked by robots, a 403, a timeout:
+  each is its own state and none of them promotes or retires anything. A site
+  that is down this afternoon is not a site without structured data, and
+  `make validate-seeds` treats a `jsonld` seed the same way — it asks whether
+  the page still publishes, because a careers page returns HTML and the JSON
+  board check would condemn every live one.
+- **A `jsonld` seed's slug is its page URL.** The four board APIs derive their
+  URL from a company slug; a bespoke page has no such rule, the address *is*
+  the identity. Carrying it in `slug` rather than special-casing the crawler
+  keeps `(ats, slug)` the de-duplication key it already is in `discover.py`,
+  `import_companies.py` and `import_portals.py`. It is deliberately kept out
+  of `EXTRACTORS` for the mirror-image reason: callers that iterate that dict
+  build a URL from a slug, which is the one question this extractor cannot
+  answer.
+
+Nothing here fetches. `PoliteFetcher` gets the bytes, because it is what
+enforces robots.txt and the per-host floor (§2.6), and an extractor that
+fetched for itself would route around both. The floor costs nothing on this
+sweep — thousands of *distinct* hosts, one request each, so no two are ever
+serialized behind one counter.
+
+**Not built, and worth stating rather than implying.** There is no sitemap
+path: a site that publishes `JobPosting` only on individual posting pages,
+with none on the index, still reads as empty. And the sweep needs network
+egress from the owner's machine, like `make validate-seeds` — so how many of
+the ~3,000 bespoke pages actually publish is, today, an unmeasured number.
 
 ### What two outside specs were worth
 
