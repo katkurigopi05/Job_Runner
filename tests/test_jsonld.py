@@ -445,3 +445,21 @@ def test_one_unreadable_posting_does_not_lose_the_others() -> None:
     titles = {p.title for p in extract(_page(hostile, good), page_url=PAGE_URL)}
 
     assert "Data Engineer" in titles
+
+
+def test_a_deeply_nested_block_is_skipped_and_the_page_survives() -> None:
+    """`json.loads` and `_walk` both recurse, and the json module sets no
+    nesting limit of its own — it inherits the interpreter's. So deeply nested
+    JSON-LD raises `RecursionError` rather than parsing, and that is not a
+    decode error: it escaped the `JSONDecodeError` guard entirely. Since
+    `bespoke.probe_page` calls `extract` outside its own try, one such page
+    would have ended a sweep of thousands."""
+    deep = "[" * 20_000 + "]" * 20_000
+    page = (
+        "<html><head>"
+        f'<script type="application/ld+json">{deep}</script>'
+        f'<script type="application/ld+json">{json.dumps(BASIC)}</script>'
+        "</head><body></body></html>"
+    )
+
+    assert [p.title for p in extract(page, page_url=PAGE_URL)] == ["Senior Backend Engineer"]
