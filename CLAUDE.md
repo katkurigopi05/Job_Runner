@@ -1626,3 +1626,55 @@ publish schema.org `JobPosting` for Google Jobs, already structured, with no
 selector to drift. That is the next build, and `seeds/bespoke_careers.csv` is
 its input.
 
+### What two outside specs were worth
+
+The owner supplied a job-tracker prompt (MERN/TypeScript LinkedIn scraper) and
+an AI-résumé-analyzer prompt (MERN + Gemini). Both are build-from-scratch
+specs for other stacks, so nearly all of it is either irrelevant here or
+already done better. Three things were not, and this records which — so the
+next person does not re-read forty pages to find out.
+
+**An assessment is its own kind of message.** The tracker's pipeline carried
+`ONLINE_ASSIGNMENT` as a stage of its own; ours had no equivalent, and the
+three commonest phrasings landed badly:
+
+    "Complete your online assessment ... within 5 days"  -> info_request
+    "Coding challenge ... Codility link. 72 hours."      -> abstained
+    "Take-home exercise ... return within a week"        -> abstained
+
+`info_request` reads as paperwork and an abstention resolves to `noise`, so
+either way the window expires while the tracker looks calm. That is a worse
+failure than a missed rejection — a rejection is already over, an assessment
+is an opportunity with a deadline. `Classification.ASSESSMENT` and
+`Outcome.ASSESSMENT` now exist, ranked above `info_requested` and below
+`interview`, because an assessment is a real advance that almost always
+precedes an interview rather than replacing one.
+
+The rule sits *before* `INTERVIEW` — an assessment invite borrows the same
+"next step" vocabulary — and every alternative names the artefact or a
+platform rather than a bare "assessment", so "we will assess your
+application" is not a coding test. The labeled 30 are unchanged at 29 correct,
+0 wrong.
+
+**Three Gemini facts worth having before a key lands**, from the analyzer
+spec's list of failures that cost someone a build. They are in
+`.env.example`: keys beginning `AQ.` are as valid as `AIzaSy...` so nothing
+should format-check them; setting `GOOGLE_API_KEY` alongside `GEMINI_API_KEY`
+makes the SDK silently prefer the former; and `GOOGLE_GENAI_USE_VERTEXAI=true`
+switches to Vertex, which wants application-default credentials instead.
+
+**A landmine in `GeminiProvider.complete_json`.** The spec's hardest-won
+lesson is that Gemini treats every schema property as optional unless named
+in `required`, and returns a partial object with no error otherwise. Pydantic's
+`model_json_schema()` already emits `required` at every level, so that half is
+covered. What it *also* emits, for a nested model, is `$defs`/`$ref` — which
+`responseSchema` has not historically resolved. No caller passes a nested
+schema today (`complete_json` has no production caller at all), so this is
+recorded at the call site rather than fixed: the first nested schema should
+check the response before trusting it.
+
+Everything else was skipped deliberately. The tracker's space-padded substring
+matching solves a problem `locality.py` already solves with word boundaries;
+its match formula is a weighted keyword count where we have embeddings plus a
+rubric; and both specs assume a greenfield MERN app.
+

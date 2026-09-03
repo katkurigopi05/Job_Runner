@@ -392,6 +392,16 @@ class GeminiProvider:
                         "contents": [{"parts": [{"text": user}]}],
                         "generationConfig": {
                             "responseMimeType": "application/json",
+                            # Pydantic emits `required` at every object level,
+                            # which Gemini needs — without it every property is
+                            # optional and a partial object comes back with no
+                            # error. What it also emits is `$defs`/`$ref` for a
+                            # *nested* model, and `responseSchema` has not
+                            # historically resolved those. No caller passes a
+                            # nested schema today, so this is a landmine rather
+                            # than a bug: the first one that does should check
+                            # the response before trusting it, and inline the
+                            # definitions if Gemini rejects the reference.
                             "responseSchema": schema.model_json_schema(),
                             "temperature": JSON_TEMPERATURE,
                         },

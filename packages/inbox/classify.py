@@ -107,6 +107,31 @@ RULES: tuple[tuple[Classification, re.Pattern[str]], ...] = (
             re.I,
         ),
     ),
+    # Before INTERVIEW: an assessment invite borrows the same vocabulary
+    # ("next step", "move forward"), so the more specific rule has to win.
+    #
+    # This is the one inbound message with a clock on it — 72 hours, five days
+    # — and before it had a class of its own the three commonest phrasings
+    # landed as `info_request` (reads as paperwork) or abstained to `noise`
+    # (never surfaces). Either way the window expires while the tracker looks
+    # calm, which is a worse failure than a missed rejection: a rejection is
+    # already over, an assessment is an opportunity with a deadline.
+    #
+    # Every alternative names the artefact or a platform, never a bare
+    # "assessment" — "we will assess your application" is not a coding test.
+    (
+        Classification.ASSESSMENT,
+        re.compile(
+            r"\b(?:online|technical|coding|skills?|aptitude|screening)\s+"
+            r"(?:assessment|challenge|test|exercise)\b"
+            r"|\b(?:assessment|coding challenge|coding test)\s+(?:link|invitation|invite)\b"
+            r"|\bcomplete\s+(?:the|your)\s+(?:online\s+)?assessment\b"
+            r"|\btake[- ]home\s+(?:assignment|exercise|test|challenge|project)\b"
+            r"|\b(?:hackerrank|codility|codesignal|karat|coderbyte|woven|devskiller"
+            r"|testgorilla|hackerearth)\b",
+            re.I,
+        ),
+    ),
     (
         Classification.OTP,
         re.compile(

@@ -51,6 +51,10 @@ class Outcome(StrEnum):
     REJECTED = "rejected"
     #: They asked the applicant for something.
     INFO_REQUESTED = "info_requested"
+    #: A timed exercise — HackerRank, Codility, a take-home. Ranked above
+    #: `info_requested` because it is a real advance in the process, and below
+    #: `interview` because it almost always precedes one.
+    ASSESSMENT = "assessment"
 
 
 class Classification(StrEnum):
@@ -60,6 +64,13 @@ class Classification(StrEnum):
     REJECTION = "rejection"
     OFFER = "offer"
     INFO_REQUEST = "info_request"
+    #: An online assessment, coding challenge or take-home.
+    #:
+    #: Its own class because it is the one inbound message with a *clock* on
+    #: it. Filed as `info_request` — where it landed before — it reads as
+    #: paperwork; abstaining sends it to `noise` and the owner never sees it.
+    #: Either way a 72-hour window expires while the tracker looks calm.
+    ASSESSMENT = "assessment"
     ACKNOWLEDGEMENT = "acknowledgement"
     #: A verification code — the one kind that legitimately moves status.
     OTP = "otp"
@@ -73,6 +84,7 @@ OUTCOME_FOR_CLASSIFICATION: dict[Classification, Outcome] = {
     Classification.REJECTION: Outcome.REJECTED,
     Classification.OFFER: Outcome.OFFER,
     Classification.INFO_REQUEST: Outcome.INFO_REQUESTED,
+    Classification.ASSESSMENT: Outcome.ASSESSMENT,
     Classification.ACKNOWLEDGEMENT: Outcome.ACKNOWLEDGED,
 }
 
