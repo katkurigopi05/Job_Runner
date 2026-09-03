@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Posting, PostingLabel, Profile
+from packages.matching.active import Stream
 from packages.matching.labels import RELEVANCE_SCALE, LabeledPosting, LabeledSet, Provenance
 
 #: `docs/BACKLOG.md` P1's "done when": below this the set cannot support a
@@ -41,14 +42,26 @@ class OwnerReport:
     profile: str
     total: int
     grades: dict[int, int] = field(default_factory=dict)
+    #: Stream -> count, with a zero for every stream that produced nothing.
+    #: Reported rather than merely stored: this is the export's own view of
+    #: whether the corpus escaped the shortlist, and a count of labels cannot
+    #: show it.
+    streams: dict[str, int] = field(default_factory=dict)
 
     @property
     def graded_classes(self) -> int:
+        """How many distinct grades appear. Below two, every metric is
+        degenerate however many labels there are."""
         return sum(1 for count in self.grades.values() if count)
 
     def summary(self) -> str:
+        """The count, the grade spread, and the stream mix — the third being
+        the one a count cannot substitute for."""
         spread = ", ".join(f"{g}:{self.grades.get(g, 0)}" for g in sorted(RELEVANCE_SCALE))
+        by_stream = ", ".join(f"{name}:{count}" for name, count in sorted(self.streams.items()))
         lines = [f"{self.profile}: {self.total} owner-graded postings ({spread})"]
+        if self.streams:
+            lines.append(f"  streams: {by_stream}")
 
         if self.total < MIN_USEFUL_LABELS:
             lines.append(
@@ -65,6 +78,19 @@ class OwnerReport:
             lines.append(
                 "  One grade only — every metric is degenerate until the corpus "
                 "disagrees with itself somewhere."
+            )
+        unknown = self.streams.get(Stream.UNKNOWN.value, 0)
+        if unknown:
+            lines.append(
+                f"  {unknown} label(s) with an unrecoverable stream: the posting's "
+                "score was withdrawn between serving and grading, so they are not "
+                "counted as unseen."
+            )
+        if self.total and not self.streams.get(Stream.UNSEEN.value):
+            lines.append(
+                "  No labels from the unseen stream. This corpus can only measure "
+                "postings the ranker already surfaced — the bias `provenance: owner` "
+                "is supposed to mean it escaped."
             )
         return "\n".join(lines)
 
@@ -103,9 +129,11 @@ async def export_owner_labels(
 
     items: list[LabeledPosting] = []
     grades: dict[int, int] = dict.fromkeys(RELEVANCE_SCALE, 0)
+    streams: dict[str, int] = {stream.value: 0 for stream in Stream}
 
     for label, posting in rows:
         grades[label.relevance] = grades.get(label.relevance, 0) + 1
+        streams[label.stream or "unknown"] = streams.get(label.stream or "unknown", 0) + 1
         items.append(
             LabeledPosting(
                 key=_key(posting),
@@ -120,7 +148,7 @@ async def export_owner_labels(
             )
         )
 
-    report = OwnerReport(profile=profile.label, total=len(items), grades=grades)
+    report = OwnerReport(profile=profile.label, total=len(items), grades=grades, streams=streams)
     if not items:
         return None, report
 

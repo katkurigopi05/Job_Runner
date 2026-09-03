@@ -644,10 +644,19 @@ export const api = {
   labelQueue: (size: number) =>
     request<LabelCandidate[]>(`/labels/next?size=${size}`),
   labelSummary: () => request<LabelSummary>("/labels/summary"),
-  recordLabel: (postingId: string, relevance: number, note?: string) =>
+  /**
+   * `servedStream` is a hint the server may only use to *weaken* the recorded
+   * stream, never to strengthen it — it cannot be used to claim `unseen`.
+   */
+  recordLabel: (postingId: string, relevance: number, servedStream?: string, note?: string) =>
     request<{ id: string; posting_id: string; relevance: number }>("/labels", {
       method: "POST",
-      body: JSON.stringify({ posting_id: postingId, relevance, note: note ?? null }),
+      body: JSON.stringify({
+        posting_id: postingId,
+        relevance,
+        note: note ?? null,
+        served_stream: servedStream ?? null,
+      }),
     }),
   digest: () => request<Digest>("/analytics/digest"),
   matchSummary: () => request<MatchSummary>("/matches/summary"),

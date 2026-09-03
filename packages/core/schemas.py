@@ -793,6 +793,10 @@ class LabelIn(BaseModel):
     profile_id: uuid.UUID | None = None
     relevance: int = Field(ge=0, le=3)
     note: str | None = None
+    #: The stream `/labels/next` said served this card. A hint, never a
+    #: instruction: the server recomputes, and this value can only ever make
+    #: the recorded stream *weaker* — see `_stream_for`. Omitting it is safe.
+    served_stream: str | None = None
 
 
 class LabelOut(BaseModel):

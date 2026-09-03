@@ -230,8 +230,15 @@ async def test_the_summary_warns_when_no_unseen_posting_has_been_graded(
 
 
 async def test_the_summary_reports_the_stream_mix(client: AsyncClient, corpus) -> None:
+    """The mix is reported beside the count because they answer different
+    questions, and only one of them can show a shortlist-only corpus."""
     await client.post("/labels", json={"posting_id": corpus["scored"][0], "relevance": 1})
-    await client.post("/labels", json={"posting_id": corpus["unscored"][0], "relevance": 0})
+    # With the hint, as the grading screen sends it: `unseen` is claimed only
+    # when a serve attests it.
+    await client.post(
+        "/labels",
+        json={"posting_id": corpus["unscored"][0], "relevance": 0, "served_stream": "unseen"},
+    )
 
     summary = (await client.get("/labels/summary")).json()
 
@@ -266,7 +273,10 @@ async def test_grades_export_as_owner_not_feedback(
     from packages.matching.owner_labels import export_owner_labels
 
     await client.post("/labels", json={"posting_id": corpus["scored"][0], "relevance": 3})
-    await client.post("/labels", json={"posting_id": corpus["unscored"][0], "relevance": 0})
+    await client.post(
+        "/labels",
+        json={"posting_id": corpus["unscored"][0], "relevance": 0, "served_stream": "unseen"},
+    )
 
     profile = await worker_session.get(Profile, uuid.UUID(corpus["profile_id"]))
     assert profile is not None
@@ -294,3 +304,238 @@ async def test_an_empty_corpus_exports_nothing_rather_than_an_empty_set(
 
     assert labeled is None
     assert report.total == 0
+
+
+# --------------------------------------------------------------------------
+# Review findings on #76, each reproduced before it was fixed
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("size", [1, 2, 3, 4, 5, 7, 10, 20, 50])
+def test_the_quota_always_sums_to_the_batch_size(size: int) -> None:
+    """Rounding each share independently over-allocated on every size that is
+    not a multiple of the mix, and the caller truncated the tail. `size=4` gave
+    `2+2+1` and lost `confident`; `size=1` gave `1+1+1` and left uncertain
+    alone — the shortlist bias arriving through an arithmetic bug."""
+    quota = active._quota(size)
+
+    assert sum(quota.values()) == size
+    assert all(count >= 0 for count in quota.values())
+
+
+def test_every_stream_gets_a_slot_once_the_batch_can_hold_them() -> None:
+    """Below three there are not enough slots and the shares decide. At three
+    and above, a batch that silently carried only one stream would be the
+    failure this module exists to prevent."""
+    for size in range(len(active.STREAM_MIX), 30):
+        quota = active._quota(size)
+        assert all(count >= 1 for count in quota.values()), size
+
+
+async def test_the_stored_stream_matches_the_stream_that_served_it(
+    client: AsyncClient, worker_session: AsyncSession, complete_candidate
+) -> None:
+    """With one scored posting the range is flat, so `_uncertain` returns
+    nothing and `_confident` is what served the card. The recorded stream said
+    `uncertain` — and the recorded one is the audit trail, so it was the copy
+    that lied."""
+    profile_id = uuid.UUID(complete_candidate["profile_id"])
+    posting = Posting(url="https://boards.greenhouse.io/acme/jobs/flat", title="Only Role")
+    worker_session.add(posting)
+    await worker_session.flush()
+    worker_session.add(Match(profile_id=profile_id, posting_id=posting.id, score=0.4))
+    await worker_session.commit()
+
+    served = (await client.get("/labels/next", params={"size": 10})).json()
+    await client.post("/labels", json={"posting_id": served[0]["posting_id"], "relevance": 2})
+
+    stored = await worker_session.scalar(
+        select(PostingLabel).where(PostingLabel.posting_id == posting.id)
+    )
+    assert stored is not None
+    assert stored.stream == served[0]["stream"]
+
+
+async def test_two_grades_racing_the_same_posting_both_succeed(
+    client: AsyncClient, worker_session: AsyncSession, corpus
+) -> None:
+    """Read-then-insert let two writes both see no row, and the unique
+    constraint then failed one — so a double-tap returned an error instead of
+    a grade. Key auto-repeat makes that easy to hit."""
+    import asyncio
+
+    posting_id = corpus["scored"][0]
+    first, second = await asyncio.gather(
+        client.post("/labels", json={"posting_id": posting_id, "relevance": 1}),
+        client.post("/labels", json={"posting_id": posting_id, "relevance": 3}),
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    rows = (
+        await worker_session.scalars(
+            select(PostingLabel).where(PostingLabel.posting_id == uuid.UUID(posting_id))
+        )
+    ).all()
+    assert len(rows) == 1
+
+
+async def test_a_re_grade_does_not_restate_what_the_ranker_thought(
+    client: AsyncClient, worker_session: AsyncSession, corpus
+) -> None:
+    """`score_at_label` and `stream` describe the moment of the *first* grade.
+    Re-scoring moves the score, and letting a re-grade overwrite them would
+    quietly rewrite the history the measurement rests on."""
+    posting_id = corpus["scored"][0]
+    await client.post("/labels", json={"posting_id": posting_id, "relevance": 1})
+
+    stored = await worker_session.scalar(
+        select(PostingLabel).where(PostingLabel.posting_id == uuid.UUID(posting_id))
+    )
+    assert stored is not None
+    original_score, original_stream = stored.score_at_label, stored.stream
+
+    await client.post("/labels", json={"posting_id": posting_id, "relevance": 3})
+    await worker_session.refresh(stored)
+
+    assert stored.relevance == 3
+    assert stored.score_at_label == original_score
+    assert stored.stream == original_stream
+
+
+async def test_a_corpus_with_no_unseen_label_is_never_called_usable(
+    client: AsyncClient, corpus
+) -> None:
+    """The predicate, not just a note beside it. A hundred labels with two
+    grades and no `unseen` is the corpus this loop was built to avoid, and
+    calling it usable would send the owner to export it."""
+    for i, posting_id in enumerate(corpus["scored"]):
+        await client.post("/labels", json={"posting_id": posting_id, "relevance": i % 2})
+
+    summary = (await client.get("/labels/summary")).json()
+
+    assert summary["total"] == len(corpus["scored"])
+    assert not summary["by_stream"].get(active.Stream.UNSEEN.value)
+    assert not summary["usable"]
+
+
+async def test_the_export_report_names_the_stream_mix(
+    client: AsyncClient, worker_session: AsyncSession, corpus
+) -> None:
+    """`make export-labels` prints this, and a count of labels cannot show
+    whether the corpus escaped the shortlist."""
+    from packages.core.models import Profile
+    from packages.matching.owner_labels import export_owner_labels
+
+    await client.post("/labels", json={"posting_id": corpus["scored"][0], "relevance": 2})
+
+    profile = await worker_session.get(Profile, uuid.UUID(corpus["profile_id"]))
+    assert profile is not None
+    _, report = await export_owner_labels(worker_session, profile)
+
+    assert "streams:" in report.summary()
+    assert "unseen stream" in report.summary()
+
+
+async def test_a_withdrawn_score_is_not_counted_as_unseen(
+    client: AsyncClient, worker_session: AsyncSession, corpus
+) -> None:
+    """`score.score_and_store` deletes a stale `Match` row when a posting newly
+    fails a hard filter. So a card served as `uncertain` can reach the grade
+    with its row already gone, and the recompute would see no score and record
+    `unseen` — inflating the one number that certifies the corpus escaped the
+    shortlist bias. Reproduced before the fix: served `uncertain`, stored
+    `unseen`.
+
+    `unknown` is the honest answer: not proven unseen, so not counted as it.
+    """
+    served = (await client.get("/labels/next", params={"size": 10})).json()
+    target = next(c for c in served if c["stream"] != active.Stream.UNSEEN.value)
+
+    stale = await worker_session.scalar(
+        select(Match).where(Match.posting_id == uuid.UUID(target["posting_id"]))
+    )
+    await worker_session.delete(stale)
+    await worker_session.commit()
+
+    await client.post(
+        "/labels",
+        json={
+            "posting_id": target["posting_id"],
+            "relevance": 2,
+            "served_stream": target["stream"],
+        },
+    )
+
+    stored = await worker_session.scalar(
+        select(PostingLabel).where(PostingLabel.posting_id == uuid.UUID(target["posting_id"]))
+    )
+    assert stored is not None
+    assert stored.stream == active.Stream.UNKNOWN.value
+
+    summary = (await client.get("/labels/summary")).json()
+    assert not summary["by_stream"].get(active.Stream.UNSEEN.value)
+
+
+async def test_the_hint_can_never_be_used_to_claim_unseen(
+    client: AsyncClient, worker_session: AsyncSession, corpus
+) -> None:
+    """`served_stream` is one-way. A client claiming `unseen` for a posting the
+    ranker did score gets the server's answer, not its own — otherwise the hint
+    would be a way to manufacture the very coverage it exists to protect."""
+    posting_id = corpus["scored"][0]
+
+    await client.post(
+        "/labels",
+        json={"posting_id": posting_id, "relevance": 2, "served_stream": "unseen"},
+    )
+
+    stored = await worker_session.scalar(
+        select(PostingLabel).where(PostingLabel.posting_id == uuid.UUID(posting_id))
+    )
+    assert stored is not None
+    assert stored.stream != active.Stream.UNSEEN.value
+
+
+async def test_a_genuinely_unseen_posting_is_still_recorded_as_unseen(
+    client: AsyncClient, worker_session: AsyncSession, corpus
+) -> None:
+    """The fail-safe must not cost the real thing. A posting the ranker never
+    scored, graded with the hint the screen actually showed, still counts."""
+    posting_id = corpus["unscored"][0]
+
+    await client.post(
+        "/labels",
+        json={"posting_id": posting_id, "relevance": 3, "served_stream": "unseen"},
+    )
+
+    stored = await worker_session.scalar(
+        select(PostingLabel).where(PostingLabel.posting_id == uuid.UUID(posting_id))
+    )
+    assert stored is not None
+    assert stored.stream == active.Stream.UNSEEN.value
+
+
+async def test_silence_is_not_evidence_of_never_being_scored(
+    client: AsyncClient, worker_session: AsyncSession, corpus
+) -> None:
+    """A caller that sends no hint has told us nothing, and defaulting that to
+    the strongest claim would put the hole straight back — the MCP tools, curl
+    and any future client all reach this path. `unseen` is claimed only when a
+    serve attests it.
+
+    The cost is real and deliberate: such a caller cannot contribute unseen
+    coverage. That is the honest outcome, because it genuinely cannot say where
+    the posting came from.
+    """
+    await client.post("/labels", json={"posting_id": corpus["unscored"][0], "relevance": 2})
+
+    stored = await worker_session.scalar(
+        select(PostingLabel).where(PostingLabel.posting_id == uuid.UUID(corpus["unscored"][0]))
+    )
+    assert stored is not None
+    assert stored.stream == active.Stream.UNKNOWN.value
+
+    summary = (await client.get("/labels/summary")).json()
+    assert not summary["usable"]

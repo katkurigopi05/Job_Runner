@@ -66,6 +66,14 @@ class Stream(StrEnum):
     UNCERTAIN = "uncertain"
     UNSEEN = "unseen"
     CONFIDENT = "confident"
+    #: Never served — recorded when the server cannot prove which stream a
+    #: posting came from. A rescore between serving a card and grading it can
+    #: withdraw the posting's `Match` row (`score.score_and_store` deletes a
+    #: stale row that carries nothing of the owner's), and the recompute would
+    #: then see no score and claim `unseen`. `unseen` is the number that
+    #: certifies the corpus escaped the shortlist, so over-claiming it is the
+    #: one error that matters. This is what we say instead.
+    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True)
@@ -85,6 +93,7 @@ def _labeled_subquery(profile_id: uuid.UUID) -> Select[tuple[uuid.UUID]]:
 
 
 def _unlabeled(profile_id: uuid.UUID) -> Select[tuple[Posting]]:
+    """Open postings this profile has not graded — the base of every stream."""
     return select(Posting).where(
         Posting.closed_at.is_(None),
         Posting.id.not_in(_labeled_subquery(profile_id)),
@@ -183,9 +192,42 @@ async def _confident(session: AsyncSession, profile_id: uuid.UUID, limit: int) -
 
 
 def _quota(size: int) -> dict[str, int]:
-    """Split a batch across the streams, keeping the mix's proportions."""
+    """Split a batch across the streams, summing to exactly `size`.
+
+    Largest-remainder rather than rounding each share independently. Rounding
+    over-allocated on every size that is not a multiple of the mix — `size=4`
+    produced `2 + 2 + 1`, and the caller then truncated the tail, which silently
+    dropped `confident` and then `unseen`. At `size=1` it produced `1 + 1 + 1`
+    and truncation left uncertain alone: the shortlist bias this module exists
+    to avoid, arriving through an arithmetic bug.
+
+    Every stream gets at least one slot once the batch is large enough to hold
+    them all. Below that a batch genuinely cannot carry the mix, and the shares
+    decide who gets the slots — stated here rather than discovered later.
+    """
+    if size <= 0:
+        return dict.fromkeys(STREAM_MIX, 0)
+
     total = sum(STREAM_MIX.values())
-    quota = {name: max(1, round(size * share / total)) for name, share in STREAM_MIX.items()}
+    if size >= len(STREAM_MIX):
+        # One each, then distribute the rest by share.
+        quota = dict.fromkeys(STREAM_MIX, 1)
+        remaining = size - len(STREAM_MIX)
+    else:
+        quota = dict.fromkeys(STREAM_MIX, 0)
+        remaining = size
+
+    exact = {name: remaining * share / total for name, share in STREAM_MIX.items()}
+    for name, value in exact.items():
+        quota[name] += int(value)
+
+    # Largest fractional remainder takes what integer division left behind.
+    short = size - sum(quota.values())
+    by_remainder = sorted(
+        exact, key=lambda n: (exact[n] - int(exact[n]), STREAM_MIX[n]), reverse=True
+    )
+    for name in by_remainder[:short]:
+        quota[name] += 1
     return quota
 
 
