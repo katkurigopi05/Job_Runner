@@ -264,8 +264,12 @@ import-csv:
 # nothing forever. Needs network egress, like validate-seeds.
 #   make probe-bespoke n=50        sample first
 #   make probe-bespoke write=1     promote the ones that publish
+# `filter 1` rather than `$(if $(write),...)`: make reads any nonempty value as
+# true, so `write=0` passed --write and mutated the registry. Strict, and it
+# fails safe — an unrecognised value reports instead of writing, and the script
+# prints "report only — pass write=1" so a typo is visible rather than silent.
 probe-bespoke:
-	$(PY)/python -m scripts.probe_bespoke $(if $(csv),--csv $(csv),) $(if $(n),-n $(n),) $(if $(write),--write,)
+	$(PY)/python -m scripts.probe_bespoke $(if $(csv),--csv $(csv),) $(if $(n),-n $(n),) $(if $(filter 1,$(write)),--write,)
 
 import-mail:
 	@test -n "$(src)" || (echo "set src=<mbox|eml|dir>" && exit 1)

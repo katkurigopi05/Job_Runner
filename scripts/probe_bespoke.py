@@ -32,6 +32,11 @@ DEFAULT_BESPOKE = Path("seeds/bespoke_careers.csv")
 
 
 def _report(report: ProbeReport) -> None:
+    """Print the verdict, naming examples rather than only counting.
+
+    Blocked and unreachable pages are worth re-running; the no-data count is
+    the measurement that says whether a sitemap strategy is worth building.
+    """
     print(report.summary())
 
     for result in report.publishing[:10]:
@@ -54,6 +59,7 @@ def _report(report: ProbeReport) -> None:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    """Probe the remainder file and, with --write, promote what published."""
     try:
         rows = load_bespoke(args.csv)
     except (OSError, ValueError) as exc:
@@ -85,6 +91,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point for `make probe-bespoke`."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--csv", type=Path, default=DEFAULT_BESPOKE)
     parser.add_argument("--seeds", type=Path, default=None, help="target registry file")
@@ -92,7 +99,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--write", action="store_true", help="append the pages that publish to the registry"
     )
-    return asyncio.run(_run(parser.parse_args(argv)))
+    args = parser.parse_args(argv)
+    # A negative slice is not a smaller sample: `rows[:-1]` probes all but the
+    # last page, which is the opposite of asking for fewer. Refused at the
+    # boundary rather than silently reinterpreted.
+    if args.limit is not None and args.limit < 0:
+        parser.error("-n must be zero or more")
+    return asyncio.run(_run(args))
 
 
 if __name__ == "__main__":

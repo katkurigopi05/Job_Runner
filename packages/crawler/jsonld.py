@@ -103,6 +103,7 @@ def script_blocks(html: str) -> list[str]:
 
 
 def _types_of(node: dict[str, Any]) -> set[str]:
+    """Every `@type` on a node, lowercased. The field is a string or a list."""
     raw = node.get("@type")
     values = raw if isinstance(raw, list) else [raw]
     return {str(v).strip().lower() for v in values if v}
@@ -150,6 +151,13 @@ def job_postings(html: str) -> list[dict[str, Any]]:
 
 
 def _text(value: Any) -> str | None:
+    """A trimmed string, or None for anything that is not one.
+
+    The normaliser every open-record field goes through. These objects are
+    arbitrary JSON from sites we do not control, so a field the schema calls
+    a string routinely arrives as a dict, a list or a number. Returning None
+    rather than raising is what lets one odd field cost one field.
+    """
     if isinstance(value, str):
         cleaned = value.strip()
         return cleaned or None
@@ -181,12 +189,15 @@ def _location_of(node: dict[str, Any]) -> str | None:
     if not isinstance(address, dict):
         return _text(raw.get("name")) or _remote_location(node)
 
+    # `addressCountry` is a string in most markup and a Country object in some.
+    # Bound to a local and type-checked rather than guarded with `or {}`: that
+    # guard only catches falsy values, so a list — which sites do emit — reached
+    # `.get` and raised AttributeError out of the whole extraction.
+    country = address.get("addressCountry")
     pieces = [
         _text(address.get("addressLocality")),
         _text(address.get("addressRegion")),
-        _text(address.get("addressCountry"))
-        if isinstance(address.get("addressCountry"), str)
-        else _text((address.get("addressCountry") or {}).get("name")),
+        _text(country.get("name")) if isinstance(country, dict) else _text(country),
     ]
     joined = ", ".join(p for p in pieces if p)
     return joined or _text(raw.get("name")) or _remote_location(node)
@@ -234,6 +245,7 @@ def _external_id(node: dict[str, Any], url: str | None, title: str | None) -> st
 
 
 def _published(node: dict[str, Any]) -> datetime | None:
+    """When the site says the posting went up, or None when it does not say."""
     return parse_timestamp(node.get("datePosted") or node.get("dateCreated"))
 
 
@@ -262,7 +274,10 @@ def to_posting(node: dict[str, Any], *, page_url: str) -> ExtractedPosting | Non
         url=url,
         title=title,
         location=_location_of(node),
-        description_raw=strip_html(node.get("description")),
+        # Through `_text` first: `strip_html` hands its argument to
+        # `HTMLParser.feed`, which raises TypeError on a dict or a list. Sites
+        # do emit both, and the exception escaped `extract` entirely.
+        description_raw=strip_html(_text(node.get("description"))),
         ats_type=ATS,
         published_at=_published(node),
     )
@@ -271,11 +286,24 @@ def to_posting(node: dict[str, Any], *, page_url: str) -> ExtractedPosting | Non
 
 
 def extract(html: str, *, page_url: str) -> list[ExtractedPosting]:
-    """Every readable JobPosting on one page. Empty when the page has none."""
+    """Every readable JobPosting on one page. Empty when the page has none.
+
+    One unreadable posting never costs the others, and never costs the sweep.
+    The fields above are normalised for the shapes sites are known to emit, but
+    this is arbitrary JSON from three thousand strangers' sites and the next
+    shape is one nobody has seen yet. `job_postings` already refuses to let one
+    malformed *block* lose a page; this is the same rule one level down, and it
+    is what makes `bespoke.probe_page`'s "never raises" true rather than
+    aspirational — a single odd page would otherwise end a sweep of thousands.
+    """
     postings: list[ExtractedPosting] = []
     seen: set[str] = set()
     for node in job_postings(html):
-        posting = to_posting(node, page_url=page_url)
+        try:
+            posting = to_posting(node, page_url=page_url)
+        except Exception as exc:  # noqa: BLE001 — arbitrary third-party JSON
+            log.debug("jsonld_posting_unreadable", error=type(exc).__name__)
+            continue
         if posting is None or posting.external_id in seen:
             continue
         seen.add(posting.external_id)
@@ -301,6 +329,7 @@ class JsonLdExtractor:
     ats = ATS
 
     def board_url(self, company_slug: str) -> str:
+        """The page itself — a bespoke seed's slug is its URL."""
         if not company_slug.lower().startswith(("http://", "https://")):
             # Not raised: `crawl_company` calls this before its try block, so a
             # raise here would end the whole cycle over one bad row. Returned
@@ -309,4 +338,6 @@ class JsonLdExtractor:
         return company_slug
 
     def parse(self, body: str, company_slug: str) -> list[ExtractedPosting]:
+        """Read the fetched page. The slug is the page URL, so it is the base
+        a relative posting link resolves against."""
         return extract(body, page_url=company_slug)

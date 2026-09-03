@@ -377,3 +377,71 @@ async def test_the_crawler_polls_a_bespoke_page_like_any_other_board(db_session)
     # nothing. Bespoke pages change less often than boards, not more.
     second = await crawl_company(db_session, seed, fetcher, force=True)
     assert second.emitted == 0
+
+
+# --------------------------------------------------------------------------
+# Arbitrary JSON from three thousand strangers' sites
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        {"@value": "Ship it"},
+        ["Ship it", "and more"],
+        42,
+    ],
+)
+def test_a_description_that_is_not_a_string_yields_no_description(description: object) -> None:
+    """`strip_html` hands its argument to `HTMLParser.feed`, which raises
+    TypeError on anything but a string. The posting is still worth having — a
+    title and a URL are what the feed needs — so the field goes empty."""
+    postings = extract(_page({**BASIC, "description": description}), page_url=PAGE_URL)
+
+    assert len(postings) == 1
+    assert postings[0].description_raw is None
+
+
+@pytest.mark.parametrize(
+    ("country", "expected"),
+    [
+        ("US", "San Francisco, CA, US"),
+        ({"@type": "Country", "name": "United States"}, "San Francisco, CA, United States"),
+        (["US"], "San Francisco, CA"),
+        (7, "San Francisco, CA"),
+        (None, "San Francisco, CA"),
+    ],
+)
+def test_address_country_is_read_in_every_shape_a_site_emits(
+    country: object, expected: str
+) -> None:
+    """Both forms the schema allows, and the ones it does not. An `or {}` guard
+    catches only falsy values, so a list reached `.get` and raised out of the
+    whole extraction — losing every posting on the page over one field."""
+    page = _page(
+        {
+            **BASIC,
+            "jobLocation": {
+                "address": {
+                    "addressLocality": "San Francisco",
+                    "addressRegion": "CA",
+                    "addressCountry": country,
+                }
+            },
+        }
+    )
+
+    assert extract(page, page_url=PAGE_URL)[0].location == expected
+
+
+def test_one_unreadable_posting_does_not_lose_the_others() -> None:
+    """The same rule `job_postings` applies to a malformed block, one level
+    down. This is what makes `bespoke.probe_page`'s "never raises" true: the
+    next unforeseen shape is one nobody has seen, and a sweep of three thousand
+    pages must not end on it."""
+    hostile = {**BASIC, "identifier": "REQ-BAD", "jobLocation": {"address": {"addressRegion": []}}}
+    good = {**BASIC, "title": "Data Engineer", "identifier": "REQ-9000"}
+
+    titles = {p.title for p in extract(_page(hostile, good), page_url=PAGE_URL)}
+
+    assert "Data Engineer" in titles

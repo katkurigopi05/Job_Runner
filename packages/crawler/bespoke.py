@@ -80,17 +80,23 @@ class ProbeReport:
     results: list[ProbeResult] = field(default_factory=list)
 
     def of(self, state: BespokeState) -> list[ProbeResult]:
+        """Every result with one outcome. Each state is reported separately
+        because they need different follow-ups."""
         return [r for r in self.results if r.state is state]
 
     @property
     def publishing(self) -> list[ProbeResult]:
+        """The only results that may become registry rows."""
         return self.of(BespokeState.PUBLISHES)
 
     @property
     def postings(self) -> int:
+        """Jobs found across the pages that published — the sweep's yield."""
         return sum(r.postings for r in self.publishing)
 
     def summary(self) -> str:
+        """One line naming every outcome that occurred, and how many jobs the
+        publishing pages carried."""
         counts = ", ".join(
             f"{len(self.of(state))} {state.value}" for state in BespokeState if self.of(state)
         )
@@ -137,9 +143,15 @@ async def probe_page(row: Row, fetcher: PoliteFetcher) -> ProbeResult:
 async def probe(
     rows: list[Row], fetcher: PoliteFetcher, *, limit: int | None = None
 ) -> ProbeReport:
-    """Probe each row in order. Sequential, because the fetcher is."""
+    """Probe each row in order. Sequential, because the fetcher is.
+
+    `limit is None` rather than a truthiness test: zero is a limit, not the
+    absence of one. `if limit` read `-n 0` as unlimited, so asking for a sample
+    of nothing swept every page in the file — the opposite of what the flag is
+    reached for, and on ~3,000 rows an afternoon rather than a moment.
+    """
     report = ProbeReport()
-    for row in rows[:limit] if limit else rows:
+    for row in rows if limit is None else rows[:limit]:
         report.results.append(await probe_page(row, fetcher))
     return report
 

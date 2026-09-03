@@ -136,6 +136,37 @@ async def test_the_limit_stops_early() -> None:
     assert len(report.results) == 2
 
 
+async def test_a_limit_of_zero_probes_nothing() -> None:
+    """Zero is a limit, not the absence of one. A truthiness test read `-n 0`
+    as unlimited, so asking for a sample of nothing swept the whole file — on
+    ~3,000 rows an afternoon instead of a moment, and every page fetched."""
+    rows = [Row(name=str(i), url=f"https://h{i}.example/careers") for i in range(5)]
+
+    report = await probe(rows, _fetcher(_page(JOB)), limit=0)
+
+    assert report.results == []
+
+
+async def test_no_limit_probes_everything() -> None:
+    rows = [Row(name=str(i), url=f"https://h{i}.example/careers") for i in range(5)]
+
+    report = await probe(rows, _fetcher(_page(JOB)))
+
+    assert len(report.results) == 5
+
+
+async def test_a_page_whose_markup_raises_is_reported_not_fatal() -> None:
+    """`probe_page` promises never to raise, and `extract` sat outside its try.
+    A page whose JSON-LD carried a shape nothing anticipated would have ended a
+    sweep of thousands on its first bad row."""
+    hostile = {**JOB, "description": {"@value": "not a string"}, "jobLocation": {"address": []}}
+
+    report = await probe([ROW], _fetcher(_page(hostile)))
+
+    assert len(report.results) == 1
+    assert report.results[0].state in (BespokeState.PUBLISHES, BespokeState.NO_DATA)
+
+
 # --------------------------------------------------------------------------
 # Promotion
 # --------------------------------------------------------------------------
