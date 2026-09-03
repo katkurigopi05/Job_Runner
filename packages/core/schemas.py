@@ -12,6 +12,8 @@ from packages.core.enums import ApplicationStatus, EmailMode, FailureReason, Sen
 
 
 class ErrorDetail(BaseModel):
+    """Error code and message for API responses."""
+
     code: str
     message: str
 
@@ -28,6 +30,8 @@ class ErrorResponse(BaseModel):
 
 
 class CandidateCreate(BaseModel):
+    """Request to create a new candidate."""
+
     name: str = Field(min_length=1, max_length=200)
     email: EmailStr
     email_mode: EmailMode = EmailMode.SELF
@@ -35,6 +39,8 @@ class CandidateCreate(BaseModel):
 
 
 class CandidateOut(BaseModel):
+    """Candidate as returned by the API."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -51,6 +57,8 @@ class CandidateOut(BaseModel):
 
 
 class ProfileCreate(BaseModel):
+    """Request to create a new profile."""
+
     candidate_id: uuid.UUID
     label: str = Field(min_length=1, max_length=200)
     phone: str | None = None
@@ -93,6 +101,8 @@ class ProfileUpdate(BaseModel):
 
 
 class ProfileOut(BaseModel):
+    """Profile as returned by the API."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -118,6 +128,8 @@ class ProfileOut(BaseModel):
 
 
 class ApplicationCreate(BaseModel):
+    """Request to create a new application."""
+
     candidate_id: uuid.UUID
     profile_id: uuid.UUID
     url: str = Field(min_length=1)
@@ -125,6 +137,8 @@ class ApplicationCreate(BaseModel):
 
 
 class ApplicationOut(BaseModel):
+    """Application as returned by the API."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -180,6 +194,18 @@ class TailoringCompareRequest(BaseModel):
     """
 
     cloud: str | None = None
+    #: Several remote halves at once, for "which of these should I use".
+    #:
+    #: Separate from `cloud` because the cost is different in kind, not degree:
+    #: each name is another §2.8 upload of the résumé to another third party,
+    #: so a four-way comparison sends it three times. That has to be typed out
+    #: rather than inferred from "every provider with a key", which is why
+    #: there is no `all` flag here.
+    #:
+    #: Wins over `cloud` when both are sent — it is the more specific request,
+    #: and quietly adding a column the caller did not list would be the exact
+    #: surprise upload this design avoids.
+    clouds: list[str] | None = None
 
 
 class TailoringChoice(BaseModel):
@@ -204,6 +230,8 @@ class OtpSubmission(BaseModel):
 
 
 class ApplicationEventOut(BaseModel):
+    """Application event as returned by the API."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -218,6 +246,8 @@ class ApplicationEventOut(BaseModel):
 
 
 class SyncGitHubRequest(BaseModel):
+    """Request to sync GitHub repositories for a candidate."""
+
     candidate_id: uuid.UUID
     username: str = Field(min_length=1, max_length=100)
     #: Overrides GITHUB_TOKEN for this call. Never stored, never logged.
@@ -226,12 +256,16 @@ class SyncGitHubRequest(BaseModel):
 
 
 class SyncResultOut(BaseModel):
+    """Result of a GitHub sync operation."""
+
     added: int
     updated: int
     total: int
 
 
 class ProjectOut(BaseModel):
+    """Project as returned by the API."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -281,6 +315,8 @@ class ProjectPreview(BaseModel):
 
 
 class ResumeOut(BaseModel):
+    """Resume as returned by the API."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -398,6 +434,8 @@ class ResumeParsedOut(BaseModel):
 
 
 class PostingOut(BaseModel):
+    """Posting as returned by the API."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -413,6 +451,8 @@ class PostingOut(BaseModel):
 
 
 class PostingSearchOut(BaseModel):
+    """Search results for postings."""
+
     results: list[PostingOut] = Field(default_factory=list)
     total_indexed: int = 0
     #: Set when the empty result means "nothing indexed" rather than "no match".
@@ -515,6 +555,8 @@ class ChatRequest(BaseModel):
 
 
 class ChatReply(BaseModel):
+    """Response from the chat assistant."""
+
     model_config = ConfigDict(from_attributes=True)
 
     reply: str
@@ -685,6 +727,8 @@ class LatencyOut(BaseModel):
 
 
 class SilentOut(BaseModel):
+    """An application with no recruiter reply yet."""
+
     application_id: str
     url: str
     days_since: int
@@ -692,6 +736,8 @@ class SilentOut(BaseModel):
 
 
 class CadenceOut(BaseModel):
+    """Application cadence and follow-up timing."""
+
     silent: list[SilentOut] = Field(default_factory=list)
     due: int = 0
     stale: int = 0
@@ -699,6 +745,8 @@ class CadenceOut(BaseModel):
 
 
 class DigestOut(BaseModel):
+    """Weekly digest of activity."""
+
     window_days: int = 7
     postings_seen: int = 0
     applications_created: int = 0

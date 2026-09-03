@@ -199,10 +199,22 @@ def classify(line: str) -> LineKind:
 
     if _opens_with_a_verb(stripped):
         return LineKind.BULLET
-    if len(words) >= _PROSE_WORDS:
-        return LineKind.BULLET
+    # Before the length test, not after it. A skills line is a list however
+    # long it runs — `Languages  Python, TypeScript, Rust, C, C++, Java,
+    # JavaScript, HTML, CSS, XML, Assembly Language` is nineteen words and
+    # names eleven languages, and the length test read it as prose and handed
+    # it to the model. What came back was `Using tools, I have experience with
+    # Python and GitHub Actions.`: a list rewritten as a sentence, shorter than
+    # what it replaced, and missing most of the entries.
+    #
+    # Safe in this position only because the verb test above has already run.
+    # That is what separates a stack from `Added model adapters, audio-upload
+    # handling, and graceful fallbacks.`, which is three short comma fragments
+    # and plainly a bullet — it opens with a verb and never reaches here.
     if _is_list(stripped):
         return LineKind.META
+    if len(words) >= _PROSE_WORDS:
+        return LineKind.BULLET
     # A verb further in, on a line short enough to have got here: prose with an
     # unusual opening rather than a name.
     return LineKind.BULLET if _VERBAL_RE.search(stripped) else LineKind.ENTRY
@@ -295,8 +307,84 @@ def _is_list(line: str) -> bool:
     AWS Redshift, Google BigQuery, Talend, Tableau, SQL`. Requires at least two
     commas, because one comma is ordinary punctuation in a sentence, and every
     fragment to be short, because `Built X, which did Y across Z` has long ones.
+
+    A terminal full stop rules the line out. A stack is not punctuated as a
+    sentence, and this test now runs *before* the length fallback in
+    `classify` — so without it, one long prose bullet built from short clauses
+    could be filed as a list and never rewritten. Requiring the full stop's
+    absence keeps the reorder from trading a bad rewrite for a silent skip,
+    which CLAUDE.md records as the harder failure to notice.
     """
+    if line.rstrip().endswith("."):
+        return False
+    if _is_labelled_list(line):
+        return True
     fragments = [part.strip() for part in line.split(",")]
+    if len(fragments) < 3:
+        return False
+    return all(0 < len(part.split()) <= _LIST_FRAGMENT_WORDS for part in fragments)
+
+
+#: The column gap a résumé puts between a skills category and its list. Two
+#: spaces or more: one space is a word break, and a tab or a run of spaces is
+#: what survives when a two-column layout is flattened to text.
+_LABEL_GAP_RE = re.compile(r"\s{2,}|\t")
+
+
+def list_payload(line: str) -> str:
+    """The entries of a list line, without the category label in front of it.
+
+    `Data, DevOps & Tools  Qdrant (Vector DB), Docker, Git` names three tools;
+    the words before the column gap name the *category*, and they are ordinary
+    English — Data, DevOps, Tools, Web, Frameworks, Languages. A caller reading
+    a résumé's technologies off these lines wants the entries and not the
+    heading, or it ends up treating "web" as a technology the owner claims.
+
+    Returns the line unchanged when there is no label to strip, so callers can
+    use it unconditionally.
+    """
+    stripped = line.strip()
+    # Two ways a résumé writes the label: a column gap left over from a
+    # two-column layout, and a plain colon. `Languages (Spoken): English
+    # (Professional), Telugu (Native), Hindi (Conversational)` is the second,
+    # and without it "languages" and "spoken" read as things the owner claims.
+    for candidate in (_LABEL_GAP_RE.split(stripped, maxsplit=1), stripped.split(":", 1)):
+        if len(candidate) != 2:
+            continue
+        label, tail = candidate[0].strip(), candidate[1].strip()
+        if not label or not tail:
+            continue
+        fragments = [part.strip() for part in tail.split(",")]
+        if len(fragments) < 3:
+            continue
+        if all(0 < len(part.split()) <= _LIST_FRAGMENT_WORDS for part in fragments):
+            return tail
+    return line
+
+
+def _is_labelled_list(line: str) -> bool:
+    """`Data, DevOps & Tools  Qdrant (Vector DB), Docker, Git, pytest`.
+
+    A skills line carrying its category, which is how every one of them reads
+    on the owner's résumé. The plain test above cannot see it: splitting the
+    whole line on commas puts the label and the first entry in one fragment —
+    `DevOps & Tools  Qdrant (Vector DB)` is five words — so a single long
+    fragment sank a line that is otherwise nine short ones.
+
+    That line was handed to the model, which is how `Data, DevOps & Tools ...`
+    became a sentence about machine learning. Splitting at the gap first and
+    asking the same question of the tail is what the label was hiding.
+
+    Narrow on purpose: the tail must satisfy the ordinary list test, so a
+    bullet that merely contains a double space is not caught by this.
+    """
+    parts = _LABEL_GAP_RE.split(line.strip(), maxsplit=1)
+    if len(parts) != 2:
+        return False
+    label, tail = parts[0].strip(), parts[1].strip()
+    if not label or not tail:
+        return False
+    fragments = [part.strip() for part in tail.split(",")]
     if len(fragments) < 3:
         return False
     return all(0 < len(part.split()) <= _LIST_FRAGMENT_WORDS for part in fragments)

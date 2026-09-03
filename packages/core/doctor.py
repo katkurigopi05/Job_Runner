@@ -50,6 +50,8 @@ CHECK_TIMEOUT_S = 5.0
 
 
 class Health(StrEnum):
+    """Health check result status."""
+
     OK = "ok"
     FAIL = "fail"
     #: Could not be determined — an optional feature is unconfigured, or a
@@ -59,6 +61,8 @@ class Health(StrEnum):
 
 @dataclass(frozen=True)
 class Check:
+    """A single health check result."""
+
     name: str
     health: Health
     detail: str
@@ -69,19 +73,24 @@ class Check:
 
     @property
     def ok(self) -> bool:
+        """True if the check passed."""
         return self.health is Health.OK
 
 
 @dataclass
 class Report:
+    """Collection of health check results."""
+
     checks: list[Check] = field(default_factory=list)
 
     @property
     def failures(self) -> list[Check]:
+        """All checks that failed."""
         return [check for check in self.checks if check.health is Health.FAIL]
 
     @property
     def blocking(self) -> list[Check]:
+        """Failed required checks that block operation."""
         return [check for check in self.failures if check.required]
 
     @property
@@ -95,6 +104,7 @@ class Report:
         return not self.blocking
 
     def summary(self) -> str:
+        """One-line summary of check results."""
         ok = sum(1 for check in self.checks if check.ok)
         return f"{ok}/{len(self.checks)} checks passed, {len(self.blocking)} blocking"
 
@@ -117,6 +127,7 @@ def _redacted(url: str) -> str:
 
 
 async def check_database() -> Check:
+    """Check Postgres database connectivity."""
     settings = get_settings()
     url = settings.database_url
     async_url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
@@ -221,6 +232,31 @@ def check_weasyprint() -> Check:
     return Check("weasyprint", Health.OK, "imports; native libraries resolved")
 
 
+def check_np_tagger() -> Check:
+    """The POS tagger the fabrication guard needs to see lowercase claims.
+
+    Optional in the sense that the app runs without it, and not optional in
+    any sense that matters: without it §9 Gate 3 matches on capitalization,
+    and a rewrite claiming "machine learning" against a résumé that never says
+    it is accepted with zero entities checked.
+
+    This is the check that keeps the fallback honest. Every GuardReport
+    carries which extractor produced it, but nobody reads a passing report.
+    """
+    from packages.tailor.chunk import available
+
+    if not available():
+        return Check(
+            "noun-phrase tagger",
+            Health.SKIPPED,
+            "not installed — the guard falls back to capitalization and cannot "
+            "see lowercase claims like 'machine learning'",
+            fix="make nltk-data",
+            required=False,
+        )
+    return Check("noun-phrase tagger", Health.OK, "installed; guard checks noun phrases")
+
+
 async def check_playwright_browser() -> Check:
     """Chromium on disk. Importing playwright proves nothing about this.
 
@@ -295,6 +331,7 @@ def check_vault_key() -> Check:
 
 
 def check_storage() -> Check:
+    """Check that storage root is writable."""
     settings = get_settings()
     root = Path(settings.storage_root)
     try:
@@ -383,6 +420,7 @@ async def run(*, include_optional: bool = True) -> Report:
     checks: list[Check] = [
         check_storage(),
         check_weasyprint(),
+        check_np_tagger(),
         await check_playwright_browser(),
         check_vault_key(),
         check_llm_provider(),

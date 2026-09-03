@@ -133,11 +133,13 @@ class Notification:
 
     @property
     def title(self) -> str:
+        """Notification title including company and role."""
         where = " — ".join(part for part in (self.company, self.role) if part)
         return f"Jobrunner: {where}" if where else "Jobrunner"
 
     @property
     def body(self) -> str:
+        """Notification body text explaining what action is needed."""
         return _ASKS[self.reason]
 
     def as_dict(self) -> dict[str, str]:

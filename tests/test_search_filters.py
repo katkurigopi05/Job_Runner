@@ -166,3 +166,48 @@ def test_describe_reads_as_the_owner_set_it() -> None:
         "remote only",
         "senior or above",
     ]
+
+
+# --------------------------------------------------------------------------
+# The entry rung: one tier, several names an employer might use
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Software Engineering Intern",
+        "2026 Summer Internship",
+        "Software Apprentice",
+        "Apprenticeship Programme — Data",
+        "Engineering Co-op",
+        "Engineering Coop",
+        "Graduate Trainee Program",
+    ],
+)
+def test_every_entry_level_name_lands_on_the_intern_rung(title: str) -> None:
+    """An apprenticeship, a co-op and a traineeship are the same tier as an
+    internship. Giving each its own rung would break "at least junior" for
+    no gain."""
+    assert detect_seniority(title) == "intern"
+
+
+@pytest.mark.parametrize(
+    "title",
+    ["Internal Tools Engineer", "International Partnerships Manager", "Cooperative Bank Analyst"],
+)
+def test_a_word_containing_intern_is_not_an_internship(title: str) -> None:
+    """ "intern" sits inside "internal" and "coop" inside "cooperative".
+    Substring matching read both as entry-level, and a miscategorised rung
+    then gets the posting dropped for an applicant it suited."""
+    assert detect_seniority(title) != "intern"
+
+
+def test_an_intern_search_finds_the_whole_rung() -> None:
+    """What the owner actually asked for: show me internships."""
+    only_entry = SearchFilters(max_seniority="intern")
+
+    for title in ("Software Apprentice", "Summer Internship", "Engineering Co-op"):
+        assert matches(_posting(title=title), only_entry).kept, title
+
+    assert not matches(_posting(title="Senior Backend Engineer"), only_entry).kept

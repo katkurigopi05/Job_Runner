@@ -24,17 +24,29 @@ class StorageLimitError(Exception):
 class StorageBackend(Protocol):
     """The subset of S3 semantics this project needs."""
 
-    def put(self, key: str, data: bytes) -> str: ...
+    def put(self, key: str, data: bytes) -> str:
+        """Write bytes to storage at the given key."""
+        ...
 
-    def put_file(self, key: str, source: Path) -> str: ...
+    def put_file(self, key: str, source: Path) -> str:
+        """Copy a file to storage at the given key."""
+        ...
 
-    def get(self, key: str) -> bytes: ...
+    def get(self, key: str) -> bytes:
+        """Read bytes from storage for the given key."""
+        ...
 
-    def exists(self, key: str) -> bool: ...
+    def exists(self, key: str) -> bool:
+        """Check if a key exists in storage."""
+        ...
 
-    def delete(self, key: str) -> None: ...
+    def delete(self, key: str) -> None:
+        """Delete a key from storage."""
+        ...
 
-    def path_for(self, key: str) -> Path: ...
+    def path_for(self, key: str) -> Path:
+        """Return the absolute path for a key."""
+        ...
 
 
 class LocalStorage:
@@ -114,6 +126,7 @@ _backend: StorageBackend | None = None
 
 
 def get_storage() -> StorageBackend:
+    """Get the active storage backend, creating it if needed."""
     global _backend
     if _backend is None:
         _backend = LocalStorage()
@@ -132,6 +145,7 @@ def receipt_key(application_id: str, name: str) -> str:
 
 
 def resume_key(candidate_id: str, version: int, filename: str) -> str:
+    """Generate a storage key for a resume."""
     return f"resumes/{candidate_id}/v{version}/{filename}"
 
 

@@ -32,6 +32,8 @@ EMBEDDING_DIM = 384
 
 
 class Base(DeclarativeBase):
+    """Base class for all SQLAlchemy models."""
+
     pass
 
 
@@ -48,6 +50,8 @@ def _created_at() -> Mapped[datetime]:
 
 
 class User(Base):
+    """A user account owning one or more candidates."""
+
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -58,6 +62,8 @@ class User(Base):
 
 
 class Candidate(Base):
+    """A person applying to jobs, owned by a user."""
+
     __tablename__ = "candidates"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -80,6 +86,8 @@ class Candidate(Base):
 
 
 class Profile(Base):
+    """A candidate's profile containing resume and application preferences."""
+
     __tablename__ = "profiles"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -126,6 +134,8 @@ class Profile(Base):
 
 
 class Resume(Base):
+    """A candidate's resume, either base or tailored for a posting."""
+
     __tablename__ = "resumes"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -167,6 +177,8 @@ class Resume(Base):
 
 
 class Company(Base):
+    """A company with a careers page to poll."""
+
     __tablename__ = "companies"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -186,6 +198,8 @@ class Company(Base):
 
 
 class Posting(Base):
+    """A job posting from a company's careers page."""
+
     __tablename__ = "postings"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -206,6 +220,16 @@ class Posting(Base):
     location: Mapped[str | None] = mapped_column(Text)
     description_raw: Mapped[str | None] = mapped_column(Text)
     description_embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
+    #: Which embedder produced the vector above, and which corpus statistics
+    #: it was weighted by. Both are part of the vector's identity: a cosine
+    #: between two vectors from different models, or from the same model under
+    #: different IDF weights, is noise rather than a low score — and noise
+    #: that reports itself as a number nobody questions.
+    #:
+    #: `embedding_revision` is NULL for an unweighted embedder, which has no
+    #: corpus statistics to be stale against.
+    embedding_model: Mapped[str | None] = mapped_column(String(64))
+    embedding_revision: Mapped[int | None] = mapped_column(Integer)
     #: Change detection — an unchanged hash means the crawler emits nothing.
     content_hash: Mapped[str | None] = mapped_column(String(64))
     #: When the *source* says the posting went up. Distinct from first_seen_at,
@@ -226,7 +250,30 @@ class Posting(Base):
     )
 
 
+class CorpusStats(Base):
+    """Document frequencies over the postings, at a point in time.
+
+    Persisted rather than recomputed per pass because the numbers are part of
+    a stored vector's identity. A statistic recomputed on every crawl would
+    shift continuously, and every posting would be permanently stale against
+    it — so it is rebuilt on a growth policy and stamped with a revision that
+    only moves when it is rebuilt.
+    """
+
+    __tablename__ = "corpus_stats"
+
+    id: Mapped[uuid.UUID] = _pk()
+    #: Monotonic. What `Posting.embedding_revision` points at.
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
+    total_documents: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: term -> document count. Capped, see packages/matching/idf.py.
+    counts_json: Mapped[dict[str, int]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
+
+
 class Match(Base):
+    """A scored posting paired with a profile."""
+
     __tablename__ = "matches"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -274,6 +321,8 @@ class Match(Base):
 
 
 class Application(Base):
+    """A job application in the pipeline."""
+
     __tablename__ = "applications"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -338,6 +387,8 @@ class ApplicationEvent(Base):
 
 
 class InboundMessage(Base):
+    """A recruiter reply received via email."""
+
     __tablename__ = "inbound_messages"
 
     id: Mapped[uuid.UUID] = _pk()

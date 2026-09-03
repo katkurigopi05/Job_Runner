@@ -98,10 +98,13 @@ export async function compareTailoring(
   // Empty means "whatever real tailoring would use" — the shipped default, and
   // the one that costs the owner no decision. A named provider applies to this
   // comparison only; nothing about how applications route changes.
-  const cloud = String(form.get("cloud") ?? "").trim();
+  const clouds = form
+    .getAll("clouds")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
 
   try {
-    await api.compareTailoring(applicationId, cloud || undefined);
+    await api.compareTailoring(applicationId, clouds);
   } catch (error) {
     if (error instanceof ApiError) return { ok: false, message: error.message };
     throw error;
@@ -110,8 +113,8 @@ export async function compareTailoring(
   revalidatePath("/review");
   return {
     ok: true,
-    message: cloud
-      ? `Compared against ${cloud}. Both versions are below — nothing else changed.`
+    message: clouds.length
+      ? `Compared against ${clouds.join(", ")}. Every version is below — nothing else changed.`
       : "Compared. Both versions are below.",
   };
 }

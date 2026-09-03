@@ -34,6 +34,11 @@ dependencies = [
     "mcp>=1.2",
     # packages/crawler/extract.py reads the company seed list.
     "pyyaml>=6",
+    # packages/tailor/chunk.py — noun-phrase extraction for the fabrication
+    # guard. Not optional: without it §9 Gate 3 checks capitalization instead
+    # of noun phrases, and a lowercase claim like "machine learning" is
+    # invisible. The tagger *data* is a separate download — `make nltk-data`.
+    "nltk>=3.9",
 ]
 
 [project.optional-dependencies]
@@ -97,5 +102,5 @@ strict = true
 
 # weasyprint ships no py.typed marker.
 [[tool.mypy.overrides]]
-module = ["weasyprint.*", "pypdf.*", "sentence_transformers.*"]
+module = ["weasyprint.*", "pypdf.*", "sentence_transformers.*", "nltk.*"]
 ignore_missing_imports = true

@@ -276,3 +276,9 @@ fit-topics:
 import-portals:
 	@test -n "$(f)" || (echo "set f=<path to career-ops portals.yml>" && exit 1)
 	$(PY)/python -m scripts.import_portals "$(f)" $(ARGS)
+
+# The POS tagger data the fabrication guard needs. Separate from `install`
+# because it is a download, not a package: pip cannot ship it. Without it the
+# guard falls back to capitalization and says so on every GuardReport.
+nltk-data:
+	$(PY)/python -m scripts.fetch_nltk_data

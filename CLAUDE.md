@@ -872,6 +872,19 @@ question its gate was written to ask, which is whether the scoring and the
 classifier work on *this owner's* material. Swap the fixtures for real data
 before trusting either number.
 
+- **Gate 3 now checks what it says it checks.** The wording is "every
+  noun-phrase entity in output traces to the source résumé"; the guard matched
+  on capitalization, acronyms and digits instead, which is a proxy that cannot
+  see a lowercase claim. A rewrite adding "with machine learning" to a résumé
+  that never says it was accepted with **zero entities checked**.
+  `packages/tailor/chunk.py` POS-tags the output and extracts noun phrases, so
+  nouns and their adjectives are claims while verbs and adverbs stay free —
+  §2.1 permits rephrasing, and "oversaw" for "maintained" is rephrasing.
+
+  The tagger data is a download, not a package: `make nltk-data`. Without it
+  the guard falls back to the old proxy, `GuardReport.extractor` records which
+  one ran, and `make doctor` reports it. A guard that quietly loses a check is
+  worse than one that never had it, because nobody re-reads a green test.
 - **Gate 5's ranking half is now measured rather than asserted.** The gate
   checks one bit — ten wanted postings in the top ten — which cannot see a
   match slide from rank 1 to rank 10 and cannot compare two scorers. It also
@@ -1678,3 +1691,61 @@ matching solves a problem `locality.py` already solves with word boundaries;
 its match formula is a weighted keyword count where we have embeddings plus a
 rubric; and both specs assume a greenfield MERN app.
 
+
+### What the first real comparison showed about the tailorer
+
+The compare panel's first live run — llama3.1 against openrouter, on a real
+Cloudflare posting, both sides answering with zero provider failures — reported
+ollama 11 rewrites against 25 guard refusals, and openrouter 12 against 1. Read
+straight, openrouter won decisively. The content said otherwise, and three
+defects behind that reading are now fixed.
+
+**A skills line is a list however long it runs.** `classify` consulted
+`_is_list` only *after* the length fallback, so `Languages  Python, TypeScript,
+Rust, C, C++, Java, ...` was nineteen words and therefore "prose". It went to
+the model, which returned `Using tools, I have experience with Python and
+GitHub Actions.` — a list rewritten as a sentence, naming fewer things than it
+started with. Two of them also carry a category label, which hid them from the
+plain comma test as well: splitting `Data, DevOps & Tools  Qdrant (Vector DB),
+Docker, ...` on commas puts the label and the first entry in one long fragment.
+`_is_labelled_list` splits at the column gap first.
+
+Moving the list test ahead of the length test is only safe because the verb
+test already ran, and because `_is_list` now requires no terminal full stop —
+otherwise a real bullet built from short clauses would be filed as a stack and
+silently skipped, which CLAUDE.md already records as the harder failure to
+notice. On the owner's résumé this took the lines sent to the model from 37 to
+16, and every one of the 16 is prose.
+
+**A rewrite nobody can see was being counted as a rewrite.** `changed` was
+`candidate.strip() != bullet.strip()`, so a colon added to `Core CS  Data
+Structures` and two spaces removed from `Cloud Data Warehousing & BI Analytics
+[GitHub]` both counted. Three of openrouter's reported 12 were of that kind;
+nine were real. `is_substantive` compares the lines with punctuation dropped and
+spacing collapsed, and a cosmetic answer now keeps the source line so the
+document and the count agree. Case is deliberately *not* folded — a model
+lowercasing a technology name has changed something worth showing.
+
+**Deleting a true thing is not fabrication, and nothing was checking for it.**
+Every test in `guard.py` reads the output and asks whether it says something the
+source does not; none reads what is missing. Both models dropped
+`(Pillow/Tkinter)` from the same bullet and neither was refused, so the résumé
+came out of tailoring with fewer of the keywords an ATS scans for.
+`packages/tailor/technologies.py` reads the technologies the résumé lists for
+itself — the skills section and the stack line under each project — and `vet`
+refuses a rewrite that drops one.
+
+Scoped to *listed* technologies rather than to names, because
+`extract_entities` reads `Filtered`, `Provisioned` and `Designing` as proper
+nouns and rejecting every dropped one would refuse the re-emphasis §2.1 permits.
+Presence is decided through the alias table, so expanding `CI` to `continuous
+integration` keeps the term — that is a rename, not a deletion. A flat corpus
+has no inventory and disables the check rather than guessing one.
+
+**What none of this fixes.** Both models still write worse bullets than the
+source in places — openrouter inserted `using forecasting and clustering tools`
+into a Tableau line and turned `vector retrieval pipeline` into `vector
+retrieval data pipeline`. The refusal count measures how hard a model pushed
+against the guard, not whether the résumé got better, and tuning against it is
+the trap `docs/REFERENCE.md` §3.6 names. These three changes make the counts
+mean what the screen says they mean; they do not make either model good.

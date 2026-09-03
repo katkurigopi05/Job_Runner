@@ -108,6 +108,30 @@ export function ReviewCard({
 
       <ScreeningPanel screening={review.screening} />
 
+      {review.cover_letter ? (
+        <section className="border-b border-rule px-6 py-5">
+          <p className="font-mono text-xs text-ink-faint">
+            cover letter — every sentence traced back to your résumé before it got here
+            {review.cover_letter.answered_by ? ` · written by ${review.cover_letter.answered_by}` : null}
+          </p>
+          {review.cover_letter.text ? (
+            <p className="mt-2 whitespace-pre-wrap font-display leading-relaxed">
+              {review.cover_letter.text}
+            </p>
+          ) : (
+            /* A refusal has to read differently from a form that never asked.
+               The guard offers no fallback here, so the alternative to a bad
+               letter is none — and whether to write one by hand is yours. */
+            <p className="mt-2 font-mono text-xs text-stop">
+              the guard refused this letter
+              {review.cover_letter.rejected_reason
+                ? `: ${review.cover_letter.rejected_reason}`
+                : "."}
+            </p>
+          )}
+        </section>
+      ) : null}
+
       {application.status === "needs_otp" ? (
         <form action={runOtp} className="border-b border-rule px-6 py-5">
           <label htmlFor={`otp-${application.id}`} className="font-mono text-xs text-ink-soft">

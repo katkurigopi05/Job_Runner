@@ -20,6 +20,8 @@ from packages.core.models import Posting, Profile
 from packages.core.queue import ClaimedTask
 from packages.crawler.discover import ingest, promote, verify_open
 from packages.crawler.fetch import build_fetcher
+from packages.matching.embed import LexicalEmbedder
+from packages.matching.idf import rebuild_if_stale
 from packages.matching.score import embed_postings, score_and_store
 
 log = structlog.get_logger(__name__)
@@ -55,7 +57,12 @@ async def handle_discover(session: AsyncSession, claimed: ClaimedTask) -> None:
     postings = list(
         (await session.scalars(select(Posting).where(Posting.closed_at.is_(None)))).all()
     )
-    await embed_postings(session, postings)
+    # Statistics first: the embedder is weighted by them, and a vector
+    # stamped with the wrong revision is one this pass has to redo.
+    texts = [f"{p.title or ''}\n{p.description_raw or ''}" for p in postings]
+    frequencies, revision = await rebuild_if_stale(session, texts)
+    embedder = LexicalEmbedder(frequencies=frequencies) if frequencies.usable else None
+    await embed_postings(session, postings, embedder=embedder, revision=revision)
 
     for profile in (await session.scalars(select(Profile))).all():
         await score_and_store(session, profile, postings)

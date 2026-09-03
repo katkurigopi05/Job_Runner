@@ -176,6 +176,12 @@ const CLOUD_SIDES = [
       "Sends your résumé to OpenRouter, which forwards it to an upstream provider it does not name. Free routes commonly log prompts and share them with that undisclosed creator. Which model runs is whatever OPENROUTER_MODEL names.",
   },
   {
+    value: "tokenrouter",
+    label: "tokenrouter",
+    hint:
+      "Sends your résumé to TokenRouter, which forwards it to an upstream provider it does not name. Its GLM route is free, and free routes commonly log prompts. Slow: roughly 150s per bullet. Which model runs is whatever TOKENROUTER_MODEL names.",
+  },
+  {
     value: "ollama_cloud",
     label: "ollama cloud",
     hint:
@@ -183,30 +189,60 @@ const CLOUD_SIDES = [
   },
 ] as const;
 
-/** The picker, plus what the current choice means for where the résumé goes. */
-function CloudSide({ value, onChange }: { value: string; onChange: (next: string) => void }) {
-  const chosen = CLOUD_SIDES.find((side) => side.value === value) ?? CLOUD_SIDES[0];
+/** The pickers, plus what each ticked box means for where the résumé goes.
+ *
+ * Checkboxes rather than a select, because the question changed. One cloud
+ * answers "would my cloud provider have done better than local"; several
+ * answer "which of these should I be using", and that is the question the
+ * owner has once more than one free route is configured.
+ *
+ * Nothing is ticked by default, and there is deliberately no "all providers"
+ * button. Each box is another §2.8 upload of the résumé to another third
+ * party, so four columns send it three times — that should be three
+ * deliberate clicks, not one convenient one.
+ */
+function CloudSides({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const toggle = (name: string) =>
+    onChange(value.includes(name) ? value.filter((v) => v !== name) : [...value, name]);
+  const picked = CLOUD_SIDES.filter((side) => side.value && value.includes(side.value));
+
   return (
     <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <label htmlFor="cloud-side" className="font-mono text-xs text-ink-faint">
-          cloud side
-        </label>
-        <select
-          id="cloud-side"
-          name="cloud"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          className="rounded-md border border-rule bg-paper px-2 py-1.5 font-mono text-xs focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
-        >
-          {CLOUD_SIDES.map((side) => (
-            <option key={side.value} value={side.value}>
-              {side.label}
-            </option>
-          ))}
-        </select>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <span className="font-mono text-xs text-ink-faint">cloud sides</span>
+        {CLOUD_SIDES.filter((side) => side.value).map((side) => (
+          <label key={side.value} className="flex items-center gap-1.5 font-mono text-xs">
+            <input
+              type="checkbox"
+              name="clouds"
+              value={side.value}
+              checked={value.includes(side.value)}
+              onChange={() => toggle(side.value)}
+              className="accent-attn focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+            />
+            {side.label}
+          </label>
+        ))}
       </div>
-      <p className="max-w-prose font-mono text-xs text-ink-faint">{chosen.hint}</p>
+      {picked.length === 0 ? (
+        <p className="max-w-prose font-mono text-xs text-ink-faint">
+          None ticked — the remote half will be whatever real tailoring would use.
+        </p>
+      ) : (
+        <ul className="max-w-prose space-y-1">
+          {picked.map((side) => (
+            <li key={side.value} className="font-mono text-xs text-ink-faint">
+              <span className="text-ink">{side.label}</span> — {side.hint}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -222,15 +258,15 @@ export function TailoringCompare({
 }) {
   const compareAction = compareTailoring.bind(null, applicationId);
   const [state, run] = useActionState<ReviewResult | null, FormData>(compareAction, null);
-  const [cloud, setCloud] = useState("");
+  const [clouds, setClouds] = useState<string[]>([]);
 
   if (!candidates || candidates.length === 0) {
     return (
       <div className="space-y-3">
         <form action={run} className="space-y-3">
-          <CloudSide value={cloud} onChange={setCloud} />
+          <CloudSides value={clouds} onChange={setClouds} />
           <div className="flex flex-wrap items-center gap-3">
-            <Pending>compare local vs cloud</Pending>
+            <Pending>compare the tailorings</Pending>
             {state ? (
               <span className={`text-sm ${state.ok ? "text-go" : "text-stop"}`}>
                 {state.message}
@@ -239,10 +275,10 @@ export function TailoringCompare({
           </div>
         </form>
         <p className="max-w-prose font-mono text-xs text-ink-faint">
-          Runs the tailorer twice and shows both. The cloud side uploads your résumé again, so
-          this happens only when you ask — and a posting already tailored for sends nothing.
-          Choosing a provider here applies to this comparison only; it does not change what your
-          applications tailor with.
+          Runs the tailorer once per column and shows them side by side. Every cloud column
+          uploads your résumé again, so this happens only when you ask — and a posting already
+          tailored for by that provider sends nothing. Ticking providers here applies to this
+          comparison only; it does not change what your applications tailor with.
         </p>
       </div>
     );
@@ -250,7 +286,7 @@ export function TailoringCompare({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {candidates.map((side, index) => (
           <Column
             key={`${side.requested}-${index}`}
@@ -264,7 +300,7 @@ export function TailoringCompare({
           different provider without leaving the screen — which is the point of
           being able to name one at all. */}
       <form action={run} className="space-y-3">
-        <CloudSide value={cloud} onChange={setCloud} />
+        <CloudSides value={clouds} onChange={setClouds} />
         <div className="flex flex-wrap items-center gap-3">
           <Pending>run it again</Pending>
           {state ? (

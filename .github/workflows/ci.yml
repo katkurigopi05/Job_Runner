@@ -35,6 +35,9 @@ env:
   # REQUIRE_DB turns "no database, skip" into a hard failure. A green gate that
   # silently skipped the database tests is worse than no gate.
   REQUIRE_DB: "1"
+  # The same bargain for the POS tagger: with the data fetched below, "the
+  # chunker is unavailable" stops being an acceptable state to run tests in.
+  REQUIRE_CHUNKER: "1"
 
 jobs:
   gates:
@@ -96,6 +99,37 @@ jobs:
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/pip install -e ".[dev]"
+
+      # The POS tagger the fabrication guard reads noun phrases with. It is
+      # data, not a package, so pip cannot carry it — and `packages/tailor/
+      # chunk.py` falls back to matching on capitalization when it is absent,
+      # which cannot see a lowercase claim like "machine learning".
+      #
+      # Without this step CI ran the *weaker* guard than any developer machine
+      # that had run `make nltk-data`, and two real defects reached main
+      # invisible to it: the alias table only worked in one direction, and
+      # `_COMMON_WORDS` was missing the generic machine nouns. Both refused
+      # honest rewrites locally and passed here, because a lowercase noun
+      # carried no entity for the fallback to check. A gate that runs a
+      # different guard from the one that ships is not testing what ships.
+      #
+      # The step fails the run if the download fails, deliberately. Continuing
+      # would restore the silent fallback this exists to remove — and the
+      # cache above means a network hiccup costs one run, not every run.
+      #
+      # REQUIRE_CHUNKER makes that guarantee testable rather than assumed:
+      # the suite asserts the noun-phrase extractor is actually live, so a
+      # future run that fetches nothing fails loudly instead of quietly
+      # grading itself against the weaker guard. Same reasoning as
+      # REQUIRE_DB above, and the same failure it prevents.
+      - name: Cache the POS tagger data
+        uses: actions/cache@v4
+        with:
+          path: ~/nltk_data
+          key: nltk-${{ hashFiles('scripts/fetch_nltk_data.py') }}
+
+      - name: Fetch the POS tagger data
+        run: make nltk-data
 
       # --with-deps pulls the shared libraries Chromium needs on a bare runner.
       # Only chromium: the adapters never touch firefox or webkit.

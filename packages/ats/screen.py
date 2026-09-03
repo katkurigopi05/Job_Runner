@@ -58,6 +58,8 @@ log = structlog.get_logger(__name__)
 
 
 class Finding(StrEnum):
+    """Type of issue found in a form question."""
+
     KNOCK_OUT = "knock_out"
     CAUTION = "caution"
 
@@ -74,15 +76,21 @@ class ScreenedQuestion:
 
 @dataclass
 class ScreenReport:
+    """Results of screening a form's questions before answering."""
+
     knock_outs: list[ScreenedQuestion] = field(default_factory=list)
     cautions: list[ScreenedQuestion] = field(default_factory=list)
 
     @property
     def any_findings(self) -> bool:
+        """True if any issues were found."""
         return bool(self.knock_outs or self.cautions)
 
     def as_dict(self) -> dict[str, object]:
+        """Serialize for API response."""
+
         def render(items: list[ScreenedQuestion]) -> list[dict[str, str]]:
+            """Convert screened questions to dicts."""
             return [
                 {"key": q.key, "label": q.label, "reason": q.reason, "finding": q.finding.value}
                 for q in items

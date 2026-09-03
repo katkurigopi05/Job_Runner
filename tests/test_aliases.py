@@ -16,7 +16,10 @@ recognize, and the merely-related terms it must keep refusing.
 
 from __future__ import annotations
 
+import pytest
+
 from packages.tailor.aliases import equivalents
+from packages.tailor.chunk import available as chunker_available
 from packages.tailor.guard import SourceCorpus, check
 from packages.tailor.keywords import analyze
 
@@ -171,3 +174,54 @@ def test_the_object_of_an_allowed_verb_is_still_checked() -> None:
     assert not check("Deployed the data pipeline to Kubernetes.", corpus).ok
     assert not check("Tested the data pipeline, cutting latency by 40%.", corpus).ok
     assert not check("Led the data pipeline work.", corpus).ok
+
+
+# --------------------------------------------------------------------------
+# The other direction: the output spells out what the source shortened
+# --------------------------------------------------------------------------
+
+
+def test_the_output_may_spell_out_what_the_source_abbreviated() -> None:
+    """The mirror of `expand_phrases`, and it was missing.
+
+    Indexing handles source-says-long / output-says-short: "machine learning"
+    in a résumé makes `ml` available. The reverse never worked, because
+    `expand_tokens` keeps phrases out of a token index on purpose — so a source
+    saying `ML` left "machine" and "learning" tracing to nothing.
+
+    Invisible while the guard matched on capitalization: "machine learning" is
+    lowercase and carried no entity. The noun-phrase extractor reads every
+    noun, so it began refusing rewrites written in the résumé's own vocabulary.
+    """
+    corpus = SourceCorpus.from_texts("Used ML models in production. Deployed to K8s.")
+
+    assert check("Used machine learning models in production.", corpus).ok
+    assert check("Deployed to Kubernetes.", corpus).ok
+
+
+@pytest.mark.skipif(
+    not chunker_available(),
+    reason="the capitalization extractor reads no entity in an all-lowercase "
+    "phrase, so it accepts these trivially and the assertion would prove nothing",
+)
+def test_spelling_out_a_term_the_source_never_had_is_still_refused() -> None:
+    """The check reads the alias table, not the output's own confidence.
+
+    Skipped without the noun-phrase chunker, and the skip is the finding rather
+    than an inconvenience: `continuous integration`, `deep learning` and
+    `artificial intelligence` are all lowercase, so the capitalization
+    extractor sees no claim in any of them and returns ok with zero entities
+    checked. Asserting a refusal there would pass for the wrong reason on the
+    machine that has the tagger data and fail on the one that does not.
+
+    The tagger data is a download (`make nltk-data`), and CI does not fetch it.
+    So this whole class of guarantee is unverified in CI while it holds
+    locally — which is worth knowing before trusting a green run.
+    """
+    corpus = SourceCorpus.from_texts("Used ML models in production.")
+
+    # `ci` is a real alias group; this source simply does not assert it.
+    assert not check("Built continuous integration pipelines.", corpus).ok
+    # Not aliases of ML at all, and deliberately so — see ALIAS_GROUPS.
+    assert not check("Used deep learning models.", corpus).ok
+    assert not check("Used artificial intelligence in production.", corpus).ok

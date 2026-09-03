@@ -23,6 +23,7 @@ from packages.llm.router import temperature_for
 from packages.tailor.guard import _COMMON_WORDS, GuardReport, SourceCorpus, check, normalize
 from packages.tailor.keywords import TermReport, analyze, borrowed_terms
 from packages.tailor.recombination import find as find_recombinations
+from packages.tailor.technologies import dropped as dropped_technologies
 
 log = structlog.get_logger(__name__)
 
@@ -164,6 +165,35 @@ def _echoes(label: str, original: str) -> bool:
     return any(word.lower() in source for word in label.split())
 
 
+#: Punctuation and spacing, which a rewrite may move without saying anything
+#: different. Stripped from both sides before they are compared.
+_COSMETIC_RE = re.compile(r"[^\w\s]+")
+
+
+def _reduced(text: str) -> str:
+    """`text` with punctuation dropped and spacing collapsed."""
+    return " ".join(_COSMETIC_RE.sub("", text).split())
+
+
+def is_substantive(original: str, candidate: str) -> bool:
+    """Whether a rewrite differs in more than punctuation and spacing.
+
+    The count on the review and comparison screens is what the owner judges
+    two models by, and it was counting edits nobody can see. On the first real
+    local-vs-cloud run, 3 of the cloud side's 12 reported rewrites were of this
+    kind: `Core CS  Data Structures` gaining a colon, `Cloud Data Warehousing &
+    BI Analytics   [GitHub]` losing two spaces. Nine were real. A screen whose
+    whole purpose is comparing two models must not pad one side's total with
+    whitespace.
+
+    Case is deliberately *not* folded. Punctuation and spacing carry no claim;
+    capitalization sometimes does — `python` and `Python` are the same skill,
+    but the résumé writes technology names the way their vendors do, and a
+    model quietly lowercasing them is a change worth showing.
+    """
+    return _reduced(original) != _reduced(candidate)
+
+
 def _content_words(text: str) -> set[str]:
     """Meaning-bearing words, ignoring grammar."""
     words = {normalize(w) for w in text.split()}
@@ -251,6 +281,25 @@ def vet(
             report,
         )
 
+    # Everything above asks whether the rewrite says something the source does
+    # not. This asks the opposite question, and it is the only check here that
+    # reads what is *missing*: a rewrite that quietly deletes a library the
+    # résumé lists passes every test above — nothing was invented — and hands
+    # the employer a document with fewer of the keywords an ATS scans for.
+    # Both models tested dropped `(Pillow/Tkinter)` from the same bullet.
+    #
+    # An equivalent spelling is not a deletion: `technologies.dropped` decides
+    # presence through the alias table, so expanding `CI` to `continuous
+    # integration` keeps the term and is allowed.
+    lost = dropped_technologies(original, candidate, corpus.technologies)
+    if lost:
+        return (
+            False,
+            "drops " + ", ".join(repr(term) for term in lost) + " — the résumé "
+            "lists it and the rewrite does not mention it",
+            report,
+        )
+
     overlap = vocabulary_overlap(original, candidate)
     if overlap < MIN_VOCABULARY_OVERLAP:
         return (
@@ -308,10 +357,21 @@ async def tailor_bullet(
             entities_checked=report.checked,
         )
 
+    if not is_substantive(bullet, candidate):
+        # Vetted, but it says the same thing. Keep the source line so the
+        # document and the count agree: reporting a rewrite that a reader
+        # cannot see is the same defect as reporting none that they can.
+        return BulletRewrite(
+            original=bullet,
+            tailored=bullet,
+            changed=False,
+            entities_checked=report.checked,
+        )
+
     return BulletRewrite(
         original=bullet,
         tailored=candidate,
-        changed=candidate.strip() != bullet.strip(),
+        changed=True,
         entities_checked=report.checked,
     )
 

@@ -57,6 +57,49 @@ def test_a_technology_line_is_not_rewritten(line: str) -> None:
 @pytest.mark.parametrize(
     "line",
     [
+        # Every one of these was handed to the model on the owner's résumé,
+        # because the length fallback ran before the list test and a skills
+        # line is long. `Python, GitHub Actions` came back as `Using tools, I
+        # have experience with Python and GitHub Actions.` — a list rewritten
+        # as a sentence, naming fewer things than it started with.
+        "Languages  Python, TypeScript, Rust, C, C++, Java, JavaScript, HTML, CSS, XML, "
+        "Assembly Language",
+        "AI / ML & NLP  Machine Learning, Deep Learning, Generative AI (VAE, GAN, "
+        "Diffusion), Transformer-based NLP (BERT, HuggingFace), RAG",
+        "Frameworks & Web  FastAPI, React, Streamlit, Node.js, Tauri, WebGPU/WASM",
+        "Data, DevOps & Tools  Qdrant (Vector DB), Docker, Git, GitHub Actions (CI/CD), "
+        "pytest, OpenCV, Pillow, Jupyter Notebook",
+        "Data Warehousing & BI  Snowflake, AWS Redshift, Google BigQuery, Talend Open "
+        "Studio, Tableau, SQL",
+    ],
+)
+def test_a_long_skills_line_is_not_rewritten(line: str) -> None:
+    """A stack is a stack however long it runs.
+
+    These are longer than `_PROSE_WORDS`, so the length test claimed them as
+    prose before the list test was ever consulted. Two of them carry a category
+    label — `Data, DevOps & Tools  Qdrant (Vector DB), ...` — which also hid
+    them from the plain comma test, because splitting the whole line puts the
+    label and the first entry into one long fragment.
+    """
+    assert not is_rewritable(line)
+
+
+def test_a_long_prose_bullet_of_short_clauses_is_still_rewritten() -> None:
+    """The counter-case to the test above, and why `_is_list` needs the period.
+
+    Moving the list test ahead of the length test risks filing a real bullet as
+    a stack. This one is three short comma-separated fragments and would match
+    the list shape on that basis alone; it is prose, and the terminal full stop
+    is what says so.
+    """
+    line = "Added model adapters, audio-upload handling, and graceful fallbacks."
+    assert is_rewritable(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
         "Software Engineer, Acme Corp, Jan 2021 - Present",
         "Acme Corp   2019 - 2022",
         "Master of Science in Business Analytics   Jan 2025 - Dec 2026",

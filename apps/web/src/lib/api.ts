@@ -638,10 +638,14 @@ export const api = {
    * whatever real tailoring would use. Naming one moves no setting — the next
    * application routes exactly as it did before.
    */
-  compareTailoring: (id: string, cloud?: string) =>
+  compareTailoring: (id: string, clouds?: string[]) =>
     request<Application>(`/applications/${id}/tailoring/compare`, {
       method: "POST",
-      body: JSON.stringify({ cloud: cloud ?? null }),
+      // `clouds` rather than `cloud`: each name is another upload of the
+      // résumé to another third party, so the list is what the owner ticked
+      // and never "everything with a key". Empty sends null, which the server
+      // reads as "whatever real tailoring would use".
+      body: JSON.stringify({ clouds: clouds && clouds.length > 0 ? clouds : null }),
     }),
 
   /**

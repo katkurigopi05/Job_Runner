@@ -32,6 +32,7 @@ not dropped. A comparison silently missing its second half looks like a verdict.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -211,12 +212,40 @@ def _reason(exc: Exception) -> str:
     return f"{type(exc).__name__} — check that the provider is configured and reachable"
 
 
+def _requested_clouds(cloud: str | None, clouds: Sequence[str] | None) -> tuple[str, ...]:
+    """The remote sides the owner asked for, de-duplicated and in order.
+
+    Two fields because they answer different questions and both are worth
+    asking. `cloud` is "would my cloud provider have done better than local",
+    which is one upload and the common case. `clouds` is "which of these
+    should I be using", which is one upload *per provider named* — a §2.8
+    multiplier, and the reason it has to be spelled out rather than defaulted
+    to everything configured.
+
+    `clouds` wins when both are given: it is the more specific request, and
+    silently running a fourth column the caller did not list would be exactly
+    the surprise upload this guards against.
+
+    Order is preserved and duplicates dropped, so naming a provider twice does
+    not send the résumé twice.
+    """
+    named = list(clouds) if clouds else ([cloud] if cloud else [])
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in named:
+        if name and name not in seen:
+            seen.add(name)
+            ordered.append(name)
+    return tuple(ordered)
+
+
 async def compare_tailorings(
     session: AsyncSession,
     *,
     profile: Profile,
     posting: Posting,
     cloud: str | None = None,
+    clouds: Sequence[str] | None = None,
 ) -> list[Candidate]:
     """Tailor this posting with the local model and with a cloud one.
 
@@ -245,16 +274,19 @@ async def compare_tailorings(
     résumé, a posting with no text, or a named cloud that cannot answer.
     Everything else that can go wrong belongs to one side and is reported there.
     """
-    if cloud is not None and not is_comparable_cloud(cloud):
-        # A precondition, not a model outcome, so it raises rather than becoming
-        # a failed column — the owner asked for a specific comparison and did
-        # not get it, and a column reading "openrouter: unavailable" beside a
-        # local one would look like a verdict on OpenRouter.
-        raise CannotCompare(
-            f"{cloud!r} cannot be the remote half of a comparison. Choose one of "
-            f"{comparable_clouds() or ['— none configured —']}, or omit it to use "
-            "whatever real tailoring would."
-        )
+    requested = _requested_clouds(cloud, clouds)
+    for name in requested:
+        if not is_comparable_cloud(name):
+            # A precondition, not a model outcome, so it raises rather than
+            # becoming a failed column — the owner asked for a specific
+            # comparison and did not get it, and a column reading "openrouter:
+            # unavailable" beside a local one would look like a verdict on
+            # OpenRouter.
+            raise CannotCompare(
+                f"{name!r} cannot be a remote half of a comparison. Choose from "
+                f"{comparable_clouds() or ['— none configured —']}, or name none "
+                "to use whatever real tailoring would."
+            )
     if profile.base_resume_id is None:
         raise CannotCompare("this profile has no base résumé to tailor")
 
@@ -285,8 +317,12 @@ async def compare_tailorings(
     )
     projects = relevant_for_posting(inventory, posting_text, embedder=get_embedder())
 
-    remote = cloud or cloud_for_tailoring()
-    sides = [LOCAL_PROVIDER] + ([remote] if remote else [])
+    if requested:
+        remotes = list(requested)
+    else:
+        fallback = cloud_for_tailoring()
+        remotes = [fallback] if fallback else []
+    sides = [LOCAL_PROVIDER, *remotes]
 
     candidates: list[Candidate] = []
     for name in sides:
@@ -304,7 +340,7 @@ async def compare_tailorings(
             )
         )
 
-    if remote is None:
+    if not remotes:
         candidates.append(
             Candidate(
                 requested="cloud",

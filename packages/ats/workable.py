@@ -87,6 +87,7 @@ def profile_key_for(field_name: str) -> str | None:
 
 
 def is_employer_question(field_name: str) -> bool:
+    """Check if a field is an employer-specific question."""
     return field_name.startswith(_EMPLOYER_PREFIX)
 
 
@@ -97,15 +98,18 @@ class WorkableAdapter:
 
     @staticmethod
     def matches(url: str) -> bool:
+        """Check if URL is a Workable posting."""
         return bool(_URL_RE.match(url))
 
     @staticmethod
     def company_slug(url: str) -> str | None:
+        """Extract company slug from Workable URL."""
         match = _URL_RE.match(url)
         return match.group("company") if match else None
 
     @staticmethod
     def external_id(url: str) -> str | None:
+        """Extract job ID from Workable URL."""
         match = _URL_RE.match(url)
         return match.group("job_id") if match else None
 
@@ -115,6 +119,7 @@ class WorkableAdapter:
             raise ManualCompletionRequired("captcha present; finish this application by hand")
 
     async def parse_posting(self, page: Any) -> ParsedPosting:
+        """Parse posting details from a Workable page."""
         url = page.url
         closed = bool(await page.locator(SELECTORS["closed_marker"]).count())
 
@@ -220,10 +225,12 @@ class WorkableAdapter:
         return key.replace("_", " ")
 
     async def fill(self, page: Any, answers: dict[str, Any]) -> FillReport:
+        """Fill a Workable form (not implemented)."""
         raise NotImplementedError(
             "Workable fill is not implemented. Parsing and enumeration were verified "
             "against a live form; filling was not, so no unchecked values are written."
         )
 
     async def submit(self, page: Any) -> Receipt:
+        """Submit a Workable application (not implemented)."""
         raise NotImplementedError("Workable submit is not implemented.")

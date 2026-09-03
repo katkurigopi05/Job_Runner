@@ -56,7 +56,7 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 | Hard filters | **HAVE** | `packages/matching/filters.py` |
 | **A–G rubric → 1.0–5.0** | **HAVE** | `packages/matching/rubric.py`, from the mobile branch |
 | Swipe/rate feed | **HAVE** | `/swipe` — and the decisions are the labelled set §15 says is missing |
-| Salary gap (`salary-gap`) | **BUILD** | `Profile.salary_expectation` is held and never compared |
+| Salary gap (`salary-gap`) | **HAVE** | `packages/matching/salary.py` — a rubric dimension, never a form answer |
 | Upskill plan (`upskill`) | **BUILD** | gap is computed; nothing turns it into a plan |
 
 ## Résumé and documents
@@ -68,7 +68,7 @@ Their surface was enumerated from `package.json` (57 scripts), `modes/`, and
 | PDF render (`pdf`) | **HAVE** | `assemble.py`, `publish.py` |
 | HTML CV (`build-cv-html`) | **HAVE** | `assemble_html` |
 | LaTeX CV (`build-cv-latex`) | **DECLINED** | WeasyPrint covers it; LaTeX is a second toolchain |
-| Cover letter (`cover-letter`) | **HAVE** | `packages/tailor/cover.py`, called from `apply_job::_cover_letter` — written only when the form asks, refusals recorded |
+| Cover letter (`cover-letter`) | **HAVE** | `packages/tailor/cover.py`, called from `apply_job::_cover_letter` — written only when the form asks, vetted, stored, refusals recorded, and shown before approval |
 | Voice/style capture (`voice-dna`) | **BUILD** | nothing models the owner's writing voice |
 | CV visual regression (`test:cv-visual`) | **BUILD** | we test the parse round-trip, never how it *looks* |
 | Tailoring done ahead of time | **HAVE** | `make tailor-batch` — per *posting*, not per company; see below |
