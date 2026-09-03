@@ -71,7 +71,7 @@ async def main() -> None:
             print("no profiles found")
             return
 
-        written = 0
+        written: list[Path] = []
         for profile in profiles:
             if owner:
                 labeled, report = await export_owner_labels(session, profile)  # type: ignore[assignment]
@@ -89,7 +89,7 @@ async def main() -> None:
                 out = out.with_name(f"{out.stem}-{profile.label}{out.suffix}")
             dump_labeled_set(labeled, out)
             print(f"  wrote {out}")
-            written += 1
+            written.append(out)
 
         if not written:
             print(
@@ -99,8 +99,12 @@ async def main() -> None:
             )
             return
 
+        # The paths actually written, not the default. With `--out` set, or
+        # more than one profile producing suffixed files, printing the default
+        # named a file this run did not create — a copyable command that fails.
         print("\nRun the benchmark against it with:")
-        print(f'  make bench-matching ARGS="--set {out_default}"')
+        for path in written:
+            print(f'  make bench-matching ARGS="--set {path}"')
 
 
 if __name__ == "__main__":

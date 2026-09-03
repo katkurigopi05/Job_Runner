@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
@@ -131,25 +132,23 @@ async def record_label(body: LabelIn, session: SessionDep) -> PostingLabel:
     if posting is None:
         raise ApiError(ErrorCode.NOT_FOUND, "posting not found")
 
-    existing = await session.scalar(
-        select(PostingLabel).where(
-            PostingLabel.profile_id == profile.id,
-            PostingLabel.posting_id == posting.id,
-        )
-    )
-
     score = await session.scalar(
         select(Match.score).where(Match.profile_id == profile.id, Match.posting_id == posting.id)
     )
-    stream = await _stream_for(session, profile.id, posting.id, score)
+    stream = await _stream_for(session, profile.id, score)
 
-    if existing is not None:
-        existing.relevance = body.relevance
-        existing.note = body.note
-        existing.updated_at = datetime.now(UTC)
-        label = existing
-    else:
-        label = PostingLabel(
+    # An upsert rather than read-then-insert. Two writes racing both saw no
+    # existing row, and the unique constraint then failed one of them — so a
+    # double-tap on the grading screen (which key auto-repeat makes easy)
+    # returned an error instead of recording a grade. The database decides,
+    # once.
+    #
+    # `score_at_label` and `stream` are set on insert only. They describe what
+    # the ranker thought when the posting was *first* graded, and a re-grade
+    # after a re-score must not quietly restate that history.
+    statement = (
+        insert(PostingLabel)
+        .values(
             profile_id=profile.id,
             posting_id=posting.id,
             relevance=body.relevance,
@@ -157,16 +156,23 @@ async def record_label(body: LabelIn, session: SessionDep) -> PostingLabel:
             score_at_label=float(score) if score is not None else None,
             stream=stream,
         )
-        session.add(label)
-
+        .on_conflict_do_update(
+            constraint="uq_posting_labels_profile_posting",
+            set_={
+                "relevance": body.relevance,
+                "note": body.note,
+                "updated_at": datetime.now(UTC),
+            },
+        )
+        .returning(PostingLabel)
+    )
+    label = (await session.scalars(statement)).one()
     await session.commit()
     await session.refresh(label)
     return label
 
 
-async def _stream_for(
-    session: SessionDep, profile_id: uuid.UUID, posting_id: uuid.UUID, score: float | None
-) -> str:
+async def _stream_for(session: SessionDep, profile_id: uuid.UUID, score: float | None) -> str:
     """Which stream this posting would have come from.
 
     Recomputed rather than taken from the client. The stream is the audit trail
@@ -183,7 +189,12 @@ async def _stream_for(
 
     span = await active.score_range(session, profile_id)
     if span is None:
-        return active.Stream.UNCERTAIN.value
+        # One scored posting, or every score identical. `_uncertain` needs a
+        # span and returns nothing in that case, so `_confident` is what
+        # actually served this. Calling it uncertain made the stored stream
+        # disagree with the one the screen showed — and the stored one is the
+        # audit trail, so it was the copy that lied.
+        return active.Stream.CONFIDENT.value
 
     low, high = span
     # The top decile of the observed range is what `_confident` draws from.
@@ -251,6 +262,15 @@ async def summary(session: SessionDep, profile_id: uuid.UUID | None = None) -> L
         by_stream=by_stream,
         target=TARGET_LABELS,
         remaining=max(TARGET_LABELS - total, 0),
-        usable=total >= MIN_USEFUL_LABELS and len([g for g, c in by_grade.items() if c]) >= 2,
+        # Stream coverage is part of the predicate, not merely a note beside
+        # it. A hundred labels with two grades and no `unseen` is exactly the
+        # corpus this loop was built to avoid, and calling that usable would
+        # send the owner to `make export-labels kind=owner` for a set carrying
+        # the bias `provenance: owner` is supposed to mean it escaped.
+        usable=(
+            total >= MIN_USEFUL_LABELS
+            and len([g for g, c in by_grade.items() if c]) >= 2
+            and bool(by_stream.get(active.Stream.UNSEEN.value))
+        ),
         notes=notes,
     )

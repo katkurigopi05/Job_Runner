@@ -70,6 +70,11 @@ export function LabelDeck({ initial }: { initial: LabelCandidate[] }) {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      // A held digit auto-repeats. The first press grades and advances the
+      // queue, and the repeat then grades the *next* posting with the same
+      // value — silently, and into the corpus this whole screen exists to
+      // keep honest.
+      if (event.repeat) return;
       const match = GRADES.find((g) => g.key === event.key);
       if (match) void grade(match.value);
     }
@@ -121,9 +126,14 @@ export function LabelDeck({ initial }: { initial: LabelCandidate[] }) {
           </p>
         ) : null}
 
+        {/* `rel` is not cosmetic here: the URL comes from a crawled
+            third-party page, and a named browsing context can reach back
+            through `window.opener` to navigate the dashboard — which has no
+            authentication to fall back on. */}
         <a
           href={current.url}
           target="jobrunner-form"
+          rel="noopener noreferrer"
           className="mt-7 inline-block font-mono text-xs text-ink-soft underline decoration-rule underline-offset-4 hover:text-ink"
         >
           read the posting ↗
