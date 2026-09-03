@@ -233,7 +233,12 @@ async def test_the_summary_reports_the_stream_mix(client: AsyncClient, corpus) -
     """The mix is reported beside the count because they answer different
     questions, and only one of them can show a shortlist-only corpus."""
     await client.post("/labels", json={"posting_id": corpus["scored"][0], "relevance": 1})
-    await client.post("/labels", json={"posting_id": corpus["unscored"][0], "relevance": 0})
+    # With the hint, as the grading screen sends it: `unseen` is claimed only
+    # when a serve attests it.
+    await client.post(
+        "/labels",
+        json={"posting_id": corpus["unscored"][0], "relevance": 0, "served_stream": "unseen"},
+    )
 
     summary = (await client.get("/labels/summary")).json()
 
@@ -268,7 +273,10 @@ async def test_grades_export_as_owner_not_feedback(
     from packages.matching.owner_labels import export_owner_labels
 
     await client.post("/labels", json={"posting_id": corpus["scored"][0], "relevance": 3})
-    await client.post("/labels", json={"posting_id": corpus["unscored"][0], "relevance": 0})
+    await client.post(
+        "/labels",
+        json={"posting_id": corpus["unscored"][0], "relevance": 0, "served_stream": "unseen"},
+    )
 
     profile = await worker_session.get(Profile, uuid.UUID(corpus["profile_id"]))
     assert profile is not None
@@ -507,3 +515,27 @@ async def test_a_genuinely_unseen_posting_is_still_recorded_as_unseen(
     )
     assert stored is not None
     assert stored.stream == active.Stream.UNSEEN.value
+
+
+async def test_silence_is_not_evidence_of_never_being_scored(
+    client: AsyncClient, worker_session: AsyncSession, corpus
+) -> None:
+    """A caller that sends no hint has told us nothing, and defaulting that to
+    the strongest claim would put the hole straight back — the MCP tools, curl
+    and any future client all reach this path. `unseen` is claimed only when a
+    serve attests it.
+
+    The cost is real and deliberate: such a caller cannot contribute unseen
+    coverage. That is the honest outcome, because it genuinely cannot say where
+    the posting came from.
+    """
+    await client.post("/labels", json={"posting_id": corpus["unscored"][0], "relevance": 2})
+
+    stored = await worker_session.scalar(
+        select(PostingLabel).where(PostingLabel.posting_id == uuid.UUID(corpus["unscored"][0]))
+    )
+    assert stored is not None
+    assert stored.stream == active.Stream.UNKNOWN.value
+
+    summary = (await client.get("/labels/summary")).json()
+    assert not summary["usable"]

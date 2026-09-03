@@ -200,14 +200,21 @@ async def _stream_for(
         # filter, so a card served as `uncertain` can arrive here with its row
         # already gone. Reproduced: served `uncertain`, stored `unseen`.
         #
-        # When the screen says it was served as something else, the server
-        # cannot prove this posting was never scored, so it does not claim so.
-        # `unknown` reads as "not counted as unseen", which errs toward
-        # reporting more bias than there is — the safe direction for a number
-        # whose whole job is to certify the absence of bias.
-        if served_stream and served_stream != active.Stream.UNSEEN.value:
-            return active.Stream.UNKNOWN.value
-        return active.Stream.UNSEEN.value
+        # `unseen` is therefore claimed only when a serve attests it. Silence
+        # is not evidence: a caller that sends no hint — the MCP tools, curl, a
+        # future client — has told us nothing, and defaulting that to the
+        # strongest claim would put the hole straight back. `unknown` reads as
+        # "not counted as unseen", which errs toward reporting more bias than
+        # there is, the safe direction for a number whose whole job is to
+        # certify the absence of bias.
+        #
+        # The cost is real and worth stating: a caller that grades without
+        # passing the stream `/labels/next` gave it cannot contribute unseen
+        # coverage. That is the honest outcome — it genuinely cannot say where
+        # the posting came from.
+        if served_stream == active.Stream.UNSEEN.value:
+            return active.Stream.UNSEEN.value
+        return active.Stream.UNKNOWN.value
 
     span = await active.score_range(session, profile_id)
     if span is None:
