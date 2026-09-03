@@ -135,18 +135,31 @@ def _walk(node: Any, found: list[dict[str, Any]]) -> None:
 
 
 def job_postings(html: str) -> list[dict[str, Any]]:
-    """Every schema.org JobPosting object on the page."""
+    """Every schema.org JobPosting object on the page.
+
+    One malformed block must not lose the others. Sites commonly emit several,
+    and a trailing comma in the analytics one should not cost us the jobs.
+
+    `RecursionError` is caught beside the decode error because both `json.loads`
+    and `_walk` recurse, and the json module sets no nesting limit of its own —
+    it inherits the interpreter's. Deeply nested JSON-LD is therefore a page
+    that raises rather than parses, and `bespoke.probe_page` calls `extract`
+    outside its own try, so one such page would end a sweep of thousands.
+    """
     found: list[dict[str, Any]] = []
     for block in script_blocks(html):
         try:
             payload = json.loads(block)
+            # Inside the try as well: a structure shallow enough for the
+            # decoder can still be deep enough for the walk.
+            _walk(payload, found)
         except json.JSONDecodeError:
-            # One malformed block must not lose the others. Sites commonly
-            # emit several, and a trailing comma in the analytics one should
-            # not cost us the jobs.
             log.debug("jsonld_block_not_json")
-            continue
-        _walk(payload, found)
+        except RecursionError:
+            # Whatever `_walk` appended before it ran out of stack is kept:
+            # partial is better than losing the page, and each appended node
+            # is a complete object.
+            log.debug("jsonld_block_too_deeply_nested")
     return found
 
 
