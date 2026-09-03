@@ -50,9 +50,13 @@ class OwnerReport:
 
     @property
     def graded_classes(self) -> int:
+        """How many distinct grades appear. Below two, every metric is
+        degenerate however many labels there are."""
         return sum(1 for count in self.grades.values() if count)
 
     def summary(self) -> str:
+        """The count, the grade spread, and the stream mix — the third being
+        the one a count cannot substitute for."""
         spread = ", ".join(f"{g}:{self.grades.get(g, 0)}" for g in sorted(RELEVANCE_SCALE))
         by_stream = ", ".join(f"{name}:{count}" for name, count in sorted(self.streams.items()))
         lines = [f"{self.profile}: {self.total} owner-graded postings ({spread})"]

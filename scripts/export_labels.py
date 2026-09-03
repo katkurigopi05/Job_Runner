@@ -48,6 +48,7 @@ DEFAULT_OWNER_OUT = Path("seeds/owner_graded.yaml")
 
 
 async def main() -> None:
+    """Export one kind of judgement per run, one file per profile."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", default=None, help="profile label; default is all of them")
     parser.add_argument("--out", default=None, help="where to write the labeled set")

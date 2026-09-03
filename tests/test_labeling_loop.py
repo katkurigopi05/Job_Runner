@@ -230,6 +230,8 @@ async def test_the_summary_warns_when_no_unseen_posting_has_been_graded(
 
 
 async def test_the_summary_reports_the_stream_mix(client: AsyncClient, corpus) -> None:
+    """The mix is reported beside the count because they answer different
+    questions, and only one of them can show a shortlist-only corpus."""
     await client.post("/labels", json={"posting_id": corpus["scored"][0], "relevance": 1})
     await client.post("/labels", json={"posting_id": corpus["unscored"][0], "relevance": 0})
 

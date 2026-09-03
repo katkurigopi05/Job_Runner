@@ -85,6 +85,7 @@ def _labeled_subquery(profile_id: uuid.UUID) -> Select[tuple[uuid.UUID]]:
 
 
 def _unlabeled(profile_id: uuid.UUID) -> Select[tuple[Posting]]:
+    """Open postings this profile has not graded — the base of every stream."""
     return select(Posting).where(
         Posting.closed_at.is_(None),
         Posting.id.not_in(_labeled_subquery(profile_id)),
