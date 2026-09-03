@@ -174,9 +174,14 @@ gate-3: gate-0
 # gate-3: they assert wiring the module's own tests cannot see — that the
 # crawler reaches a bespoke page at all, and that validation does not condemn
 # every live one.
+#
+# test_labeling_loop is in because this gate's second half is about label
+# quality, and the loop that produces owner-graded labels can fail in a way no
+# count reveals: a corpus drawn only from the ranker's own shortlist carries
+# the sampling bias `provenance: owner` is supposed to mean it escaped.
 gate-5: gate-0
 	REQUIRE_DB=1 $(PY)/pytest -q tests/test_crawler.py tests/test_matching.py \
-	  tests/test_jsonld.py tests/test_bespoke_probe.py
+	  tests/test_jsonld.py tests/test_bespoke_probe.py tests/test_labeling_loop.py
 	@echo "gate-5 passed"
 
 # Gate 4 — CLAUDE.md §9. A full apply-to-review cycle driven by tool calls
@@ -246,7 +251,7 @@ bench-matching:
 # read them back out. See packages/matching/feedback.py for what a binary,
 # feed-ordered label does and does not license.
 export-labels:
-	$(PY)/python -m scripts.export_labels $(if $(p),--profile $(p),) $(if $(out),--out $(out),)
+	$(PY)/python -m scripts.export_labels $(if $(p),--profile $(p),) $(if $(out),--out $(out),) $(if $(kind),--kind $(kind),)
 
 # Gate 6 asks for 30 hand-labeled *real* recruiter emails; inbound_messages is
 # 0 and the fixtures were written beside the patterns that read them. Export
@@ -256,7 +261,7 @@ export-labels:
 # queue for a generic extractor rather than counted and dropped.
 import-csv:
 	@test -n "$(src)" || (echo "set src=<companies.csv>" && exit 1)
-	$(PY)/python -m scripts.import_companies "$(src)" $(if $(out),--out $(out),) $(if $(write),--write,)
+	$(PY)/python -m scripts.import_companies "$(src)" $(if $(out),--out $(out),) $(if $(filter 1,$(write)),--write,)
 
 # The other end of import-csv. Fetches each bespoke careers page once and asks
 # whether it publishes schema.org JobPosting data; only the pages that answer

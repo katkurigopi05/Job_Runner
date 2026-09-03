@@ -320,6 +320,66 @@ class Match(Base):
     )
 
 
+class PostingLabel(Base):
+    """A relevance grade the owner sat down and gave a posting.
+
+    Deliberately its own table rather than a column on `Match`, and the reason
+    is the whole point of the labeling loop.
+
+    `packages/matching/feedback.py` records two weaknesses in swipe-derived
+    labels: a swipe is **binary**, so it cannot tell "would apply" from "would
+    drop everything for"; and it is **taken in feed order**, so it is only ever
+    recorded for postings the ranker already surfaced — the model ends up
+    graded on its own shortlist. A 0–3 scale on a `Match` row would fix the
+    first and leave the second exactly as it is, while the label now claimed
+    `provenance: owner` — the grade a benchmark trusts most. That is worse than
+    not fixing it, because the bias would stop being visible.
+
+    A `Match` row exists only for a posting that cleared the hard filters and
+    got scored. Keying here on (profile, posting) instead means a posting the
+    ranker buried, filtered out, or scored near zero can still be graded, which
+    is the only way a label set can measure what the ranker is missing.
+    """
+
+    __tablename__ = "posting_labels"
+
+    id: Mapped[uuid.UUID] = _pk()
+    profile_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False
+    )
+    posting_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("postings.id", ondelete="CASCADE"), nullable=False
+    )
+    #: 0–3, per `labels.RELEVANCE_SCALE`. Checked in the database as well as in
+    #: the schema: a grade outside the scale silently breaks `2**rel` gain in
+    #: NDCG rather than raising, so it must not be storable.
+    relevance: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Why this grade. What lets a disagreement be settled later rather than
+    #: re-litigated from scratch — `LabeledPosting.note` carries it onward.
+    note: Mapped[str | None] = mapped_column(Text)
+    #: The score the ranker gave when this was graded, or NULL when it had no
+    #: opinion. Stored rather than looked up later because re-scoring moves it,
+    #: and "what did the ranker think at the moment a human disagreed" is the
+    #: measurement — recomputing it answers a different question.
+    score_at_label: Mapped[float | None] = mapped_column(Float)
+    #: Which `active.Stream` offered this posting. The audit trail for the
+    #: sampling bias the loop exists to avoid: a corpus that is all `uncertain`
+    #: was drawn from the ranker's own shortlist and carries exactly the
+    #: weakness `provenance: owner` is supposed to have escaped. Without this
+    #: stored per row, that is unknowable after the fact.
+    stream: Mapped[str | None] = mapped_column(String(20))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (
+        # Re-grading overwrites. One grade per pair, so a corrected label
+        # replaces the old one instead of both being exported.
+        UniqueConstraint("profile_id", "posting_id", name="uq_posting_labels_profile_posting"),
+        CheckConstraint("relevance BETWEEN 0 AND 3", name="ck_posting_labels_relevance_scale"),
+        Index("ix_posting_labels_profile", "profile_id"),
+    )
+
+
 class Application(Base):
     """A job application in the pipeline."""
 

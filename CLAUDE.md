@@ -1472,6 +1472,74 @@ rather than a departure, and the evidence is what tells those apart later.
 now answers "how many have never been checked" on its own: today, **119 of
 119**, because the stamp is new even for the 29 that were swept.
 
+### The labeling loop, and the bias it had to avoid twice
+
+`docs/BACKLOG.md` P1 — "the one that matters most", and the blocker under
+every ML claim in this repo. Every relevance label here is a `FIXTURE`: a
+posting and a grade written together, beside the code that reads them. That is
+why `docs/ML_EVALUATION.md` refuses to name a production ranking candidate,
+and why §15 above says Gate 5 does not answer the question it was written to
+ask.
+
+`/label` is the screen that changes it. A real crawled posting, a 0–3 grade,
+exported as `Provenance.OWNER` by `make export-labels kind=owner`.
+
+**The design decision worth recording is what it is *not*.** The obvious build
+is `/swipe` with four buttons instead of two. `packages/matching/feedback.py`
+already names two weaknesses in swipe-derived labels, and that build fixes
+exactly one of them:
+
+- a swipe is **binary**, so it cannot tell "would apply" from "would drop
+  everything for" — which is precisely what NDCG's `2**rel` gain exists to
+  reward;
+- a swipe is **taken in feed order**, so it is only ever recorded for postings
+  the ranker already surfaced. Nothing it buried is ever labeled, and the model
+  ends up graded on its own shortlist.
+
+A four-point scale on the same feed fixes the first and leaves the second
+untouched — while stamping the result `owner`, the provenance a benchmark
+trusts *most*. That is worse than not fixing it at all, because the bias stops
+being visible. A `FEEDBACK` label announces its own narrowness; an `OWNER`
+label carrying the same narrowness does not.
+
+So `packages/matching/active.py` draws from three streams:
+
+- **uncertain** — scored near the middle of the *observed* range. Read rather
+  than assumed: §15 records that the shipped `min_match_score` of 0.75 was
+  unreachable when the first real run over 10,922 postings peaked at 0.271, so
+  a midpoint hardcoded at 0.5 would call nothing uncertain and this stream
+  would silently return empty.
+- **unseen** — crawled but never scored for this profile, including postings a
+  hard filter dropped. These have no `Match` row at all, so they can never be
+  swiped, and before this they could never be labeled either. They are the only
+  labels that can measure what the ranker is missing.
+- **confident** — its own top picks. If those grade 0, the problem is not the
+  threshold and no amount of boundary sampling will show it.
+
+Four things are load-bearing:
+
+- **`PostingLabel` is its own table, not a column on `Match`.** A `Match` row
+  exists only for a posting that cleared the hard filters and got scored.
+  Keying on (profile, posting) instead is what makes the unseen stream
+  storable at all.
+- **The stream is recorded per label.** It is the audit trail for the bias:
+  a corpus that turns out to be all `uncertain` has the shortlist problem
+  back, and after the fact that is otherwise unknowable. `/labels/summary`
+  says so outright when no unseen grade exists yet.
+- **A scored posting can never be recorded as `unseen`.** Found by a test:
+  the first classifier fell through to `unseen` for any score far from the
+  midpoint, so the summary would have reported a shortlist-only corpus as
+  having escaped the shortlist — the one wrong answer that column exists to
+  prevent. `unseen` now means one thing only: the ranker never scored this.
+- **A short stream does not backfill from the others.** On a database with
+  nothing unscored the unseen quota goes unfilled rather than being handed to
+  `uncertain`. Backfilling would quietly return an all-shortlist batch, which
+  is this bias arriving through the back door.
+
+**What is not done, and no code can do it.** The corpus is empty. Grading is a
+person reading real postings. P1's "done when" is now ≥100 labels *across more
+than one stream* — the count alone was never the property that mattered.
+
 ### What is still not fixed, and why
 
 - **Gate 1's live half is refused, not pending.** It reaches the form and is

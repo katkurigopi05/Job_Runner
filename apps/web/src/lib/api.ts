@@ -349,6 +349,38 @@ export interface PostingSearch {
 export type Decision = "interested" | "skipped";
 
 /** What the owner's swipes say the score threshold should be. */
+/**
+ * One posting offered for grading, with why it was offered.
+ *
+ * `stream` is the audit trail for sampling bias. A corpus that turns out to be
+ * all `uncertain` was drawn from the ranker's own shortlist and carries the
+ * weakness `provenance: owner` is meant to have escaped — see
+ * packages/matching/active.py.
+ */
+export interface LabelCandidate {
+  posting_id: string;
+  title: string | null;
+  location: string | null;
+  url: string;
+  description: string | null;
+  first_seen_at: string;
+  stream: "uncertain" | "unseen" | "confident";
+  /** null means the ranker never scored it. Not the same as zero. */
+  score: number | null;
+}
+
+export interface LabelSummary {
+  profile_id: string;
+  profile: string;
+  total: number;
+  by_grade: Record<string, number>;
+  by_stream: Record<string, number>;
+  target: number;
+  remaining: number;
+  usable: boolean;
+  notes: string[];
+}
+
 export interface Calibration {
   decided: number;
   interested: number;
@@ -609,6 +641,14 @@ export const api = {
   /** Filters are the owner's search, passed straight through as query params. */
   matchesFiltered: (query: URLSearchParams) => request<Match[]>(`/matches?${query}`),
   calibration: () => request<Calibration>("/matches/calibration"),
+  labelQueue: (size: number) =>
+    request<LabelCandidate[]>(`/labels/next?size=${size}`),
+  labelSummary: () => request<LabelSummary>("/labels/summary"),
+  recordLabel: (postingId: string, relevance: number, note?: string) =>
+    request<{ id: string; posting_id: string; relevance: number }>("/labels", {
+      method: "POST",
+      body: JSON.stringify({ posting_id: postingId, relevance, note: note ?? null }),
+    }),
   digest: () => request<Digest>("/analytics/digest"),
   matchSummary: () => request<MatchSummary>("/matches/summary"),
   /** Returns a confirmation, not a full Match — the handler has no posting. */
