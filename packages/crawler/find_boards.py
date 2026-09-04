@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 import structlog
 
@@ -52,18 +53,20 @@ from packages.crawler.resolve import find_embedded
 log = structlog.get_logger(__name__)
 
 
-#: Hosts whose URLs are not evidence about anything. A real company list in
-#: the wild had `google.com/search?q=site:acme.com+careers+jobs` in its careers
-#: column for 3,864 of 3,869 rows — someone generated a search link per
-#: company rather than finding the page. Following those would be a robots
-#: violation and would learn nothing.
-_NON_EVIDENCE_HOSTS = (
-    "google.",
-    "bing.com",
-    "duckduckgo.com",
-    "search.yahoo.",
-    "linkedin.com",
-)
+#: A label that makes a host a search surface rather than a company. Matched
+#: against the hostname's labels, never against the whole URL: a substring test
+#: rejected `acme.example/jobs?utm_source=google.com` on its tracking
+#: parameter, and `notgoogle.example` on its own name.
+#:
+#: The last label is excluded because it is the TLD, and the point is the
+#: registrable name — `google.com` matches, a hypothetical `.google` TLD on
+#: someone else's domain does not.
+_SEARCH_LABELS = frozenset({"google", "bing", "duckduckgo", "linkedin"})
+
+#: Yahoo is a company that could legitimately appear in a Bay Area list, so
+#: only its search surface is refused rather than its domain. Same for anything
+#: else that puts search on a `search.` host.
+_SEARCH_HOST_PREFIXES = ("search.",)
 
 
 def normalize_header(header: str) -> str:
@@ -81,15 +84,37 @@ def normalize_header(header: str) -> str:
 
 
 def usable_url(url: str | None) -> str | None:
-    """The URL if it could name a board, None if it is a search link."""
+    """The URL if it could name a board, None if it is a search link.
+
+    A real company list in the wild had
+    `google.com/search?q=site:acme.com+careers+jobs` in its careers column for
+    3,864 of 3,869 rows — someone generated a search link per company rather
+    than finding the page. Following those would be a robots violation and
+    would learn nothing.
+
+    The test is on the parsed **hostname**, not the URL text. Substring
+    matching dropped three kinds of legitimate URL: a tracking parameter
+    (`?utm_source=google.com`), a referrer (`?ref=linkedin.com`), and a company
+    whose own domain contains the word (`notgoogle.example`). A row rejected
+    here is marked unusable by `company_csv.triage`, so a false positive
+    silently discards a real careers page.
+    """
     if not url:
         return None
-    lowered = url.strip().lower()
-    if not lowered.startswith(("http://", "https://")):
+    cleaned = url.strip()
+    if not cleaned.lower().startswith(("http://", "https://")):
         return None
-    if any(host in lowered for host in _NON_EVIDENCE_HOSTS):
+
+    host = (urlparse(cleaned).hostname or "").lower()
+    if not host:
         return None
-    return url.strip()
+    if host.startswith(_SEARCH_HOST_PREFIXES):
+        return None
+    # `labels[:-1]` drops the TLD: the registrable name is what identifies the
+    # engine, and matching every label would refuse a `.google` TLD elsewhere.
+    if any(label in _SEARCH_LABELS for label in host.split(".")[:-1]):
+        return None
+    return cleaned
 
 
 #: Characters permitted in a slug that will be interpolated into a URL. A

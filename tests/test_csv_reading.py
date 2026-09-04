@@ -70,3 +70,53 @@ def test_a_headerless_list_keeps_its_first_row(tmp_path: Path) -> None:
 
 def test_an_empty_file_is_not_an_error(tmp_path: Path) -> None:
     assert read_companies(_csv(tmp_path, "")) == []
+
+
+def test_a_search_engine_name_elsewhere_in_the_url_is_not_a_search_link() -> None:
+    """The test is on the hostname. Substring matching refused real careers pages.
+
+    Three shapes, all of them legitimate and all of them dropped while
+    `usable_url` matched against the whole URL string. The third is the
+    expensive one: `usable_url` gates `company_csv.triage`, so a company whose
+    own domain merely contains the word was silently filed as unusable.
+    """
+    keep = (
+        "https://careers.acme.example/?ref=linkedin.com",
+        "https://acme.example/jobs?utm_source=google.com",
+        "https://notgoogle.example/careers",
+        "https://boards.greenhouse.io/google",
+    )
+    for url in keep:
+        assert usable_url(url) == url, url
+
+
+def test_a_search_surface_is_refused_however_it_is_addressed() -> None:
+    """Any label but the TLD, plus a `search.` host.
+
+    Yahoo is a company that could legitimately appear in a Bay Area list, so
+    the domain is kept and only its search surface refused. The TLD is excluded
+    from matching so a hypothetical `.google` TLD on someone else's domain
+    would not be read as Google's.
+    """
+    drop = (
+        "https://www.google.com/search?q=site%3Aacme.com+careers",
+        "https://google.co.uk/search?q=acme",
+        "https://news.google.com/x",
+        "https://linkedin.com/jobs/acme",
+        "https://duckduckgo.com/?q=acme",
+        "https://search.yahoo.com/search?p=acme",
+    )
+    for url in drop:
+        assert usable_url(url) is None, url
+
+    assert usable_url("https://yahoo.com/careers") == "https://yahoo.com/careers"
+
+
+def test_something_that_is_not_a_url_is_not_usable() -> None:
+    """A hostless string never reaches the label test, so it is checked here.
+
+    A careers column holds free text as often as it holds a link — "email
+    jobs@acme.com", "N/A", a bare domain with no scheme.
+    """
+    for value in (None, "", "   ", "N/A", "acme.com/careers", "mailto:jobs@acme.com", "https://"):
+        assert usable_url(value) is None, value
