@@ -87,6 +87,60 @@ class PoliteFetcher:
         if self.robots is None:
             self.robots = RobotsCache(user_agent=self.user_agent, transport=self.transport)
 
+    #: How many hops a redirect chain may take before we call it a loop. httpx
+    #: defaults to 20; a careers page that needs more than five is broken.
+    _MAX_REDIRECTS = 5
+
+    async def _follow(
+        self,
+        client: httpx.AsyncClient,
+        response: httpx.Response,
+        host: str,
+    ) -> tuple[httpx.Response, str]:
+        """Walk a redirect chain, re-checking both gates at every hop.
+
+        `follow_redirects=True` did this inside httpx, which knows nothing
+        about robots.txt. A site that answered 302 to another host had that
+        host fetched with no robots check and no rate limit of its own — so
+        `first.example` redirecting to `second.example`, whose robots.txt says
+        `Disallow: /`, returned the disallowed page and never asked. Every
+        company in the registry could reach any host that way, which makes
+        §2.6 advisory rather than enforced.
+
+        Returns the final response and the host key it came from, because the
+        caller records a 429 against whichever host actually sent it.
+        """
+        for _ in range(self._MAX_REDIRECTS):
+            if not response.is_redirect:
+                return response, host
+
+            target = response.headers.get("Location")
+            if not target:
+                return response, host
+            # Relative Locations are legal and common; resolve against the URL
+            # that issued them rather than guessing.
+            next_url = str(response.url.join(target))
+            next_host = host_key(next_url)
+
+            if next_host != host:
+                # A new machine. It gets its own robots verdict and its own
+                # place in the queue, exactly as if we had started here.
+                decision = await self.robots.check(next_url)  # type: ignore[union-attr]
+                if not decision.allowed:
+                    raise Blocked(f"{next_url}: {decision.reason} (redirected from {host})")
+                await self.rate_limiter.acquire(next_host)  # type: ignore[union-attr]
+                log.info("followed_cross_host_redirect", frm=host, to=next_host)
+                host = next_host
+            else:
+                # Same machine, so no second robots fetch and no second wait —
+                # the hop is part of one logical request. It still cost the
+                # server a round trip, so it is recorded.
+                self.rate_limiter.record(host)  # type: ignore[union-attr]
+
+            response = await client.get(next_url)
+
+        raise Blocked(f"{response.url}: more than {self._MAX_REDIRECTS} redirects")
+
     async def fetch(self, url: str) -> FetchResult:
         """Fetch `url`, waiting as long as politeness requires.
 
@@ -122,9 +176,12 @@ class PoliteFetcher:
             transport=self.transport,
             timeout=self.timeout,
             headers={"User-Agent": self.user_agent},
-            follow_redirects=True,
+            # Redirects are followed by hand, one hop at a time, so each hop
+            # goes through both gates. See `_follow`.
+            follow_redirects=False,
         ) as client:
             response = await client.get(url)
+            response, host = await self._follow(client, response, host)
 
         # Being rate-limited is the server telling us our pace is wrong, and
         # it outranks whatever we had configured. This is the half that makes
