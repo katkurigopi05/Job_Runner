@@ -43,6 +43,12 @@ def test_search_links_are_not_treated_as_evidence(tmp_path: Path) -> None:
     assert usable_url("https://jobs.ashbyhq.com/acme") == "https://jobs.ashbyhq.com/acme"
 
 
+def test_a_company_url_with_a_linkedin_query_parameter_is_usable() -> None:
+    url = "https://acme.com/careers?source=linkedin.com"
+
+    assert usable_url(url) == url
+
+
 def test_the_url_column_is_chosen_by_what_it_holds(tmp_path: Path) -> None:
     """The best-named column is not always the useful one.
 
