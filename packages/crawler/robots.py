@@ -52,6 +52,37 @@ class _CachedRobots:
     missing: bool = False
 
 
+def origin_key(url: str) -> str:
+    """The scope robots.txt actually applies to — RFC 9309 §2.3, an origin.
+
+    Deliberately *not* `ratelimit.host_key`. That one answers "which machine
+    am I being polite to" and drops the port, because `:443` and the default
+    port are one server. This answers "which robots.txt governs this URL", and
+    the RFC scopes that to scheme, host and port together.
+
+    `urlparse(url).netloc` was the key, and it is wrong in both directions. It
+    omits the scheme, so `http://x` and `https://x` shared one entry and
+    whichever was fetched first supplied the rules for both — two origins, one
+    verdict. And it preserves case and the trailing root label, so `HOST`,
+    `host` and `host.` were three entries, meaning three fetches of one file
+    and three chances to disagree about it.
+    """
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        # A malformed bracketed host. Its own key, so it cannot borrow a
+        # verdict from a real origin; the fetch fails at the socket regardless.
+        return url.strip().lower()
+    if not hostname:
+        return url.strip().lower()
+    authority = hostname.rstrip(".")
+    if port is not None:
+        authority = f"{authority}:{port}"
+    return f"{(parsed.scheme or 'https').lower()}://{authority}"
+
+
 @dataclass
 class RobotsCache:
     """Fetches and caches robots.txt per host."""
@@ -71,9 +102,8 @@ class RobotsCache:
         return entry
 
     async def _load(self, url: str) -> _CachedRobots:
-        parsed = urlparse(url)
-        host = parsed.netloc
-        robots_url = urljoin(f"{parsed.scheme}://{host}", "/robots.txt")
+        host = origin_key(url)
+        robots_url = urljoin(host, "/robots.txt")
 
         try:
             async with httpx.AsyncClient(
@@ -126,8 +156,7 @@ class RobotsCache:
 
     async def check(self, url: str) -> RobotsDecision:
         """Whether `url` may be fetched, and any Crawl-delay the site asks for."""
-        host = urlparse(url).netloc
-        entry = self._fresh(host) or await self._load(url)
+        entry = self._fresh(origin_key(url)) or await self._load(url)
 
         if not entry.reachable:
             return RobotsDecision(

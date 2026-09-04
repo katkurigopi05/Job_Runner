@@ -11,12 +11,11 @@ import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlparse
 
 import httpx
 import structlog
 
-from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter
+from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter, host_key
 from packages.crawler.robots import USER_AGENT, RobotsCache
 
 log = structlog.get_logger(__name__)
@@ -95,7 +94,7 @@ class PoliteFetcher:
             Blocked: robots.txt says no, or could not be read.
         """
         assert self.robots is not None and self.rate_limiter is not None
-        host = urlparse(url).netloc
+        host = host_key(url)
 
         decision = await self.robots.check(url)
         if not decision.allowed:
