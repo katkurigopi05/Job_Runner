@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 import structlog
 
@@ -58,10 +59,10 @@ log = structlog.get_logger(__name__)
 #: company rather than finding the page. Following those would be a robots
 #: violation and would learn nothing.
 _NON_EVIDENCE_HOSTS = (
-    "google.",
+    "google.com",
     "bing.com",
     "duckduckgo.com",
-    "search.yahoo.",
+    "search.yahoo.com",
     "linkedin.com",
 )
 
@@ -84,12 +85,15 @@ def usable_url(url: str | None) -> str | None:
     """The URL if it could name a board, None if it is a search link."""
     if not url:
         return None
-    lowered = url.strip().lower()
-    if not lowered.startswith(("http://", "https://")):
+    cleaned = url.strip()
+    if not cleaned.lower().startswith(("http://", "https://")):
         return None
-    if any(host in lowered for host in _NON_EVIDENCE_HOSTS):
+    hostname = urlparse(cleaned).hostname
+    if hostname is None:
         return None
-    return url.strip()
+    if any(hostname == host or hostname.endswith(f".{host}") for host in _NON_EVIDENCE_HOSTS):
+        return None
+    return cleaned
 
 
 #: Characters permitted in a slug that will be interpolated into a URL. A
