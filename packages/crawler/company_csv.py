@@ -39,22 +39,29 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from packages.crawler.find_boards import SLUG_RE, board_root
+from packages.crawler.find_boards import SLUG_RE, board_root, normalize_header, usable_url
 
 #: Column names seen in the wild, lowercased. The first match wins, so the
 #: more specific spellings come first — a sheet with both `careers_url` and
 #: `website` means the second is the marketing site.
 NAME_COLUMNS = ("company_name", "company", "name", "employer", "organisation", "organization")
+#: Ordered by preference: a column that names careers explicitly beats a
+#: generic `url`, because a sheet often carries both and the generic one is
+#: the company's home page.
 URL_COLUMNS = (
     "careers_url",
     "career_url",
     "careers_page",
     "career_page",
+    "jobs_careers_url",
+    "careers_jobs_url",
     "jobs_url",
     "job_url",
+    "jobs",
     "careers",
     "url",
     "link",
+    "website_url",
     "website",
 )
 
@@ -137,10 +144,18 @@ class TriageReport:
 
 
 def _pick(header: list[str], candidates: tuple[str, ...]) -> str | None:
-    lowered = {column.strip().lower(): column for column in header}
+    """The header matching the first candidate that appears, or None.
+
+    Normalised through `find_boards.normalize_header` rather than a second
+    copy of the same regex: a real sheet spells the column `Jobs/Careers URL`,
+    which merely lowercased is `jobs/careers url` and matches nothing — a
+    3,802-row file was refused outright for want of a slash. Two normalisers
+    would drift, and this one is already the tested one.
+    """
+    slugged = {normalize_header(column): column for column in header}
     for candidate in candidates:
-        if candidate in lowered:
-            return lowered[candidate]
+        if candidate in slugged:
+            return slugged[candidate]
     return None
 
 
@@ -209,6 +224,20 @@ def triage(rows: list[Row]) -> TriageReport:
             report.unusable.append(
                 Classified(row=row, reason="no URL" if not url else "not an http(s) URL")
             )
+            continue
+
+        # A search link is a real URL and names nothing. `find_boards` already
+        # met a sheet with `google.com/search?q=site:acme.com+careers+jobs` in
+        # the careers column for 3,864 of 3,869 rows — someone generated one
+        # per company instead of finding the page.
+        #
+        # Calling these bespoke would be the expensive mistake: `make
+        # probe-bespoke` would then fetch thousands of search-engine pages
+        # looking for JobPosting data that is definitionally not there, which
+        # is a robots violation and learns nothing. They are unusable, and
+        # `find_boards` from the company's own domain is the tool for them.
+        if usable_url(url) is None:
+            report.unusable.append(Classified(row=row, reason="a search link, not a careers page"))
             continue
 
         key = url.rstrip("/").lower()

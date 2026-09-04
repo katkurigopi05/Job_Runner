@@ -28,11 +28,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
-import re
 import sys
 from pathlib import Path
 
-from packages.crawler.find_boards import Resolved, ResolveReport, resolve_all
+from packages.crawler.find_boards import (
+    Resolved,
+    ResolveReport,
+    normalize_header,
+    resolve_all,
+    usable_url,
+)
 
 NAME_COLUMNS = ("name", "company", "company_name", "companies", "employer")
 URL_COLUMNS = (
@@ -47,41 +52,6 @@ URL_COLUMNS = (
     "site",
     "homepage",
 )
-
-#: Hosts whose URLs are not evidence about anything. A real company list in
-#: the wild had `google.com/search?q=site:acme.com+careers+jobs` in its careers
-#: column for 3,864 of 3,869 rows — someone generated a search link per
-#: company rather than finding the page. Following those would be a robots
-#: violation and would learn nothing.
-_NON_EVIDENCE_HOSTS = (
-    "google.",
-    "bing.com",
-    "duckduckgo.com",
-    "search.yahoo.",
-    "linkedin.com",
-)
-
-
-def _normalize(header: str) -> str:
-    """`Company Name` and `Jobs/Careers URL` become `company_name`, `jobs_careers_url`.
-
-    Spreadsheet headers are written for people. Matching them literally meant
-    a file with `Company Name` fell through to the headerless path, which
-    parsed the header row itself as a company.
-    """
-    return re.sub(r"[^a-z0-9]+", "_", header.strip().lower()).strip("_")
-
-
-def usable_url(url: str | None) -> str | None:
-    """The URL if it could name a board, None if it is a search link."""
-    if not url:
-        return None
-    lowered = url.strip().lower()
-    if not lowered.startswith(("http://", "https://")):
-        return None
-    if any(host in lowered for host in _NON_EVIDENCE_HOSTS):
-        return None
-    return url.strip()
 
 
 def read_companies(path: Path) -> list[tuple[str, str | None]]:
@@ -98,7 +68,7 @@ def read_companies(path: Path) -> list[tuple[str, str | None]]:
     if not rows:
         return []
 
-    header = [_normalize(cell) for cell in rows[0]]
+    header = [normalize_header(cell) for cell in rows[0]]
     name_index = next((header.index(c) for c in NAME_COLUMNS if c in header), None)
 
     # A file can carry several URL columns, and the best-named one is not
