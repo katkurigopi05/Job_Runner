@@ -82,15 +82,35 @@ def normalize_header(header: str) -> str:
 
 
 def usable_url(url: str | None) -> str | None:
-    """The URL if it could name a board, None if it is a search link."""
+    """The URL if it could name a board, None if it is a search link.
+
+    The test is on the parsed **hostname**, not the URL text. Matching the
+    whole string dropped three kinds of legitimate URL: a tracking parameter
+    (`?utm_source=google.com`), a referrer (`?ref=linkedin.com`), and a company
+    whose own domain contains the word (`notgoogle.example`). A row rejected
+    here is marked unusable by `company_csv.triage`, so a false positive
+    silently discards a real careers page.
+    """
     if not url:
         return None
     cleaned = url.strip()
     if not cleaned.lower().startswith(("http://", "https://")):
         return None
-    hostname = urlparse(cleaned).hostname
+    try:
+        hostname = urlparse(cleaned).hostname
+    except ValueError:
+        # `https://[` is an unterminated IPv6 literal and `urlparse` raises on
+        # it. A company list is other people's typing, and `triage` reads
+        # thousands of rows in a loop that catches nothing — so one malformed
+        # cell would abort the sweep over every row after it.
+        return None
     if hostname is None:
         return None
+    # `google.com.` is the same host as `google.com` — the trailing dot is the
+    # DNS root label, and browsers follow it. Compared unstripped it matches
+    # nothing in the list, and this is the direction that costs something: a
+    # search URL accepted as evidence, rather than a real page refused.
+    hostname = hostname.rstrip(".")
     if any(hostname == host or hostname.endswith(f".{host}") for host in _NON_EVIDENCE_HOSTS):
         return None
     return cleaned
