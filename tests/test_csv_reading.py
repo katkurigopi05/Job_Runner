@@ -131,6 +131,24 @@ def test_a_country_domain_of_a_search_engine_is_a_known_gap() -> None:
     assert usable_url("https://google.co.uk/search?q=acme") == "https://google.co.uk/search?q=acme"
 
 
+def test_a_trailing_root_label_does_not_slip_past_the_list() -> None:
+    """`google.com.` is the same host as `google.com`, and browsers follow it.
+
+    Compared unstripped it matches nothing in `_NON_EVIDENCE_HOSTS`. This is
+    the direction that costs something: a search URL accepted as evidence and
+    then fetched, rather than a real careers page refused.
+    """
+    for url in (
+        "https://www.google.com./search?q=acme",
+        "https://google.com./search",
+        "https://search.yahoo.com./search?p=acme",
+    ):
+        assert usable_url(url) is None, url
+
+    # The dot is stripped for the comparison only — the caller gets what it gave.
+    assert usable_url("https://acme.example./careers") == "https://acme.example./careers"
+
+
 def test_something_that_is_not_a_url_is_not_usable() -> None:
     """A hostless string never reaches the host test, so it is checked here.
 
