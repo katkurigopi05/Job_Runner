@@ -51,6 +51,47 @@ from packages.crawler.resolve import find_embedded
 
 log = structlog.get_logger(__name__)
 
+
+#: Hosts whose URLs are not evidence about anything. A real company list in
+#: the wild had `google.com/search?q=site:acme.com+careers+jobs` in its careers
+#: column for 3,864 of 3,869 rows — someone generated a search link per
+#: company rather than finding the page. Following those would be a robots
+#: violation and would learn nothing.
+_NON_EVIDENCE_HOSTS = (
+    "google.",
+    "bing.com",
+    "duckduckgo.com",
+    "search.yahoo.",
+    "linkedin.com",
+)
+
+
+def normalize_header(header: str) -> str:
+    """`Company Name` and `Jobs/Careers URL` become `company_name`, `jobs_careers_url`.
+
+    Spreadsheet headers are written for people. Matching them literally meant
+    a file with `Company Name` fell through to the headerless path, which
+    parsed the header row itself as a company.
+
+    Lives here rather than in each reader because two copies drift, and
+    `company_csv.py` needs the identical rule — a sheet it cannot match a
+    column in is a sheet it refuses outright.
+    """
+    return re.sub(r"[^a-z0-9]+", "_", header.strip().lower()).strip("_")
+
+
+def usable_url(url: str | None) -> str | None:
+    """The URL if it could name a board, None if it is a search link."""
+    if not url:
+        return None
+    lowered = url.strip().lower()
+    if not lowered.startswith(("http://", "https://")):
+        return None
+    if any(host in lowered for host in _NON_EVIDENCE_HOSTS):
+        return None
+    return url.strip()
+
+
 #: Characters permitted in a slug that will be interpolated into a URL. A
 #: company name arrives from a CSV the owner did not necessarily write, so it
 #: is untrusted input reaching a URL — the one place where "it is only a job

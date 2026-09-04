@@ -298,3 +298,66 @@ def test_a_bespoke_page_is_still_unidentified() -> None:
     from scripts.import_portals import identify
 
     assert identify("https://twilio.com/careers") is None
+
+
+# --------------------------------------------------------------------------
+# What a real 3,802-row sheet did to this, and why both halves matter
+# --------------------------------------------------------------------------
+
+
+REAL_SHEET = """Company Name,Website URL,Jobs/Careers URL
+15Five,https://15five.com,https://www.google.com/search?q=site%3A15five.com+careers+jobs
+23andMe,https://23andme.com,https://www.google.com/search?q=site%3A23andme.com+careers+jobs
+Xpansiv,https://xpansiv.com,https://jobs.lever.co/xchg
+Twilio,https://twilio.com,https://twilio.com/careers
+"""
+
+
+def _sheet(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / "companies.csv"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_a_header_with_a_slash_in_it_is_still_matched(tmp_path: Path) -> None:
+    """`Jobs/Careers URL` merely lowercased is `jobs/careers url`, which matched
+    nothing — a real 3,802-row sheet was refused outright for want of a slash.
+    Punctuation between words is a formatting choice, not a different column."""
+    rows, header = read_rows(_sheet(tmp_path, REAL_SHEET))
+
+    assert len(rows) == 4
+    assert header == ["Company Name", "Website URL", "Jobs/Careers URL"]
+    # The careers column wins over the generic website one.
+    assert rows[2].url == "https://jobs.lever.co/xchg"
+    assert rows[0].name == "15Five"
+
+
+def test_a_search_link_is_unusable_not_bespoke(tmp_path: Path) -> None:
+    """The expensive mistake. A `google.com/search?q=site:acme.com+careers` URL
+    is a real http URL that names nothing, and a real sheet had one in the
+    careers column for 3,797 of 3,802 rows.
+
+    Filed as bespoke, `make probe-bespoke` would fetch thousands of
+    search-engine pages hunting for JobPosting data that is definitionally not
+    there — a robots violation that learns nothing. `find_boards` from the
+    company's own domain is the tool for these.
+    """
+    rows, _ = read_rows(_sheet(tmp_path, REAL_SHEET))
+    report = triage(rows)
+
+    assert [c.slug for c in report.promotable] == ["xchg"]
+    assert [c.row.name for c in report.bespoke] == ["Twilio"]
+    assert {c.row.name for c in report.unusable} == {"15Five", "23andMe"}
+    assert all("search link" in c.reason for c in report.unusable)
+
+
+def test_the_two_readers_share_one_header_normaliser() -> None:
+    """`scripts/find_boards.py` had already met this sheet and solved both
+    halves; `company_csv` simply did not share them. Two copies drift, and the
+    one that drifts is the one that refuses a file nobody can then import."""
+    from packages.crawler import company_csv
+    from packages.crawler.find_boards import normalize_header
+
+    assert company_csv.normalize_header is normalize_header
+    assert normalize_header("Jobs/Careers URL") == "jobs_careers_url"
+    assert normalize_header("Company Name") == "company_name"
