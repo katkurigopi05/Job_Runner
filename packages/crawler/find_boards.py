@@ -105,7 +105,14 @@ def usable_url(url: str | None) -> str | None:
     if not cleaned.lower().startswith(("http://", "https://")):
         return None
 
-    host = (urlparse(cleaned).hostname or "").lower()
+    try:
+        host = (urlparse(cleaned).hostname or "").lower()
+    except ValueError:
+        # `https://[` is an unterminated IPv6 literal and `urlparse` raises on
+        # it. A company list is other people's typing, and `triage` reads
+        # thousands of rows in a loop that catches nothing — so one malformed
+        # cell would abort the sweep over every row after it.
+        return None
     if not host:
         return None
     if host.startswith(_SEARCH_HOST_PREFIXES):

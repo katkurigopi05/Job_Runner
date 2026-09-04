@@ -120,3 +120,19 @@ def test_something_that_is_not_a_url_is_not_usable() -> None:
     """
     for value in (None, "", "   ", "N/A", "acme.com/careers", "mailto:jobs@acme.com", "https://"):
         assert usable_url(value) is None, value
+
+
+def test_a_malformed_host_is_unusable_rather_than_an_exception() -> None:
+    """`urlparse("https://[")` raises. `triage` catches nothing.
+
+    Introduced by parsing the hostname — the substring version it replaced
+    never parsed at all. `company_csv.triage` reads a company list row by row
+    in a loop with no handler, so one malformed cell would abort the sweep
+    over every row after it. On a 3,802-row sheet that is a truncated report
+    that looks complete.
+    """
+    for value in ("https://[", "https://[::1", "http://[oops]/careers"):
+        assert usable_url(value) is None, value
+
+    # A well-formed IPv6 literal is still a URL, and is not a search surface.
+    assert usable_url("http://[::1]/careers") == "http://[::1]/careers"
