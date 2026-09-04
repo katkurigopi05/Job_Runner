@@ -43,6 +43,12 @@ def test_search_links_are_not_treated_as_evidence(tmp_path: Path) -> None:
     assert usable_url("https://jobs.ashbyhq.com/acme") == "https://jobs.ashbyhq.com/acme"
 
 
+def test_a_company_url_with_a_linkedin_query_parameter_is_usable() -> None:
+    url = "https://acme.com/careers?source=linkedin.com"
+
+    assert usable_url(url) == url
+
+
 def test_the_url_column_is_chosen_by_what_it_holds(tmp_path: Path) -> None:
     """The best-named column is not always the useful one.
 
@@ -90,17 +96,15 @@ def test_a_search_engine_name_elsewhere_in_the_url_is_not_a_search_link() -> Non
         assert usable_url(url) == url, url
 
 
-def test_a_search_surface_is_refused_however_it_is_addressed() -> None:
-    """Any label but the TLD, plus a `search.` host.
+def test_a_search_surface_is_refused_by_host_or_subdomain() -> None:
+    """Exact host or a subdomain of one, which is why Yahoo survives.
 
-    Yahoo is a company that could legitimately appear in a Bay Area list, so
-    the domain is kept and only its search surface refused. The TLD is excluded
-    from matching so a hypothetical `.google` TLD on someone else's domain
-    would not be read as Google's.
+    `search.yahoo.com` is listed rather than `yahoo.com`: Yahoo is a company
+    that could legitimately appear in a Bay Area list, and only its search
+    surface is not evidence.
     """
     drop = (
         "https://www.google.com/search?q=site%3Aacme.com+careers",
-        "https://google.co.uk/search?q=acme",
         "https://news.google.com/x",
         "https://linkedin.com/jobs/acme",
         "https://duckduckgo.com/?q=acme",
@@ -112,8 +116,23 @@ def test_a_search_surface_is_refused_however_it_is_addressed() -> None:
     assert usable_url("https://yahoo.com/careers") == "https://yahoo.com/careers"
 
 
+def test_a_country_domain_of_a_search_engine_is_a_known_gap() -> None:
+    """`google.co.uk` is not on the list, so it reads as usable.
+
+    Pinned rather than fixed. Matching a registrable name under any public
+    suffix needs a suffix list, and guessing one ("two short labels") would
+    start refusing real company domains — the failure this whole function
+    exists to avoid. Nothing observed needs it: the owner's 3,802-row sheet
+    generated every link against `google.com`.
+
+    Delete this test the day a ccTLD search link turns up in a real list, and
+    add the host instead.
+    """
+    assert usable_url("https://google.co.uk/search?q=acme") == "https://google.co.uk/search?q=acme"
+
+
 def test_something_that_is_not_a_url_is_not_usable() -> None:
-    """A hostless string never reaches the label test, so it is checked here.
+    """A hostless string never reaches the host test, so it is checked here.
 
     A careers column holds free text as often as it holds a link — "email
     jobs@acme.com", "N/A", a bare domain with no scheme.
