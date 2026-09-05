@@ -15,7 +15,15 @@ from __future__ import annotations
 
 import pytest
 
-from packages.core.doctor import Check, Health, Report, _redacted, check_vault_key
+from packages.core.config import get_settings
+from packages.core.doctor import (
+    Check,
+    Health,
+    Report,
+    _redacted,
+    check_database,
+    check_vault_key,
+)
 
 # --------------------------------------------------------------------------
 # Secrets
@@ -46,6 +54,43 @@ def test_an_unparseable_url_does_not_fall_back_to_printing_it() -> None:
     failed, so nothing has been redacted.
     """
     assert "://" not in _redacted("postgresql://user:pw@[bad")
+
+
+def test_a_bad_port_is_redacted_rather_than_raising() -> None:
+    """`urlparse` is lazy — `.port` does the work and raises, not the parse.
+
+    With only the parse guarded this raised from inside `check_database`'s own
+    `except` block, so `make doctor` ended in a traceback rather than a report.
+    The caller's fix string is "check DATABASE_URL's port", which makes a bad
+    port the one input this must survive.
+    """
+    for url in (
+        "postgresql://user:pw@localhost:notaport/db",
+        "postgresql://user:pw@localhost:99999/db",
+    ):
+        assert _redacted(url) == "<unparseable>", url
+
+
+@pytest.mark.asyncio
+async def test_a_bad_port_is_reported_rather_than_crashing_the_check(monkeypatch) -> None:
+    """The whole point: a diagnostic that dies is worse than a failing one."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:hunter2@localhost:notaport/db")
+    get_settings.cache_clear()
+    try:
+        check = await check_database()
+    finally:
+        get_settings.cache_clear()
+
+    assert check.health is Health.FAIL
+    assert "hunter2" not in str(check)
+
+
+def test_the_redacted_string_is_still_a_url() -> None:
+    """`{username}@` then `***@` produced `user@***@host` — two separators."""
+    assert (
+        _redacted("postgresql://jobrunner:hunter2@localhost:5433/jobrunner")
+        == "postgresql://jobrunner:***@localhost:5433/jobrunner"
+    )
 
 
 def test_an_invalid_vault_key_is_reported_without_echoing_it(monkeypatch) -> None:
