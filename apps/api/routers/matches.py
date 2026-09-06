@@ -219,8 +219,10 @@ async def list_matches(
                 body_similarity=float(reasons.get("body_similarity") or 0.0),
                 matched_terms=list(reasons.get("matched_terms") or []),
                 missing_terms=list(reasons.get("missing_terms") or []),
-                legitimacy=dict(reasons.get("legitimacy") or {}),
-                rubric=dict(reasons.get("rubric") or {}),
+                # `or None` rather than `or {}`: an empty dict is truthy in
+                # the dashboard, so "no rubric" has to be falsy on the wire.
+                legitimacy=dict(reasons["legitimacy"]) if reasons.get("legitimacy") else None,
+                rubric=dict(reasons["rubric"]) if reasons.get("rubric") else None,
                 excluded_by=list(reasons.get("excluded_by") or []),
             )
         )

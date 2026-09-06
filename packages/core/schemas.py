@@ -619,10 +619,18 @@ class MatchOut(BaseModel):
     #: Whether the posting looks real and open — a tier and findings, never a
     #: number, and deliberately not folded into `score`. See
     #: packages/matching/legitimacy.py.
-    legitimacy: dict[str, Any] = Field(default_factory=dict)
+    #:
+    #: `None`, not `{}`, when there is none. Both of these are objects the
+    #: dashboard reaches *into* — `legitimacy.tier`, `rubric.dimensions` — and
+    #: an empty dict is truthy, so every `x && x.field` guard written against
+    #: them passed and then read a field off nothing. `/matches` answered 500
+    #: for the whole page, because it is a server component and one bad card
+    #: takes the route with it. The frontend type already said
+    #: `Rubric | null`; this makes that true rather than aspirational.
+    legitimacy: dict[str, Any] | None = None
     #: The score broken into dimensions. Explains the ranking, never produces
-    #: it — packages/matching/rubric.py.
-    rubric: dict[str, Any] = Field(default_factory=dict)
+    #: it — packages/matching/rubric.py. `None` when absent, as above.
+    rubric: dict[str, Any] | None = None
     #: Hard filters that ruled it out — location, seniority, sponsorship.
     excluded_by: list[str] = Field(default_factory=list)
 

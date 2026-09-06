@@ -419,3 +419,26 @@ async def test_a_posting_with_no_location_is_kept_but_ranks_last(
 
     assert await _feed(client, str(profile_id)) == ["Placed", "Unsaid"]
     assert await _feed(client, str(profile_id), allow_unknown_location="false") == ["Placed"]
+
+
+def test_an_absent_rubric_is_null_not_an_empty_dict() -> None:
+    """`{}` is truthy in JavaScript, and the dashboard reaches *into* these.
+
+    Found by loading `/matches` in a real browser: it answered **500** for the
+    whole route. `match.rubric && match.rubric.dimensions.length` passed the
+    guard on `{}` and then read `.length` off `undefined`, and because the page
+    is a server component one bad card takes the route with it, not one card.
+    `match.legitimacy && match.legitimacy.tier !== ...` is the same shape 26
+    lines further down and would have crashed next.
+
+    The frontend type already said `Rubric | null`. Nothing was wrong with the
+    guards; the wire format disagreed with the type they were written against.
+    """
+    from packages.core.schemas import MatchOut
+
+    fields = MatchOut.model_fields
+    for name in ("rubric", "legitimacy"):
+        assert fields[name].default is None, f"{name} must default to None, not {{}}"
+        assert type(None) in getattr(fields[name].annotation, "__args__", ()), (
+            f"{name} must be nullable on the wire"
+        )
