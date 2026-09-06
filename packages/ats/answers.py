@@ -53,8 +53,15 @@ def _split_name(full: str) -> tuple[str, str]:
     return parts[0], " ".join(parts[1:])
 
 
-def profile_values(candidate: Candidate, profile: Profile) -> dict[str, Any]:
-    """Flatten a candidate + profile into the vocabulary LABEL_RULES uses."""
+def profile_values(
+    candidate: Candidate, profile: Profile, *, reply_to: str | None = None
+) -> dict[str, Any]:
+    """Flatten a candidate + profile into the vocabulary LABEL_RULES uses.
+
+    `reply_to` is the per-application alias for a candidate in managed email
+    mode. It replaces the candidate's own address because the alias only
+    works if the employer is given it — see packages/inbox/alias.py.
+    """
     first, last = _split_name(candidate.name or "")
     links = profile.links_json or {}
 
@@ -62,7 +69,7 @@ def profile_values(candidate: Candidate, profile: Profile) -> dict[str, Any]:
         "first_name": first,
         "last_name": last,
         "full_name": candidate.name,
-        "email": candidate.email,
+        "email": reply_to or candidate.email,
         "phone": profile.phone,
         "location": profile.location,
         "work_auth": profile.work_auth,
@@ -106,6 +113,7 @@ def build_answers(
     resume_path: str | None = None,
     cover_letter_text: str | None = None,
     cover_letter_path: str | None = None,
+    reply_to: str | None = None,
 ) -> dict[str, Any]:
     """Answers keyed by `Question.key`, for `ATSAdapter.fill()`.
 
@@ -117,8 +125,12 @@ def build_answers(
     the same field, so both can appear on one form; each takes the shape it
     can accept, and a form that offers neither gets nothing rather than a
     path typed into a textarea.
+
+    `reply_to` overrides the email field with this application's alias, so
+    the employer's reply comes back carrying an exact key. None applies with
+    the candidate's own address.
     """
-    values = profile_values(candidate, profile)
+    values = profile_values(candidate, profile, reply_to=reply_to)
     owner_supplied = extra or {}
     answers: dict[str, Any] = {}
 

@@ -86,3 +86,35 @@ def find_alias(*header_values: str | None) -> ParsedAlias | None:
             if parsed is not None:
                 return parsed
     return None
+
+
+def reply_address(
+    *,
+    email_mode: str,
+    base_address: str | None,
+    application_id: uuid.UUID | str,
+) -> str | None:
+    """The address one application should be *applied with*, or None.
+
+    None means "apply as the candidate" — `email_mode == "self"`, the shipped
+    default, where the owner wants the employer to have their real address and
+    accepts that replies are linked by inference rather than by an exact key.
+
+    Managed mode is the half that makes `route.py` work. The alias is only ever
+    an exact key because the employer was given it in the first place; nothing
+    downstream can recover a tag that was never applied with.
+
+    Raises:
+        AliasError: managed mode with no mailbox to build from, or a base that
+            cannot carry a tag. Both are refusals rather than a bare address,
+            because an application that quietly reverts is one whose replies
+            can never conclude anything and nothing says so.
+    """
+    if email_mode != "managed":
+        return None
+    if not base_address:
+        raise AliasError(
+            "managed email mode needs a mailbox to build aliases from: "
+            "set the candidate's managed_alias, or INBOX_ALIAS_BASE"
+        )
+    return alias_for(base_address, application_id)

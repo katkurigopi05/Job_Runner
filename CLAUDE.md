@@ -1540,6 +1540,57 @@ Four things are load-bearing:
 person reading real postings. P1's "done when" is now ≥100 labels *across more
 than one stream* — the count alone was never the property that mattered.
 
+### The alias was never applied with, so no reply could conclude anything
+
+Both halves of Phase 6's routing were built and nothing joined them.
+
+`packages/inbox/alias.py` calls plus-addressing "the whole mechanism", and
+`route.py` enforces it: an inferred link attaches a message and stops there,
+and **only an exact alias may set an outcome or hand an OTP to the state
+machine**. That rule is right — recording a rejection on the wrong application
+is silent and wrong. But `alias_for` had no caller outside the test suite,
+`Settings.inbox_alias_base` had no reader anywhere in the tree, and
+`packages/ats/answers.py` typed `candidate.email` into every form. Measured
+before the fix:
+
+    email typed into the form : owner@gmail.com
+    alias the reply must carry: owner+app1b7b...@gmail.com
+    find_alias(typed)         : None
+
+So the tag never reached an employer, no reply could carry one back, and
+**nothing a recruiter sent could move an application** — not an outcome, and
+not the OTP that resumes a `needs_otp` run. Every reply took the
+`inbound_unrouted` branch or attached without concluding.
+
+Gate 6 passed throughout. `email_for` in `tests/test_inbox.py` builds the
+address with `alias_for` itself, so the fixture did the job the product did
+not — the §15 pattern exactly, one layer deeper than the fixtures that section
+already records. §15 said Gate 6 had never seen a real email; it could not have
+routed one if it had.
+
+`apply_job._reply_to` is the join, and three things about it are deliberate:
+
+- **Managed mode only.** `email_mode` defaults to `self` and the schema already
+  had the switch; nothing changes for a candidate who never opted in. This
+  decides the address an employer replies to, and a `+` tag some ATS field
+  rejects would cost the application itself — that risk belongs to an owner who
+  asked for routing, not to everyone.
+- **One key per application, not per candidate.** `managed_alias` is a mailbox,
+  not an alias. Three roles at one company are three applications, and the
+  point of the tag is telling their replies apart.
+- **A missing mailbox applies as the candidate and says so by name.** Failing an
+  application over a configuration gap costs more than the routing does, but
+  reverting silently is how this stayed invisible for a whole phase, so
+  `applying_with_the_candidate_address_no_usable_alias` is logged. An unusable
+  base — one that already carries a tag — is refused outright rather than
+  producing `a+b+app...@x`, which would be an alias that never routes back.
+
+`tests/test_apply_reply_alias.py` closes the loop rather than testing the
+halves: it applies with the address the pipeline actually produces, replies to
+it, and asserts the outcome lands. Deleting the one line in `_run_pipeline`
+turns three of its tests red — including the source-level assertion, which is
+there because every other test in the file would still pass without it.
+
 ### What is still not fixed, and why
 
 - **Gate 1's live half is refused, not pending.** It reaches the form and is
