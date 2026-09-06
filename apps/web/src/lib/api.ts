@@ -641,9 +641,17 @@ export const api = {
   /** Filters are the owner's search, passed straight through as query params. */
   matchesFiltered: (query: URLSearchParams) => request<Match[]>(`/matches?${query}`),
   calibration: () => request<Calibration>("/matches/calibration"),
-  labelQueue: (size: number) =>
-    request<LabelCandidate[]>(`/labels/next?size=${size}`),
-  labelSummary: () => request<LabelSummary>("/labels/summary"),
+  /**
+   * `profileId` is optional because the route is: `/labels/next` picks the
+   * only profile when there is one, and refuses to guess when there are
+   * several. The screen has to be able to say which.
+   */
+  labelQueue: (size: number, profileId?: string) =>
+    request<LabelCandidate[]>(
+      `/labels/next?size=${size}${profileId ? `&profile_id=${profileId}` : ""}`,
+    ),
+  labelSummary: (profileId?: string) =>
+    request<LabelSummary>(`/labels/summary${profileId ? `?profile_id=${profileId}` : ""}`),
   /**
    * `servedStream` is a hint the server may only use to *weaken* the recorded
    * stream, never to strengthen it — it cannot be used to claim `unseen`.
