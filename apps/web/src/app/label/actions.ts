@@ -21,9 +21,10 @@ export async function recordGrade(
   relevance: number,
   servedStream?: string,
   note?: string,
+  profileId?: string,
 ): Promise<GradeResult> {
   try {
-    await api.recordLabel(postingId, relevance, servedStream, note);
+    await api.recordLabel(postingId, relevance, servedStream, note, profileId);
   } catch (error) {
     if (error instanceof ApiError) return { ok: false, message: error.message };
     throw error;

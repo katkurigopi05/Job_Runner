@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from apps.api.routers.chat import asks_for_a_protected_answer
+from apps.api.routers.chat import asks_for_a_protected_answer, looks_like_a_field_name
+from packages.llm import router as llm_router
 
 #: The owner asking what *they* should put. All of these reach a real form.
 REFUSE = (
@@ -28,6 +29,10 @@ REFUSE = (
     "Am I authorized to work in the US?",
     "What is my employment history?",
     "Should I say I need a visa?",
+    # Plural is the same question. Under-refusing is the direction with
+    # consequences, and nothing that must stay answerable says "we".
+    "What salary should we ask for?",
+    "Should we say we need a visa?",
 )
 
 #: Questions the assistant is *supposed* to answer from what it was handed.
@@ -61,3 +66,36 @@ def test_a_protected_topic_alone_is_not_enough() -> None:
     assert not asks_for_a_protected_answer("salary")
     assert not asks_for_a_protected_answer("sponsorship requirements")
     assert asks_for_a_protected_answer("my salary")
+
+
+def _route_refuses(question: str) -> bool:
+    """The route's whole condition, as `chat()` evaluates it."""
+    return (
+        looks_like_a_field_name(question) and llm_router.is_protected(question)
+    ) or asks_for_a_protected_answer(question)
+
+
+class TestTheFieldMatcherIsNotRunOverProse:
+    """`is_protected` matches an ATS field name by substring.
+
+    Run over a sentence it fires on any prose containing one, so "What salary
+    expectation does this posting list?" was refused — a question about the
+    posting's advertised pay, which is grounded data and the point of the
+    assistant. It is kept only for a message that is a field name.
+    """
+
+    @pytest.mark.parametrize(
+        "question",
+        (
+            "What salary expectation does this posting list?",
+            "Does this posting list a salary expectation?",
+        ),
+    )
+    def test_prose_containing_a_field_name_still_reaches_the_model(self, question: str) -> None:
+        assert llm_router.is_protected(question), "precondition: the matcher does fire on it"
+        assert not _route_refuses(question)
+
+    @pytest.mark.parametrize("field", ("work_authorization", "salary_expectation", "sponsorship"))
+    def test_a_bare_field_name_is_still_refused(self, field: str) -> None:
+        """Pasting the field into the box means the field."""
+        assert _route_refuses(field)

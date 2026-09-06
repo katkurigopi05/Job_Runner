@@ -193,7 +193,25 @@ _PROTECTED_TOPICS = (
 #: posting" is a request to read the data, not a request to answer for the
 #: owner, and it was the one false refusal the test set found. Every phrasing
 #: that *is* a §2.2 question carries "I" or "my" instead.
-_FIRST_PERSON = re.compile(r"\b(i|i'm|im|my|mine|myself)\b")
+#: Plural included: "what salary should we ask for" is the same question, and
+#: under-refusing is the direction with consequences. None of the questions
+#: that must stay answerable are phrased with "we" — they say "this posting".
+_FIRST_PERSON = re.compile(r"\b(i|i'm|im|my|mine|myself|we|we're|our|ours|ourselves)\b")
+
+
+def looks_like_a_field_name(question: str) -> bool:
+    """Whether the message is a field name rather than a sentence.
+
+    `router.is_protected` matches an ATS field name by substring, and run over
+    prose it fires on any sentence containing one. "What salary expectation
+    does this posting list?" normalises to text containing `salary_expectation`
+    and was refused — a question about the *posting's* advertised pay, which is
+    grounded data the assistant exists to answer.
+
+    Someone pasting a bare `work_authorization` into the box still means the
+    field, though, so the matcher is kept for that and only that.
+    """
+    return len(question.split()) <= 3 and "?" not in question
 
 
 def asks_for_a_protected_answer(question: str) -> bool:
@@ -220,7 +238,9 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     # §2.2, applied to the conversation rather than to a form field. Refused
     # here rather than left to the system prompt, because a prompt is a request
     # and this is a rule.
-    if llm_router.is_protected(question) or asks_for_a_protected_answer(question):
+    if (looks_like_a_field_name(question) and llm_router.is_protected(question)) or (
+        asks_for_a_protected_answer(question)
+    ):
         return ChatReply(
             reply=(
                 "I do not draft answers for work authorization, sponsorship, employment "

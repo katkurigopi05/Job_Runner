@@ -95,7 +95,7 @@ export default async function LabelPage({
 
       {profiles.length > 1 ? <ProfileChoices profiles={profiles} selected={selected} /> : null}
 
-      <LabelDeck initial={queue} />
+      <LabelDeck initial={queue} profileId={selected} />
 
       {/* The payoff, and the honesty check. A count alone cannot tell a usable
           corpus from a self-confirming one, so the stream mix is shown beside
