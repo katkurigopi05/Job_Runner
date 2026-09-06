@@ -113,17 +113,29 @@ def _redacted(url: str) -> str:
     """A connection string with the password removed.
 
     Printed in diagnostics, which get pasted into issues and chat windows.
+
+    Every read happens inside the `try`, not just `urlparse`. The parse is lazy
+    — `.port`, `.hostname` and `.password` are properties that do the work, and
+    `.port` raises on anything that is not an integer in range. With only the
+    parse guarded, `DATABASE_URL=...@localhost:notaport/...` made this raise
+    from inside the caller's own `except` block, so `make doctor` ended in a
+    traceback instead of a report. That is the one input where it is least
+    affordable: the caller's `fix` string is "check DATABASE_URL's port", so
+    the check that exists to name a bad port was the thing a bad port broke.
     """
     try:
         parsed = urlparse(url)
+        if parsed.password is None:
+            return url
+        scheme = parsed.scheme
+        host = parsed.hostname or ""
+        port = f":{parsed.port}" if parsed.port else ""
+        user = f"{parsed.username}:" if parsed.username else ""
     except ValueError:
+        # Not "show the raw string" — the parser failed, so nothing has been
+        # redacted and the password is still in there.
         return "<unparseable>"
-    if parsed.password is None:
-        return url
-    host = parsed.hostname or ""
-    port = f":{parsed.port}" if parsed.port else ""
-    user = f"{parsed.username}@" if parsed.username else ""
-    return f"{parsed.scheme}://{user}***@{host}{port}{parsed.path}"
+    return f"{scheme}://{user}***@{host}{port}{parsed.path}"
 
 
 async def check_database() -> Check:

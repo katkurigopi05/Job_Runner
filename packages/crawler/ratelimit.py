@@ -43,6 +43,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 import structlog
 
@@ -72,6 +73,46 @@ SHARED_API_HOSTS: frozenset[str] = frozenset(
 
 #: Bounds `acquire`, so a non-advancing clock fails loudly instead of hanging.
 _MAX_WAIT_ROUNDS = 100
+
+
+def host_key(url: str) -> str:
+    """The one name §2.6 counts requests against, for any spelling of a URL.
+
+    "Minimum 60s between requests to the same host" is enforced by keying
+    `_last_request` and `_blocked_until` on a string. If two spellings of one
+    host produce two strings, they produce two counters, and the floor is
+    whatever the floor is *times the number of spellings*.
+
+    `urlparse(url).netloc` was that string, and it preserves everything that
+    distinguishes a spelling from a host — the port, the case, the trailing
+    root label, any userinfo. Four ways of writing `boards-api.greenhouse.io`
+    gave four counters, and a `Retry-After` recorded against one of them left
+    the other three ready immediately. §2.6 as amended permits the 2s shared
+    floor only "while also listening", and a backoff that one spelling walks
+    around is not listening.
+
+    Reachable because not every URL is built from a slug: `bespoke.probe_page`
+    and `find_boards.from_url` take them from a company CSV, and
+    `resolve.find_embedded` takes them from an aggregator's own HTML.
+
+    The port is deliberately dropped rather than kept. Politeness is about the
+    machine on the far end, and `:443` and the default port are one server —
+    the rule protects it, not an origin. That is the one place this key differs
+    from an RFC 9309 origin, which robots.txt is scoped to.
+    """
+    try:
+        hostname = urlparse(url).hostname  # lowercases, drops userinfo and port
+    except ValueError:
+        # A malformed bracketed host (`https://[`) raises. Counting it against
+        # the raw string is right here: politeness must never be the reason a
+        # sweep dies, and a URL this broken will fail at the socket anyway.
+        hostname = None
+    if not hostname:
+        # No host to count against. Returning the raw string keeps a caller
+        # that somehow reaches here on *some* counter rather than sharing one
+        # bucket with every other unparseable URL.
+        return url.strip().lower()
+    return hostname.rstrip(".")
 
 
 def floor_for(host: str) -> float:

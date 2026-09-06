@@ -86,8 +86,18 @@ class ProjectEntry(BaseModel):
 
 
 def compact_slug(url: str) -> str:
-    """`https://github.com/you/repo` → `github.com/you/repo`."""
-    parsed = urlparse(url)
+    """`https://github.com/you/repo` → `github.com/you/repo`.
+
+    Defensive rather than a fix for anything observed: `Project.url` is
+    GitHub's own `html_url` today and is never malformed. `Project.source`
+    exists to admit other sources, though, and this runs while rendering a
+    résumé — a raise here loses the document, so an odd URL is shown as
+    written instead.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return url
     host = parsed.netloc.removeprefix("www.")
     path = parsed.path.rstrip("/")
     return f"{host}{path}" if host else url
