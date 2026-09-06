@@ -656,7 +656,18 @@ export const api = {
    * `servedStream` is a hint the server may only use to *weaken* the recorded
    * stream, never to strengthen it — it cannot be used to claim `unseen`.
    */
-  recordLabel: (postingId: string, relevance: number, servedStream?: string, note?: string) =>
+  /**
+   * `profileId` matters for the same reason it does on the queue: `POST
+   * /labels` refuses to guess when several profiles exist. Scoping only the
+   * read left the screen rendering and every grade rejected on submit.
+   */
+  recordLabel: (
+    postingId: string,
+    relevance: number,
+    servedStream?: string,
+    note?: string,
+    profileId?: string,
+  ) =>
     request<{ id: string; posting_id: string; relevance: number }>("/labels", {
       method: "POST",
       body: JSON.stringify({
@@ -664,6 +675,7 @@ export const api = {
         relevance,
         note: note ?? null,
         served_stream: servedStream ?? null,
+        profile_id: profileId ?? null,
       }),
     }),
   digest: () => request<Digest>("/analytics/digest"),

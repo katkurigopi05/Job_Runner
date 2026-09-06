@@ -35,7 +35,14 @@ const STREAM_COPY: Record<LabelCandidate["stream"], string> = {
   confident: "one of the ranker's top picks",
 };
 
-export function LabelDeck({ initial }: { initial: LabelCandidate[] }) {
+export function LabelDeck({
+  initial,
+  profileId,
+}: {
+  initial: LabelCandidate[];
+  /** Which profile these grades are for. `POST /labels` refuses to guess. */
+  profileId?: string;
+}) {
   const [queue, setQueue] = useState(initial);
   const [pending, setPending] = useState<number | null>(null);
   const [graded, setGraded] = useState(0);
@@ -53,7 +60,13 @@ export function LabelDeck({ initial }: { initial: LabelCandidate[] }) {
         // posting's Match row between serving and grading, and without this
         // the server would see no score and record `unseen` — inflating the
         // one number that certifies the corpus escaped the shortlist bias.
-        const result = await recordGrade(current.posting_id, relevance, current.stream);
+        const result = await recordGrade(
+          current.posting_id,
+          relevance,
+          current.stream,
+          undefined,
+          profileId,
+        );
         if (!result.ok) {
           setError(result.message);
           return;
