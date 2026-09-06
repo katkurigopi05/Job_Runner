@@ -33,6 +33,7 @@ invents an application status is worse than no assistant.
 
 from __future__ import annotations
 
+import re
 import uuid
 
 from fastapi import APIRouter
@@ -153,6 +154,62 @@ async def _context(
     return "\n".join(lines)
 
 
+#: Topics §2.2 keeps verbatim, as a person says them rather than as an ATS
+#: names a field. `router.is_protected` covers the field-name side — it matches
+#: `work_authorization_status` and `question_12074270004` by substring — and
+#: reusing it on a sentence is what left a hole: only the literal token
+#: `salary_expectation` was listed, so "What should I put for salary
+#: expectation?" was refused and "What salary should I ask for?" went to the
+#: model. Measured at 2 of 5 natural phrasings caught.
+#:
+#: §14 already names that outcome the §2.2 failure: a model asked what to earn
+#: "advised on how to research one" instead of pointing at the profile.
+_PROTECTED_TOPICS = (
+    "salary",
+    "compensation",
+    "how much should i",
+    "paid",
+    "work auth",
+    "authorized to work",
+    "authorised to work",
+    "right to work",
+    "sponsor",
+    "visa",
+    "employment history",
+    "work history",
+)
+
+#: A protected topic alone is not enough. "What salary is this posting
+#: offering?" is a question about a posting, and the assistant is *supposed* to
+#: answer that from the data it was handed — refusing it would break a real
+#: feature to protect nothing.
+#:
+#: What makes it a §2.2 question is the owner asking what *they* should say, so
+#: the topic has to arrive with a first-person reference. The tradeoff is
+#: deliberate and lands on the safe side: "what salary do my matches offer" is
+#: refused too, because a false refusal costs one rephrase and a false answer
+#: goes onto a real application.
+#: "me" is deliberately absent. "Show me the sponsorship policy in this
+#: posting" is a request to read the data, not a request to answer for the
+#: owner, and it was the one false refusal the test set found. Every phrasing
+#: that *is* a §2.2 question carries "I" or "my" instead.
+_FIRST_PERSON = re.compile(r"\b(i|i'm|im|my|mine|myself)\b")
+
+
+def asks_for_a_protected_answer(question: str) -> bool:
+    """Whether this is the owner asking what to put for a §2.2 field.
+
+    Separate from `router.is_protected` on purpose: that one reads a field
+    name, this one reads a sentence, and the two want different rules. Folding
+    the sentence cases into `PROTECTED_FIELDS` would also protect an ATS field
+    called `salary_offered`, which is the posting's number and not the owner's.
+    """
+    text = question.strip().lower()
+    if not _FIRST_PERSON.search(text):
+        return False
+    return any(topic in text for topic in _PROTECTED_TOPICS)
+
+
 @router.post("", response_model=ChatReply)
 async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     """Answer a question about the owner's own job search."""
@@ -163,7 +220,7 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     # §2.2, applied to the conversation rather than to a form field. Refused
     # here rather than left to the system prompt, because a prompt is a request
     # and this is a rule.
-    if llm_router.is_protected(question):
+    if llm_router.is_protected(question) or asks_for_a_protected_answer(question):
         return ChatReply(
             reply=(
                 "I do not draft answers for work authorization, sponsorship, employment "

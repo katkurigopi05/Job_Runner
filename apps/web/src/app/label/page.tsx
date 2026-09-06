@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ApiError, api, type LabelCandidate, type LabelSummary } from "@/lib/api";
+import { ApiError, api, type LabelCandidate, type LabelSummary, type Profile } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
 import { LabelDeck } from "@/components/label-deck";
 
@@ -26,11 +26,52 @@ const BATCH_SIZE = 10;
  * carry `provenance: owner`, the grade a benchmark trusts most, while keeping
  * the sampling bias invisible.
  */
-export default async function LabelPage() {
+export default async function LabelPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const asked = typeof params.profile_id === "string" ? params.profile_id : undefined;
+
+  // `/labels/next` refuses to guess when several profiles exist, and this
+  // screen never said which — so a second profile made grading unreachable
+  // from the dashboard, with no way forward but deleting one through the API.
+  //
+  // The answer is a picker rather than a default. Which profile a label is
+  // *for* is the label's meaning, and a corpus quietly graded against the
+  // wrong one is worse than no corpus: it would carry `provenance: owner`,
+  // the grade a benchmark trusts most, while measuring somebody else.
+  let profiles: Profile[];
+  try {
+    profiles = await api.profiles();
+  } catch (error) {
+    if (error instanceof ApiError) return <ErrorPanel error={error} />;
+    throw error;
+  }
+
+  const selected = asked ?? (profiles.length === 1 ? profiles[0]?.id : undefined);
+
+  if (!selected) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-6">
+        <h1 className="font-display text-[length:var(--text-display)] leading-none">Grade</h1>
+        <p className="text-sm text-ink-soft">
+          You have {profiles.length} profiles. A grade records how well a posting matches{" "}
+          <em>one</em> of them, so pick which before starting.
+        </p>
+        <ProfileChoices profiles={profiles} selected={undefined} />
+      </div>
+    );
+  }
+
   let queue: LabelCandidate[];
   let summary: LabelSummary;
   try {
-    [queue, summary] = await Promise.all([api.labelQueue(BATCH_SIZE), api.labelSummary()]);
+    [queue, summary] = await Promise.all([
+      api.labelQueue(BATCH_SIZE, selected),
+      api.labelSummary(selected),
+    ]);
   } catch (error) {
     if (error instanceof ApiError) return <ErrorPanel error={error} />;
     throw error;
@@ -51,6 +92,8 @@ export default async function LabelPage() {
           .
         </p>
       </header>
+
+      {profiles.length > 1 ? <ProfileChoices profiles={profiles} selected={selected} /> : null}
 
       <LabelDeck initial={queue} />
 
@@ -105,5 +148,33 @@ export default async function LabelPage() {
         ) : null}
       </section>
     </div>
+  );
+}
+
+/** Which profile these grades belong to. Shown whenever there is a choice. */
+function ProfileChoices({
+  profiles,
+  selected,
+}: {
+  profiles: Profile[];
+  selected: string | undefined;
+}) {
+  return (
+    <nav className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="font-mono text-ink-faint">grading for</span>
+      {profiles.map((profile) => (
+        <Link
+          key={profile.id}
+          href={`/label?profile_id=${profile.id}`}
+          className={
+            profile.id === selected
+              ? "rounded border border-rule bg-surface px-2 py-1 font-mono"
+              : "rounded border border-rule/40 px-2 py-1 font-mono text-ink-faint underline decoration-rule underline-offset-4"
+          }
+        >
+          {profile.label || profile.id.slice(0, 8)}
+        </Link>
+      ))}
+    </nav>
   );
 }
