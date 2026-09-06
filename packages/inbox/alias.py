@@ -46,6 +46,16 @@ def alias_for(base_address: str, application_id: uuid.UUID | str) -> str:
     `parse_alias` used to read back as a valid alias of ours, so it looked
     right from both ends while routing nothing.
     """
+    # Surrounding whitespace is a copy-paste artefact with unambiguous intent —
+    # a trailing newline off the end of an `.env` line — so it is trimmed.
+    # Internal whitespace is not: `owner name@gmail.com` is a typo no rule can
+    # safely guess at, and it would otherwise pass every check below and yield
+    # an address no form accepts, without `_reply_to` taking its logged
+    # fallback. Refusing is what puts it on the candidate's own address.
+    base_address = base_address.strip()
+    if any(character.isspace() for character in base_address):
+        raise AliasError(f"{base_address!r} contains whitespace")
+
     local, at, domain = base_address.partition("@")
     if not at:
         raise AliasError(f"{base_address!r} is not an email address")

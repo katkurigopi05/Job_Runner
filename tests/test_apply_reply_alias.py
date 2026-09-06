@@ -35,7 +35,7 @@ from packages.ats.answers import build_answers
 from packages.ats.base import Question, QuestionKind
 from packages.core.config import get_settings
 from packages.core.models import Application, Candidate, Profile, User
-from packages.inbox.alias import AliasError, find_alias, reply_address
+from packages.inbox.alias import AliasError, find_alias, parse_alias, reply_address
 from packages.inbox.route import InboundEmail, route_message
 
 BASE = "owner@gmail.com"
@@ -168,6 +168,9 @@ async def test_a_managed_candidate_with_no_mailbox_applies_as_themselves(
         "a@b@gmail.com",
         "owner@",
         "@gmail.com",
+        "owner name@gmail.com",
+        "owner@gmail com",
+        "owner\t@gmail.com",
     ],
 )
 async def test_an_unusable_base_never_produces_a_tag_that_cannot_route(
@@ -183,6 +186,24 @@ async def test_an_unusable_base_never_produces_a_tag_that_cannot_route(
     """
     with pytest.raises(AliasError):
         reply_address(email_mode="managed", base_address=base, application_id=uuid.uuid4())
+
+
+@pytest.mark.parametrize("base", [" owner@gmail.com", "owner@gmail.com\n"])
+async def test_a_copy_pasted_newline_does_not_cost_the_owner_their_routing(
+    db_session, base: str
+) -> None:
+    """Surrounding whitespace is trimmed, because the intent is not in doubt.
+
+    A trailing newline off the end of an `.env` line is the likeliest way this
+    setting is ever wrong, and refusing it would silently drop the owner back
+    to their own address for every application.
+    """
+    parsed = parse_alias(
+        reply_address(email_mode="managed", base_address=base, application_id=uuid.UUID(int=3))
+        or ""
+    )
+    assert parsed is not None
+    assert parsed.base_address == "owner@gmail.com"
 
 
 @pytest.mark.parametrize("address", ["owner+app" + "0" * 32 + "@@gmail.com"])
