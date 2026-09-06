@@ -196,11 +196,15 @@ _PROTECTED_TOPICS = (
 #: Plural included: "what salary should we ask for" is the same question, and
 #: under-refusing is the direction with consequences. None of the questions
 #: that must stay answerable are phrased with "we" — they say "this posting".
+#: The same topics as bare labels, normalised the way `is_protected` does it,
+#: so `work history`, `work_history` and `work-history` are one message.
+_PROTECTED_LABELS = frozenset(topic.replace(" ", "_") for topic in _PROTECTED_TOPICS)
+
 _FIRST_PERSON = re.compile(r"\b(i|i'm|im|my|mine|myself|we|we're|our|ours|ourselves)\b")
 
 
-def looks_like_a_field_name(question: str) -> bool:
-    """Whether the message is a field name rather than a sentence.
+def names_a_protected_field(question: str) -> bool:
+    """Whether the whole message *is* a protected field, rather than a sentence.
 
     `router.is_protected` matches an ATS field name by substring, and run over
     prose it fires on any sentence containing one. "What salary expectation
@@ -211,13 +215,40 @@ def looks_like_a_field_name(question: str) -> bool:
     Someone pasting a bare `work_authorization` into the box still means the
     field, though, so the matcher is kept for that and only that.
 
-    A field name is one token. That is what an ATS emits — `work_authorization`,
-    `salary_expectation`, `question_12074270004` — and it is the whole test.
+    Two shapes count. One token is what an ATS emits —  `work_authorization`,
+    `question_12074270004` — and a bare protected label written as a person
+    writes it, `employment history`, is the same message with a space in it.
+
     Counting words and looking for a question mark was the first attempt and
     too loose: "salary expectation listed" is three words with no `?`, so it
     was read as a field name and refused, which is a posting question again.
+    Requiring one token was the second and too tight in the direction that
+    matters — `is_protected` normalises the space and does recognise
+    `employment history`, but it was never reached, so a §2.2 label went
+    to the model.
+
+    So the multiword case is an *exact* match against the protected
+    vocabulary, never a substring: "salary expectation listed" is not a label
+    and stays answerable.
     """
-    return bool(question.strip()) and len(question.split()) == 1
+    text = question.strip().lower()
+    if not text:
+        return False
+
+    # Normalise once, then ask every vocabulary. Branching on shape first is
+    # what produced three rounds of this: each branch knew a different list,
+    # so a label fell between them every time. `work history` was not in
+    # `PROTECTED_FIELDS`, and `work_history` was not reached by the topic
+    # check, and both went to the model.
+    normalized = text.replace("-", "_").replace(" ", "_")
+    if normalized in llm_router.PROTECTED_FIELDS or normalized in _PROTECTED_LABELS:
+        return True
+
+    # Only a single token falls through to the substring matcher, which is how
+    # the ATS variants (`work_authorization_status`) are caught. Prose must not
+    # reach it: "what salary expectation does this posting list?" contains a
+    # field name and is a question about the posting.
+    return len(text.split()) == 1 and llm_router.is_protected(text)
 
 
 def asks_for_a_protected_answer(question: str) -> bool:
@@ -244,9 +275,7 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     # §2.2, applied to the conversation rather than to a form field. Refused
     # here rather than left to the system prompt, because a prompt is a request
     # and this is a rule.
-    if (looks_like_a_field_name(question) and llm_router.is_protected(question)) or (
-        asks_for_a_protected_answer(question)
-    ):
+    if names_a_protected_field(question) or asks_for_a_protected_answer(question):
         return ChatReply(
             reply=(
                 "I do not draft answers for work authorization, sponsorship, employment "
