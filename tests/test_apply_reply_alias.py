@@ -206,13 +206,20 @@ async def test_a_copy_pasted_newline_does_not_cost_the_owner_their_routing(
     assert parsed.base_address == "owner@gmail.com"
 
 
-@pytest.mark.parametrize("address", ["owner+app" + "0" * 32 + "@@gmail.com"])
+@pytest.mark.parametrize(
+    "address",
+    [
+        "owner+app" + "0" * 32 + "@@gmail.com",
+        "owner name+app" + "0" * 32 + "@gmail.com",
+        "owner+app" + "0" * 32 + "@gmail com",
+    ],
+)
 def test_an_address_we_could_not_have_issued_is_not_read_as_ours(address: str) -> None:
     """The inbound half of the same rule.
 
     `find_alias` decides whether a reply may conclude an outcome, so an address
-    we could never have issued must not answer to one. The domain group was
-    `.+`, which swallowed the second `@`.
+    we could never have issued must not answer to one. This includes a second
+    `@` and internal whitespace, which `alias_for` refuses on outbound aliases.
     """
     assert find_alias(address) is None
 

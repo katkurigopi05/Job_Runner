@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 #: `owner+app0f8c...@gmail.com`. The tag is the application UUID as bare hex —
 #: unambiguous, and short enough for the 64-character local-part limit.
-_ALIAS_RE = re.compile(r"^(?P<user>[^+@]+)\+app(?P<hex>[0-9a-f]{32})@(?P<domain>[^@]+)$", re.I)
+_ALIAS_RE = re.compile(r"^(?P<user>[^+@\s]+)\+app(?P<hex>[0-9a-f]{32})@(?P<domain>[^@\s]+)$", re.I)
 
 TAG_PREFIX = "app"
 
