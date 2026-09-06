@@ -137,6 +137,13 @@ class TestTheFieldMatcherIsNotRunOverProse:
             "needs sponsorship",
             # An ATS names the same question differently every other week.
             "work_authorization_status",
+            # Every spelling of one label is one message. Branching on shape
+            # first is what let these through: `work history` was checked
+            # against the topic list and `work_history` was not.
+            "work_history",
+            "work-history",
+            "employment_history",
+            "salary-expectation",
         ),
     )
     def test_every_supported_label_is_refused_however_it_is_spelled(self, label: str) -> None:
@@ -159,6 +166,8 @@ class TestTheFieldMatcherIsNotRunOverProse:
         """
         assert names_a_protected_field("work_authorization")
         assert names_a_protected_field("employment history"), "an exact label, spaced"
+        assert names_a_protected_field("work_history"), "the same label, underscored"
+        assert names_a_protected_field("work-history"), "the same label, hyphenated"
         assert not names_a_protected_field("salary expectation listed")
         assert not names_a_protected_field("salary expectation in this posting")
         assert not names_a_protected_field("")

@@ -196,6 +196,10 @@ _PROTECTED_TOPICS = (
 #: Plural included: "what salary should we ask for" is the same question, and
 #: under-refusing is the direction with consequences. None of the questions
 #: that must stay answerable are phrased with "we" — they say "this posting".
+#: The same topics as bare labels, normalised the way `is_protected` does it,
+#: so `work history`, `work_history` and `work-history` are one message.
+_PROTECTED_LABELS = frozenset(topic.replace(" ", "_") for topic in _PROTECTED_TOPICS)
+
 _FIRST_PERSON = re.compile(r"\b(i|i'm|im|my|mine|myself|we|we're|our|ours|ourselves)\b")
 
 
@@ -230,18 +234,21 @@ def names_a_protected_field(question: str) -> bool:
     text = question.strip().lower()
     if not text:
         return False
-    # One token: hand it to the field matcher, which knows the ATS variants
-    # (`work_authorization_status` and the rest) by substring.
-    if len(text.split()) == 1:
-        return llm_router.is_protected(text)
-    # Several: an exact label only. Returning the verdict rather than the
-    # shape is what closes the gap — `work history` is a protected topic that
-    # `PROTECTED_FIELDS` does not list, so a caller combining "looks like a
-    # field" with `is_protected` let it through.
-    return (
-        text.replace("-", "_").replace(" ", "_") in llm_router.PROTECTED_FIELDS
-        or text in _PROTECTED_TOPICS
-    )
+
+    # Normalise once, then ask every vocabulary. Branching on shape first is
+    # what produced three rounds of this: each branch knew a different list,
+    # so a label fell between them every time. `work history` was not in
+    # `PROTECTED_FIELDS`, and `work_history` was not reached by the topic
+    # check, and both went to the model.
+    normalized = text.replace("-", "_").replace(" ", "_")
+    if normalized in llm_router.PROTECTED_FIELDS or normalized in _PROTECTED_LABELS:
+        return True
+
+    # Only a single token falls through to the substring matcher, which is how
+    # the ATS variants (`work_authorization_status`) are caught. Prose must not
+    # reach it: "what salary expectation does this posting list?" contains a
+    # field name and is a question about the posting.
+    return len(text.split()) == 1 and llm_router.is_protected(text)
 
 
 def asks_for_a_protected_answer(question: str) -> bool:
