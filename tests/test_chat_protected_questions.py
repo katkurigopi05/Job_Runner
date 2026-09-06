@@ -49,11 +49,24 @@ ANSWER = (
 
 @pytest.mark.parametrize("question", REFUSE)
 def test_the_owner_asking_what_to_put_is_refused(question: str) -> None:
+    """Every one of these ends up on a real application under the owner's name.
+
+    §2.2 makes them profile values copied word for word, so the assistant must
+    not draft one — and the refusal runs in code rather than in the prompt,
+    because a prompt is a request and this is a rule.
+    """
     assert asks_for_a_protected_answer(question), question
 
 
 @pytest.mark.parametrize("question", ANSWER)
 def test_a_question_about_the_data_is_still_answered(question: str) -> None:
+    """The other half, and the one a widening breaks first.
+
+    These ask about a posting or the queue, not about what to put on a form.
+    Refusing them would trade a real feature for no protection at all, so the
+    set is parametrised: a future tightening that swallows one fails here
+    rather than passing quietly.
+    """
     assert not asks_for_a_protected_answer(question), question
 
 
@@ -96,6 +109,13 @@ class TestTheFieldMatcherIsNotRunOverProse:
         ),
     )
     def test_prose_containing_a_field_name_still_reaches_the_model(self, question: str) -> None:
+        """The precondition is half the test.
+
+        Asserting `is_protected` really does fire on the sentence is what makes
+        the second line meaningful: without it the test would still pass if the
+        matcher simply stopped matching, and the gate it exists to pin would be
+        gone unnoticed.
+        """
         assert llm_router.is_protected(question), "precondition: the matcher does fire on it"
         assert not _route_refuses(question)
 
