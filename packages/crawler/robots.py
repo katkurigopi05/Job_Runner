@@ -35,6 +35,18 @@ USER_AGENT = "jobrunner"
 #: Re-read robots.txt at most this often per host.
 CACHE_TTL_SECONDS = 3600.0
 
+#: RFC 9309 §2.5: "Crawlers SHOULD impose a parsing limit to protect their
+#: systems", and it "MUST be at least 500 kibibytes". This file already follows
+#: §2.3.1.3 and §2.3.1.4 to the letter; the limit was the clause it missed, and
+#: without it a single host serving a huge /robots.txt buffers the whole thing
+#: into the worker. On the bespoke sweep that is thousands of unknown hosts.
+#:
+#: The RFC's floor is the value: content past it is not read, and what came
+#: before is still parsed and obeyed. Truncating is the specified behaviour
+#: here, unlike a page body, where a short read would silently mean "this
+#: board has fewer postings today".
+ROBOTS_PARSE_LIMIT_BYTES = 500 * 1024
+
 
 @dataclass
 class RobotsDecision:
@@ -50,6 +62,31 @@ class _CachedRobots:
     fetched_at: float
     reachable: bool
     missing: bool = False
+
+
+async def _read_capped(client: httpx.AsyncClient, url: str) -> tuple[httpx.Response, str]:
+    """GET `url`, reading at most `ROBOTS_PARSE_LIMIT_BYTES` of the body.
+
+    Streamed rather than fetched whole: `client.get` buffers everything before
+    returning, so a cap applied afterwards protects the parser and not the
+    memory, which is the half that matters on an unknown host.
+
+    A status outside 2xx needs no body — every branch in `_load` decides on the
+    code alone — so nothing is read for those.
+    """
+    async with client.stream("GET", url) as response:
+        if not (200 <= response.status_code < 300):
+            return response, ""
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in response.aiter_bytes():
+            chunks.append(chunk)
+            total += len(chunk)
+            if total >= ROBOTS_PARSE_LIMIT_BYTES:
+                log.info("robots_truncated", url=url, limit=ROBOTS_PARSE_LIMIT_BYTES)
+                break
+        raw = b"".join(chunks)[:ROBOTS_PARSE_LIMIT_BYTES]
+    return response, raw.decode("utf-8", errors="replace")
 
 
 def origin_key(url: str) -> str:
@@ -112,7 +149,7 @@ class RobotsCache:
                 headers={"User-Agent": self.user_agent},
                 follow_redirects=True,
             ) as client:
-                response = await client.get(robots_url)
+                response, body = await _read_capped(client, robots_url)
         except Exception as exc:  # noqa: BLE001 - any failure means "unknown"
             log.warning("robots_unreachable", host=host, error=type(exc).__name__)
             entry = _CachedRobots(parser=None, fetched_at=time.monotonic(), reachable=False)
@@ -149,7 +186,7 @@ class RobotsCache:
             return entry
 
         parser = urllib.robotparser.RobotFileParser()
-        parser.parse(response.text.splitlines())
+        parser.parse(body.splitlines())
         entry = _CachedRobots(parser=parser, fetched_at=time.monotonic(), reachable=True)
         self._cache[host] = entry
         return entry
