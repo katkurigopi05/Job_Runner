@@ -1553,9 +1553,11 @@ is silent and wrong. But `alias_for` had no caller outside the test suite,
 `packages/ats/answers.py` typed `candidate.email` into every form. Measured
 before the fix:
 
-    email typed into the form : owner@gmail.com
-    alias the reply must carry: owner+app1b7b...@gmail.com
-    find_alias(typed)         : None
+```text
+email typed into the form : owner@gmail.com
+alias the reply must carry: owner+app1b7b...@gmail.com
+find_alias(typed)         : None
+```
 
 So the tag never reached an employer, no reply could carry one back, and
 **nothing a recruiter sent could move an application** — not an outcome, and
@@ -1582,8 +1584,19 @@ routed one if it had.
   application over a configuration gap costs more than the routing does, but
   reverting silently is how this stayed invisible for a whole phase, so
   `applying_with_the_candidate_address_no_usable_alias` is logged. An unusable
-  base — one that already carries a tag — is refused outright rather than
-  producing `a+b+app...@x`, which would be an alias that never routes back.
+  base is refused outright rather than producing an alias that never routes
+  back.
+
+`alias_for` guarded only two of the shapes that produce one. It tested
+`"@" not in base_address`, which a *doubled* `@` satisfies, so
+`owner@@example.com` yielded `owner+app...@@example.com` — an address no
+employer's form accepts, and one `parse_alias` read back as a valid alias of
+ours, because its domain group was `.+`. Malformed at the employer and
+correct-looking at both of our own ends, which is the combination that hides.
+Empty local parts and domains passed the same way. The check is now exactly one
+`@` with both sides non-empty, and the regex will not match a second `@` — the
+two ends have to agree about what we could have issued, or the trail says a
+reply routed when it could not have.
 
 `tests/test_apply_reply_alias.py` closes the loop rather than testing the
 halves: it applies with the address the pipeline actually produces, replies to

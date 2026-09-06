@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 #: `owner+app0f8c...@gmail.com`. The tag is the application UUID as bare hex —
 #: unambiguous, and short enough for the 64-character local-part limit.
-_ALIAS_RE = re.compile(r"^(?P<user>[^+@]+)\+app(?P<hex>[0-9a-f]{32})@(?P<domain>.+)$", re.I)
+_ALIAS_RE = re.compile(r"^(?P<user>[^+@]+)\+app(?P<hex>[0-9a-f]{32})@(?P<domain>[^@]+)$", re.I)
 
 TAG_PREFIX = "app"
 
@@ -39,11 +39,20 @@ def alias_for(base_address: str, application_id: uuid.UUID | str) -> str:
         AliasError: the base address already carries a tag, or is not an
             address at all. Silently producing `a+b+app...@x` would create an
             alias that never routes back.
-    """
-    if "@" not in base_address:
-        raise AliasError(f"{base_address!r} is not an email address")
 
-    local, _, domain = base_address.partition("@")
+    Every shape refused here is one that yields an unsendable address, and the
+    `@@` case is the one worth naming: `owner@@example.com` becomes
+    `owner+app…@@example.com`, which no employer's form accepts — and which
+    `parse_alias` used to read back as a valid alias of ours, so it looked
+    right from both ends while routing nothing.
+    """
+    local, at, domain = base_address.partition("@")
+    if not at:
+        raise AliasError(f"{base_address!r} is not an email address")
+    if not local or not domain:
+        raise AliasError(f"{base_address!r} has an empty local part or domain")
+    if "@" in domain:
+        raise AliasError(f"{base_address!r} has more than one '@'")
     if "+" in local:
         raise AliasError(f"{base_address!r} already contains a plus-tag; use the bare address")
 

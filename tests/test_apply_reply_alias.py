@@ -42,10 +42,12 @@ BASE = "owner@gmail.com"
 
 
 def _email_question() -> Question:
+    """The field this whole mechanism turns on."""
     return Question(key="email", label="Email", kind=QuestionKind.EMAIL, required=True)
 
 
 async def _setup(db_session, *, email_mode: str, managed_alias: str | None):
+    """One candidate, profile and application, with the email mode under test."""
     suffix = uuid.uuid4().hex[:8]
     user = User(email=f"u-{suffix}@example.com")
     db_session.add(user)
@@ -157,13 +159,41 @@ async def test_a_managed_candidate_with_no_mailbox_applies_as_themselves(
     assert typed == candidate.email
 
 
-@pytest.mark.parametrize("base", ["owner+existing@gmail.com", "not-an-address"])
+@pytest.mark.parametrize(
+    "base",
+    [
+        "owner+existing@gmail.com",
+        "not-an-address",
+        "owner@@gmail.com",
+        "a@b@gmail.com",
+        "owner@",
+        "@gmail.com",
+    ],
+)
 async def test_an_unusable_base_never_produces_a_tag_that_cannot_route(
     db_session, base: str
 ) -> None:
-    """`a+b+app...@x` would be an alias that never comes back. Refused."""
+    """Every shape here yields an address no employer's form can send to.
+
+    `owner@@gmail.com` is the one worth spelling out. It used to pass — the
+    check was `"@" not in base_address`, which a doubled `@` satisfies — and
+    produced `owner+app…@@gmail.com`, which `parse_alias` then read back as a
+    valid alias of ours. Malformed at the employer, and correct-looking at
+    both of our own ends, which is the combination that hides.
+    """
     with pytest.raises(AliasError):
         reply_address(email_mode="managed", base_address=base, application_id=uuid.uuid4())
+
+
+@pytest.mark.parametrize("address", ["owner+app" + "0" * 32 + "@@gmail.com"])
+def test_an_address_we_could_not_have_issued_is_not_read_as_ours(address: str) -> None:
+    """The inbound half of the same rule.
+
+    `find_alias` decides whether a reply may conclude an outcome, so an address
+    we could never have issued must not answer to one. The domain group was
+    `.+`, which swallowed the second `@`.
+    """
+    assert find_alias(address) is None
 
 
 def test_the_pipeline_passes_the_alias_to_the_form() -> None:
