@@ -199,8 +199,8 @@ _PROTECTED_TOPICS = (
 _FIRST_PERSON = re.compile(r"\b(i|i'm|im|my|mine|myself|we|we're|our|ours|ourselves)\b")
 
 
-def looks_like_a_field_name(question: str) -> bool:
-    """Whether the message is a field name rather than a sentence.
+def names_a_protected_field(question: str) -> bool:
+    """Whether the whole message *is* a protected field, rather than a sentence.
 
     `router.is_protected` matches an ATS field name by substring, and run over
     prose it fires on any sentence containing one. "What salary expectation
@@ -211,13 +211,37 @@ def looks_like_a_field_name(question: str) -> bool:
     Someone pasting a bare `work_authorization` into the box still means the
     field, though, so the matcher is kept for that and only that.
 
-    A field name is one token. That is what an ATS emits — `work_authorization`,
-    `salary_expectation`, `question_12074270004` — and it is the whole test.
+    Two shapes count. One token is what an ATS emits —  `work_authorization`,
+    `question_12074270004` — and a bare protected label written as a person
+    writes it, `employment history`, is the same message with a space in it.
+
     Counting words and looking for a question mark was the first attempt and
     too loose: "salary expectation listed" is three words with no `?`, so it
     was read as a field name and refused, which is a posting question again.
+    Requiring one token was the second and too tight in the direction that
+    matters — `is_protected` normalises the space and does recognise
+    `employment history`, but it was never reached, so a §2.2 label went
+    to the model.
+
+    So the multiword case is an *exact* match against the protected
+    vocabulary, never a substring: "salary expectation listed" is not a label
+    and stays answerable.
     """
-    return bool(question.strip()) and len(question.split()) == 1
+    text = question.strip().lower()
+    if not text:
+        return False
+    # One token: hand it to the field matcher, which knows the ATS variants
+    # (`work_authorization_status` and the rest) by substring.
+    if len(text.split()) == 1:
+        return llm_router.is_protected(text)
+    # Several: an exact label only. Returning the verdict rather than the
+    # shape is what closes the gap — `work history` is a protected topic that
+    # `PROTECTED_FIELDS` does not list, so a caller combining "looks like a
+    # field" with `is_protected` let it through.
+    return (
+        text.replace("-", "_").replace(" ", "_") in llm_router.PROTECTED_FIELDS
+        or text in _PROTECTED_TOPICS
+    )
 
 
 def asks_for_a_protected_answer(question: str) -> bool:
@@ -244,9 +268,7 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     # §2.2, applied to the conversation rather than to a form field. Refused
     # here rather than left to the system prompt, because a prompt is a request
     # and this is a rule.
-    if (looks_like_a_field_name(question) and llm_router.is_protected(question)) or (
-        asks_for_a_protected_answer(question)
-    ):
+    if names_a_protected_field(question) or asks_for_a_protected_answer(question):
         return ChatReply(
             reply=(
                 "I do not draft answers for work authorization, sponsorship, employment "

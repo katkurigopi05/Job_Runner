@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from apps.api.routers.chat import asks_for_a_protected_answer, looks_like_a_field_name
+from apps.api.routers.chat import asks_for_a_protected_answer, names_a_protected_field
 from packages.llm import router as llm_router
 
 #: The owner asking what *they* should put. All of these reach a real form.
@@ -83,9 +83,7 @@ def test_a_protected_topic_alone_is_not_enough() -> None:
 
 def _route_refuses(question: str) -> bool:
     """The route's whole condition, as `chat()` evaluates it."""
-    return (
-        looks_like_a_field_name(question) and llm_router.is_protected(question)
-    ) or asks_for_a_protected_answer(question)
+    return names_a_protected_field(question) or asks_for_a_protected_answer(question)
 
 
 class TestTheFieldMatcherIsNotRunOverProse:
@@ -124,13 +122,43 @@ class TestTheFieldMatcherIsNotRunOverProse:
         """Pasting the field into the box means the field."""
         assert _route_refuses(field)
 
-    def test_a_field_name_is_one_token(self) -> None:
-        """What an ATS emits, and the whole test.
+    @pytest.mark.parametrize(
+        "label",
+        (
+            "work_authorization",
+            "work authorization",
+            "employment_history",
+            "employment history",
+            "work history",
+            "salary_expectation",
+            "salary expectation",
+            "sponsorship",
+            "needs_sponsorship",
+            "needs sponsorship",
+            # An ATS names the same question differently every other week.
+            "work_authorization_status",
+        ),
+    )
+    def test_every_supported_label_is_refused_however_it_is_spelled(self, label: str) -> None:
+        """One token or several, underscored or spaced — all the same message.
+
+        Requiring one token was a §2.2 *under*-refusal: `is_protected`
+        normalises the space and does know `employment history`, but the
+        one-token gate meant it was never asked, so a protected label reached
+        the model. That is the direction with consequences.
+        """
+        assert _route_refuses(label), label
+
+    def test_a_label_is_the_whole_message_or_it_is_prose(self) -> None:
+        """Exact, never a substring.
 
         Counting words and looking for a question mark was too loose in the
         direction that costs a feature: any short phrase containing a field
-        name read as one.
+        name read as one. Matching a multiword label by substring instead of
+        exactly would bring that straight back.
         """
-        assert looks_like_a_field_name("work_authorization")
-        assert not looks_like_a_field_name("salary expectation listed")
-        assert not looks_like_a_field_name("")
+        assert names_a_protected_field("work_authorization")
+        assert names_a_protected_field("employment history"), "an exact label, spaced"
+        assert not names_a_protected_field("salary expectation listed")
+        assert not names_a_protected_field("salary expectation in this posting")
+        assert not names_a_protected_field("")
