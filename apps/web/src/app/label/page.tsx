@@ -95,7 +95,11 @@ export default async function LabelPage({
 
       {profiles.length > 1 ? <ProfileChoices profiles={profiles} selected={selected} /> : null}
 
-      <LabelDeck initial={queue} profileId={selected} />
+      {/* `key` remounts on a profile change. `LabelDeck` seeds its queue from
+          `initial` with `useState`, which reads it only on mount, so without
+          this a switch would keep the previous profile's cards — and grade
+          them against the new one. */}
+      <LabelDeck key={selected} initial={queue} profileId={selected} />
 
       {/* The payoff, and the honesty check. A count alone cannot tell a usable
           corpus from a self-confirming one, so the stream mix is shown beside

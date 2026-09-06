@@ -82,7 +82,10 @@ export function LabelDeck({
         setPending(null);
       }
     },
-    [current, pending],
+    // `profileId` belongs here: the grade is recorded against it, and a
+    // callback memoised without it can submit under the profile that was
+    // selected when it was last built.
+    [current, pending, profileId],
   );
 
   useEffect(() => {

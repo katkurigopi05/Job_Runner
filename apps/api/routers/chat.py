@@ -210,8 +210,14 @@ def looks_like_a_field_name(question: str) -> bool:
 
     Someone pasting a bare `work_authorization` into the box still means the
     field, though, so the matcher is kept for that and only that.
+
+    A field name is one token. That is what an ATS emits — `work_authorization`,
+    `salary_expectation`, `question_12074270004` — and it is the whole test.
+    Counting words and looking for a question mark was the first attempt and
+    too loose: "salary expectation listed" is three words with no `?`, so it
+    was read as a field name and refused, which is a posting question again.
     """
-    return len(question.split()) <= 3 and "?" not in question
+    return bool(question.strip()) and len(question.split()) == 1
 
 
 def asks_for_a_protected_answer(question: str) -> bool:

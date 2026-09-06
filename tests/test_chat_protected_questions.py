@@ -89,6 +89,10 @@ class TestTheFieldMatcherIsNotRunOverProse:
         (
             "What salary expectation does this posting list?",
             "Does this posting list a salary expectation?",
+            # No question mark and only three words, which the first version of
+            # the gate read as a field name and refused.
+            "salary expectation listed",
+            "salary expectation in this posting",
         ),
     )
     def test_prose_containing_a_field_name_still_reaches_the_model(self, question: str) -> None:
@@ -99,3 +103,14 @@ class TestTheFieldMatcherIsNotRunOverProse:
     def test_a_bare_field_name_is_still_refused(self, field: str) -> None:
         """Pasting the field into the box means the field."""
         assert _route_refuses(field)
+
+    def test_a_field_name_is_one_token(self) -> None:
+        """What an ATS emits, and the whole test.
+
+        Counting words and looking for a question mark was too loose in the
+        direction that costs a feature: any short phrase containing a field
+        name read as one.
+        """
+        assert looks_like_a_field_name("work_authorization")
+        assert not looks_like_a_field_name("salary expectation listed")
+        assert not looks_like_a_field_name("")
