@@ -111,6 +111,13 @@ async def route_message(
 
     Idempotent on `message_id`: IMAP re-delivers, and a rejection recorded
     twice must not look like two rejections.
+
+    That is what this said while keying on (from_addr, application_id,
+    subject) instead. The triple is not an identity — it collides on exactly
+    the mail that legitimately repeats, and an OTP resend is the sharp case:
+    same sender, same subject, a *new* code, dropped here before reaching the
+    block below that hands the code to the state machine. The application then
+    sits in `needs_otp` holding the expired one.
     """
     verdict = result or await classify_message(email.subject, email.body, provider=provider)
     routing = RoutingResult(message_id=email.message_id, classification=verdict.classification)
@@ -154,13 +161,23 @@ async def route_message(
 
     routing.application_id = str(application.id)
 
-    already = await session.scalar(
-        InboundMessage.__table__.select().where(
+    # Scoped to the candidate rather than the application: a message is the
+    # same message wherever it linked, and the id is what says so. The old
+    # triple survives only for a message carrying no id at all — `imap.py`
+    # digests the bytes when the header is absent, so in practice nothing
+    # reaches it, but a caller constructing an InboundEmail by hand can.
+    if email.message_id:
+        duplicate = InboundMessage.__table__.select().where(
+            InboundMessage.candidate_id == application.candidate_id,
+            InboundMessage.message_id == email.message_id,
+        )
+    else:
+        duplicate = InboundMessage.__table__.select().where(
             InboundMessage.from_addr == email.from_addr,
             InboundMessage.application_id == application.id,
             InboundMessage.subject == email.subject,
         )
-    )
+    already = await session.scalar(duplicate)
     if already is not None:
         log.debug("inbound_duplicate_skipped", message_id=email.message_id)
         routing.unrouted_reason = "already recorded"
@@ -170,6 +187,7 @@ async def route_message(
         InboundMessage(
             candidate_id=application.candidate_id,
             application_id=application.id,
+            message_id=email.message_id or None,
             from_addr=email.from_addr,
             subject=email.subject,
             body=email.body,

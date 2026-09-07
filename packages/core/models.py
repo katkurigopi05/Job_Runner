@@ -458,6 +458,14 @@ class InboundMessage(Base):
     application_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("applications.id", ondelete="SET NULL")
     )
+    #: The RFC 5322 Message-ID, which is what makes re-delivery detectable.
+    #: `route_message` de-duplicates on it: IMAP re-delivers, and a rejection
+    #: recorded twice must not look like two rejections. It used to say that
+    #: and key on (from_addr, application_id, subject) instead — a heuristic
+    #: that collides on exactly the mail which legitimately repeats, so a
+    #: resent OTP was dropped and its application sat in `needs_otp` holding
+    #: the expired code. NULL only on rows written before this column existed.
+    message_id: Mapped[str | None] = mapped_column(String(998))
     from_addr: Mapped[str] = mapped_column(String(320), nullable=False)
     subject: Mapped[str | None] = mapped_column(Text)
     body: Mapped[str | None] = mapped_column(Text)
@@ -472,6 +480,8 @@ class InboundMessage(Base):
     #: 0..1 for an inferred link; NULL when the link was exact or absent.
     link_confidence: Mapped[float | None] = mapped_column(Float)
     at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (Index("ix_inbound_messages_candidate_message", "candidate_id", "message_id"),)
 
 
 class Project(Base):

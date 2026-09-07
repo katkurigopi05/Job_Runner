@@ -199,8 +199,8 @@ Application(id, candidate_id, profile_id, posting_id, url, ats,
 
 ApplicationEvent(id, application_id, type, payload_json, at)   -- append-only
 
-InboundMessage(id, candidate_id, application_id, from_addr, subject,
-               body, classification, link_method, link_confidence, at)
+InboundMessage(id, candidate_id, application_id, message_id, from_addr,
+               subject, body, classification, link_method, link_confidence, at)
 
 Project(id, candidate_id, source, external_id, name, full_name, url,
         homepage, description, language, topics_json, stars, forks,
@@ -1627,6 +1627,55 @@ halves: it applies with the address the pipeline actually produces, replies to
 it, and asserts the outcome lands. Deleting the one line in `_run_pipeline`
 turns three of its tests red — including the source-level assertion, which is
 there because every other test in the file would still pass without it.
+
+### A resent OTP was dropped as a duplicate
+
+§10 says every queue handler is idempotent, and `route_message`'s docstring
+said how: "Idempotent on `message_id`: IMAP re-delivers, and a rejection
+recorded twice must not look like two rejections."
+
+There was no `message_id` column. The de-duplication keyed on
+`(from_addr, application_id, subject)`, which is not an identity — it is a
+heuristic, and it collides on exactly the mail that legitimately repeats.
+
+The sharp case is an OTP resend, because the duplicate check returns *before*
+the block that hands a code to the state machine:
+
+```text
+first  111111 -> status='running'   changed=True   otp='111111'
+resend 222222 -> status='needs_otp' changed=False  otp='111111'
+```
+
+The owner clicks "resend code" — which is what you do when the first one
+expired — and the second never arrives. The application sits in `needs_otp`
+holding the dead code, and §6's `needs_otp ──otp──> running` edge is
+unreachable for the rest of that run. A follow-up on an existing thread is the
+same collision without the state machine attached: same sender, same subject,
+silently swallowed.
+
+**Fixing it needed `imap.py` fixed first.** The stand-in for a message with no
+`Message-ID` header was `f"no-id-{id(raw)}"` — a *memory address*. Unstable
+between runs, so a re-delivered message would be recorded twice; reusable
+after collection, so a later, different message could inherit a freed address
+and be dropped. Both directions were harmless only while nothing keyed on it,
+and making the id the key would have inherited both. It is a digest of the
+bytes now: the identity the header would have carried.
+
+The column is nullable and **deliberately not backfilled**. Existing rows have
+no id to recover, and inventing one would make two different messages look
+like the same message — the failure the column exists to prevent. A NULL never
+matches, so old rows cannot suppress new mail.
+
+`tests/test_inbox_duplicates.py` is in `GATE6_TESTS`, and covers both
+directions: a resend reaches the state machine, and a genuine re-delivery is
+still recorded once. Reverting either half turns four of them red.
+
+One of its tests had to be repaired before it was worth having.
+`_synthetic_id(raw) == _synthetic_id(bytes(raw))` passes against the *old*
+implementation too, because `bytes()` on a bytes input returns the same object
+in CPython, so the two addresses matched. Round-tripping through a bytearray
+forces a separate allocation. A test that cannot fail is the thing this file
+keeps finding.
 
 ### What is still not fixed, and why
 
