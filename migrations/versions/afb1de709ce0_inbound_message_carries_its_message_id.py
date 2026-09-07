@@ -27,17 +27,28 @@ depends_on = None
 
 
 def upgrade() -> None:
+    """Add the column and the index the duplicate check reads."""
     op.add_column(
         "inbound_messages",
         sa.Column("message_id", sa.String(length=998), nullable=True),
     )
+    # Unique, and partial so the NULLs on pre-existing rows do not collide
+    # with each other. It is what `route_message` conflicts against: a SELECT
+    # then an INSERT is two statements and two concurrent `handle_inbox` tasks
+    # can both pass the check — `search(None, "UNSEEN")` returns the same ids
+    # to both until one of them FETCHes and marks them seen. The constraint
+    # makes "one row per (candidate, message)" true by construction rather
+    # than by timing.
     op.create_index(
-        "ix_inbound_messages_candidate_message",
+        "uq_inbound_messages_candidate_message",
         "inbound_messages",
         ["candidate_id", "message_id"],
+        unique=True,
+        postgresql_where=sa.text("message_id IS NOT NULL"),
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_inbound_messages_candidate_message", table_name="inbound_messages")
+    """Drop both. The de-duplication falls back to the old triple."""
+    op.drop_index("uq_inbound_messages_candidate_message", table_name="inbound_messages")
     op.drop_column("inbound_messages", "message_id")

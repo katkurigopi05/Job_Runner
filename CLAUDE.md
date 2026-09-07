@@ -1666,9 +1666,32 @@ no id to recover, and inventing one would make two different messages look
 like the same message — the failure the column exists to prevent. A NULL never
 matches, so old rows cannot suppress new mail.
 
+**The check and the insert were still two statements**, which review caught and
+which the column alone did not fix. `run_pool` runs several workers, and
+`search(None, "UNSEEN")` hands the same ids to every `handle_inbox` that asks
+before one of them FETCHes and marks them seen. Two routings of one message
+could both pass a SELECT — neither transaction can see the other's uncommitted
+row — and both would insert and both would apply the outcome or the OTP.
+
+`uq_inbound_messages_candidate_message` is a *unique* partial index, and
+`route_message` claims the message with `INSERT ... ON CONFLICT DO NOTHING`
+rather than reading first. Losing the race is a no-op instead of a second row,
+and the invariant is true by construction rather than by timing. The path for
+a message with no id keeps the old triple and with it the old race: there is no
+key a unique index could be built on, and it is reachable only from a caller
+constructing an `InboundEmail` by hand.
+
 `tests/test_inbox_duplicates.py` is in `GATE6_TESTS`, and covers both
 directions: a resend reaches the state machine, and a genuine re-delivery is
 still recorded once. Reverting either half turns four of them red.
+
+The race test took two tries to be one. It cannot use the `db_session`
+fixture — that runs inside a transaction which is rolled back, so nothing it
+writes reaches a second connection and both routings simply find no
+application. And committing both sessions at the end *deadlocks*: the second
+insert waits on the first's uncommitted row, so the first has to commit while
+the second is still blocked. The first draft hung rather than failed, which is
+its own kind of test that proves nothing.
 
 One of its tests had to be repaired before it was worth having.
 `_synthetic_id(raw) == _synthetic_id(bytes(raw))` passes against the *old*

@@ -481,7 +481,20 @@ class InboundMessage(Base):
     link_confidence: Mapped[float | None] = mapped_column(Float)
     at: Mapped[datetime] = _created_at()
 
-    __table_args__ = (Index("ix_inbound_messages_candidate_message", "candidate_id", "message_id"),)
+    __table_args__ = (
+        #: Unique so a duplicate cannot be inserted at all, and partial so the
+        #: NULLs on rows written before the column existed do not collide with
+        #: each other. `route_message` conflicts against it rather than
+        #: reading first — a SELECT then an INSERT is two chances for two
+        #: concurrent `handle_inbox` tasks to both pass.
+        Index(
+            "uq_inbound_messages_candidate_message",
+            "candidate_id",
+            "message_id",
+            unique=True,
+            postgresql_where=text("message_id IS NOT NULL"),
+        ),
+    )
 
 
 class Project(Base):

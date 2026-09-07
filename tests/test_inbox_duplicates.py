@@ -23,32 +23,35 @@ Harmless only while nothing keyed on it.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from packages.core.enums import ApplicationStatus
 from packages.core.models import Application, Candidate, InboundMessage, Profile, User
 from packages.inbox.alias import alias_for
 from packages.inbox.imap import _synthetic_id
 from packages.inbox.route import InboundEmail, route_message
+from tests.conftest import TEST_DATABASE_URL
 
 BASE = "owner@gmail.com"
 
 
-async def _parked(db_session, status: str = ApplicationStatus.NEEDS_OTP.value):
-    suffix = uuid.uuid4().hex[:8]
+async def _build(session, suffix: str, status: str):
+    """The rows one application needs, in whatever session is given."""
     user = User(email=f"u-{suffix}@example.com")
-    db_session.add(user)
-    await db_session.flush()
+    session.add(user)
+    await session.flush()
     candidate = Candidate(user_id=user.id, name="Jane", email=f"j-{suffix}@example.com")
-    db_session.add(candidate)
-    await db_session.flush()
+    session.add(candidate)
+    await session.flush()
     profile = Profile(candidate_id=candidate.id, label="default")
-    db_session.add(profile)
-    await db_session.flush()
+    session.add(profile)
+    await session.flush()
     application = Application(
         candidate_id=candidate.id,
         profile_id=profile.id,
@@ -56,12 +59,18 @@ async def _parked(db_session, status: str = ApplicationStatus.NEEDS_OTP.value):
         ats="greenhouse",
         status=status,
     )
-    db_session.add(application)
-    await db_session.flush()
+    session.add(application)
+    await session.flush()
     return application
 
 
+async def _parked(db_session, status: str = ApplicationStatus.NEEDS_OTP.value):
+    """One application waiting in `status`, with the rows it needs behind it."""
+    return await _build(db_session, uuid.uuid4().hex[:8], status)
+
+
 def _mail(application, *, body: str, subject: str, message_id: str | None = None):
+    """A reply carrying this application's alias. A fresh id unless one is given."""
     return InboundEmail(
         message_id=message_id or f"<{uuid.uuid4()}@mail>",
         from_addr="no-reply@greenhouse.io",
@@ -133,6 +142,70 @@ async def test_the_recorded_message_carries_its_id(db_session) -> None:
 
     stored = (await db_session.scalars(select(InboundMessage))).one()
     assert stored.message_id == mail.message_id
+
+
+async def test_two_workers_racing_one_message_record_it_once() -> None:
+    """The check and the insert used to be two statements, and two chances.
+
+    `run_pool` runs several workers, and `search(None, "UNSEEN")` hands the
+    same ids to every `handle_inbox` that asks before one of them FETCHes and
+    marks them seen. Both would pass a SELECT, both would insert, and both
+    would apply the outcome or the OTP below it.
+
+    The interleaving is explicit, because that is the one that used to break:
+    the second routing starts while the first is still *uncommitted*. A SELECT
+    cannot see the other transaction's row, so the old code found nothing and
+    inserted a second time. The unique index makes the second insert wait, and
+    once the first commits it becomes a no-op.
+
+    Two things this had to get right to be a test at all. It does not use the
+    `db_session` fixture — that runs inside a transaction which is rolled back,
+    so nothing it writes reaches a second connection and both routings would
+    simply find no application. And it commits the first session *while* the
+    second is blocked; committing both at the end deadlocks, which is how the
+    first draft hung rather than failed.
+    """
+    engine = create_async_engine(TEST_DATABASE_URL)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    suffix = uuid.uuid4().hex[:8]
+    try:
+        async with maker() as setup:
+            application = await _build(setup, suffix, ApplicationStatus.QUEUED.value)
+            await setup.commit()
+            application_id, candidate_id = application.id, application.candidate_id
+
+        mail = InboundEmail(
+            message_id=f"<{uuid.uuid4()}@mail>",
+            from_addr="no-reply@greenhouse.io",
+            to_addr=alias_for(BASE, application_id),
+            subject="Interview",
+            body="Hi.",
+            received_at=datetime.now(UTC),
+        )
+
+        async with maker() as one, maker() as two:
+            first = await route_message(one, mail)  # inserted, not committed
+            second = asyncio.create_task(route_message(two, mail))
+            await asyncio.sleep(0.2)  # let it reach the insert
+            await one.commit()  # now the conflict resolves
+            result = await asyncio.wait_for(second, timeout=30)
+            await two.commit()
+
+        assert first.unrouted_reason != "already recorded"
+        assert result.unrouted_reason == "already recorded"
+
+        async with maker() as reader:
+            stored = (
+                await reader.scalars(
+                    select(InboundMessage).where(InboundMessage.candidate_id == candidate_id)
+                )
+            ).all()
+        assert len(stored) == 1, f"{len(stored)} rows for one message"
+    finally:
+        async with maker() as cleanup:
+            await cleanup.execute(delete(User).where(User.email == f"u-{suffix}@example.com"))
+            await cleanup.commit()
+        await engine.dispose()
 
 
 # --------------------------------------------------------------------------
