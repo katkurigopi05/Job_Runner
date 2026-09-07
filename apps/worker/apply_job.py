@@ -860,8 +860,7 @@ async def _readiness(
         unanswered_required=[q.question for q in report.unanswered if q.required],
         knock_outs=[q.label for q in (screening.knock_outs if screening else [])],
         excluded_by=excluded_by,
-        has_resume=application.tailored_resume_id is not None
-        or profile.base_resume_id is not None,
+        has_resume=application.tailored_resume_id is not None or profile.base_resume_id is not None,
     )
     return assessment.as_dict()
 
