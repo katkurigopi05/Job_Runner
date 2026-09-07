@@ -1,6 +1,7 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching export-labels import-csv probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6
+        bench-matching export-labels import-csv probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
 
@@ -119,6 +120,22 @@ worktree:
 #
 # REQUIRE_DB=1 so a missing database fails the gate instead of skipping the
 # tests that do most of the asserting.
+# The test files each labelled gate runs. CI names these gates too, and used to
+# repeat the file lists in `.github/workflows/ci.yml` — which drifted: the CI
+# step called "gate-3" ran 131 tests where `make gate-3` ran 178, and "gate-5"
+# ran 150 where the gate ran 243. Both still *ran* under gate-0, so nothing was
+# unchecked; what was lost is the label saying which phase regressed, which is
+# the exact cost §13 warns about. One definition, read by both.
+GATE1_TESTS := tests/test_greenhouse.py tests/test_greenhouse_har.py
+GATE2_TESTS := tests/test_gate2.py tests/test_worker.py
+GATE3_TESTS := tests/test_no_fabrication.py tests/test_cover_letter.py \
+  tests/test_apply_cover_letter.py tests/test_tailor_cache.py \
+  tests/test_apply_uploads_tailored.py
+GATE4_TESTS := tests/test_mcp.py
+GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
+  tests/test_bespoke_probe.py tests/test_labeling_loop.py
+GATE6_TESTS := tests/test_inbox.py
+
 gate-0: lint typecheck check-migrations
 	REQUIRE_DB=1 $(PY)/pytest -q
 	@echo "gate-0 passed"
@@ -129,7 +146,7 @@ gate-0: lint typecheck check-migrations
 # The other half (a LIVE Greenhouse posting) cannot run here and is not
 # asserted by this target. Run `make gate-1-live URL=<posting>` for that.
 gate-1: gate-0
-	REQUIRE_DB=1 $(PY)/pytest -q tests/test_greenhouse.py tests/test_greenhouse_har.py
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE1_TESTS)
 	@echo "gate-1 (offline) passed"
 
 # Gate 2 — CLAUDE.md §9. The offline half: the review queue carries every
@@ -137,7 +154,7 @@ gate-1: gate-0
 # the run. The fill-rate half of the gate needs a real posting and a real
 # profile, which is `make gate-2-live`.
 gate-2: gate-0
-	REQUIRE_DB=1 $(PY)/pytest -q tests/test_gate2.py tests/test_worker.py
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE2_TESTS)
 	@echo "gate-2 (offline) passed"
 
 # make gate-2-live URL=https://job-boards.greenhouse.io/<company>/jobs/<id>
@@ -162,9 +179,7 @@ gate-2-live:
 # résumés, plus adversarial cases the guard must reject and legitimate
 # rewrites it must allow, plus the tailored-PDF round trip.
 gate-3: gate-0
-	REQUIRE_DB=1 $(PY)/pytest -q tests/test_no_fabrication.py \
-	  tests/test_cover_letter.py tests/test_apply_cover_letter.py \
-	  tests/test_tailor_cache.py tests/test_apply_uploads_tailored.py
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE3_TESTS)
 	@echo "gate-3 passed"
 
 # Gate 5 — CLAUDE.md §9. A full cycle inside the rate limit, a second run
@@ -180,21 +195,36 @@ gate-3: gate-0
 # count reveals: a corpus drawn only from the ranker's own shortlist carries
 # the sampling bias `provenance: owner` is supposed to mean it escaped.
 gate-5: gate-0
-	REQUIRE_DB=1 $(PY)/pytest -q tests/test_crawler.py tests/test_matching.py \
-	  tests/test_jsonld.py tests/test_bespoke_probe.py tests/test_labeling_loop.py
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE5_TESTS)
 	@echo "gate-5 passed"
 
 # Gate 4 — CLAUDE.md §9. A full apply-to-review cycle driven by tool calls
 # alone, plus the tool surface's own invariants.
 gate-4: gate-0
-	REQUIRE_DB=1 $(PY)/pytest -q tests/test_mcp.py
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE4_TESTS)
 	@echo "gate-4 passed"
 
 # Gate 6 — CLAUDE.md §9. Alias routing to the right application, and
 # classification accuracy on 30 hand-labeled recruiter emails.
 gate-6: gate-0
-	REQUIRE_DB=1 $(PY)/pytest -q tests/test_inbox.py
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE6_TESTS)
 	@echo "gate-6 passed"
+
+# The labelled subsets on their own, without re-running gate-0. CI runs gate-0
+# once and then these for the label; a developer wants `make gate-N`, which
+# keeps the gate-0 dependency so a gate cannot pass on a red suite.
+gate-1-only:
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE1_TESTS)
+gate-2-only:
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE2_TESTS)
+gate-3-only:
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE3_TESTS)
+gate-4-only:
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE4_TESTS)
+gate-5-only:
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE5_TESTS)
+gate-6-only:
+	REQUIRE_DB=1 $(PY)/pytest -q $(GATE6_TESTS)
 
 # make gate-1-live URL=https://boards.greenhouse.io/<company>/jobs/<id>
 gate-1-live:

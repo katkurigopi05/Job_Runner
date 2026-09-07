@@ -653,6 +653,30 @@ list, so a `gate-N` that exists in the Makefile but not in `ci.yml` still gets
 *run* — gate 0 covers every test — but a failure in it reports as a gate-0
 failure and you lose the label that says which phase regressed.
 
+That is the half this paragraph anticipated. The half that actually happened is
+harder to see, because the CI step is right there wearing the correct name: the
+steps repeated the *file lists* rather than calling `make gate-N`, and the two
+copies drifted.
+
+```text
+gate-2   CI ran   4 tests, make gate-2 ran  18
+gate-3   CI ran 131 tests, make gate-3 ran 178
+gate-5   CI ran 150 tests, make gate-5 ran 243
+```
+
+Every one of those tests still ran under gate-0, so nothing went unchecked.
+What was lost is the thing the named steps exist for: "gate-3 is green" in CI
+had stopped meaning what `make gate-3` means, and the cover letter, the
+tailoring cache and the tailored-résumé upload — the three suites §15 records
+adding to gate-3 precisely so a green gate would stop over-claiming — were
+never in the labelled step at all.
+
+The lists now live once, as `GATEn_TESTS`, and CI runs `make gate-N-only` —
+the same subset without the `gate-0` dependency, since CI has already run it
+and a developer typing `make gate-3` should still get the full suite first.
+`tests/test_ci_runs_every_gate.py` holds both properties: every gate is named
+in CI, and no CI step spells out its own file list again.
+
 **`image`** — builds the `Dockerfile`, imports every entry point inside it, and
 checks Chromium is present. Nothing is pushed anywhere.
 
