@@ -225,3 +225,99 @@ async def test_a_dead_url_falls_back_to_the_name() -> None:
 
     assert isinstance(outcome, Resolved)
     assert outcome.slug == "acme"
+
+
+def test_a_short_first_word_does_not_become_a_slug_on_its_own() -> None:
+    """The `3 Data` regression, found on the first real CSV run.
+
+    `slug_candidates` offered `3` as the first-word shortcut. It is a real
+    Greenhouse board — a healthcare provider's — and it answered with two live
+    postings, so every downstream check passed: the board exists, it is a
+    board, it has jobs. None of them asks whether it is *this company's*
+    board, so `--append` would have written a registry row naming 3 Data and
+    pointing at somebody else's postings.
+    """
+    candidates = slug_candidates("3 Data")
+
+    assert "3" not in candidates, "a one-character fragment identifies nobody"
+    assert "3data" in candidates, "the identifying candidates are untouched"
+    assert "3-data" in candidates
+
+
+def test_a_genuinely_short_name_keeps_its_slug() -> None:
+    """The guard is about fragments of a longer name, not about short names.
+
+    `HP` and `X Corp` reduce to the whole company name rather than a piece of
+    one, so their short slugs are the correct guess and are still offered.
+    """
+    assert "hp" in slug_candidates("HP")
+    assert "x" in slug_candidates("X Corp"), "`Corp` is noise, so `X` is the whole name"
+    assert "a9" in slug_candidates("A9 Labs")
+
+
+def test_the_first_word_shortcut_still_works_for_real_names() -> None:
+    """Withholding it for everything would cost the resolutions it was added for."""
+    assert "abnormal" in slug_candidates("Abnormal Security")
+    assert "stripe" in slug_candidates("Stripe Payments")
+
+
+@pytest.mark.asyncio
+async def test_vendors_are_probed_concurrently_but_the_first_in_order_wins() -> None:
+    """The fan-out must not make the result depend on which host answered first.
+
+    A company that moved ATS and left the old board up resolves on two
+    vendors. Sequentially the earlier entry in `VENDORS` won; with
+    `asyncio.gather` the temptation is to take whichever finished first, which
+    would make a registry written from this change between identical runs.
+
+    Here the *later* vendor answers fastest, so a first-past-the-post
+    implementation returns `ashby` and this asserts `greenhouse`.
+    """
+    import asyncio as _asyncio
+
+    from packages.crawler import find_boards as module
+
+    async def probe(fetcher, vendor, slug):  # noqa: ANN001, ARG001
+        if vendor == "ashby":
+            return 5, f"https://ashby/{slug}", None
+        if vendor == "greenhouse":
+            await _asyncio.sleep(0.02)  # answers last
+            return 9, f"https://greenhouse/{slug}", None
+        return None, "", None
+
+    original = module._probe
+    module._probe = probe
+    try:
+        result = await module.resolve_one("Acme", object())
+    finally:
+        module._probe = original
+
+    assert isinstance(result, Resolved)
+    assert result.ats == "greenhouse", "vendor precedence must not depend on timing"
+    assert result.open_jobs == 9
+
+
+@pytest.mark.asyncio
+async def test_a_robots_refusal_on_one_vendor_is_still_reported() -> None:
+    """`blocked` and `not found` mean different things about a company.
+
+    The fan-out collects refusals from every branch rather than only the one
+    that happened to run last.
+    """
+    from packages.crawler import find_boards as module
+
+    async def probe(fetcher, vendor, slug):  # noqa: ANN001, ARG001
+        if vendor == "lever":
+            return None, "", "robots.txt disallows /postings"
+        return None, "", None
+
+    original = module._probe
+    module._probe = probe
+    try:
+        result = await module.resolve_one("Acme", object())
+    finally:
+        module._probe = original
+
+    assert isinstance(result, tuple)
+    assert result[1].startswith("blocked:")
+    assert "robots.txt" in result[1]

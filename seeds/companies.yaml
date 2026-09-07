@@ -3,385 +3,652 @@ companies:
   slug: stripe
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Airbnb
   slug: airbnb
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Databricks
   slug: databricks
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Cloudflare
   slug: cloudflare
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Figma
   slug: figma
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Vercel
   slug: vercel
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: PlanetScale
   slug: planetscale
   ats: greenhouse
   poll_interval_s: 21600
-- name: Temporal
-  slug: temporaltechnologies
-  ats: greenhouse
-  poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Fivetran
   slug: fivetran
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Grafana Labs
   slug: grafanalabs
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Datadog
   slug: datadog
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Elastic
   slug: elastic
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: MongoDB
   slug: mongodb
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Instacart
   slug: instacart
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Robinhood
   slug: robinhood
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Coinbase
   slug: coinbase
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Affirm
   slug: affirm
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Brex
   slug: brex
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Gusto
   slug: gusto
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Asana
   slug: asana
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Discord
   slug: discord
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Reddit
   slug: reddit
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Pinterest
   slug: pinterest
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Duolingo
   slug: duolingo
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Chime
   slug: chime
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Faire
   slug: faire
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Webflow
   slug: webflow
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Amplitude
   slug: amplitude
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Mixpanel
   slug: mixpanel
   ats: greenhouse
   poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: api
 - name: Anthropic
   slug: anthropic
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: PolyAI
   slug: polyai
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Parloa
   slug: parloa
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Intercom
   slug: intercom
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Hume AI
   slug: humeai
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: ElevenLabs
   slug: elevenlabs
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Deepgram
   slug: deepgram
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Vapi
   slug: vapi
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Bland AI
   slug: bland
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Airtable
   slug: airtable
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Arize AI
   slug: arizeai
   ats: greenhouse
-- name: RunPod
-  slug: runpod
-  ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Weights & Biases (CoreWeave)
   slug: coreweave
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Glean
   slug: gleanwork
   ats: greenhouse
-- name: Ada
-  slug: ada
-  ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Sierra
   slug: sierra
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Decagon
   slug: decagon
   ats: ashby
-- name: Lindy
-  slug: lindy
-  ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Speechmatics
   slug: speechmatics
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: n8n
   slug: n8n
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Zapier
   slug: zapier
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Boomi
   slug: boomilp
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Cohere
   slug: cohere
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: LangChain
   slug: langchain
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Pinecone
   slug: pinecone
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Mistral AI
   slug: mistral
   ats: lever
+  checked: '2026-09-07'
+  state: api
 - name: Palantir
   slug: palantir
   ats: lever
+  checked: '2026-09-07'
+  state: api
 - name: Later
   slug: later
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Safari AI
   slug: safariai
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Hootsuite
   slug: hootsuite
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Klue
   slug: klue
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Glacis AI
   slug: glacis-ai
   ats: ashby
-- name: Sanctuary AI
-  slug: sanctuary
-  ats: lever
-- name: Factorial
-  slug: factorial
-  ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Attio
   slug: attio
   ats: ashby
-- name: Tinybird
-  slug: tinybird
-  ats: ashby
-- name: Clarity AI
-  slug: clarity-ai
-  ats: lever
-- name: Travelperk
-  slug: travelperk
-  ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Aleph Alpha
   slug: AlephAlpha
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: DeepL
   slug: DeepL
   ats: ashby
-- name: Black Forest Labs
-  slug: blackforestlabs
-  ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Helsing
   slug: helsing
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Celonis
   slug: celonis
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Contentful
   slug: contentful
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: GetYourGuide
   slug: getyourguide
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: HelloFresh
   slug: hellofresh
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: N26
   slug: n26
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Trade Republic
   slug: traderepublicbank
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: SumUp
   slug: sumup
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Qonto
   slug: qonto
   ats: lever
-- name: Forto
-  slug: forto
-  ats: lever
+  checked: '2026-09-07'
+  state: api
 - name: Lakera
   slug: lakera.ai
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Scandit
   slug: scandit
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Cradle
   slug: cradlebio
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Photoroom
   slug: photoroom
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Pigment
   slug: pigment
   ats: lever
+  checked: '2026-09-07'
+  state: api
 - name: Wayve
   slug: wayve
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Isomorphic Labs
   slug: isomorphiclabs
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: PhysicsX
   slug: physicsx
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Stability AI
   slug: stabilityai
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Synthesia
   slug: synthesia
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Faculty
   slug: faculty
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Causaly
   slug: causaly
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Lovable
   slug: lovable
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Legora
   slug: legora
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Spotify
   slug: spotify
   ats: lever
-- name: Vinted
-  slug: vinted
-  ats: lever
+  checked: '2026-09-07'
+  state: api
 - name: Corti
   slug: corti
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Pleo
   slug: pleo
   ats: ashby
-- name: Templafy
-  slug: templafy
-  ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Amplemarket
   slug: amplemarket
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Perplexity
   slug: perplexity
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Clay Labs
   slug: claylabs
   ats: ashby
-- name: Runway
-  slug: runwayml
-  ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Hightouch
   slug: hightouch
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: WorkOS
   slug: workos
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Supabase
   slug: supabase
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Resend
   slug: resend
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Clerk
   slug: clerk
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: Inngest
   slug: inngest
   ats: ashby
+  checked: '2026-09-07'
+  state: api
 - name: 15Five
   slug: 15five
   ats: lever
+  checked: '2026-09-07'
+  state: api
 - name: 5AM Ventures
   slug: 5amventures
   ats: lever
+  checked: '2026-09-07'
+  state: api
 - name: Abacus.AI
   slug: abacus
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Abnormal Security
   slug: abnormalsecurity
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Accela
   slug: accela
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Achievers
   slug: achievers
   ats: lever
+  checked: '2026-09-07'
+  state: api
 - name: Acquia
   slug: acquia
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Admios
   slug: admios
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Adyen
   slug: adyen
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
 - name: Afresh
   slug: afresh
   ats: greenhouse
+  checked: '2026-09-07'
+  state: api
+retired:
+- name: Temporal
+  slug: temporaltechnologies
+  ats: greenhouse
+  poll_interval_s: 21600
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: 404
+- name: RunPod
+  slug: runpod
+  ats: greenhouse
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: 404
+- name: Ada
+  slug: ada
+  ats: greenhouse
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: 404
+- name: Lindy
+  slug: lindy
+  ats: ashby
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: null
+- name: Sanctuary AI
+  slug: sanctuary
+  ats: lever
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: null
+- name: Factorial
+  slug: factorial
+  ats: greenhouse
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: 404
+- name: Tinybird
+  slug: tinybird
+  ats: ashby
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: null
+- name: Clarity AI
+  slug: clarity-ai
+  ats: lever
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: null
+- name: Travelperk
+  slug: travelperk
+  ats: ashby
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: null
+- name: Black Forest Labs
+  slug: blackforestlabs
+  ats: greenhouse
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: 404
+- name: Forto
+  slug: forto
+  ats: lever
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: null
+- name: Vinted
+  slug: vinted
+  ats: lever
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: null
+- name: Templafy
+  slug: templafy
+  ats: greenhouse
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: 404
+- name: Runway
+  slug: runwayml
+  ats: greenhouse
+  checked: '2026-09-07'
+  state: missing
+  api_status: 404
+  rendered_status: 404

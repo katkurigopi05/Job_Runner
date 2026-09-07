@@ -51,6 +51,7 @@ from packages.matching.embed import get_embedder
 from packages.matching.pick_resume import choose_base_resume
 from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
+from packages.tailor.readiness import assess
 
 log = structlog.get_logger(__name__)
 
@@ -807,6 +808,63 @@ async def _capture(page: Any, application: Application, name: str) -> str | None
         return None
 
 
+async def _readiness(
+    session: AsyncSession,
+    application: Application,
+    profile: Profile,
+    report: FillReport,
+    resume_diff: dict[str, Any] | None,
+    screening: ScreenReport | None,
+) -> dict[str, Any]:
+    """Compose the §53 readiness assessment from what this run already computed.
+
+    Nothing here measures anything. Every number was produced by the module
+    that owns it — the rubric by `matching/rubric.py`, the ATS and recruiter
+    levels by the tailoring run that wrote `resume_diff`, the fill rate by the
+    adapter — and a second opinion computed here would drift against all three.
+    CLAUDE.md §15 records that happening once already, with two definitions of
+    "remote" disagreeing about whether a job was reachable.
+
+    A missing input stays None and `readiness.assess` reports it as unmeasured.
+    Substituting a default here is the one thing that would make the composite
+    lie, because the screen cannot tell a real 0.0 from a filled-in one.
+    """
+    ats = (resume_diff or {}).get("ats") or {}
+    recruiter = (resume_diff or {}).get("recruiter") or {}
+
+    rubric_overall: float | None = None
+    excluded_by: list[str] = []
+    if application.posting_id is not None:
+        reasons = await session.scalar(
+            select(Match.reasons_json).where(
+                Match.profile_id == application.profile_id,
+                Match.posting_id == application.posting_id,
+            )
+        )
+        if reasons:
+            rubric = reasons.get("rubric") or {}
+            raw = rubric.get("overall")
+            if isinstance(raw, int | float):
+                rubric_overall = float(raw)
+            excluded_by = [str(r) for r in reasons.get("excluded_by") or []]
+
+    assessment = assess(
+        rubric_overall=rubric_overall,
+        # `parse_after` and `keywords_after` describe the document being sent.
+        # The `_before` halves belong to the diff, which is about the rewrite.
+        ats_parse=ats.get("parse_after"),
+        ats_keywords=ats.get("keywords_after") if ats else None,
+        recruiter_overall=recruiter.get("after"),
+        recruiter_shortlist=recruiter.get("shortlist_after"),
+        fill_rate=report.fill_rate,
+        unanswered_required=[q.question for q in report.unanswered if q.required],
+        knock_outs=[q.label for q in (screening.knock_outs if screening else [])],
+        excluded_by=excluded_by,
+        has_resume=application.tailored_resume_id is not None or profile.base_resume_id is not None,
+    )
+    return assessment.as_dict()
+
+
 async def _decide(
     session: AsyncSession,
     application: Application,
@@ -847,6 +905,15 @@ async def _decide(
         # asked and got none looks identical to a form that never asked, and
         # writing it by hand is the owner's call.
         "cover_letter": cover_letter,
+        # §25/§44/§53 — the composite the owner reads before approving, the
+        # band that makes the float legible, and the list of things stopping
+        # this from being sendable. Written here rather than computed by the
+        # screen because it is a property of *this run*: the same application
+        # re-read a week later would score against whatever the modules do
+        # then, and the owner approved what they were shown.
+        "readiness": await _readiness(
+            session, application, profile, report, resume_diff, screening
+        ),
     }
 
     if not report.is_complete:

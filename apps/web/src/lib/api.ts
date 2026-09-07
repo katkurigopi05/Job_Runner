@@ -220,6 +220,39 @@ export interface ReviewRecord {
   score?: number | null;
   min_match_score?: number;
   screening?: Screening | null;
+  /** §25/§44/§53 — the composite, its band, and what is stopping this going. */
+  readiness?: Readiness | null;
+}
+
+/** One measured axis of readiness. `measured` false means its input was
+ *  missing, so it carries no weight and its `finding` says why. */
+export interface ReadinessComponent {
+  name: string;
+  score: number;
+  weight: number;
+  finding: string;
+  measured: boolean;
+}
+
+export interface ReadinessBlocker {
+  code: string;
+  detail: string;
+}
+
+/**
+ * `score` and `tier` are null when too little was measurable to say — which is
+ * a different answer from a low score and is rendered as one. `ready` is false
+ * on any blocker regardless of `score`: the gate is a fact about whether the
+ * application can be completed, the score is an opinion about how it would land.
+ */
+export interface Readiness {
+  score: number | null;
+  tier: string | null;
+  ready: boolean;
+  components: ReadinessComponent[];
+  blockers: ReadinessBlocker[];
+  weakest: string | null;
+  summary: string;
 }
 
 export interface Application {
