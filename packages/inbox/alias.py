@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 #: `owner+app0f8c...@gmail.com`. The tag is the application UUID as bare hex —
 #: unambiguous, and short enough for the 64-character local-part limit.
-_ALIAS_RE = re.compile(r"^(?P<user>[^+@]+)\+app(?P<hex>[0-9a-f]{32})@(?P<domain>.+)$", re.I)
+_ALIAS_RE = re.compile(r"^(?P<user>[^+@\s]+)\+app(?P<hex>[0-9a-f]{32})@(?P<domain>[^@\s]+)$", re.I)
 
 TAG_PREFIX = "app"
 
@@ -39,11 +39,30 @@ def alias_for(base_address: str, application_id: uuid.UUID | str) -> str:
         AliasError: the base address already carries a tag, or is not an
             address at all. Silently producing `a+b+app...@x` would create an
             alias that never routes back.
-    """
-    if "@" not in base_address:
-        raise AliasError(f"{base_address!r} is not an email address")
 
-    local, _, domain = base_address.partition("@")
+    Every shape refused here is one that yields an unsendable address, and the
+    `@@` case is the one worth naming: `owner@@example.com` becomes
+    `owner+app…@@example.com`, which no employer's form accepts — and which
+    `parse_alias` used to read back as a valid alias of ours, so it looked
+    right from both ends while routing nothing.
+    """
+    # Surrounding whitespace is a copy-paste artefact with unambiguous intent —
+    # a trailing newline off the end of an `.env` line — so it is trimmed.
+    # Internal whitespace is not: `owner name@gmail.com` is a typo no rule can
+    # safely guess at, and it would otherwise pass every check below and yield
+    # an address no form accepts, without `_reply_to` taking its logged
+    # fallback. Refusing is what puts it on the candidate's own address.
+    base_address = base_address.strip()
+    if any(character.isspace() for character in base_address):
+        raise AliasError(f"{base_address!r} contains whitespace")
+
+    local, at, domain = base_address.partition("@")
+    if not at:
+        raise AliasError(f"{base_address!r} is not an email address")
+    if not local or not domain:
+        raise AliasError(f"{base_address!r} has an empty local part or domain")
+    if "@" in domain:
+        raise AliasError(f"{base_address!r} has more than one '@'")
     if "+" in local:
         raise AliasError(f"{base_address!r} already contains a plus-tag; use the bare address")
 
@@ -86,3 +105,35 @@ def find_alias(*header_values: str | None) -> ParsedAlias | None:
             if parsed is not None:
                 return parsed
     return None
+
+
+def reply_address(
+    *,
+    email_mode: str,
+    base_address: str | None,
+    application_id: uuid.UUID | str,
+) -> str | None:
+    """The address one application should be *applied with*, or None.
+
+    None means "apply as the candidate" — `email_mode == "self"`, the shipped
+    default, where the owner wants the employer to have their real address and
+    accepts that replies are linked by inference rather than by an exact key.
+
+    Managed mode is the half that makes `route.py` work. The alias is only ever
+    an exact key because the employer was given it in the first place; nothing
+    downstream can recover a tag that was never applied with.
+
+    Raises:
+        AliasError: managed mode with no mailbox to build from, or a base that
+            cannot carry a tag. Both are refusals rather than a bare address,
+            because an application that quietly reverts is one whose replies
+            can never conclude anything and nothing says so.
+    """
+    if email_mode != "managed":
+        return None
+    if not base_address:
+        raise AliasError(
+            "managed email mode needs a mailbox to build aliases from: "
+            "set the candidate's managed_alias, or INBOX_ALIAS_BASE"
+        )
+    return alias_for(base_address, application_id)

@@ -45,6 +45,7 @@ from packages.core.queue import ClaimedTask
 from packages.core.state import WorkClaim, begin_work, transition
 from packages.core.storage import get_storage, receipt_key
 from packages.github.select import relevant_for_posting
+from packages.inbox.alias import AliasError, reply_address
 from packages.llm import router as llm_router
 from packages.matching.embed import get_embedder
 from packages.matching.pick_resume import choose_base_resume
@@ -209,6 +210,7 @@ async def _run_pipeline(
             resume_path=await _resume_path(session, application, profile),
             cover_letter_text=(letter or {}).get("text"),
             cover_letter_path=_letter_path(application),
+            reply_to=_reply_to(candidate, application),
         )
         report = await adapter.fill(page, answers)
 
@@ -728,6 +730,40 @@ async def _cover_letter(
     # Kept alongside the ref because the review screen has to show the letter
     # the owner is approving, and a PDF is not readable back as text.
     return {**outcome, "ref": ref, "text": letter.text}
+
+
+def _reply_to(candidate: Candidate, application: Application) -> str | None:
+    """The address to apply with — this application's alias, or None.
+
+    None means the candidate's own address, which is `email_mode == "self"`
+    and the shipped default.
+
+    Managed mode is what makes recruiter mail routable. `route.py` concludes an
+    outcome only from an exact alias, and an alias is exact only because the
+    employer was handed it here; without this call the tag never leaves the
+    machine, every reply falls to the inference path, and nothing an employer
+    sends can move an application. Gate 6 passed throughout, because its
+    fixture builds the alias the product never did.
+
+    A managed candidate with no mailbox to build from applies with their own
+    address and says so by name. Failing the application over a configuration
+    gap would cost more than the routing does.
+    """
+    settings = get_settings()
+    base = candidate.managed_alias or settings.inbox_alias_base
+    try:
+        return reply_address(
+            email_mode=candidate.email_mode,
+            base_address=base,
+            application_id=application.id,
+        )
+    except AliasError as exc:
+        log.warning(
+            "applying_with_the_candidate_address_no_usable_alias",
+            application_id=str(application.id),
+            reason=str(exc),
+        )
+        return None
 
 
 def _letter_path(application: Application) -> str | None:
