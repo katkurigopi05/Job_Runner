@@ -25,11 +25,24 @@ clean up after — 21 of the original 50 entries turned out to be exactly that.
 
 **Politeness is not optional and not reimplemented here.** Every request goes
 through `PoliteFetcher`, so robots.txt and the per-host floor apply the same
-as they do in a crawl. That is also the honest constraint on this: the four
-ATS API hosts sit at the 2s shared floor (§2.6 as amended), and probing is
-serialized per host. Four hundred names against three vendors is roughly forty
-minutes of wall clock, and there is no version of this that is faster and
-still within the rules.
+as they do in a crawl. The four ATS API hosts sit at the 2s shared floor
+(§2.6 as amended), and probing stays serialized *within* each host.
+
+**Across hosts it is not.** This paragraph used to end "there is no version of
+this that is faster and still within the rules", and that was wrong — it read
+§2.6 as one global budget when the rule is written per host. Probing the four
+vendors one after another paid the *sum* of four independent floors while
+three of the four hosts sat idle. A 60-company sample spent 792s waiting,
+spread as workable 361s, greenhouse 160s, ashby 136s, lever 135s; the slowest
+host alone is 361s. `resolve_one` now fans out across vendors, so a company
+costs the maximum rather than the total, and the owner's 3,802-row CSV went
+from roughly 16 hours to roughly 4.
+
+Nothing was relaxed to get that. Each host still refuses to be touched inside
+its own floor, a 429 still backs that host off for everyone, and
+`tests/test_ratelimit_concurrency.py` establishes that the limiter holds under
+exactly this access pattern — written before the fan-out, to check rather than
+assume.
 
 The slug-validation idea, and the observation that a board with zero jobs is
 not a resolution, are both from `santifer/career-ops`'s `discover-ats.mjs`
@@ -38,6 +51,7 @@ not a resolution, are both from `santifer/career-ops`'s `discover-ats.mjs`
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
@@ -413,14 +427,60 @@ async def resolve_one(
     if not candidates:
         return name, "no usable slug could be derived from the name"
 
-    for vendor in vendors:
+    # One task per vendor, run together; the slugs *within* a vendor stay
+    # sequential because they share that vendor's host and therefore its floor.
+    #
+    # This is where the sweep's wall clock lives, and it used to be a nested
+    # sequential loop paying the *sum* of four independent floors. On a
+    # 60-company sample that was 792s of waiting spread over four hosts —
+    # workable 361s, greenhouse 160s, ashby 136s, lever 135s — where the
+    # slowest host alone is 361s. Fanning out costs the maximum instead of the
+    # total, which took the owner's 3,802-row CSV from ~16 hours to ~4.
+    #
+    # §2.6 is untouched by this and is the reason it works: the rule is
+    # written per host, each host still refuses to be touched inside its own
+    # floor, and `tests/test_ratelimit_concurrency.py` establishes that the
+    # limiter holds that line under exactly this pattern. Concurrency across
+    # hosts is not a way around the limit — running four hosts at their own
+    # pace is what the limit already permits, and doing it one at a time was
+    # simply leaving three of them idle.
+    async def probe_vendor(vendor: str) -> tuple[Resolved | None, str | None]:
+        refused: str | None = None
         for slug in candidates:
             count, url, blocked = await _probe(fetcher, vendor, slug)
             if blocked:
-                blocked_reason = blocked
+                refused = blocked
                 continue
             if count:
-                return Resolved(name=name, ats=vendor, slug=slug, board_url=url, open_jobs=count)
+                return Resolved(
+                    name=name, ats=vendor, slug=slug, board_url=url, open_jobs=count
+                ), None
+        return None, refused
+
+    outcomes = await asyncio.gather(*(probe_vendor(vendor) for vendor in vendors))
+
+    # The one cost, recorded rather than buried: the sequential version
+    # stopped at the first vendor that answered, and a fan-out cannot — all
+    # four are probed even when greenhouse resolves. That is roughly 10% of
+    # companies (the share that resolve at all) making up to three probes they
+    # previously skipped. It buys no wall clock, since those hosts run in
+    # parallel anyway, and it stays inside every floor; it is simply more
+    # requests. Judged worth it because the alternative is cancelling
+    # in-flight probes on first success, which makes the winner depend on
+    # which host answered fastest rather than on `vendors` order — and a
+    # registry whose rows change between identical runs is a worse problem
+    # than a few extra polite requests.
+    #
+    # Resolved in `vendors` order, not in whichever finished first. Two
+    # vendors can both answer for one name — a company that moved ATS and left
+    # the old board up — and the sequential version returned the earlier
+    # vendor. Preserving that keeps the result deterministic across runs, which
+    # a registry written from it depends on.
+    for found, refused in outcomes:
+        if refused and not blocked_reason:
+            blocked_reason = refused
+        if found is not None:
+            return found
 
     if blocked_reason:
         return name, f"blocked: {blocked_reason}"
