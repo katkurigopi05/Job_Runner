@@ -149,22 +149,22 @@ jobs:
       # "some test failed". These are subsets of the run above, so they are
       # cheap and they keep the CLAUDE.md §9 gate names meaningful in CI.
       - name: gate-1 (offline Greenhouse adapter)
-        run: .venv/bin/pytest -q tests/test_greenhouse.py tests/test_greenhouse_har.py
+        run: make gate-1-only
 
       - name: gate-2 (review queue, offline half)
-        run: .venv/bin/pytest -q tests/test_gate2.py
+        run: make gate-2-only
 
       - name: gate-3 (fabrication merge gate)
-        run: .venv/bin/pytest -q tests/test_no_fabrication.py
+        run: make gate-3-only
 
       - name: gate-4 (MCP tool surface)
-        run: .venv/bin/pytest -q tests/test_mcp.py
+        run: make gate-4-only
 
       - name: gate-5 (crawler and matching)
-        run: .venv/bin/pytest -q tests/test_crawler.py tests/test_matching.py
+        run: make gate-5-only
 
       - name: gate-6 (inbox tracker)
-        run: .venv/bin/pytest -q tests/test_inbox.py
+        run: make gate-6-only
 
   image:
     name: docker image builds and runs
