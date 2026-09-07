@@ -69,13 +69,60 @@ def _page_publishes_jobs(response: FetchResult) -> bool:
     return bool(response.ok and job_postings(response.text))
 
 
-def _api_is_board(response: FetchResult) -> bool:
+#: The JSON container each ATS's board API answers with. Lever is the odd one
+#: and the reason this table exists: it returns a bare array of postings, which
+#: `LeverExtractor.parse` documents and this module did not know.
+#:
+#: The cost of not knowing was not a failed check — it was a *confident wrong
+#: one*. `_api_is_board` tested the Greenhouse shape against every ATS, so a
+#: live Lever board answering 200 with its full posting list failed the shape
+#: test, fell through to MISSING, and `--write` retired it. The first real sweep
+#: condemned eight companies that way, Palantir and Spotify among them, each
+#: stamped `api_status: 200` — a status no dead board returns. A checker that
+#: retires live boards is worse than no checker: it removes exactly the entries
+#: someone trusted it to keep.
+_BOARD_PAYLOAD: dict[str, type] = {
+    "greenhouse": dict,
+    "ashby": dict,
+    "workable": dict,
+    "lever": list,
+}
+
+
+class UnknownBoardShape(KeyError):
+    """An ATS with an extractor but no entry in `_BOARD_PAYLOAD`.
+
+    Raised rather than defaulted. A default is what caused the damage above:
+    an unrecognised shape silently read as "not a board", which reads as
+    "this company left", which `--write` acts on by retiring it. An adapter
+    added without a line here should stop the sweep, not quietly condemn
+    every company using it. `test_every_extractor_has_a_known_board_shape`
+    makes that a failing test rather than a failing sweep.
+    """
+
+
+def _api_is_board(response: FetchResult, ats: str) -> bool:
+    """Whether the body is this ATS's board document — empty or not.
+
+    Shape, deliberately, rather than `extractor.parse(...)` returning
+    postings. A company with a live board and nothing currently open answers
+    with an empty container, and counting postings would retire it for hiring
+    slowly. What makes a board dead is that it has stopped being a board.
+    """
     if not response.ok:
         return False
     try:
         payload = json.loads(response.text)
     except json.JSONDecodeError:
         return False
+
+    try:
+        container = _BOARD_PAYLOAD[ats]
+    except KeyError as exc:
+        raise UnknownBoardShape(ats) from exc
+
+    if container is list:
+        return isinstance(payload, list)
     return isinstance(payload, dict) and isinstance(payload.get("jobs"), list)
 
 
@@ -114,7 +161,7 @@ async def validate_seeds(seeds: list[CompanySeed], fetcher: PoliteFetcher) -> li
             )
             continue
 
-        if _api_is_board(api):
+        if _api_is_board(api, seed.ats):
             results.append(
                 SeedValidation(
                     seed.name,
