@@ -225,3 +225,37 @@ async def test_a_dead_url_falls_back_to_the_name() -> None:
 
     assert isinstance(outcome, Resolved)
     assert outcome.slug == "acme"
+
+
+def test_a_short_first_word_does_not_become_a_slug_on_its_own() -> None:
+    """The `3 Data` regression, found on the first real CSV run.
+
+    `slug_candidates` offered `3` as the first-word shortcut. It is a real
+    Greenhouse board — a healthcare provider's — and it answered with two live
+    postings, so every downstream check passed: the board exists, it is a
+    board, it has jobs. None of them asks whether it is *this company's*
+    board, so `--append` would have written a registry row naming 3 Data and
+    pointing at somebody else's postings.
+    """
+    candidates = slug_candidates("3 Data")
+
+    assert "3" not in candidates, "a one-character fragment identifies nobody"
+    assert "3data" in candidates, "the identifying candidates are untouched"
+    assert "3-data" in candidates
+
+
+def test_a_genuinely_short_name_keeps_its_slug() -> None:
+    """The guard is about fragments of a longer name, not about short names.
+
+    `HP` and `X Corp` reduce to the whole company name rather than a piece of
+    one, so their short slugs are the correct guess and are still offered.
+    """
+    assert "hp" in slug_candidates("HP")
+    assert "x" in slug_candidates("X Corp"), "`Corp` is noise, so `X` is the whole name"
+    assert "a9" in slug_candidates("A9 Labs")
+
+
+def test_the_first_word_shortcut_still_works_for_real_names() -> None:
+    """Withholding it for everything would cost the resolutions it was added for."""
+    assert "abnormal" in slug_candidates("Abnormal Security")
+    assert "stripe" in slug_candidates("Stripe Payments")

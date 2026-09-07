@@ -148,12 +148,23 @@ _NOISE = (
 )
 
 
+#: A first-word-only slug shorter than this is a fragment, not a company.
+#: Three because two-letter slugs on a shared ATS host are overwhelmingly
+#: already someone's, and a wrong board is worse here than a missed one: a
+#: missed company is absent from the feed, while a wrong one puts another
+#: employer's jobs in it under this company's name.
+_MIN_FIRST_WORD = 3
+
+
 def slug_candidates(name: str) -> list[str]:
     """Plausible board slugs for a company name, best guess first.
 
     Ashby slugs are case-sensitive (`AlephAlpha`, `DeepL`), so the original
     casing is kept as a candidate rather than lowercasing everything and
     quietly missing those boards.
+
+    The first-word candidate is withheld when that word is too short to
+    identify anyone — see `_MIN_FIRST_WORD`.
     """
     cleaned = re.sub(r"[^\w\s.-]", " ", name).strip()
     if not cleaned:
@@ -166,9 +177,23 @@ def slug_candidates(name: str) -> list[str]:
     candidates = [
         "".join(lowered),  # "acmecorp"
         "-".join(lowered),  # "acme-corp"
-        lowered[0],  # "acme"
-        "".join(meaningful),  # "AcmeCorp" — Ashby is case-sensitive
     ]
+    # "Acme Corp" → "acme", but only when the first word names the company.
+    # `3 Data` produced the slug `3`, which is a real Greenhouse board
+    # belonging to a healthcare provider, and `resolve_one` accepted it
+    # because it answered with two live postings. Every check downstream
+    # passed: the board exists, it is a board, it has jobs. Nothing anywhere
+    # asks whether it is *this company's* board, so the registry would have
+    # gained a row naming one employer and pointing at another — and the
+    # crawler would then score that employer's postings as this one's.
+    #
+    # A short first word is the whole failure mode: it is a fragment rather
+    # than an identity, and short slugs are exactly the ones already taken.
+    # Nothing is lost for genuinely short names — `HP` reaches the same slug
+    # through `"".join(lowered)` above.
+    if len(lowered[0]) >= _MIN_FIRST_WORD:
+        candidates.append(lowered[0])
+    candidates.append("".join(meaningful))  # "AcmeCorp" — Ashby is case-sensitive
 
     seen: list[str] = []
     for candidate in candidates:
