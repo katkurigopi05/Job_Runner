@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
-import type { Application, ResumeParsed, Screening } from "@/lib/api";
+import type { Application, Readiness, ResumeParsed, Screening } from "@/lib/api";
 import { ResumePreview } from "@/components/resume-preview";
 import { ResumeEditor } from "@/components/resume-editor";
 import { ResumeDiffView } from "@/components/resume-diff";
@@ -105,6 +105,8 @@ export function ReviewCard({
           <FillRate rate={review.fill_rate} />
         </div>
       </header>
+
+      <ReadinessPanel readiness={review.readiness} />
 
       <ScreeningPanel screening={review.screening} />
 
@@ -445,6 +447,86 @@ function AdoptBase() {
  * it changes nothing on its own, and you may well decide it is just badly
  * worded.
  */
+function ReadinessPanel({ readiness }: { readiness?: Readiness | null }) {
+  // Absent on every application parked before this shipped, and on any run
+  // that never reached the fill. Rendering a zero there would invent a verdict.
+  if (!readiness) return null;
+
+  const { score, tier, ready, components, blockers } = readiness;
+  const measured = components.filter((c) => c.measured);
+  const unmeasured = components.filter((c) => !c.measured);
+
+  return (
+    <section className="border-b border-rule px-6 py-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h3 className="font-mono text-xs uppercase tracking-widest text-ink-faint">readiness</h3>
+        {score === null ? (
+          // Not a low score. An application nobody could measure and one that
+          // measured badly are different answers and must not look alike at
+          // the moment of sending.
+          <p className="font-mono text-xs text-ink-faint">not assessed — too little measured</p>
+        ) : (
+          <p className="font-display text-2xl leading-none">
+            {Math.round(score * 100)}
+            <span className="ml-2 font-mono text-xs uppercase tracking-widest text-ink-faint">
+              {tier}
+            </span>
+          </p>
+        )}
+      </div>
+
+      {blockers.length > 0 ? (
+        <div className="mt-3 rounded-[var(--radius)] border border-stop/40 bg-stop-soft px-3 py-2">
+          <p className="font-mono text-xs text-stop">
+            {blockers.length === 1
+              ? "one thing is stopping this going"
+              : `${blockers.length} things are stopping this going`}
+          </p>
+          <ul className="mt-2 space-y-1">
+            {blockers.map((blocker) => (
+              <li key={`${blocker.code}:${blocker.detail}`} className="font-mono text-xs text-stop/80">
+                {blocker.detail}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : ready ? null : (
+        <p className="mt-3 font-mono text-xs text-attn">
+          nothing blocks this — it simply scores below the floor. Approving is still yours.
+        </p>
+      )}
+
+      {measured.length > 0 ? (
+        <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+          {measured.map((component) => (
+            <div key={component.name}>
+              <dt className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+                {component.name}
+              </dt>
+              <dd className="font-display text-lg leading-tight">
+                {Math.round(component.score * 100)}
+              </dd>
+              <dd className="font-mono text-xs text-ink-faint">{component.finding}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+
+      {unmeasured.length > 0 ? (
+        // Named rather than dropped: a component that disappears when its
+        // input does reads as one that passed.
+        <ul className="mt-3 space-y-1">
+          {unmeasured.map((component) => (
+            <li key={component.name} className="font-mono text-xs text-ink-faint">
+              {component.name}: {component.finding}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 function ScreeningPanel({ screening }: { screening?: Screening | null }) {
   if (!screening) return null;
   const { knock_outs: knockOuts, cautions } = screening;
