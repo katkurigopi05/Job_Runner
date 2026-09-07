@@ -134,7 +134,7 @@ GATE3_TESTS := tests/test_no_fabrication.py tests/test_cover_letter.py \
 GATE4_TESTS := tests/test_mcp.py
 GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
   tests/test_bespoke_probe.py tests/test_labeling_loop.py
-GATE6_TESTS := tests/test_inbox.py
+GATE6_TESTS := tests/test_inbox.py tests/test_inbox_duplicates.py
 
 gate-0: lint typecheck check-migrations
 	REQUIRE_DB=1 $(PY)/pytest -q

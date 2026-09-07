@@ -16,6 +16,7 @@ import contextlib
 import email
 import email.policy
 import email.utils
+import hashlib
 import imaplib
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -35,6 +36,25 @@ class MailSource(Protocol):
     """Anything that can hand over unread messages."""
 
     async def fetch_unread(self, limit: int = DEFAULT_BATCH) -> list[InboundEmail]: ...
+
+
+def _synthetic_id(raw: bytes) -> str:
+    """A stable stand-in for a message with no `Message-ID` header.
+
+    Almost every message has one — RFC 5322 says SHOULD and every mainstream
+    MTA obliges — but "almost" is not "always", and `route_message` now
+    de-duplicates on this value.
+
+    It used to be `f"no-id-{id(raw)}"`, a *memory address*: unstable between
+    runs, so a re-delivered message got a fresh id every poll and would be
+    recorded again; and reusable after collection, so a later, different
+    message could inherit a freed address and be dropped as a duplicate. Both
+    directions were harmless only while nothing keyed on it.
+
+    A digest of the bytes is the identity the header would have carried:
+    the same message hashes the same forever, and two different ones do not.
+    """
+    return f"sha256-{hashlib.sha256(raw).hexdigest()}"
 
 
 def _decode(value: object) -> str:
@@ -76,7 +96,7 @@ def parse_message(raw: bytes) -> InboundEmail:
             received_at = None
 
     return InboundEmail(
-        message_id=_decode(parsed.get("Message-ID")) or f"no-id-{id(raw)}",
+        message_id=_decode(parsed.get("Message-ID")) or _synthetic_id(raw),
         from_addr=_decode(parsed.get("From")),
         to_addr=_decode(parsed.get("To")),
         cc_addr=_decode(parsed.get("Cc")),

@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import structlog
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.enums import (
@@ -111,6 +112,13 @@ async def route_message(
 
     Idempotent on `message_id`: IMAP re-delivers, and a rejection recorded
     twice must not look like two rejections.
+
+    That is what this said while keying on (from_addr, application_id,
+    subject) instead. The triple is not an identity — it collides on exactly
+    the mail that legitimately repeats, and an OTP resend is the sharp case:
+    same sender, same subject, a *new* code, dropped here before reaching the
+    block below that hands the code to the state machine. The application then
+    sits in `needs_otp` holding the expired one.
     """
     verdict = result or await classify_message(email.subject, email.body, provider=provider)
     routing = RoutingResult(message_id=email.message_id, classification=verdict.classification)
@@ -154,31 +162,60 @@ async def route_message(
 
     routing.application_id = str(application.id)
 
-    already = await session.scalar(
-        InboundMessage.__table__.select().where(
-            InboundMessage.from_addr == email.from_addr,
-            InboundMessage.application_id == application.id,
-            InboundMessage.subject == email.subject,
-        )
-    )
-    if already is not None:
-        log.debug("inbound_duplicate_skipped", message_id=email.message_id)
-        routing.unrouted_reason = "already recorded"
-        return routing
+    row = {
+        "candidate_id": application.candidate_id,
+        "application_id": application.id,
+        "message_id": email.message_id or None,
+        "from_addr": email.from_addr,
+        "subject": email.subject,
+        "body": email.body,
+        "classification": verdict.classification.value,
+        "link_method": routing.link_method,
+        "link_confidence": routing.link_confidence,
+        "at": email.received_at or datetime.now(UTC),
+    }
 
-    session.add(
-        InboundMessage(
-            candidate_id=application.candidate_id,
-            application_id=application.id,
-            from_addr=email.from_addr,
-            subject=email.subject,
-            body=email.body,
-            classification=verdict.classification.value,
-            link_method=routing.link_method,
-            link_confidence=routing.link_confidence,
-            at=email.received_at or datetime.now(UTC),
+    # Claim the message by inserting it, rather than looking first and then
+    # inserting. Two statements are two chances: `run_pool` runs several
+    # workers, `search(None, "UNSEEN")` hands the same ids to every
+    # `handle_inbox` that asks before one of them FETCHes and marks them seen,
+    # and both would pass a SELECT and then both apply the outcome or the OTP
+    # below. `uq_inbound_messages_candidate_message` is what makes losing the
+    # race a no-op instead of a second row.
+    #
+    # Scoped to the candidate rather than the application: a message is the
+    # same message wherever it linked, and the id is what says so.
+    if email.message_id:
+        claim = (
+            pg_insert(InboundMessage)
+            .values(**row)
+            .on_conflict_do_nothing(
+                index_elements=["candidate_id", "message_id"],
+                index_where=InboundMessage.message_id.isnot(None),
+            )
+            .returning(InboundMessage.id)
         )
-    )
+        if await session.scalar(claim) is None:
+            log.debug("inbound_duplicate_skipped", message_id=email.message_id)
+            routing.unrouted_reason = "already recorded"
+            return routing
+    else:
+        # No id to claim on, so this path keeps the old triple and with it the
+        # old race. It is reachable only from a caller building an InboundEmail
+        # by hand — `imap.py` digests the bytes when the header is absent — and
+        # there is no key a unique index could be built on.
+        already = await session.scalar(
+            InboundMessage.__table__.select().where(
+                InboundMessage.from_addr == email.from_addr,
+                InboundMessage.application_id == application.id,
+                InboundMessage.subject == email.subject,
+            )
+        )
+        if already is not None:
+            log.debug("inbound_duplicate_skipped", message_id=email.message_id)
+            routing.unrouted_reason = "already recorded"
+            return routing
+        session.add(InboundMessage(**row))
 
     # An inferred link attaches the message and stops there — no outcome, and
     # no state transition either. Attaching a reply to the wrong application
