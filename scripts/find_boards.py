@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 
 from packages.crawler.find_boards import (
+    VENDORS,
     Resolved,
     ResolveReport,
     normalize_header,
@@ -144,7 +145,35 @@ async def main() -> int:
         action="store_true",
         help="append resolved companies to seeds/companies.yaml",
     )
+    # Since vendors are probed concurrently, the sweep costs the *slowest*
+    # host, so one slow vendor sets the pace for the whole file. On the
+    # owner's 3,802-row CSV that is Workable: 3.9s per probe against ~1.5s
+    # for the other three, because it is the only one returning 429 (four
+    # penalties in the first 37 companies), and it resolved nothing at all in
+    # a 60-company sample while taking 46% of the waiting.
+    #
+    # Dropping it is a real coverage loss, not a free win — genuine Workable
+    # employers become invisible — so it is a flag rather than a new default.
+    parser.add_argument(
+        "--vendors",
+        default=",".join(VENDORS),
+        help=(
+            "comma-separated ATS list to probe, in precedence order "
+            f"(default: {','.join(VENDORS)}). Probed concurrently, so the run "
+            "costs the slowest one — dropping `workable` roughly halves it, at "
+            "the cost of missing Workable employers."
+        ),
+    )
     args = parser.parse_args()
+
+    vendors = tuple(v.strip() for v in args.vendors.split(",") if v.strip())
+    unknown = [v for v in vendors if v not in VENDORS]
+    if unknown:
+        print(f"unknown ATS: {', '.join(unknown)}. known: {', '.join(VENDORS)}", file=sys.stderr)
+        return 1
+    if not vendors:
+        print("--vendors named nothing to probe", file=sys.stderr)
+        return 1
 
     if not args.csv_path.is_file():
         print(f"no such file: {args.csv_path}", file=sys.stderr)
@@ -158,7 +187,7 @@ async def main() -> int:
         return 1
 
     with_urls = sum(1 for _, url in companies if url)
-    print(f"probing {len(companies)} companies across greenhouse, lever, ashby, workable")
+    print(f"probing {len(companies)} companies across {', '.join(vendors)}")
     if with_urls:
         print(f"{with_urls} have a URL — resolved from evidence, not a guess")
     print("(2s per request per host — this takes a while)\n")
@@ -167,7 +196,7 @@ async def main() -> int:
         mark = "hit " if isinstance(outcome, Resolved) else "  . "
         print(f"  {mark} {name}", flush=True)
 
-    report = await resolve_all(companies, on_result=progress)
+    report = await resolve_all(companies, vendors=vendors, on_result=progress)
     print()
     print(render(report))
 
