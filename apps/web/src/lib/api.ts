@@ -558,6 +558,33 @@ export interface ApplicationPacket {
   ready_to_submit: boolean;
 }
 
+export interface AtsFinding {
+  code: string;
+  detail: string;
+  cost: number;
+  line: string | null;
+}
+
+/**
+ * §23's "before" score for one posting, computed on request.
+ *
+ * `scored_against_posting` false means the posting carried no description, in
+ * which case `keywords` must not be shown — 0 there means "not asked", not
+ * "matches nothing".
+ */
+export interface PostingAts {
+  posting_id: string;
+  resume_id: string;
+  resume_version: number;
+  resume_reason: string;
+  parse: number;
+  keywords: number;
+  scored_against_posting: boolean;
+  supported: string[];
+  missing: string[];
+  findings: AtsFinding[];
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -648,6 +675,12 @@ export const api = {
   resumes: (candidateId: string) =>
     request<Resume[]>(`/resumes?candidate_id=${encodeURIComponent(candidateId)}`),
   resumeParsed: (id: string) => request<ResumeParsed>(`/resumes/${id}/parsed`),
+
+  /** How an ATS reads this profile's résumé against one posting. */
+  postingAts: (postingId: string, profileId: string) =>
+    request<PostingAts>(
+      `/postings/${postingId}/ats?profile_id=${encodeURIComponent(profileId)}`,
+    ),
 
   /**
    * Save an edited résumé. Creates a new version rather than rewriting the one

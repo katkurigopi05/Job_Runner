@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
 import { FilterBar } from "./filter-bar";
+import { AtsPanel } from "./ats-panel";
 import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
@@ -154,6 +155,8 @@ export default async function MatchesPage({
                 {match.legitimacy && match.legitimacy.tier !== "high_confidence" ? (
                   <LegitimacyPanel legitimacy={match.legitimacy} />
                 ) : null}
+
+                <AtsPanel postingId={match.posting_id} profileId={match.profile_id} />
 
                 {match.excluded_by.length > 0 ? (
                   <p className="mt-3 rounded-[var(--radius)] border border-stop/40 bg-stop-soft px-3 py-2 font-mono text-xs text-stop">
