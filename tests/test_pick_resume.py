@@ -18,6 +18,7 @@ import pytest
 from packages.core.models import Candidate, Posting, Profile, Resume, User
 from packages.matching.embed import LexicalEmbedder
 from packages.matching.pick_resume import MIN_MARGIN, base_resumes, choose_base_resume
+from packages.tailor.parse import parse_text
 
 pytestmark = pytest.mark.asyncio
 
@@ -50,11 +51,16 @@ async def _candidate(session) -> Candidate:
 
 
 async def _resume(session, candidate: Candidate, lines: list[str], version: int) -> Resume:
+    # Parsed the way an upload is, not hand-built from `raw_lines`. A row
+    # carrying only raw lines has no sections and no contact, so `ats.score`
+    # reads every fixture as equally unparseable — which silently disabled the
+    # sendability gate in `test_an_unreadable_resume_cannot_win_on_similarity`
+    # and made it assert the opposite of what it says.
     resume = Resume(
         candidate_id=candidate.id,
         version=version,
         storage_ref=f"resumes/{candidate.id}/v{version}/resume.pdf",
-        parsed_json={"raw_lines": lines},
+        parsed_json=parse_text("\n".join(lines)).model_dump(),
     )
     session.add(resume)
     await session.flush()
@@ -244,3 +250,140 @@ async def test_the_choice_records_its_runners_up(db_session) -> None:
     assert len(rendered["considered"]) == 2
     assert {"version", "score"} <= set(rendered["considered"][0])
     assert rendered["reason"]
+
+
+# --- sendability gates similarity ---------------------------------------------
+
+#: Parses at 100%: contact links, a recognised education section, real dates.
+COMPLETE = [
+    "Gopi Krishna Reddy",
+    "(925) 555-0100 | g@example.com | linkedin.com/in/gopi | github.com/gopi",
+    "PROFESSIONAL SUMMARY",
+    "Machine learning engineer with six years building models.",
+    "EDUCATION",
+    "State University, Hayward, CA",
+    "Bachelor of Science in Computer Science, Aug 2016 - May 2020",
+    "EXPERIENCE",
+    "Machine Learning Engineer, Acme Corp, Jan 2021 - Dec 2024",
+    "Trained and served PyTorch ranking models on GPU clusters.",
+    "SKILLS",
+    "PyTorch, TensorFlow, scikit-learn, transformers, embeddings",
+]
+
+#: Parses at 56%: no links, no education an ATS recognises, no dates. The
+#: shape of the stub sitting in the owner's own database as v1.
+STUB = [
+    "Gopi K",
+    "g@example.com | +1-555-0142",
+    "Summary",
+    "Backend engineer.",
+    "Experience",
+    "Senior Engineer, Example Corp",
+    "Skills",
+    "Python, PostgreSQL, Django, Kubernetes, Docker, Redis",
+]
+
+
+async def test_an_unreadable_resume_cannot_win_on_similarity(db_session) -> None:
+    """The defect this gate exists for, from the owner's real data.
+
+    An eight-line stub — `Backend engineer.`, `Senior Engineer, Example Corp`,
+    a 555 phone number — beat their real résumé 0.642 to 0.609 on a support
+    posting and would have been uploaded to the employer. The margin was
+    outside `MIN_MARGIN`, so the tie-break correctly did not fire: nothing was
+    broken, the question was simply never asked.
+
+    The posting here is deliberately *backend*, so the stub is genuinely the
+    closer match on wording. It must still lose, because a résumé an ATS reads
+    at 56% scores nothing with the employer however well it matches.
+    """
+    candidate = await _candidate(db_session)
+    stub = await _resume(db_session, candidate, STUB, 1)
+    complete = await _resume(db_session, candidate, COMPLETE, 2)
+    profile = _profile(candidate, base=None)
+
+    choice = await choose_base_resume(
+        db_session,
+        profile,
+        _text("Senior Backend Engineer", "Python, PostgreSQL, Django, Kubernetes, Docker."),
+        embedder=LexicalEmbedder(),
+    )
+
+    assert choice is not None
+    assert choice.resume_id == complete.id, "the readable résumé must win"
+    assert choice.resume_id != stub.id
+    assert "56%" in choice.reason, "and the reason must name what was dropped and why"
+
+
+async def test_similarity_still_decides_between_readable_resumes(db_session) -> None:
+    """The gate must not swallow the feature it was added to.
+
+    Two équally readable résumés are still chosen between on the merits — the
+    floor is for "not fit to send", not a preference for tidier formatting.
+    """
+    candidate = await _candidate(db_session)
+    ml = await _resume(db_session, candidate, COMPLETE, 1)
+    backend = await _resume(
+        db_session,
+        candidate,
+        [
+            *COMPLETE[:8],
+            "Senior Backend Engineer, Acme Corp, Jan 2021 - Dec 2024",
+            "Built distributed Python services on PostgreSQL and Kubernetes.",
+            "SKILLS",
+            "Python, PostgreSQL, Django, Kubernetes, Docker, Redis",
+        ],
+        2,
+    )
+    profile = _profile(candidate, base=None)
+
+    choice = await choose_base_resume(
+        db_session,
+        profile,
+        _text("Senior Backend Engineer", "Python, PostgreSQL, Django, Kubernetes, Docker, Redis."),
+        embedder=LexicalEmbedder(),
+    )
+
+    assert choice is not None
+    assert choice.resume_id == backend.id
+    assert choice.resume_id != ml.id
+
+
+async def test_one_resume_is_never_gated_away(db_session) -> None:
+    """A single stub is still the document. Refusing would send none at all.
+
+    §15 already settles the direction: an honest untailored résumé beats an
+    application with no résumé.
+    """
+    candidate = await _candidate(db_session)
+    stub = await _resume(db_session, candidate, STUB, 1)
+    profile = _profile(candidate, base=stub)
+
+    choice = await choose_base_resume(
+        db_session, profile, _text("Backend Engineer", "Python."), embedder=LexicalEmbedder()
+    )
+
+    assert choice is not None
+    assert choice.resume_id == stub.id
+
+
+async def test_uniformly_poor_resumes_still_yield_a_pick(db_session) -> None:
+    """Relative, not a fixed bar.
+
+    An owner whose résumés all parse badly should still get the best match
+    among them rather than an empty hand.
+    """
+    candidate = await _candidate(db_session)
+    await _resume(db_session, candidate, BACKEND, 1)
+    await _resume(db_session, candidate, ML, 2)
+    profile = _profile(candidate, base=None)
+
+    choice = await choose_base_resume(
+        db_session,
+        profile,
+        _text("Machine Learning Engineer", "PyTorch, transformers, embeddings, GPU training."),
+        embedder=LexicalEmbedder(),
+    )
+
+    assert choice is not None
+    assert len(choice.considered) == 2, "both stayed in the running"
