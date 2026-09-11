@@ -1000,10 +1000,13 @@ Three details are load-bearing:
   deliberately does not commit — a notification sent there announces an
   application that may still roll back. A doorbell that rings for work that did
   not happen is worse than a late one.
-- **Idempotent on the reason, not the application.** The queue is
+- **Idempotent on one park, not on the application.** The queue is
   at-least-once, so a re-run must not tell the owner twice; a `notified` event
-  records delivery. Keyed on the reason so an application that parks, resumes
-  and parks again *does* ring again — that is a second thing to do.
+  records delivery. Scoped to the park it announces — the boundary is the last
+  transition into the current status — so an application that parks, resumes
+  and parks again *does* ring again, that being a second thing to do. This
+  said "keyed on the reason" and was wrong for as long as it said it; see
+  *The doorbell was silent the second time* below.
 - **A failed backend never fails the application.** Every delivery is wrapped
   and logged by name. The exception body is not logged, because a webhook error
   can echo the URL and the URL can carry a token.
@@ -1627,6 +1630,59 @@ halves: it applies with the address the pipeline actually produces, replies to
 it, and asserts the outcome lands. Deleting the one line in `_run_pipeline`
 turns three of its tests red — including the source-level assertion, which is
 there because every other test in the file would still pass without it.
+
+### The doorbell was silent the second time
+
+The same shape as the resent OTP below, one layer up: a check that promised to
+be keyed on one thing and was keyed on something coarser, so the repeat it
+existed to allow was swallowed.
+
+`notify_if_parked`'s docstring — and §15's bullet above — both said "an
+application that parks, resumes and parks again does ring twice". It asked
+whether the application had **ever** been notified for this reason, with no
+time bound, and `ParkReason` is derived from the status alone. Three values.
+So the second park was silent whenever it parked the same way as the first,
+which is the common case:
+
+```text
+park needs_review -> rings  -> owner approves -> re-runs
+park needs_review -> SILENT
+```
+
+§6 has `needs_review ──approve──> running`, and §15 already records that
+approving re-enters `_run_pipeline` from the top: fresh page, re-`goto`,
+re-`enumerate_fields`. The `report.is_complete` park sits *above* the
+`owner_approved` short-circuit in `apply_job._run_pipeline`, so a form still
+carrying an unanswered required question parks again — and the owner, who
+approved it and heard nothing more, has every reason to believe it was sent.
+The OTP case is worse for having a deadline: the site asks for a second code
+and nothing says so.
+
+This is the promise in §2.3 failing quietly. "Nothing submits without you" is
+kept by parking; the owner *finding out* is what makes parking different from
+losing the application, and that is the whole job of this module.
+
+`test_parking_a_second_time_rings_again` in `test_notify.py` looked like the
+covering test and was not: it parks at `needs_review` and then at
+`failed[manual_completion_required]` — two *different* reasons, so it only ever
+exercised the case that already worked. The §15 pattern again, and the reason
+the defect survived a green suite.
+
+The boundary is now the last transition into the current status, and two
+details are load-bearing:
+
+- **A status reached without `transition()` keeps the old whole-history
+  check.** There is no boundary to scope by, and the fallback can miss a
+  re-ring but can never ring twice for one park. §6 requires every status
+  change to go through `transition()`, so nothing in the pipeline reaches it.
+- **`tests/test_notify_reparks.py` commits for real rather than using
+  `db_session`.** `at` defaults to the transaction clock, so inside one
+  transaction every event shares a timestamp and none of this is visible.
+  `run.py` commits the task and *then* calls `notify_if_parked`, so in
+  production the park and its notification always land in different
+  transactions; the test reproduces that rather than assuming it. Reverting
+  the fix turns two of its five red, and the other three pass either way —
+  they pin the behaviour that was already correct.
 
 ### A resent OTP was dropped as a duplicate
 

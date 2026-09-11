@@ -234,10 +234,13 @@ async def notify_if_parked(session: AsyncSession, application_id: uuid.UUID) -> 
     A doorbell that rings for work that did not happen is worse than a late one.
 
     Idempotent, because the queue is at-least-once: a `notified` event is
-    written after delivery and a second run for the same status finds it and
-    stays quiet. Keyed on the status, not merely on the application, so an
+    written after delivery and a re-run of the same task finds it and stays
+    quiet. Scoped to one park rather than to the application, so an
     application that parks, resumes and parks again does ring twice — that is
-    a second thing to do, not a repeat of the first.
+    a second thing to do, not a repeat of the first. The boundary is the last
+    transition into the current status; keying on the reason alone silences
+    the second park whenever it parks the same way as the first, which is the
+    common case and the one worth hearing about.
     """
     from sqlalchemy import select
 
@@ -251,16 +254,36 @@ async def notify_if_parked(session: AsyncSession, application_id: uuid.UUID) -> 
     if reason is None:
         return None
 
-    already = await session.scalar(
-        select(ApplicationEvent.id)
+    # Scoped to *this* park, not to the application's whole history. The
+    # at-least-once queue is why a check is needed at all, but "has this
+    # application ever been told about a needs_review" also silences the
+    # second, genuinely different park — approve, re-run, park again — which
+    # is the case this function exists for. The last transition into the
+    # current status is the boundary between the two.
+    parked_at = await session.scalar(
+        select(ApplicationEvent.at)
         .where(
             ApplicationEvent.application_id == application.id,
-            ApplicationEvent.type == EventType.NOTIFIED.value,
-            ApplicationEvent.payload_json["reason"].astext == reason.value,
+            ApplicationEvent.type == EventType.TRANSITION.value,
+            ApplicationEvent.payload_json["to"].astext == application.status,
         )
+        .order_by(ApplicationEvent.at.desc())
         .limit(1)
     )
-    if already is not None:
+    seen = select(ApplicationEvent.id).where(
+        ApplicationEvent.application_id == application.id,
+        ApplicationEvent.type == EventType.NOTIFIED.value,
+        ApplicationEvent.payload_json["reason"].astext == reason.value,
+    )
+    if parked_at is not None:
+        # `at` defaults to the transaction clock, and the notification is
+        # written in a later transaction than the park it announces, so a
+        # delivery for this park always sorts at or after it. A status
+        # reached without going through `transition()` has no boundary to
+        # scope by; there the check stays the old whole-history one, which
+        # can miss a re-ring but can never ring twice for one park.
+        seen = seen.where(ApplicationEvent.at >= parked_at)
+    if await session.scalar(seen.limit(1)) is not None:
         return None
 
     company = role = ""
