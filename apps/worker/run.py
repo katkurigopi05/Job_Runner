@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 import structlog
 
 from apps.worker.apply_job import TaskPayloadError, handle_apply
+from apps.worker.crawl_company_job import CRAWL_COMPANY_TASK_KIND, handle_crawl_company
 from apps.worker.crawl_job import CRAWL_TASK_KIND, handle_crawl
 from apps.worker.discover_job import DISCOVER_TASK_KIND, handle_discover
 from apps.worker.inbox_job import INBOX_TASK_KIND, handle_inbox
@@ -45,6 +46,7 @@ APPLY_TASK_KIND = "apply"
 HANDLERS = {
     APPLY_TASK_KIND: handle_apply,
     CRAWL_TASK_KIND: handle_crawl,
+    CRAWL_COMPANY_TASK_KIND: handle_crawl_company,
     DISCOVER_TASK_KIND: handle_discover,
     INBOX_TASK_KIND: handle_inbox,
 }

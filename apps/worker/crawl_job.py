@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.models import Posting, Profile
 from packages.core.queue import ClaimedTask
 from packages.crawler.crawl import CrawlReport, crawl_all
+from packages.crawler.dispatch import dispatch, due_for_dispatch
 from packages.crawler.extract import load_seed
 from packages.crawler.fetch import build_fetcher
 from packages.crawler.runs import finish_run, start_run, state_recorder
@@ -43,7 +44,9 @@ async def handle_crawl(session: AsyncSession, claimed: ClaimedTask) -> None:
     force = bool(payload.get("force"))
 
     seeds = load_seed(seed_path)
-    if not seeds:
+    if not seeds and not payload.get("dispatch"):
+        # The dispatching path reads the registry from the database, so an
+        # empty seed file is not its problem.
         log.warning("crawl_no_seeds", seed_path=seed_path)
         return
 
@@ -57,6 +60,21 @@ async def handle_crawl(session: AsyncSession, claimed: ClaimedTask) -> None:
     elif trigger not in VALID_TRIGGERS:
         log.warning("crawl_unknown_trigger", trigger=trigger)
         trigger = "scheduled"
+
+    if payload.get("dispatch"):
+        # One task per company instead of one loop over all of them. The run
+        # row is opened here and closed by whichever company task reports
+        # last — no process sees the whole cycle any more.
+        run = await start_run(session, trigger=trigger)
+        companies = await due_for_dispatch(
+            session, limit=int(payload.get("limit", 500)), force=force
+        )
+        report = await dispatch(session, companies, run, force=force)
+        log.info("crawl_dispatch_done", summary=report.summary())
+        if report.enqueued == 0:
+            # Nothing to wait for, so nothing will ever close it.
+            await finish_run(session, run, CrawlReport())
+        return
 
     run = await start_run(session, trigger=trigger, companies_total=len(seeds))
     # Held by the caller so a cycle that dies partway still reports what it
