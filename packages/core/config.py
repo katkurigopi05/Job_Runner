@@ -170,6 +170,26 @@ class Settings(BaseSettings):
     #: Floor, not a default — the crawler refuses to go below this.
     crawler_min_delay_s: int = 60
 
+    #: Connection pooling for the crawler's HTTP client.
+    #:
+    #: A client was built and torn down around every request, so each fetch
+    #: paid a fresh TCP handshake and a fresh TLS negotiation. Against a
+    #: shared ATS API — one host serving thousands of boards at the amended
+    #: §2.6 floor of 2s — that is the same handshake to the same machine, over
+    #: and over, for the entire registry.
+    #:
+    #: Pooling changes nothing about politeness: robots.txt and the per-host
+    #: floor are enforced in `PoliteFetcher.fetch` before a connection is
+    #: reached for, so a reused socket waits exactly as long as a new one
+    #: would have. It removes setup cost, not delay.
+    crawler_http_max_connections: int = 32
+    #: Kept well below `max_connections`. These are sockets held open against
+    #: hosts we are about to wait at least 2s before touching again, so a
+    #: large idle pool is memory spent on connections the far end is likely to
+    #: have dropped anyway.
+    crawler_http_max_keepalive: int = 16
+    crawler_http_timeout_s: float = 30.0
+
     #: The owner's search is United States only, California first. On by
     #: default because it is a standing preference rather than a per-search
     #: one — §1 calls filters the owner's input, and this is that input stated

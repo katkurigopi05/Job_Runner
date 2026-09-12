@@ -8,7 +8,7 @@ forget to be polite; it has no way to reach the network that skips this.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
@@ -102,12 +102,63 @@ class PoliteFetcher:
     user_agent: str = USER_AGENT
     transport: httpx.AsyncBaseTransport | None = None
     timeout: float = 30.0
+    #: Connection pool size. `None` means httpx's own defaults, which is what
+    #: a directly-constructed fetcher gets; `build_fetcher` fills these from
+    #: settings.
+    max_connections: int | None = None
+    max_keepalive: int | None = None
+    _client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.rate_limiter is None:
             self.rate_limiter = HostRateLimiter()
         if self.robots is None:
             self.robots = RobotsCache(user_agent=self.user_agent, transport=self.transport)
+
+    def _client_for_requests(self) -> httpx.AsyncClient:
+        """The pooled client, built on first use.
+
+        Lazily, because a fetcher is constructed in ordinary synchronous code
+        — `build_fetcher()` at the top of a handler — and an `AsyncClient`
+        binds to the event loop that first uses it. Building it in
+        `__post_init__` would tie the object to whichever loop happened to be
+        running at construction, which is how a fetcher built once and used by
+        two cycles fails with an error about a different loop.
+
+        Rebuilt if it has been closed, so `aclose()` is not a one-way door
+        for a fetcher someone reuses afterwards.
+        """
+        if self._client is None or self._client.is_closed:
+            limits = None
+            if self.max_connections is not None or self.max_keepalive is not None:
+                limits = httpx.Limits(
+                    max_connections=self.max_connections,
+                    max_keepalive_connections=self.max_keepalive,
+                )
+            self._client = httpx.AsyncClient(
+                transport=self.transport,
+                timeout=self.timeout,
+                headers={"User-Agent": self.user_agent},
+                # Redirects are followed by hand, one hop at a time, so each
+                # hop goes through both gates. See `_walk`.
+                follow_redirects=False,
+                **({"limits": limits} if limits is not None else {}),
+            )
+        return self._client
+
+    async def aclose(self) -> None:
+        """Release the pool, and the robots cache's with it."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
+        if self.robots is not None:
+            await self.robots.aclose()
+
+    async def __aenter__(self) -> PoliteFetcher:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.aclose()
 
     #: How many hops a redirect chain may take before we call it a loop. httpx
     #: defaults to 20; a careers page that needs more than five is broken.
@@ -215,15 +266,9 @@ class PoliteFetcher:
 
         waited = await self.rate_limiter.acquire(host)
 
-        async with httpx.AsyncClient(
-            transport=self.transport,
-            timeout=self.timeout,
-            headers={"User-Agent": self.user_agent},
-            # Redirects are followed by hand, one hop at a time, so each hop
-            # goes through both gates. See `_follow`.
-            follow_redirects=False,
-        ) as client:
-            status, text, host = await self._walk(client, url, host)
+        # Both gates are behind us. Reusing the connection from here changes
+        # how much setup is repeated, never how long anything waited.
+        status, text, host = await self._walk(self._client_for_requests(), url, host)
 
         return FetchResult(
             url=url,
@@ -260,6 +305,8 @@ def build_fetcher(delay_seconds: float | None = None, **kwargs: object) -> Polit
     if configured is None:
         configured = float(get_settings().crawler_min_delay_s)
 
+    settings = get_settings()
+
     # HostRateLimiter raises rather than clamps, which is the point.
     limiter = HostRateLimiter(delay_seconds=max(configured, MIN_DELAY_SECONDS))
     if configured < MIN_DELAY_SECONDS:
@@ -268,4 +315,9 @@ def build_fetcher(delay_seconds: float | None = None, **kwargs: object) -> Polit
             configured=configured,
             using=MIN_DELAY_SECONDS,
         )
+    # Only supplied when the caller has not; a test handing in its own pool
+    # size or timeout keeps it.
+    kwargs.setdefault("max_connections", settings.crawler_http_max_connections)
+    kwargs.setdefault("max_keepalive", settings.crawler_http_max_keepalive)
+    kwargs.setdefault("timeout", settings.crawler_http_timeout_s)
     return PoliteFetcher(rate_limiter=limiter, **kwargs)  # type: ignore[arg-type]

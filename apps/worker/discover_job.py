@@ -33,12 +33,13 @@ async def handle_discover(session: AsyncSession, claimed: ClaimedTask) -> None:
     """Ingest every aggregator, promote what resolved, score what is new."""
     payload = claimed.task.payload_json or {}
 
-    report = await ingest(
-        session,
-        build_fetcher(),
-        limit=int(payload.get("limit", 500)),
-        resolve_ats=bool(payload.get("resolve_ats", True)),
-    )
+    async with build_fetcher() as fetcher:
+        report = await ingest(
+            session,
+            fetcher,
+            limit=int(payload.get("limit", 500)),
+            resolve_ats=bool(payload.get("resolve_ats", True)),
+        )
     log.info("discovery_report", summary=report.summary())
 
     if payload.get("promote", True):
@@ -47,9 +48,10 @@ async def handle_discover(session: AsyncSession, claimed: ClaimedTask) -> None:
     # Aggregator postings have no board to re-read, so nothing else in the
     # system would ever notice they had closed.
     if payload.get("verify", True):
-        report.verified, report.closed_stale = await verify_open(
-            session, build_fetcher(), limit=int(payload.get("verify_limit", 50))
-        )
+        async with build_fetcher() as fetcher:
+            report.verified, report.closed_stale = await verify_open(
+                session, fetcher, limit=int(payload.get("verify_limit", 50))
+            )
 
     if not report.new_postings:
         return

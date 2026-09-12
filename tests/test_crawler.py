@@ -1168,3 +1168,84 @@ def test_a_registry_written_as_a_bare_list_is_refused(tmp_path) -> None:
 
     with pytest.raises(SeedFileError):
         load_seed(str(path))
+
+
+# --------------------------------------------------------------------------
+# Connection reuse — setup cost, never politeness
+# --------------------------------------------------------------------------
+
+
+async def test_one_client_serves_many_fetches(monkeypatch) -> None:
+    """A client per request meant a handshake per request.
+
+    Against a shared ATS API — one host serving thousands of boards at the
+    amended §2.6 floor of 2s — that is the same TCP and TLS setup to the same
+    machine, once per company, for the whole registry.
+    """
+    built: list[object] = []
+    real = httpx.AsyncClient
+
+    class Counting(real):  # type: ignore[misc, valid-type]
+        def __init__(self, *args, **kwargs) -> None:
+            built.append(self)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", Counting)
+
+    fetcher = PoliteFetcher(
+        transport=_board_transport({"jobs": []}),
+        rate_limiter=limiter(),
+    )
+    for _ in range(3):
+        await fetcher.fetch("https://boards-api.greenhouse.io/v1/boards/acme/jobs")
+
+    # One for the pages, one for robots.txt — which keeps its own because it
+    # follows redirects and the page client deliberately does not.
+    assert len(built) == 2, f"expected one pooled client per role, got {len(built)}"
+    await fetcher.aclose()
+
+
+async def test_pooling_does_not_shorten_the_wait() -> None:
+    """The floor is enforced before a connection is reached for.
+
+    This is the assertion that makes reuse safe to keep: §2.6 is about how
+    often a host is touched, and pooling changes only what is reused between
+    touches.
+    """
+    clock = FakeClock()
+    fetcher = PoliteFetcher(
+        transport=_board_transport({"jobs": []}),
+        rate_limiter=limiter(clock=clock),
+    )
+    url = "https://boards-api.greenhouse.io/v1/boards/acme/jobs"
+
+    await fetcher.fetch(url)
+    second = await fetcher.fetch(url)
+
+    assert second.waited >= MIN_SHARED_API_DELAY_SECONDS
+    await fetcher.aclose()
+
+
+async def test_a_closed_fetcher_can_be_used_again() -> None:
+    """`aclose` releases the pool; it is not a one-way door."""
+    fetcher = PoliteFetcher(
+        transport=_board_transport({"jobs": []}),
+        rate_limiter=limiter(),
+    )
+    url = "https://boards-api.greenhouse.io/v1/boards/acme/jobs"
+
+    await fetcher.fetch(url)
+    await fetcher.aclose()
+    again = await fetcher.fetch(url)
+
+    assert again.ok
+    await fetcher.aclose()
+
+
+async def test_fetcher_works_as_a_context_manager() -> None:
+    async with PoliteFetcher(
+        transport=_board_transport({"jobs": []}), rate_limiter=limiter()
+    ) as fetcher:
+        result = await fetcher.fetch("https://boards-api.greenhouse.io/v1/boards/acme/jobs")
+
+    assert result.ok

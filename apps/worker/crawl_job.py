@@ -47,7 +47,6 @@ async def handle_crawl(session: AsyncSession, claimed: ClaimedTask) -> None:
         log.warning("crawl_no_seeds", seed_path=seed_path)
         return
 
-    fetcher = build_fetcher()
     # Checked against the column's CHECK constraint rather than passed
     # through: the payload is JSON from whoever enqueued the task, and an
     # unexpected word in it would fail the INSERT and take the whole cycle
@@ -64,14 +63,18 @@ async def handle_crawl(session: AsyncSession, claimed: ClaimedTask) -> None:
     # managed to poll.
     report = CrawlReport()
     try:
-        await crawl_all(
-            session,
-            seeds,
-            fetcher,
-            force=force,
-            on_result=state_recorder(session, run),
-            report=report,
-        )
+        # One fetcher, so one connection pool, for the whole cycle. Closed on
+        # the way out either way — a worker runs cycle after cycle, and a pool
+        # left open per cycle is a socket leak with a schedule.
+        async with build_fetcher() as fetcher:
+            await crawl_all(
+                session,
+                seeds,
+                fetcher,
+                force=force,
+                on_result=state_recorder(session, run),
+                report=report,
+            )
     except Exception:
         # The run row is the only record that a cycle was attempted at all, so
         # it is closed on the way out rather than left `running` forever —

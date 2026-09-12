@@ -70,7 +70,8 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"{args.csv} is empty — run `make import-csv src=<sheet>` first.")
         return 0
 
-    report = await probe(rows, build_fetcher(), limit=args.limit)
+    async with build_fetcher() as fetcher:
+        report = await probe(rows, fetcher, limit=args.limit)
 
     _report(report)
 

@@ -129,6 +129,32 @@ class RobotsCache:
     transport: httpx.AsyncBaseTransport | None = None
     timeout: float = 15.0
     _cache: dict[str, _CachedRobots] = field(default_factory=dict)
+    _client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
+
+    def _client_for_requests(self) -> httpx.AsyncClient:
+        """The pooled client, built on first use.
+
+        Lazy for the same reason as the fetcher's: an `AsyncClient` binds to
+        the loop that first uses it, and a cache is constructed in ordinary
+        synchronous code.
+
+        Cached rules mean this is asked far less often than the fetcher's
+        client, but "far less often" over 3,500 hosts is still 3,500
+        handshakes a cache cycle.
+        """
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                transport=self.transport,
+                timeout=self.timeout,
+                headers={"User-Agent": self.user_agent},
+                follow_redirects=True,
+            )
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
 
     def _fresh(self, host: str) -> _CachedRobots | None:
         entry = self._cache.get(host)
@@ -143,13 +169,7 @@ class RobotsCache:
         robots_url = urljoin(host, "/robots.txt")
 
         try:
-            async with httpx.AsyncClient(
-                transport=self.transport,
-                timeout=self.timeout,
-                headers={"User-Agent": self.user_agent},
-                follow_redirects=True,
-            ) as client:
-                response, body = await _read_capped(client, robots_url)
+            response, body = await _read_capped(self._client_for_requests(), robots_url)
         except Exception as exc:  # noqa: BLE001 - any failure means "unknown"
             log.warning("robots_unreachable", host=host, error=type(exc).__name__)
             entry = _CachedRobots(parser=None, fetched_at=time.monotonic(), reachable=False)
