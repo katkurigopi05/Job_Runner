@@ -85,12 +85,23 @@ _ALL_TABLES = (
     "inbound_messages",
     "applications",
     "matches",
+    "posting_labels",
     "projects",
     "queue_tasks",
     "profiles",
     "resumes",
     "postings",
     "candidates",
+    # `company_crawl_states` is reached by CASCADE from here, but the two
+    # below are not reachable from anything in this list: `crawl_runs` is
+    # referenced by `company_crawl_states` rather than referencing it, and
+    # `crawler_host_budgets` has no foreign keys at all. Left out, they
+    # survived every committing test and leaked into the next one — which
+    # showed up as a scheduler test finding a run it did not create.
+    "company_crawl_states",
+    "crawl_runs",
+    "crawler_host_budgets",
+    "corpus_stats",
     "companies",
     "users",
 )

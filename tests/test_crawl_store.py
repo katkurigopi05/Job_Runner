@@ -256,3 +256,61 @@ async def test_closing_is_decided_by_the_sighting_stamp_not_a_list_of_ids(db_ses
 
     dropped = await crawl_company(db_session, seed, _fetcher({"jobs": [_job(1)]}), force=True)
     assert dropped.closed_postings == 2, "and the two the board stopped listing do close"
+
+
+async def test_an_edited_posting_loses_the_vector_for_its_old_text(db_session) -> None:
+    """Measured, not supposed: the stale vector used to survive the edit.
+
+    `embed_postings` re-embeds a posting whose vector is missing, or whose
+    stamps name another model or corpus revision. An edit changes none of
+    those — so a requisition rewritten from a Python role into a Rust one kept
+    the vector built from the Python text, and cosine against it does not
+    fail. It returns a plausible number, and the feed ranks by it.
+    """
+    from packages.matching.score import embed_postings
+
+    seed = CompanySeed(name="Acme", slug="acme", poll_interval_s=0)
+    python_role = _job(1, content="<p>Python and Django and Flask</p>")
+    await crawl_company(db_session, seed, _fetcher({"jobs": [python_role]}), force=True)
+
+    posting = await _posting(db_session, "1")
+    await embed_postings(db_session, [posting], revision=1)
+    await db_session.flush()
+    original = list((await _posting(db_session, "1")).description_embedding)
+
+    rust_role = _job(1, content="<p>Rust systems programming kernel drivers</p>")
+    await crawl_company(db_session, seed, _fetcher({"jobs": [rust_role]}), force=True)
+    db_session.expire_all()
+
+    rewritten = await _posting(db_session, "1")
+    assert rewritten.description_embedding is None, (
+        "the vector describes text this posting no longer contains"
+    )
+    assert rewritten.embedding_model is None
+    assert rewritten.embedding_revision is None
+
+    # And the next matching pass picks it up, which is the point of clearing
+    # it here rather than re-embedding here.
+    assert await embed_postings(db_session, [rewritten], revision=1) == 1
+    db_session.expire_all()
+    assert list((await _posting(db_session, "1")).description_embedding) != original
+
+
+async def test_an_unchanged_posting_keeps_its_vector(db_session) -> None:
+    """Clearing on every sighting would re-embed the whole corpus each cycle."""
+    from packages.matching.score import embed_postings
+
+    seed = CompanySeed(name="Acme", slug="acme", poll_interval_s=0)
+    await crawl_company(db_session, seed, _fetcher({"jobs": [_job(1)]}), force=True)
+    posting = await _posting(db_session, "1")
+    await embed_postings(db_session, [posting], revision=1)
+    await db_session.flush()
+    original = list((await _posting(db_session, "1")).description_embedding)
+
+    # A board whose response differs, but whose posting 1 is untouched.
+    await crawl_company(db_session, seed, _fetcher({"jobs": [_job(1), _job(2)]}), force=True)
+    db_session.expire_all()
+
+    kept = await _posting(db_session, "1")
+    assert kept.description_embedding is not None
+    assert list(kept.description_embedding) == original

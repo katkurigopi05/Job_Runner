@@ -282,6 +282,23 @@ async def _store(
             "description_raw": case(
                 (changed, statement.excluded.description_raw), else_=Posting.description_raw
             ),
+            # An edited posting's vector describes text it no longer contains,
+            # so it is dropped along with the text it was made from.
+            #
+            # `embed_postings` re-embeds a posting whose vector is missing or
+            # whose stamps are from another model or corpus revision — and an
+            # edit changes none of those. So a requisition rewritten from a
+            # Python role into a Rust one kept the vector for the Python one:
+            # measured, not supposed. Cosine against it does not fail, it
+            # returns a plausible number, and the feed ranks by it.
+            #
+            # Clearing it here rather than re-embedding here on purpose.
+            # Embedding wants the corpus statistics and the crawler has no
+            # business holding them; a NULL vector is a fact the next matching
+            # pass already knows how to act on.
+            "description_embedding": case((changed, None), else_=Posting.description_embedding),
+            "embedding_model": case((changed, None), else_=Posting.embedding_model),
+            "embedding_revision": case((changed, None), else_=Posting.embedding_revision),
         },
     )
     # `first_seen_at` is absent from the update set on purpose: it is when we

@@ -15,16 +15,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.config import get_settings
-from packages.core.models import Posting, Profile, QueueTask
+from packages.core.models import QueueTask
 from packages.core.queue import ClaimedTask, enqueue
 from packages.crawler.crawl import CrawlReport, crawl_all
 from packages.crawler.dispatch import tick
 from packages.crawler.extract import load_seed
 from packages.crawler.fetch import build_fetcher
 from packages.crawler.runs import finish_run, start_run, state_recorder
-from packages.matching.embed import LexicalEmbedder
-from packages.matching.idf import rebuild_if_stale
-from packages.matching.score import embed_postings, score_and_store
+from packages.matching.incremental import run_matching_pass
 
 log = structlog.get_logger(__name__)
 
@@ -109,6 +107,17 @@ async def handle_crawl(session: AsyncSession, claimed: ClaimedTask) -> None:
         )
         if report is not None:
             log.info("crawl_dispatch_done", summary=report.summary())
+
+        # The sweep is where scoring happens under dispatch. A per-company
+        # task cannot do it — scoring wants the corpus, and 3,500 of them
+        # would rebuild the statistics 3,500 times a cycle, each invalidating
+        # the vectors the last had written. The sweep runs every few minutes
+        # and picks up whatever the finished company tasks left outstanding,
+        # which it works out for itself rather than being handed.
+        if payload.get("match", True):
+            matching = await run_matching_pass(session)
+            log.info("crawl_matching", summary=matching.summary())
+
         if payload.get("repeat", True):
             await _schedule_next_tick(session, payload, settings.crawler_tick_seconds)
         return
@@ -150,18 +159,5 @@ async def handle_crawl(session: AsyncSession, claimed: ClaimedTask) -> None:
     if not report.emitted:
         return
 
-    # Only postings that are actually open are worth embedding or scoring.
-    postings = list(
-        (await session.scalars(select(Posting).where(Posting.closed_at.is_(None)))).all()
-    )
-    # Statistics first: the embedder is weighted by them, and a vector
-    # stamped with the wrong revision is one this pass has to redo.
-    texts = [f"{p.title or ''}\n{p.description_raw or ''}" for p in postings]
-    frequencies, revision = await rebuild_if_stale(session, texts)
-    embedder = LexicalEmbedder(frequencies=frequencies) if frequencies.usable else None
-    embedded = await embed_postings(session, postings, embedder=embedder, revision=revision)
-    log.info("postings_embedded", count=embedded)
-
-    profiles = list((await session.scalars(select(Profile))).all())
-    for profile in profiles:
-        await score_and_store(session, profile, postings)
+    matching = await run_matching_pass(session)
+    log.info("crawl_matching", summary=matching.summary())
