@@ -294,3 +294,82 @@ async def test_waiting_happens_outside_a_transaction(worker_sessions) -> None:
     assert elapsed < 5.0, (
         f"reserving took {elapsed:.1f}s of real time — the lock is held while waiting"
     )
+
+
+# --------------------------------------------------------------------------
+# The default, which is the part that was actually wrong
+# --------------------------------------------------------------------------
+
+
+async def test_build_fetcher_shares_the_counter_by_default(engine) -> None:
+    """Two fetchers built the ordinary way must not hold two counters.
+
+    This is the defect, not a refinement of it. `build_fetcher()` constructs a
+    fresh limiter on every call, so before the default changed, two concurrent
+    tasks in *one process* each had their own `_last_request` dict and both
+    fired immediately against a host owed 2s. Measured, as the settings
+    docstring records.
+
+    `make workers n=4` is a documented command that runs four claimants in one
+    process, so the shipped default was up to 4× the permitted rate on every
+    path except the single handler that passed `shared=True` by hand. A test
+    that only ever built limiters explicitly could not see it — which is why
+    this one goes through `build_fetcher`.
+    """
+    from packages.crawler.fetch import build_fetcher
+    from packages.crawler.host_budget import SharedHostRateLimiter
+
+    first, second = build_fetcher(), build_fetcher()
+    try:
+        assert isinstance(first.rate_limiter, SharedHostRateLimiter), (
+            "the default must be the shared limiter"
+        )
+        assert first.rate_limiter is not second.rate_limiter, (
+            "separate objects is the point — they have to agree through the table"
+        )
+
+        assert await first.rate_limiter.acquire(SHARED) == 0.0
+        waited = await second.rate_limiter.acquire(SHARED)
+
+        # The reservation hands back "time from now until your slot", so a few
+        # elapsed milliseconds put it just under the floor. The spacing between
+        # the two requests is the full floor, which is what §2.6 is about.
+        assert waited >= MIN_SHARED_API_DELAY_SECONDS * 0.95, (
+            f"a second fetcher built the same way waited only {waited:.3f}s"
+        )
+    finally:
+        await first.aclose()
+        await second.aclose()
+
+
+async def test_four_concurrent_fetchers_are_spaced_by_the_floor(engine) -> None:
+    """`make workers n=4`, measured end to end rather than per-call.
+
+    Asserts the gaps between requests, because that is the quantity §2.6
+    names. Four tasks that each waited and then fired together have waited and
+    still breached it.
+    """
+    import asyncio
+    import time
+
+    from packages.crawler.fetch import build_fetcher
+
+    fetchers = [build_fetcher() for _ in range(4)]
+    stamps: list[float] = []
+
+    async def hit(fetcher) -> None:
+        await fetcher.rate_limiter.acquire(SHARED)
+        stamps.append(time.monotonic())
+
+    try:
+        await asyncio.gather(*(hit(fetcher) for fetcher in fetchers))
+        stamps.sort()
+        gaps = [later - earlier for earlier, later in zip(stamps, stamps[1:], strict=False)]
+        assert len(gaps) == 3
+        for gap in gaps:
+            assert gap >= MIN_SHARED_API_DELAY_SECONDS * 0.95, (
+                f"requests were {gap:.3f}s apart, under the {MIN_SHARED_API_DELAY_SECONDS}s floor"
+            )
+    finally:
+        for fetcher in fetchers:
+            await fetcher.aclose()

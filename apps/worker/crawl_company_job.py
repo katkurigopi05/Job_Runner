@@ -81,9 +81,10 @@ async def handle_crawl_company(session: AsyncSession, claimed: ClaimedTask) -> N
 
     run_id = uuid.UUID(payload["run_id"]) if payload.get("run_id") else None
 
-    # `shared=True` rather than the setting: this handler exists so that
-    # several workers crawl at once, and in-process counters would give each
-    # of them its own §2.6 floor. See packages/crawler/dispatch.py.
+    # `shared=True` explicitly, although it is now also the default. This
+    # handler is the one that most needs it — it exists so several workers
+    # crawl at once — and naming it here means a future change to the default
+    # cannot quietly remove the guarantee this file depends on.
     async with build_fetcher(shared=True) as fetcher:
         result = await crawl_company(session, seed, fetcher, force=bool(payload.get("force")))
 

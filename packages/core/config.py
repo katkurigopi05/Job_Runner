@@ -192,14 +192,30 @@ class Settings(BaseSettings):
 
     #: Enforce the §2.6 floor in Postgres rather than in this process.
     #:
-    #: Required the moment more than one worker crawls at a time: an
-    #: in-process limiter gives each worker its own counters, so N workers
-    #: make the effective floor the floor divided by N. Off by default because
-    #: the crawl is a single cycle in a single worker today and the in-process
-    #: limiter is the one with tests measuring it; `build_fetcher(shared=True)`
-    #: turns it on for a caller that does fan out, which is the safer place
-    #: for the decision than a default that can be forgotten.
-    crawler_shared_rate_limiter: bool = False
+    #: **On by default**, and it was off for exactly as long as it took to
+    #: measure what that meant. `build_fetcher()` constructs a *new*
+    #: `HostRateLimiter` on every call, so two concurrent tasks in one process
+    #: hold two independent counters and both fire at once:
+    #:
+    #:     a = build_fetcher(); b = build_fetcher()
+    #:     await a.rate_limiter.acquire(shared_host)  -> waited 0.0s
+    #:     await b.rate_limiter.acquire(shared_host)  -> waited 0.0s
+    #:
+    #: against a host owed 2s. `make workers n=4` is a documented command and
+    #: runs four claimants in one process, so the shipped default was up to 4×
+    #: the permitted request rate on every path except the one handler that
+    #: passed `shared=True` explicitly. That is not a tuning choice, it is §2.6
+    #: not holding.
+    #:
+    #: The table fixes both halves at once: two limiters in one process and two
+    #: in separate processes all reserve from the same row, so there is no
+    #: arrangement of workers that can outrun the floor.
+    #:
+    #: The cost is that fetching now needs a reachable database, and an
+    #: unreachable one fails the fetch instead of quietly falling back to a
+    #: per-process counter. That is the right way round: a fallback here is a
+    #: politeness breach nobody would see.
+    crawler_shared_rate_limiter: bool = True
 
     #: How often the dispatching cycle wakes to enqueue whatever has come due.
     #:

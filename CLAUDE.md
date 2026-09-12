@@ -1824,6 +1824,41 @@ in CPython, so the two addresses matched. Round-tripping through a bytearray
 forces a separate allocation. A test that cannot fail is the thing this file
 keeps finding.
 
+### §2.6 did not hold for `make workers n=4`
+
+The shared host limiter landed with `CRAWLER_SHARED_RATE_LIMITER=false`, on the
+reasoning that the crawl was one cycle in one worker and the in-process limiter
+was the one with tests measuring it. That reasoning was wrong about its own
+codebase, and measuring took four lines:
+
+```text
+a = build_fetcher(); b = build_fetcher()
+await a.rate_limiter.acquire("boards-api.greenhouse.io")  -> waited 0.000s
+await b.rate_limiter.acquire("boards-api.greenhouse.io")  -> waited 0.000s
+```
+
+`build_fetcher()` constructs a **new** `HostRateLimiter` on every call. So the
+counters were never per-process, they were per-fetcher — and `make workers n=4`
+is a documented command that runs four claimants in one process. Four
+independent counters, four simultaneous requests to a host owed 2s, measured
+0.000s apart. Only `crawl_company_job` passed `shared=True`, so every other
+path — discovery, `validate-seeds`, `probe-bespoke`, the inline cycle — ran at
+up to 4× the permitted rate.
+
+Every gate passed throughout, and `tests/test_ratelimit_concurrency.py` passed
+too, because it builds its limiter explicitly and therefore shares one by
+construction. The suite proved the limiter worked and never asked whether
+callers got the same one. The two new tests go through `build_fetcher`, which
+is the part that was wrong; with the default reverted they report requests
+0.000s apart.
+
+The default is now `true`. That makes a reachable database a requirement for
+fetching, and an unreachable one fails the fetch rather than falling back to
+per-process counting — the right way round, because a fallback here is a breach
+nobody would ever see. The table fixes both halves at once: two limiters in one
+process and two in separate processes reserve from the same row, so there is no
+arrangement of workers that outruns the floor.
+
 ### What is still not fixed, and why
 
 - **Gate 1's live half is refused, not pending.** It reaches the form and is
