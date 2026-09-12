@@ -186,6 +186,22 @@ class Company(Base):
     domain: Mapped[str | None] = mapped_column(String(300))
     careers_url: Mapped[str | None] = mapped_column(Text)
     ats_type: Mapped[str | None] = mapped_column(String(50))
+    #: The company's identifier *on its ATS* — the `acme` in
+    #: `boards-api.greenhouse.io/v1/boards/acme/jobs`. It lived only in
+    #: `seeds/companies.yaml` until now, which was fine while a cycle was one
+    #: pass over the YAML: `crawl_company` was handed a `CompanySeed` and read
+    #: the slug off it.
+    #:
+    #: A per-company queue task cannot do that. It carries a company id, and
+    #: the handler that picks it up has to rebuild the board URL from the row
+    #: alone — the YAML may have been edited, reordered, or not be the thing
+    #: that enqueued the task at all. Without this column the row cannot say
+    #: which board it stands for.
+    #:
+    #: Nullable because rows exist that were never seeded: companies created
+    #: by discovery promotion before they resolve to a board, and the fixtures
+    #: in the test suite.
+    slug: Mapped[str | None] = mapped_column(String(200))
     #: Floor is enforced in the crawler too; never configure below 60s.
     poll_interval_s: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("3600")
@@ -195,6 +211,18 @@ class Company(Base):
     #: skips parsing entirely instead of re-hashing every posting.
     board_hash: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (
+        # The scheduler asks "which companies are due?" every tick. At 29 rows
+        # that is a sequential scan nobody notices; at 3,500 it is the query
+        # that runs most often in the whole system.
+        Index("ix_companies_last_polled_at", "last_polled_at"),
+        # Resolution and promotion both ask "do we already have this board?"
+        # before writing. Not unique: two rows may legitimately share a slug
+        # across different ATS vendors, and enforcing otherwise would make a
+        # collision an import failure rather than a fact to look at.
+        Index("ix_companies_ats_slug", "ats_type", "slug"),
+    )
 
 
 class Posting(Base):
@@ -237,6 +265,20 @@ class Posting(Base):
     #: and it is the only evidence that poll_interval_s is set sensibly.
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     first_seen_at: Mapped[datetime] = _created_at()
+    #: The last cycle that found this posting still listed on its board.
+    #:
+    #: Distinct from `content_hash`, which answers "did it change", and from
+    #: `first_seen_at`, which answers "when did we notice it". Neither answers
+    #: "is it still there", and an unchanged posting used to update nothing at
+    #: all — so a posting last confirmed an hour ago and one last confirmed in
+    #: March were the same row.
+    #:
+    #: That gap is what `_close_missing` has to work around. It closes by set
+    #: difference within a single cycle, which is only sound when one pass saw
+    #: the whole board; under a dispatcher, several workers and a paginated
+    #: board, "absent from this response" stops meaning "absent from the
+    #: board". A timestamp is the durable form of the same question.
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # No vector index. At ~50 companies the corpus is 500–5k postings, where an
@@ -247,6 +289,20 @@ class Posting(Base):
         Index("ix_postings_first_seen_at", text("first_seen_at DESC")),
         Index("ix_postings_published_at", text("published_at DESC")),
         Index("ix_postings_content_hash", "content_hash"),
+        # Every crawl of every company runs two queries keyed on this column
+        # — load the existing set, then load the open set — and neither had an
+        # index. That is twice per cycle per company: 58 sequential scans of
+        # the whole posting table at 29 companies, 7,000 at 3,500.
+        Index("ix_postings_company_id", "company_id"),
+        # What makes `ON CONFLICT` possible, and therefore what turns `_store`
+        # from a read-then-branch loop into one statement.
+        #
+        # NULLs stay distinct under this, which is the behaviour we want
+        # rather than a limitation to work around: a row with no external_id
+        # has nothing to be deduplicated *by*, and the benchmark corpus and
+        # the older fixtures hold such rows. Every row the crawler writes has
+        # one — `ExtractedPosting.external_id` is a required `str`.
+        UniqueConstraint("company_id", "external_id", name="uq_postings_company_external_id"),
     )
 
 

@@ -94,6 +94,11 @@ async def upsert_company(session: AsyncSession, seed: CompanySeed) -> Company:
     company.domain = seed.domain
     company.careers_url = seed.careers_url
     company.ats_type = seed.ats
+    # Written every cycle so the row can name its own board. Until now the
+    # slug lived only in the seed file, which is fine while a cycle is one
+    # pass over that file and every call already holds the `CompanySeed` —
+    # and useless to anything handed a company id instead.
+    company.slug = seed.slug
     company.poll_interval_s = seed.poll_interval_s
     await session.flush()
     return company
