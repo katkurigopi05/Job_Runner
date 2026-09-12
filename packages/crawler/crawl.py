@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from sqlalchemy import case, func, select, update
@@ -26,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Company, Posting
 from packages.crawler.extract import CompanySeed, ExtractedPosting, extractor_for
-from packages.crawler.fetch import Blocked, PoliteFetcher
+from packages.crawler.fetch import Blocked, PoliteFetcher, content_hash
 
 log = structlog.get_logger(__name__)
 
@@ -421,7 +422,18 @@ async def _poll_company(
         result.skipped_reason = "not due yet"
         return result
 
-    url = extractor.board_url(seed.slug)
+    try:
+        url = extractor.board_url(seed.slug)
+    except ValueError as exc:
+        # A slug the extractor cannot turn into a URL. A registry problem, and
+        # one that would otherwise surface as a fetch failure against a
+        # nonsense address.
+        result.skipped_reason = f"unusable slug: {exc}"
+        return result
+
+    collect = getattr(extractor, "collect", None)
+    if collect is not None:
+        return await _poll_paged(session, seed, fetcher, company, result, collect)
 
     try:
         response = await fetcher.fetch(url)
@@ -478,6 +490,70 @@ async def _poll_company(
     if not result.suspect_parse:
         company.board_hash = response.content_hash
 
+    await session.flush()
+    return result
+
+
+async def _poll_paged(
+    session: AsyncSession,
+    seed: CompanySeed,
+    fetcher: PoliteFetcher,
+    company: Company,
+    result: CompanyResult,
+    collect: Any,
+) -> CompanyResult:
+    """A board that takes several requests to read — see `crawler.workday`.
+
+    Kept apart from the single-request path rather than folded into it. The
+    two differ in what a failure *means*: one failed request is one failed
+    board, but one failed page leaves a partial list, and a partial list is
+    exactly what `_close_missing` would read as "these postings have closed".
+    So nothing here is stored unless every page arrived.
+    """
+    try:
+        pages = await collect(fetcher, seed.slug)
+    except Blocked as exc:
+        log.info("crawl_blocked", company=seed.name, reason=str(exc))
+        result.skipped_reason = str(exc)
+        result.blocked = True
+        return result
+    except Exception as exc:  # noqa: BLE001 - one bad host must not stop the cycle
+        log.warning("crawl_fetch_failed", company=seed.name, error=type(exc).__name__)
+        result.error = f"fetch failed: {type(exc).__name__}"
+        return result
+
+    result.fetched = True
+    result.waited_seconds = pages.waited_seconds
+    company.last_polled_at = datetime.now(UTC)
+
+    board_hash = content_hash(pages.body)
+    if company.board_hash == board_hash:
+        log.debug("board_unchanged", company=seed.name)
+        result.unchanged = True
+        return result
+
+    seen_at = datetime.now(UTC)
+    stored = await _store(session, company, pages.postings, now=seen_at)
+    result.new_postings = len(stored.new)
+    result.updated_postings = len(stored.updated)
+    result.reopened_postings = len(stored.reopened)
+    result.changed_posting_ids = stored.changed
+
+    if pages.truncated:
+        # We know we did not see the whole board, so we cannot know what is
+        # absent from it. Closing on a truncated read is the bulk-close this
+        # repo has already been bitten by, with the excuse that it was
+        # technically a successful fetch.
+        log.warning("crawl_truncated_board_not_closing", company=seed.name)
+        result.suspect_parse = True
+        await session.flush()
+        return result
+
+    result.closed_postings, result.suspect_parse = await _close_missing(
+        session, company, pages.postings, seen_at=seen_at
+    )
+    if not result.suspect_parse:
+        company.board_hash = board_hash
     await session.flush()
     return result
 

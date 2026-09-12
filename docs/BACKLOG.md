@@ -35,7 +35,7 @@ Same as PARITY.md, plus one:
 |---|---|---|---|
 | §5 | Greenhouse, Lever, Ashby, Workable adapters | **HAVE** | `packages/ats/` |
 | §5 | SmartRecruiters, iCIMS, SuccessFactors, Oracle, Jobvite | **BUILD** | → **P12** |
-| §5 | Workday adapter | **REFUSED** | CLAUDE.md §11 puts it out of scope until after Phase 6 |
+| §5 | Workday adapter | **REFUSED** | CLAUDE.md §11 puts it out of scope until after Phase 6. The read-only *extractor* is now built (`packages/crawler/workday.py`); the adapter — filling and submitting a Workday form — is not, and applying to one still fails as `unsupported_site`. |
 | §5 | Generic fallback crawler | **PARTIAL** | `crawler/jsonld.py` reads schema.org `JobPosting` off a bespoke page; `make probe-bespoke` promotes the pages that publish it. No sitemap path yet, and a page publishing nothing stays unreadable |
 | §5 | robots.txt, rate limits | **HAVE** | `crawler/robots.py`, `ratelimit.py` |
 | §5 | CAPTCHA bypass | **REFUSED** | CLAUDE.md §2.5, hard scope boundary |

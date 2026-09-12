@@ -471,12 +471,16 @@ async def test_seed_validation_checks_rendered_board_after_api_404() -> None:
 
 
 async def test_seed_validation_keeps_recorded_unsupported_ats() -> None:
-    """An ATS we cannot read is reported, never rewritten or dropped."""
+    """An ATS we cannot read is reported, never rewritten or dropped.
+
+    Stood in for by `taleo` rather than `workday`, which is what this said
+    until Workday gained an extractor. The test is about what happens to a
+    registry row naming an ATS with no reader, so it needs one that really
+    has none.
+    """
     fetcher = PoliteFetcher(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
 
-    results = await validate_seeds(
-        [CompanySeed(name="Moved", slug="moved", ats="workday")], fetcher
-    )
+    results = await validate_seeds([CompanySeed(name="Moved", slug="moved", ats="taleo")], fetcher)
 
     assert results[0].state is SeedState.OTHER_ATS
 
@@ -682,7 +686,10 @@ async def test_empty_200_board_is_not_a_failure(db_session, seed) -> None:
 
 
 async def test_unknown_ats_is_skipped(db_session) -> None:
-    seed = CompanySeed(name="Acme", slug="acme", ats="workday")
+    """`taleo` rather than `workday`, which this used before Workday gained an
+    extractor — and which then passed for the wrong reason, because the slug
+    error it started raising happened to contain the word being asserted on."""
+    seed = CompanySeed(name="Acme", slug="acme", ats="taleo")
     fetcher = PoliteFetcher(
         transport=_board_transport({"jobs": []}),
         rate_limiter=limiter(),
@@ -691,7 +698,7 @@ async def test_unknown_ats_is_skipped(db_session) -> None:
     result = await crawl_company(db_session, seed, fetcher, force=True)
 
     assert result.skipped_reason is not None
-    assert "workday" in result.skipped_reason
+    assert "taleo" in result.skipped_reason
 
 
 async def test_full_cycle_respects_the_rate_limit(db_session) -> None:

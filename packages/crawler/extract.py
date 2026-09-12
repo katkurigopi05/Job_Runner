@@ -506,6 +506,20 @@ EXTRACTORS: dict[str, PostingExtractor] = {
     WorkableExtractor.ats: WorkableExtractor(),
 }
 
+
+def _register_workday() -> None:
+    """Added separately because `workday` imports this module for
+    `ExtractedPosting` and `posting_hash`; at module scope the two would
+    import each other.
+
+    It also carries a `collect` the other four do not — a Workday board takes
+    several requests to read — which `crawl_company` looks for by name.
+    """
+    from packages.crawler.workday import WorkdayExtractor
+
+    EXTRACTORS.setdefault(WorkdayExtractor.ats, WorkdayExtractor())
+
+
 #: A bespoke careers page read through its schema.org data. Deliberately kept
 #: out of `EXTRACTORS`: it takes a page URL where the four take a slug, so a
 #: caller that iterates the board APIs and builds a URL from a slug would ask
@@ -520,6 +534,8 @@ _jsonld_extractor: PostingExtractor | None = None
 
 
 def extractor_for(ats: str) -> PostingExtractor | None:
+    if ats == "workday" and "workday" not in EXTRACTORS:
+        _register_workday()
     global _jsonld_extractor
     if ats == JSONLD_ATS:
         if _jsonld_extractor is None:

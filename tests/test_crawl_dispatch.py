@@ -66,7 +66,7 @@ def test_a_row_with_a_slug_names_its_own_board() -> None:
     [
         pytest.param({"slug": None}, id="no slug"),
         pytest.param({"ats_type": None}, id="no ats"),
-        pytest.param({"ats_type": "workday"}, id="no extractor for that ats"),
+        pytest.param({"ats_type": "taleo"}, id="no extractor for that ats"),
     ],
 )
 def test_a_row_that_cannot_name_a_board_is_refused(broken) -> None:

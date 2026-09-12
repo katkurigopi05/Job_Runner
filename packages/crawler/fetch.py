@@ -240,8 +240,22 @@ class PoliteFetcher:
 
         raise Blocked(f"{url}: more than {self._MAX_REDIRECTS} redirects")
 
-    async def fetch(self, url: str) -> FetchResult:
+    async def fetch(
+        self, url: str, *, method: str = "GET", json: object | None = None
+    ) -> FetchResult:
         """Fetch `url`, waiting as long as politeness requires.
+
+        `method`/`json` exist for one reason: Workday's careers API is a POST
+        whose body carries the page offset. Everything before the request is
+        unchanged — robots.txt is consulted, the site's `Crawl-delay` is
+        honoured, and the host's floor is waited out — because those gates are
+        about *touching a host*, which a POST does exactly as much as a GET.
+
+        A non-GET is sent as a single request and its redirects are not
+        followed. Following one correctly means deciding whether to re-send
+        the body, which differs by status code and is a decision no caller
+        here needs made for it: an API that answers a redirect to a POST has
+        changed shape, and a 3xx returned plainly says so.
 
         Raises:
             Blocked: robots.txt says no, or could not be read.
@@ -273,7 +287,11 @@ class PoliteFetcher:
 
         # Both gates are behind us. Reusing the connection from here changes
         # how much setup is repeated, never how long anything waited.
-        status, text, host = await self._walk(self._client_for_requests(), url, host)
+        client = self._client_for_requests()
+        if method.upper() == "GET":
+            status, text, host = await self._walk(client, url, host)
+        else:
+            status, text = await self._send(client, method, url, host, json)
 
         return FetchResult(
             url=url,
@@ -282,6 +300,27 @@ class PoliteFetcher:
             content_hash=content_hash(text),
             waited=waited,
         )
+
+    async def _send(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        host: str,
+        json: object | None,
+    ) -> tuple[int, str]:
+        """One non-GET request, with the same 429 handling `_walk` applies."""
+        async with client.stream(method.upper(), url, json=json) as response:
+            if response.status_code in (429, 503):
+                await self.rate_limiter.penalize(  # type: ignore[union-attr]
+                    host, _retry_after(response, default=_DEFAULT_BACKOFF)
+                )
+                return response.status_code, ""
+            if response.is_redirect:
+                # See `fetch`. Returned rather than followed.
+                log.info("post_redirected", url=url, status=response.status_code)
+                return response.status_code, ""
+            return response.status_code, await self._read_body(response, url)
 
     async def _read_body(self, response: httpx.Response, url: str) -> str:
         """The body, or `TooLarge` before it can exhaust the worker.
