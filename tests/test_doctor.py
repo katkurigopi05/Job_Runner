@@ -22,7 +22,9 @@ from packages.core.doctor import (
     Report,
     _redacted,
     check_database,
+    check_inbox,
     check_vault_key,
+    run,
 )
 
 # --------------------------------------------------------------------------
@@ -167,9 +169,92 @@ async def test_the_real_report_runs_without_raising() -> None:
 
     A health check that throws is the least useful thing in the repository.
     """
-    from packages.core.doctor import run
-
     report = await run()
 
     assert report.checks
     assert all(isinstance(check.health, Health) for check in report.checks)
+
+
+# --------------------------------------------------------------------------
+# The inbox
+# --------------------------------------------------------------------------
+#
+# Phase 6 routes recruiter replies back onto applications, and the whole chain
+# is inert without a mailbox. `make doctor` said nothing about that at all, so
+# "IMAP host, username and password incomplete" was something a diagnostic
+# sweep had to go and find. A check that is silent about a feature that cannot
+# run is the same failure as a crawl that reports zero postings from a dead
+# board: indistinguishable from working.
+
+
+@pytest.fixture
+def inbox_env(monkeypatch):
+    """Set IMAP_* for one check, and put the settings cache back afterwards.
+
+    `get_settings` is cached, so clearing it only on the way in leaves the
+    next test reading this test's mailbox. That is how a green suite starts
+    reporting a configured inbox to a module that has none.
+    """
+
+    def _set(**values: str) -> None:
+        for name, value in values.items():
+            monkeypatch.setenv(name, value)
+        get_settings.cache_clear()
+
+    try:
+        yield _set
+    finally:
+        get_settings.cache_clear()
+
+
+def test_an_unconfigured_inbox_is_reported_not_silent(inbox_env) -> None:
+    inbox_env(IMAP_HOST="", IMAP_USERNAME="", IMAP_PASSWORD="")
+
+    check = check_inbox()
+
+    assert not check.ok
+    # Optional: an owner who does not use the tracker is not broken.
+    assert not check.required
+    assert check.fix
+
+
+def test_a_half_configured_inbox_names_what_is_missing(inbox_env) -> None:
+    """The worst state of the three: it looks set up and cannot connect."""
+    inbox_env(IMAP_HOST="imap.gmail.com", IMAP_USERNAME="owner@gmail.com", IMAP_PASSWORD="")
+
+    check = check_inbox()
+
+    assert not check.ok
+    assert "IMAP_PASSWORD" in check.detail
+    assert "IMAP_HOST" not in check.detail
+
+
+def test_the_inbox_password_never_reaches_the_output(inbox_env) -> None:
+    """§2.7 — diagnostic output is pasted into chat windows more than anything."""
+    inbox_env(IMAP_HOST="imap.gmail.com", IMAP_USERNAME="owner@gmail.com", IMAP_PASSWORD="hunter2")
+
+    check = check_inbox()
+
+    assert check.ok
+    assert "hunter2" not in f"{check.detail} {check.fix}"
+
+
+def test_a_configured_inbox_is_not_claimed_to_be_reachable(inbox_env) -> None:
+    """Settings being present is not the same as a mailbox answering.
+
+    The check does no network: `make doctor` is a precondition in scripts and
+    must not hang on an unreachable host. Saying more than it knows is how a
+    green check stops being worth reading.
+    """
+    inbox_env(IMAP_HOST="imap.gmail.com", IMAP_USERNAME="owner@gmail.com", IMAP_PASSWORD="hunter2")
+
+    check = check_inbox()
+
+    assert "configured" in check.detail.lower()
+    assert "connected" not in check.detail.lower()
+
+
+async def test_the_report_includes_the_inbox() -> None:
+    report = await run()
+
+    assert "inbox" in {c.name for c in report.checks}

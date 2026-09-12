@@ -18,7 +18,6 @@ from typing import Any
 import structlog
 
 from packages.ats.base import (
-    FilledField,
     FillReport,
     ManualCompletionRequired,
     Option,
@@ -26,10 +25,17 @@ from packages.ats.base import (
     Question,
     QuestionKind,
     Receipt,
-    SiteError,
-    SkippedField,
-    UnansweredQuestion,
 )
+from packages.ats.form import field_selector, fill_form, submit_form
+from packages.ats.navigate import (
+    FORM_READY_TIMEOUT_MS,
+    POSTING_READY_TIMEOUT_MS,
+    application_route,
+    locate_form,
+    longest_text,
+)
+from packages.ats.navigate import wait_for_form as _wait_for_form
+from packages.ats.navigate import wait_for_posting as _wait_for_posting
 
 log = structlog.get_logger(__name__)
 
@@ -67,6 +73,11 @@ SELECTORS: dict[str, str] = {
         "text=/this job is closed/i, text=/position has been filled/i"
     ),
 }
+
+#: Greenhouse serves the form on the posting page itself — there is no
+#: second route, and navigating to one would leave the only page that
+#: carries the form.
+APPLICATION_SEGMENT: str | None = None
 
 #: Greenhouse marks required fields with an asterisk in the label.
 _REQUIRED_MARKERS = ("*", "(required)", "required")
@@ -151,6 +162,38 @@ class GreenhouseAdapter:
         match = _URL_RE.match(url) or _EMBED_RE.search(url)
         return match.group("company") if match else None
 
+    @staticmethod
+    def profile_key_for(field_name: str) -> str | None:
+        """Greenhouse has no key map, and does not need one.
+
+        Its field names are already the words a label rule matches —
+        `first_name`, `email`, `resume` — so there is nothing here that
+        reading the label does not already answer. Present so every adapter
+        answers the same question rather than the caller checking which have
+        one.
+        """
+        return None
+
+    @staticmethod
+    def application_url(url: str) -> str:
+        return application_route(url, _URL_RE, APPLICATION_SEGMENT)
+
+    async def wait_for_posting(self, page: Any, timeout_ms: int = POSTING_READY_TIMEOUT_MS) -> None:
+        """Give the posting a chance to render before reading it."""
+        await _wait_for_posting(
+            page, title_selector=SELECTORS["posting_title"], timeout_ms=timeout_ms
+        )
+
+    async def wait_for_form(self, page: Any, timeout_ms: int = FORM_READY_TIMEOUT_MS) -> None:
+        """Block until the employer's questions are actually on the page."""
+        await _wait_for_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+            captcha_selector=SELECTORS["captcha"],
+            timeout_ms=timeout_ms,
+        )
+
     async def _guard_automation_blocks(self, page: Any) -> None:
         """Stop on a captcha rather than trying to get around it.
 
@@ -175,10 +218,7 @@ class GreenhouseAdapter:
                 return " ".join(text.split()) or None
             return None
 
-        body = None
-        body_locator = page.locator(SELECTORS["posting_body"]).first
-        if await body_locator.count():
-            body = await body_locator.inner_text()
+        body = await longest_text(page, SELECTORS["posting_body"])
 
         return ParsedPosting(
             external_id=self.external_id(url),
@@ -193,9 +233,11 @@ class GreenhouseAdapter:
         """Walk the real form. The field list comes from the page, not a guess."""
         await self._guard_automation_blocks(page)
 
-        form = page.locator(SELECTORS["form"]).first
-        if not await form.count():
-            raise SiteError("no application form found on page")
+        form = await locate_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+        )
 
         controls = form.locator(SELECTORS["fields"])
         count = await controls.count()
@@ -225,6 +267,15 @@ class GreenhouseAdapter:
                 key = group
 
             label = await self._label_for(page, form, control, key)
+            # A radio group is addressed by the shared name, not by the id
+            # of whichever option happened to be walked first.
+            selector = (
+                field_selector(None, key)
+                if kind is QuestionKind.RADIO
+                else field_selector(
+                    await control.get_attribute("id"), await control.get_attribute("name")
+                )
+            )
             element_required = await control.get_attribute("required") is not None
 
             options: list[Option] = []
@@ -247,7 +298,7 @@ class GreenhouseAdapter:
                     kind=kind,
                     required=_looks_required(label, element_required),
                     options=options,
-                    selector=f"#{key}" if await control.get_attribute("id") else None,
+                    selector=selector,
                 )
             )
 
@@ -316,116 +367,9 @@ class GreenhouseAdapter:
         return key
 
     async def fill(self, page: Any, answers: dict[str, Any]) -> FillReport:
-        """Fill what we have answers for. Never invent one.
-
-        A question with no answer goes into `unanswered` carrying its exact
-        text, which is what parks the application for the owner.
-        """
-        await self._guard_automation_blocks(page)
-
-        questions = await self.enumerate_fields(page)
-        report = FillReport()
-
-        for question in questions:
-            if question.kind in (QuestionKind.HIDDEN, QuestionKind.DISPLAY):
-                continue
-
-            if question.key not in answers or answers[question.key] in (None, ""):
-                if question.required:
-                    report.unanswered.append(
-                        UnansweredQuestion(
-                            key=question.key,
-                            question=question.label,
-                            kind=question.kind,
-                            options=question.options,
-                            required=True,
-                        )
-                    )
-                else:
-                    report.skipped.append(
-                        SkippedField(
-                            key=question.key,
-                            label=question.label,
-                            reason="no answer in profile and field is optional",
-                        )
-                    )
-                continue
-
-            value = answers[question.key]
-            try:
-                await self._set_value(page, question, value)
-            except ManualCompletionRequired:
-                raise
-            except Exception as exc:  # noqa: BLE001 - one bad field must not abort
-                log.warning(
-                    "field_fill_failed",
-                    key=question.key,
-                    kind=question.kind.value,
-                    error=type(exc).__name__,
-                )
-                report.skipped.append(
-                    SkippedField(
-                        key=question.key,
-                        label=question.label,
-                        reason=f"could not fill: {type(exc).__name__}",
-                    )
-                )
-                continue
-
-            report.filled.append(
-                FilledField(
-                    key=question.key,
-                    label=question.label,
-                    kind=question.kind,
-                    # File contents are never echoed into the report.
-                    value=None if question.kind is QuestionKind.FILE else str(value),
-                )
-            )
-
-        return report
-
-    async def _set_value(self, page: Any, question: Question, value: Any) -> None:
-        selector = question.selector or f"#{question.key}"
-        locator = page.locator(selector).first
-
-        match question.kind:
-            case QuestionKind.FILE:
-                await locator.set_input_files(str(value))
-            case QuestionKind.SINGLE_SELECT | QuestionKind.MULTI_SELECT:
-                await locator.select_option(str(value))
-            case QuestionKind.CHECKBOX | QuestionKind.BOOLEAN:
-                if bool(value):
-                    await locator.check()
-                else:
-                    await locator.uncheck()
-            case QuestionKind.RADIO:
-                escaped = str(value).replace('"', '\\"')
-                await page.locator(f'input[name="{question.key}"][value="{escaped}"]').first.check()
-            case _:
-                await locator.fill(str(value))
+        """Fill what we have answers for. Never invent one."""
+        return await fill_form(self, page, answers, selectors=SELECTORS)
 
     async def submit(self, page: Any) -> Receipt:
-        """Click submit and capture what the site says back.
-
-        Only ever reached after the approval gate — see apps/worker/apply_job.py.
-        """
-        await self._guard_automation_blocks(page)
-
-        button = page.locator(SELECTORS["submit_button"]).first
-        if not await button.count():
-            raise SiteError("no submit button found on application form")
-
-        await button.click()
-        await page.wait_for_load_state("networkidle")
-
-        confirmation = None
-        confirm_locator = page.locator(SELECTORS["confirmation"]).first
-        if await confirm_locator.count():
-            confirmation = " ".join((await confirm_locator.inner_text()).split())
-
-        return Receipt(
-            submitted=True,
-            ats=self.name,
-            url=page.url,
-            confirmation_text=confirmation,
-        )
+        """Click submit and capture what the site says back."""
+        return await submit_form(self, page, selectors=SELECTORS)

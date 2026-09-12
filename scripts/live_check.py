@@ -1,6 +1,9 @@
-"""Gate 1, live half — run the adapter against a real Greenhouse posting.
+"""Gate 1, live half — run an adapter against a real posting.
 
     make gate-1-live URL=https://boards.greenhouse.io/<company>/jobs/<id>
+
+Works for any of the four ATSes: the URL picks the adapter, and the adapter
+knows where its application form lives.
 
 This is READ-ONLY. It parses the posting, enumerates the real field list, and
 fills from a fixture profile so you can see what the adapter would do. It never
@@ -20,7 +23,13 @@ import uuid
 from pathlib import Path
 
 from packages.ats.answers import build_answers
-from packages.ats.base import ManualCompletionRequired, SiteError
+from packages.ats.base import (
+    ManualCompletionRequired,
+    PostingGone,
+    SiteError,
+    UnsupportedSiteError,
+)
+from packages.ats.navigate import open_application
 from packages.ats.registry import adapter_for
 from packages.core.models import Candidate, Profile
 
@@ -57,6 +66,8 @@ async def main(url: str) -> int:
     async with ephemeral_page(headless=not headed, slow_mo_ms=400 if headed else 0) as page:
         await page.goto(url, wait_until="domcontentloaded")
 
+        await adapter.wait_for_posting(page)
+
         try:
             posting = await adapter.parse_posting(page)
         except SiteError as exc:
@@ -73,6 +84,31 @@ async def main(url: str) -> int:
         if posting.closed:
             print("posting is closed; nothing further to check")
             return 0
+
+        # The posting page is not the form on three of the four ATSes, and on
+        # all three the form renders after `domcontentloaded`. Enumerating
+        # straight off the goto above is what made a Lever apply route with 40
+        # controls on it report "no application form found".
+        try:
+            opened = await open_application(page, adapter, url)
+        except ManualCompletionRequired as exc:
+            print(f"BLOCKED reaching the form: {exc}")
+            print("This is the expected outcome on a site that blocks automation.")
+            return 0
+        except UnsupportedSiteError as exc:
+            # Not a bug and not a retry. The employer hosts the application on
+            # their own site; §11 has no extractor for a bespoke careers page.
+            print(f"UNSUPPORTED: {exc}")
+            return 0
+        except PostingGone as exc:
+            print(f"CLOSED: {exc}")
+            return 0
+        except SiteError as exc:
+            print(f"FAIL reaching the application form: {exc}")
+            return 1
+
+        if opened != url:
+            print(f"--- application form: {opened} ---\n")
 
         try:
             questions = await adapter.enumerate_fields(page)
@@ -91,7 +127,7 @@ async def main(url: str) -> int:
             print(f" {flag} [{question.kind.value:<14}] {question.key}")
             print(f"      label: {question.label!r}{options}")
 
-        answers = build_answers(questions, FIXTURE_CANDIDATE, FIXTURE_PROFILE)
+        answers = build_answers(questions, FIXTURE_CANDIDATE, FIXTURE_PROFILE, ats=adapter.name)
         try:
             report = await adapter.fill(page, answers)
         except ManualCompletionRequired as exc:

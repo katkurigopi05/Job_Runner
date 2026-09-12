@@ -162,6 +162,13 @@ _NOISE = (
 )
 
 
+#: Companies resolved at once. Bounded only by politeness toward the
+#: companies' *own* domains — one request each, so no host sees two — and by
+#: local sockets. It cannot affect ATS pacing: those hosts are governed by the
+#: rate limiter, which holds its floor however many coroutines are waiting.
+DEFAULT_CONCURRENCY = 16
+
+
 #: A first-word-only slug shorter than this is a fragment, not a company.
 #: Three because two-letter slugs on a shared ATS host are overwhelmingly
 #: already someone's, and a wrong board is worse here than a missed one: a
@@ -493,6 +500,7 @@ async def resolve_all(
     *,
     vendors: tuple[str, ...] = VENDORS,
     on_result: object = None,
+    concurrency: int = DEFAULT_CONCURRENCY,
 ) -> ResolveReport:
     """Resolve a list of company names, or (name, url) pairs.
 
@@ -500,30 +508,56 @@ async def resolve_all(
     column of names, or names beside the careers URLs someone already
     collected. The pair form resolves far more of them — see `from_url`.
 
-    Sequential on purpose. The rate limiter is per host and every candidate
-    for a given vendor hits the same host, so concurrency would spend its time
-    queued behind the same 2s floor while making the traffic look burstier to
-    the far end.
+    **Companies run concurrently, and that is not a way around §2.6.** This
+    was sequential, on the reasoning that concurrency "would spend its time
+    queued behind the same 2s floor". That is true of the ATS probes and false
+    of everything else a company costs: `from_url` fetches the company's *own*
+    domain, and 3,802 companies are 3,802 distinct hosts with no shared floor
+    between them. Serialising those meant the four ATS hosts sat idle waiting
+    on one careers page at a time — including the ~15% that time out.
+
+    The shared hosts are still governed entirely by the limiter, which holds
+    its floor no matter how many coroutines ask (see
+    `tests/test_ratelimit_concurrency.py`). Raising `concurrency` cannot make
+    the crawler poll any ATS faster; it only stops it idling between probes.
+
+    Results are collected in input order even though they finish out of
+    order, so a registry written from two identical runs is identical.
+    `on_result` still fires as each lands, because it is a progress display.
     """
     active = fetcher or PoliteFetcher()
     report = ResolveReport()
 
+    entries: list[tuple[str, str | None]] = []
     for entry in names:
         stripped, url = (entry, None) if isinstance(entry, str) else entry
         stripped = stripped.strip()
-        if not stripped:
-            continue
-        outcome = await resolve_one(stripped, active, url=url, vendors=vendors)
+        if stripped:
+            entries.append((stripped, url))
+
+    limit = asyncio.Semaphore(max(1, concurrency))
+
+    async def run(index: int, name: str, url: str | None) -> tuple[int, object]:
+        async with limit:
+            return index, await resolve_one(name, active, url=url, vendors=vendors)
+
+    outcomes: list[object] = [None] * len(entries)
+    tasks = [run(i, name, url) for i, (name, url) in enumerate(entries)]
+
+    for finished in asyncio.as_completed(tasks):
+        index, outcome = await finished
+        outcomes[index] = outcome
+        if callable(on_result):
+            on_result(entries[index][0], outcome)
+
+    for outcome in outcomes:
         report.probes += 1
         if isinstance(outcome, Resolved):
             report.resolved.append(outcome)
-        elif outcome[1].startswith("blocked:"):
+        elif isinstance(outcome, tuple) and outcome[1].startswith("blocked:"):
             report.blocked.append(outcome)
-        else:
+        elif isinstance(outcome, tuple):
             report.unresolved.append(outcome)
-
-        if callable(on_result):
-            on_result(stripped, outcome)
 
     log.info("resolve_complete", summary=report.summary())
     return report

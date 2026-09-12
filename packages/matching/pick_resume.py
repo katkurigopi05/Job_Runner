@@ -43,6 +43,23 @@ from packages.matching.embed import Embedder, cosine, get_embedder
 #: run to run would make "which document did they get" unanswerable.
 MIN_MARGIN = 0.02
 
+#: How far below the best candidate's ATS parse score a résumé may sit and
+#: still be considered. Beyond this it is dropped however well it matches.
+#:
+#: Similarity answers "which of these is closest to the job". It cannot answer
+#: "is this a document worth sending", and on the owner's own data those came
+#: apart badly: an eight-line stub — `Backend engineer.`, `Senior Engineer,
+#: Example Corp`, a 555 phone number — beat their real 54-line résumé 0.642 to
+#: 0.609 on a support posting and would have been uploaded to the employer.
+#: The margin was 0.033, outside `MIN_MARGIN`, so the tie-break correctly did
+#: not fire; nothing was broken, the question was never asked. The stub parsed
+#: at 56% against the real résumé's 82%.
+#:
+#: 0.15 is wide on purpose. This is a floor for "not fit to send", not a
+#: preference for tidier formatting — two real résumés differing by a missing
+#: links line should still be decided on the merits by similarity.
+MAX_PARSE_DEFICIT = 0.15
+
 
 @dataclass(frozen=True)
 class ResumeChoice:
@@ -88,6 +105,48 @@ async def base_resumes(session: AsyncSession, candidate_id: uuid.UUID) -> list[R
     return [row for row in rows if _resume_text(row).strip()]
 
 
+def _parse_score(resume: Resume) -> float:
+    """How cleanly an ATS reads this document, ignoring any posting.
+
+    Imported here rather than at module scope: `packages.tailor` imports from
+    `packages.matching`, and taking the dependency the other way at import
+    time would close the cycle.
+    """
+    from packages.tailor.ats import score as ats_score
+    from packages.tailor.parse import ParsedResume
+
+    try:
+        parsed = ParsedResume.model_validate(resume.parsed_json or {})
+    except Exception:  # noqa: BLE001 - a malformed row must not stop the pick
+        return 0.0
+    return ats_score(parsed, "").parse
+
+
+def _readable_enough(resumes: list[Resume]) -> tuple[list[Resume], list[tuple[int, float]]]:
+    """Split candidates into those fit to send and those too far behind.
+
+    Relative to the best candidate rather than to a fixed bar. An owner whose
+    résumés all parse at 60% should still get the best of them; the failure
+    this prevents is a *comparatively* unreadable document winning on a
+    similarity hair.
+
+    Never returns an empty list — if every résumé is somehow below the
+    threshold the best one is still returned, because refusing to pick at all
+    would leave the application with no résumé, and CLAUDE.md §15 already
+    records that an honest untailored résumé beats none.
+    """
+    if len(resumes) < 2:
+        return resumes, []
+
+    parses = {resume.id: _parse_score(resume) for resume in resumes}
+    best = max(parses.values())
+    floor = best - MAX_PARSE_DEFICIT
+
+    keep = [resume for resume in resumes if parses[resume.id] >= floor]
+    drop = [(resume.version, parses[resume.id]) for resume in resumes if parses[resume.id] < floor]
+    return (keep or resumes), drop
+
+
 async def choose_base_resume(
     session: AsyncSession,
     profile: Profile,
@@ -123,6 +182,30 @@ async def choose_base_resume(
     haystack = posting_text.strip()
     if not haystack:
         return None
+
+    # Sendability first, similarity second. A résumé an ATS reads badly scores
+    # nothing with the employer however well it matches the posting, so the
+    # question "is this fit to send" is settled before "which is closest".
+    #
+    # Deliberately scored with no posting: `ats.score` computes the keyword
+    # half only when given one, and sendability is a property of the document
+    # alone. Letting the posting in here would make a résumé's eligibility
+    # depend on the job, which is the similarity question again.
+    readable, rejected = _readable_enough(resumes)
+    if len(readable) == 1 and rejected:
+        only = readable[0]
+        worst = ", ".join(f"v{version} at {parse:.0%}" for version, parse in rejected)
+        return ResumeChoice(
+            resume_id=only.id,
+            version=only.version,
+            score=0.0,
+            reason=(
+                f"the only résumé an ATS reads cleanly — dropped {worst} "
+                f"against this one's {_parse_score(only):.0%}"
+            ),
+            considered=((only.version, 0.0),),
+        )
+    resumes = readable
 
     active = embedder or get_embedder()
     posting_vector = active.encode([haystack])[0]

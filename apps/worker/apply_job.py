@@ -24,10 +24,12 @@ from packages.ats.answers import asks_for_cover_letter, build_answers
 from packages.ats.base import (
     FillReport,
     ManualCompletionRequired,
+    PostingGone,
     Question,
     SiteError,
     UnsupportedSiteError,
 )
+from packages.ats.navigate import open_application
 from packages.ats.registry import adapter_for
 from packages.ats.screen import ScreenReport, screen
 from packages.core.config import get_settings
@@ -121,6 +123,10 @@ async def handle_apply(session: AsyncSession, claimed: ClaimedTask) -> None:
         await _run_pipeline(session, application, candidate, profile)
     except UnsupportedSiteError as exc:
         await _fail(session, application, FailureReason.UNSUPPORTED_SITE, str(exc))
+    except PostingGone as exc:
+        # A board that redirects away from a posting it no longer carries. The
+        # HTTP check below only sees 404 and 410; this one answers 200.
+        await _fail(session, application, FailureReason.JOB_CLOSED, str(exc))
     except ManualCompletionRequired as exc:
         # A blocked site is a scope boundary, not a bug to work around.
         await _fail(session, application, FailureReason.MANUAL_COMPLETION_REQUIRED, str(exc))
@@ -163,10 +169,33 @@ async def _run_pipeline(
             )
             return
 
+        # Same defect as the form below, one step earlier and with worse
+        # consequences. A live Ashby posting is an empty `<div id="root">` at
+        # `domcontentloaded`, so title, location and `description_raw` all came
+        # back None — and the application was then tailored against an empty
+        # job description, scored for ATS keywords against no vocabulary, and
+        # filtered on a location nobody had read. Every one of those reads as
+        # "poor match" rather than as "we never looked".
+        await adapter.wait_for_posting(page)
+
         posting = await adapter.parse_posting(page)
         if posting.closed:
             await _fail(session, application, FailureReason.JOB_CLOSED, "posting is closed")
             return
+
+        # The posting URL is not always the form. Greenhouse serves both on one
+        # page; Lever, Ashby and Workable each put the application on a route of
+        # its own, and all three render it with React *after*
+        # `domcontentloaded`. Enumerating straight off the `goto` above
+        # therefore read an empty page and reported "no application form found"
+        # — which reads as a broken selector, and sent a live run looking at the
+        # adapter instead of at the navigation that never happened. A live probe
+        # of those routes found 40 Lever controls and nine Ashby fields waiting.
+        #
+        # `application.url` is deliberately not updated: it is half of the
+        # `UNIQUE(candidate_id, url)` that stops us applying twice, and the
+        # posting URL is the stable identity of the job.
+        await open_application(page, adapter, application.url)
 
         questions = await adapter.enumerate_fields(page)
 
@@ -212,6 +241,9 @@ async def _run_pipeline(
             cover_letter_text=(letter or {}).get("text"),
             cover_letter_path=_letter_path(application),
             reply_to=_reply_to(candidate, application),
+            # The adapter's own field-name map answers before the label
+            # rules do. Three adapters carried one and nothing asked.
+            ats=adapter.name,
         )
         report = await adapter.fill(page, answers)
 

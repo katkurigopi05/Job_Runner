@@ -450,6 +450,52 @@ class PostingOut(BaseModel):
     closed_at: datetime | None
 
 
+class AtsFindingOut(BaseModel):
+    """One observable defect, with what it costs the parse score."""
+
+    code: str
+    detail: str
+    cost: float
+    #: The offending line verbatim, so the owner can check the call.
+    line: str | None = None
+
+
+class PostingAtsOut(BaseModel):
+    """How an ATS would read the owner's résumé against one posting.
+
+    Answers the question `/review` answers, at the point the owner is still
+    *choosing* — before an application exists. §23 wants the score before and
+    after tailoring; this is the before, available while the decision to apply
+    at all is still open.
+
+    It names the résumé it scored. `matching/pick_resume.choose_base_resume`
+    picks that, the same function the apply pipeline uses, so this is the
+    document that would actually be sent. Scoring the profile's default
+    instead would put a number on screen for a file the employer would never
+    receive — the defect CLAUDE.md §15 records twice already.
+    """
+
+    posting_id: uuid.UUID
+    resume_id: uuid.UUID
+    resume_version: int
+    #: Why this résumé and not another of the owner's. Rendered, not inferred.
+    resume_reason: str
+
+    #: 1.0 means nothing observable stops a parser.
+    parse: float
+    #: Share of the posting's salient terms the résumé backs.
+    keywords: float
+    #: False when the posting carries no description, in which case `keywords`
+    #: must not be read — 0.0 there means "not asked", not "matches nothing".
+    scored_against_posting: bool
+
+    supported: list[str] = Field(default_factory=list)
+    #: What the posting asks for and the résumé does not evidence. Not a
+    #: to-do list: writing one of these in would be fabrication (§2.1).
+    missing: list[str] = Field(default_factory=list)
+    findings: list[AtsFindingOut] = Field(default_factory=list)
+
+
 class PostingSearchOut(BaseModel):
     """Search results for postings."""
 

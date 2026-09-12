@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching export-labels import-csv probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching export-labels import-csv probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -79,6 +79,12 @@ eval-tailor:
 doctor:
 	$(PY)/python -m scripts.doctor
 
+# A fresh Fernet key for VAULT_KEY. Printed, never written: .env is
+# gitignored and stays that way, and appending blindly would leave two
+# VAULT_KEY lines with the stale one winning on some readers.
+vault-key:
+	@$(PY)/python -c 'from packages.core.vault import generate_key; print(generate_key())'
+
 validate-seeds:
 	$(PY)/python -m packages.crawler.validate seeds/companies.yaml
 
@@ -126,14 +132,18 @@ worktree:
 # ran 150 where the gate ran 243. Both still *ran* under gate-0, so nothing was
 # unchecked; what was lost is the label saying which phase regressed, which is
 # the exact cost §13 warns about. One definition, read by both.
-GATE1_TESTS := tests/test_greenhouse.py tests/test_greenhouse_har.py
+GATE1_TESTS := tests/test_greenhouse.py tests/test_greenhouse_har.py \
+  tests/test_lever.py tests/test_ashby.py tests/test_workable.py \
+  tests/test_application_route.py tests/test_adapter_fill.py \
+  tests/test_posting_readiness.py tests/test_answers_use_the_adapters_key_map.py
 GATE2_TESTS := tests/test_gate2.py tests/test_worker.py
 GATE3_TESTS := tests/test_no_fabrication.py tests/test_cover_letter.py \
   tests/test_apply_cover_letter.py tests/test_tailor_cache.py \
   tests/test_apply_uploads_tailored.py
 GATE4_TESTS := tests/test_mcp.py
 GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
-  tests/test_bespoke_probe.py tests/test_labeling_loop.py
+  tests/test_bespoke_probe.py tests/test_labeling_loop.py \
+  tests/test_posting_url_is_reachable.py
 GATE6_TESTS := tests/test_inbox.py tests/test_inbox_duplicates.py
 
 gate-0: lint typecheck check-migrations

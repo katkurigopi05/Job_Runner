@@ -159,12 +159,3 @@ async def test_missing_form_is_site_error(page) -> None:
 
     with pytest.raises(SiteError, match="no application form"):
         await WorkableAdapter().enumerate_fields(page)
-
-
-async def test_unverified_write_paths_are_explicit(page) -> None:
-    adapter = WorkableAdapter()
-
-    with pytest.raises(NotImplementedError, match="not implemented"):
-        await adapter.fill(page, {})
-    with pytest.raises(NotImplementedError, match="not implemented"):
-        await adapter.submit(page)

@@ -154,6 +154,47 @@ class ATSAdapter(Protocol):
         """True if this adapter handles the given posting URL."""
         ...
 
+    @staticmethod
+    def application_url(url: str) -> str:
+        """Where the application form for this posting lives.
+
+        Greenhouse answers with the posting URL itself; the other three put the
+        form on a route of its own. Returning the input unchanged is always
+        valid — an adapter never invents a route for a URL it cannot read.
+        """
+        ...
+
+    @staticmethod
+    def profile_key_for(field_name: str) -> str | None:
+        """The profile key this field takes its answer from, or None.
+
+        The ATS's own statement about its field names — `_systemfield_name` is
+        the full name, `urls[LinkedIn]` is the LinkedIn URL — which is better
+        evidence than a regex over whatever label sits beside it. None means
+        only a human knows, and §2.4 parks the question rather than guessing.
+
+        Greenhouse answers None throughout: its field names are already the
+        words a label rule matches.
+        """
+        ...
+
+    async def wait_for_form(self, page: Any, timeout_ms: int = ...) -> None:
+        """Block until the employer's questions have rendered.
+
+        Three of the four ATSes render the form with React after
+        `domcontentloaded`, so a check that runs immediately sees an empty
+        page and reports a missing form that is merely late.
+        """
+        ...
+
+    async def wait_for_posting(self, page: Any, timeout_ms: int = ...) -> None:
+        """Give the posting a chance to render before it is read.
+
+        Best-effort: a withdrawn posting has no title, and raising here would
+        report `site_error` for the one outcome that is expected and permanent.
+        """
+        ...
+
     async def parse_posting(self, page: Any) -> ParsedPosting: ...
 
     async def enumerate_fields(self, page: Any) -> list[Question]: ...
@@ -171,6 +212,24 @@ class SiteError(Exception):
     """The page did not behave as the adapter expects — maps to `site_error`.
 
     Message must not carry page HTML; it is written to the task row.
+    """
+
+
+class PostingGone(Exception):
+    """The posting has been taken down — maps to `job_closed`.
+
+    Separate from `UnsupportedSiteError` because a redirect off the ATS means
+    one of two different things and they have opposite consequences for the
+    registry. Greenhouse answers 200 for both:
+
+    - Stripe's board redirects *every* posting, live ones included, to
+      `stripe.com/careers/listing/<role>/<id>`. The employer hosts the
+      application themselves, and we have no extractor for a bespoke page.
+    - A withdrawn Cloudflare posting redirects to
+      `cloudflare.com/careers/#open-roles` — the careers index, naming no job.
+      Cloudflare's board is fine; this one role is gone.
+
+    The landing URL still carrying the job id is what tells them apart.
     """
 
 

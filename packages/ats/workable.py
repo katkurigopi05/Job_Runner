@@ -27,9 +27,17 @@ from packages.ats.base import (
     Question,
     QuestionKind,
     Receipt,
-    SiteError,
 )
+from packages.ats.form import field_selector, fill_form, submit_form
 from packages.ats.greenhouse import _clean_label, _kind_for
+from packages.ats.navigate import (
+    FORM_READY_TIMEOUT_MS,
+    POSTING_READY_TIMEOUT_MS,
+    application_route,
+    locate_form,
+)
+from packages.ats.navigate import wait_for_form as _wait_for_form
+from packages.ats.navigate import wait_for_posting as _wait_for_posting
 
 #: https://apply.workable.com/<company>/j/<id>[/apply]
 _URL_RE = re.compile(
@@ -39,7 +47,11 @@ _URL_RE = re.compile(
 )
 
 SELECTORS: dict[str, str] = {
-    "form": "form[action*='/apply']",
+    # The live form carries no `action`. The fixture that passed for months
+    # did, because it was written beside this selector. `locate_form` picks the
+    # candidate with the most fields, so admitting a bare `form` here does not
+    # hand back the site search box.
+    "form": "form[action*='/apply'], form",
     "posting_title": "[data-ui='job-title']",
     "posting_location": "[data-ui='job-workplace']",
     "posting_body": (
@@ -63,6 +75,9 @@ SELECTORS: dict[str, str] = {
         "text=/this job is closed/i, text=/position has been filled/i"
     ),
 }
+
+#: Workable puts the form on `/apply`.
+APPLICATION_SEGMENT: str | None = "apply"
 
 _FILE_PROMPT = "Choose file or drag and drop here"
 _EMPLOYER_PREFIX = "QA_"
@@ -113,6 +128,35 @@ class WorkableAdapter:
         match = _URL_RE.match(url)
         return match.group("job_id") if match else None
 
+    @staticmethod
+    def profile_key_for(field_name: str) -> str | None:
+        """The profile key this field takes its answer from, or None.
+
+        The module-level function is the implementation; this is how
+        `build_answers` reaches it without importing one adapter by name.
+        """
+        return profile_key_for(field_name)
+
+    @staticmethod
+    def application_url(url: str) -> str:
+        return application_route(url, _URL_RE, APPLICATION_SEGMENT)
+
+    async def wait_for_posting(self, page: Any, timeout_ms: int = POSTING_READY_TIMEOUT_MS) -> None:
+        """Give the posting a chance to render before reading it."""
+        await _wait_for_posting(
+            page, title_selector=SELECTORS["posting_title"], timeout_ms=timeout_ms
+        )
+
+    async def wait_for_form(self, page: Any, timeout_ms: int = FORM_READY_TIMEOUT_MS) -> None:
+        """Block until the employer's questions are actually on the page."""
+        await _wait_for_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+            captcha_selector=SELECTORS["captcha"],
+            timeout_ms=timeout_ms,
+        )
+
     async def _guard_automation_blocks(self, page: Any) -> None:
         """Stop on CAPTCHA; never attempt to bypass it. CLAUDE.md §2.5."""
         if await page.locator(SELECTORS["captcha"]).count():
@@ -149,9 +193,11 @@ class WorkableAdapter:
         """Walk the live form without changing any value."""
         await self._guard_automation_blocks(page)
 
-        form = page.locator(SELECTORS["form"]).first
-        if not await form.count():
-            raise SiteError("no application form found on page")
+        form = await locate_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+        )
 
         controls = form.locator(SELECTORS["fields"])
         questions: list[Question] = []
@@ -200,7 +246,16 @@ class WorkableAdapter:
                 or (await control.get_attribute("aria-required")) == "true"
             )
             questions.append(
-                Question(key=key, label=label, kind=kind, required=required, options=options)
+                Question(
+                    key=key,
+                    label=label,
+                    kind=kind,
+                    required=required,
+                    options=options,
+                    selector=field_selector(
+                        await control.get_attribute("id"), await control.get_attribute("name")
+                    ),
+                )
             )
 
         return questions
@@ -225,12 +280,9 @@ class WorkableAdapter:
         return key.replace("_", " ")
 
     async def fill(self, page: Any, answers: dict[str, Any]) -> FillReport:
-        """Fill a Workable form (not implemented)."""
-        raise NotImplementedError(
-            "Workable fill is not implemented. Parsing and enumeration were verified "
-            "against a live form; filling was not, so no unchecked values are written."
-        )
+        """Fill what we have answers for. Never invent one."""
+        return await fill_form(self, page, answers, selectors=SELECTORS)
 
     async def submit(self, page: Any) -> Receipt:
-        """Submit a Workable application (not implemented)."""
-        raise NotImplementedError("Workable submit is not implemented.")
+        """Click submit and capture what the site says back."""
+        return await submit_form(self, page, selectors=SELECTORS)

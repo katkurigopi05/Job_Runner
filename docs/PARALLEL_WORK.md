@@ -120,9 +120,19 @@ The react-select bug survived a green suite for weeks because its fixture was
 hand-written and more polite than the real DOM.
 
 **Done when** `make gate-0` passes and the tests are trimmed from markup that
-was actually observed. `fill()` and `submit()` may raise `NotImplementedError`
-if they cannot be verified against a live form — an unverified fill path puts
-unchecked values on a real application, which is worse than an honest gap.
+was actually observed.
+
+`fill()` and `submit()` no longer raise `NotImplementedError` on any adapter.
+The refusal was right while nothing verified them — an unverified fill path
+puts unchecked values on a real application, which is worse than an honest gap
+— and what replaced it is `tests/test_adapter_fill.py`, which holds all four to
+one contract against each ATS's own markup. The mechanics live once in
+`packages/ats/form.py`; what differs per ATS is how the form is found and what
+the fields are called, and `enumerate_fields` has answered both by then.
+
+Still unverified against a live form, and stated rather than implied: every
+apply route mounts a captcha, so the fill path is proven against recorded and
+observed markup, not against a submission.
 
 Expect a captcha. All three existing ATSes mount one at the apply stage; §2.5
 says stop, never route around.

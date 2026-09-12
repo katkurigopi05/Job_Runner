@@ -32,9 +32,18 @@ from packages.ats.base import (
     Question,
     QuestionKind,
     Receipt,
-    SiteError,
 )
+from packages.ats.form import field_selector, fill_form, submit_form
 from packages.ats.greenhouse import _clean_label, _kind_for
+from packages.ats.navigate import (
+    FORM_READY_TIMEOUT_MS,
+    POSTING_READY_TIMEOUT_MS,
+    application_route,
+    locate_form,
+    longest_text,
+)
+from packages.ats.navigate import wait_for_form as _wait_for_form
+from packages.ats.navigate import wait_for_posting as _wait_for_posting
 
 #: https://jobs.lever.co/<company>/<posting-uuid>[/apply]
 _URL_RE = re.compile(
@@ -46,7 +55,12 @@ SELECTORS: dict[str, str] = {
     "form": "#application-form, form[id*='application']",
     "posting_title": ".posting-header h2, .posting-headline h2, h2",
     "posting_location": ".location, .posting-categories .location",
-    "posting_body": ".posting-description, .section-wrapper .section, [data-qa='job-description']",
+    # `.content` wraps the whole posting; the `.section` blocks are its parts,
+    # and the first of them is the header. `longest_text` is what stops that
+    # header being reported as the job description.
+    "posting_body": (
+        ".content, .posting-description, .section-wrapper .section, [data-qa='job-description']"
+    ),
     "fields": (
         "input:not([type='hidden']):not([type='submit']):not([type='button']), textarea, select"
     ),
@@ -65,6 +79,9 @@ SELECTORS: dict[str, str] = {
         "text=/this posting is closed/i, text=/position has been filled/i"
     ),
 }
+
+#: Lever puts the form on `/apply`.
+APPLICATION_SEGMENT: str | None = "apply"
 
 #: Lever's own names for the fields every posting has. Anything else is a
 #: `cards[...]` question, which only its label describes.
@@ -111,6 +128,35 @@ class LeverAdapter:
         match = _URL_RE.match(url)
         return match.group("job_id") if match else None
 
+    @staticmethod
+    def profile_key_for(field_name: str) -> str | None:
+        """The profile key this field takes its answer from, or None.
+
+        The module-level function is the implementation; this is how
+        `build_answers` reaches it without importing one adapter by name.
+        """
+        return profile_key_for(field_name)
+
+    @staticmethod
+    def application_url(url: str) -> str:
+        return application_route(url, _URL_RE, APPLICATION_SEGMENT)
+
+    async def wait_for_posting(self, page: Any, timeout_ms: int = POSTING_READY_TIMEOUT_MS) -> None:
+        """Give the posting a chance to render before reading it."""
+        await _wait_for_posting(
+            page, title_selector=SELECTORS["posting_title"], timeout_ms=timeout_ms
+        )
+
+    async def wait_for_form(self, page: Any, timeout_ms: int = FORM_READY_TIMEOUT_MS) -> None:
+        """Block until the employer's questions are actually on the page."""
+        await _wait_for_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+            captcha_selector=SELECTORS["captcha"],
+            timeout_ms=timeout_ms,
+        )
+
     async def _guard_automation_blocks(self, page: Any) -> None:
         """Stop on a captcha rather than trying to get around it.
 
@@ -136,7 +182,7 @@ class LeverAdapter:
             external_id=self.external_id(url),
             title=await _text(SELECTORS["posting_title"]),
             location=await _text(SELECTORS["posting_location"]),
-            description_raw=await _text(SELECTORS["posting_body"]),
+            description_raw=await longest_text(page, SELECTORS["posting_body"]),
             closed=closed,
         )
 
@@ -144,9 +190,11 @@ class LeverAdapter:
         """Walk the real form. The field list comes from the page, not a guess."""
         await self._guard_automation_blocks(page)
 
-        form = page.locator(SELECTORS["form"]).first
-        if not await form.count():
-            raise SiteError("no application form found on page")
+        form = await locate_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+        )
 
         controls = form.locator(SELECTORS["fields"])
         count = await controls.count()
@@ -196,6 +244,9 @@ class LeverAdapter:
                     kind=kind,
                     required=await control.get_attribute("required") is not None,
                     options=options,
+                    selector=field_selector(
+                        await control.get_attribute("id"), await control.get_attribute("name")
+                    ),
                 )
             )
 
@@ -221,11 +272,9 @@ class LeverAdapter:
         return key
 
     async def fill(self, page: Any, answers: dict[str, Any]) -> FillReport:
-        raise NotImplementedError(
-            "Lever fill is not implemented. enumerate_fields and parse_posting are "
-            "verified against a live board; filling is not, and shipping an "
-            "unverified fill path would put unchecked values on a real application."
-        )
+        """Fill what we have answers for. Never invent one."""
+        return await fill_form(self, page, answers, selectors=SELECTORS)
 
     async def submit(self, page: Any) -> Receipt:
-        raise NotImplementedError("Lever submit is not implemented.")
+        """Click submit and capture what the site says back."""
+        return await submit_form(self, page, selectors=SELECTORS)

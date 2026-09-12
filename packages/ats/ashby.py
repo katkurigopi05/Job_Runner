@@ -34,7 +34,16 @@ from packages.ats.base import (
     Receipt,
     SiteError,
 )
+from packages.ats.form import field_selector, fill_form, submit_form
 from packages.ats.greenhouse import _clean_label, _kind_for
+from packages.ats.navigate import (
+    FORM_READY_TIMEOUT_MS,
+    POSTING_READY_TIMEOUT_MS,
+    application_route,
+    longest_text,
+)
+from packages.ats.navigate import wait_for_form as _wait_for_form
+from packages.ats.navigate import wait_for_posting as _wait_for_posting
 
 #: https://jobs.ashbyhq.com/<company>/<posting-uuid>[/application]
 _URL_RE = re.compile(
@@ -47,7 +56,17 @@ SELECTORS: dict[str, str] = {
     # the document and the field selector has to be the thing that narrows.
     "form": "body",
     "posting_title": "h1",
-    "posting_location": "[class*='location'], [data-highlight]",
+    # Ashby's left pane is a list of `<h2>heading</h2><p>value</p>` sections
+    # inside one `[data-highlight]` container. Reading the container whole
+    # gives "Location United Kingdom; Germany; New York; Poland Employment
+    # Type Full time Location Type Remote Department Operations", which
+    # `locality.py` then has to make a region decision from — and hard filters
+    # exclude, so getting it wrong drops the posting and says nothing.
+    "posting_section": "div:has(> h2)",
+    "posting_section_heading": "h2",
+    "posting_section_value": "p",
+    # Fallback for a posting with no details pane at all.
+    "posting_location": "[class*='location']",
     "posting_body": "[class*='_description'], [class*='jobPosting'], main",
     "fields": (
         "input:not([type='hidden']):not([type='submit']):not([type='button']), textarea, select"
@@ -65,6 +84,9 @@ SELECTORS: dict[str, str] = {
         "text=/this job is closed/i, text=/position has been filled/i"
     ),
 }
+
+#: Ashby puts the form on `/application`.
+APPLICATION_SEGMENT: str | None = "application"
 
 #: Ashby prefixes the fields every posting has. Everything else is a uuid.
 _SYSTEM_PREFIX = "_systemfield_"
@@ -114,6 +136,35 @@ class AshbyAdapter:
         match = _URL_RE.match(url)
         return match.group("job_id") if match else None
 
+    @staticmethod
+    def profile_key_for(field_name: str) -> str | None:
+        """The profile key this field takes its answer from, or None.
+
+        The module-level function is the implementation; this is how
+        `build_answers` reaches it without importing one adapter by name.
+        """
+        return profile_key_for(field_name)
+
+    @staticmethod
+    def application_url(url: str) -> str:
+        return application_route(url, _URL_RE, APPLICATION_SEGMENT)
+
+    async def wait_for_posting(self, page: Any, timeout_ms: int = POSTING_READY_TIMEOUT_MS) -> None:
+        """Give the posting a chance to render before reading it."""
+        await _wait_for_posting(
+            page, title_selector=SELECTORS["posting_title"], timeout_ms=timeout_ms
+        )
+
+    async def wait_for_form(self, page: Any, timeout_ms: int = FORM_READY_TIMEOUT_MS) -> None:
+        """Block until the employer's questions are actually on the page."""
+        await _wait_for_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+            captcha_selector=SELECTORS["captcha"],
+            timeout_ms=timeout_ms,
+        )
+
     async def _guard_automation_blocks(self, page: Any) -> None:
         """Stop on a captcha rather than trying to get around it. §2.5."""
         if await page.locator(SELECTORS["captcha"]).count():
@@ -133,10 +184,48 @@ class AshbyAdapter:
             url=url,
             external_id=self.external_id(url),
             title=await _text(SELECTORS["posting_title"]),
-            location=await _text(SELECTORS["posting_location"]),
-            description_raw=await _text(SELECTORS["posting_body"]),
+            location=await self._location(page),
+            description_raw=await longest_text(page, SELECTORS["posting_body"]),
             closed=closed,
         )
+
+    async def _location(self, page: Any) -> str | None:
+        """Where the job is, from the details pane's own Location section.
+
+        `Location Type` is folded in when it is there: `locality.reads_as_remote`
+        reads the location field, and a posting naming four countries with a
+        mode of Remote is a different job from one naming four offices. Ashby
+        states the two separately and nothing else would carry the distinction.
+        """
+        sections = await self._sections(page)
+        where = sections.get("location")
+        mode = sections.get("location type")
+
+        if not where:
+            locator = page.locator(SELECTORS["posting_location"]).first
+            if not await locator.count():
+                return None
+            return _clean_label(await locator.inner_text()) or None
+
+        if mode and mode.lower() not in where.lower():
+            return f"{where} ({mode})"
+        return where
+
+    async def _sections(self, page: Any) -> dict[str, str]:
+        """The details pane as `{heading: value}`, lowercased headings."""
+        found: dict[str, str] = {}
+        blocks = page.locator(SELECTORS["posting_section"])
+        for index in range(await blocks.count()):
+            block = blocks.nth(index)
+            heading = block.locator(SELECTORS["posting_section_heading"]).first
+            value = block.locator(SELECTORS["posting_section_value"]).first
+            if not await heading.count() or not await value.count():
+                continue
+            name = _clean_label(await heading.inner_text()).lower()
+            text = _clean_label(await value.inner_text())
+            if name and text:
+                found.setdefault(name, text)
+        return found
 
     async def enumerate_fields(self, page: Any) -> list[Question]:
         """Walk the real page. There is no form to scope to, so the page is it."""
@@ -191,7 +280,16 @@ class AshbyAdapter:
             )
 
             questions.append(
-                Question(key=key, label=label, kind=kind, required=required, options=options)
+                Question(
+                    key=key,
+                    label=label,
+                    kind=kind,
+                    required=required,
+                    options=options,
+                    selector=field_selector(
+                        await control.get_attribute("id"), await control.get_attribute("name")
+                    ),
+                )
             )
 
         return questions
@@ -216,11 +314,9 @@ class AshbyAdapter:
         return key.removeprefix(_SYSTEM_PREFIX).replace("_", " ")
 
     async def fill(self, page: Any, answers: dict[str, Any]) -> FillReport:
-        raise NotImplementedError(
-            "Ashby fill is not implemented. parse_posting and enumerate_fields are "
-            "verified against a live board; filling is not, and an unverified fill "
-            "path would put unchecked values on a real application."
-        )
+        """Fill what we have answers for. Never invent one."""
+        return await fill_form(self, page, answers, selectors=SELECTORS)
 
     async def submit(self, page: Any) -> Receipt:
-        raise NotImplementedError("Ashby submit is not implemented.")
+        """Click submit and capture what the site says back."""
+        return await submit_form(self, page, selectors=SELECTORS)
