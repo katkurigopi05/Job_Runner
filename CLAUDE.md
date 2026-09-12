@@ -549,20 +549,53 @@ have left Greenhouse — and they were removed, taking it to 29. A 404 board is
 worse than an absent one: it yields zero postings, which reads identically to
 "nothing new since the last poll".
 
-**It is now 119**, and this paragraph said 29 until someone counted. The
-import of career-ops' company list added 90 entries and superseded the number
-without updating the sentence that carried it. Two things follow, and both
-matter more than the count:
+The import of career-ops' company list then added 90 entries, taking it to 119.
 
-- The paragraph also claimed the 21 dead boards were "listed at the bottom of
-  `seeds/companies.yaml` with the evidence rather than deleted". They were
-  deleted. There is no retired section in that file and never has been. The
-  argument for keeping them is still right; it was simply never implemented.
-- **The 90 imported entries have never been validated.** The 404 sweep ran
-  against the original 50. So the registry today is 29 checked boards and 90
-  unchecked ones, and on the evidence of the first sweep — 21 of 50 dead —
-  a meaningful share of the newcomers are polling nothing. Run
-  `make validate-seeds` before trusting a quiet crawl.
+**It is now 105 live boards and 14 retired ones**, and this paragraph carried
+three wrong claims until someone read the file. It has said "29", then "119",
+and twice described a state of the registry that had already been superseded —
+which is the failure mode worth naming here, because a count in prose goes
+stale the moment anything writes to the file it describes.
+
+What is actually true, read from `seeds/companies.yaml` on **2026-09-12**:
+
+| | |
+|---|---|
+| live entries under `companies:` | 105 — greenhouse 64, ashby 33, lever 8 |
+| entries under `retired:` | 14 |
+| stamped `checked` | **105 of 105**, all `2026-09-07`, all state `api` |
+| re-swept `2026-09-12` | **105 of 105 answered `api=200`. Zero dead.** |
+
+So the two claims this paragraph used to make are both retired with it:
+
+- It said "there is no retired section in that file and never has been". There
+  is one now, and it holds what §15 argued for — the evidence rather than a
+  deletion. Every entry carries the statuses that condemned it
+  (`temporaltechnologies`, `runpod`, `ada`, `lindy`, `factorial`, `vinted` and
+  the rest: `404` from the API, and `404` or nothing from the rendered page).
+- It said "the 90 imported entries have never been validated", and warned that
+  a meaningful share were probably polling nothing. A `--write` sweep on
+  2026-09-07 checked **all 105** and every one answered through the board API.
+  There are no unvalidated boards left.
+
+The 2026-09-12 re-sweep took just over three minutes for 105 boards, which is
+the §2.6 amendment doing its job: every one of these hosts is in
+`ratelimit.SHARED_API_HOSTS`, so the floor is 2s rather than 60s. At 60s the
+same sweep is 105 minutes, which is the difference between a check you run
+before trusting a crawl and one you never run. `api.ashbyhq.com` returned 401
+for robots.txt again, which the fetcher logs and treats as it always has.
+
+One gap in what the sweep recorded, since it is the kind of thing that is only
+visible later: **every retired entry has `company: None`.** The slug and the
+evidence survived the move; the human-readable name did not. A slug that 404s
+today may be a rename rather than a departure, and the name is half of what
+would tell those apart a year from now.
+
+`make validate-seeds` reports without touching the file;
+`make validate-seeds-write` re-stamps. Re-run before trusting a quiet crawl: a
+stamp says a board answered on the day it was written, not today, and a board
+that has since died yields zero postings — which reads identically to nothing
+new since the last poll. That is the whole reason this sweep exists.
 
 **Gate 5:** crawler runs a full cycle over the seed list without exceeding rate limits;
 second run emits zero postings (change detection works); match scores are sane against a
@@ -1135,11 +1168,18 @@ cover either, so "Gate 3 passes" continues to mean less than "Phase 3 works".
 
   The measured duplication is somewhere else. The audit trail's heaviest day —
   204 uploads against a ceiling of 200 — carried only **69 distinct payloads**,
-  and 189 of the 204 were `tailor.system`. Nothing persisted: the database
-  holds one résumé and no tailored ones. That is `packages/tailor/evaluate.py`,
-  an offline harness with no session, re-run over the same fixtures. This cache
-  does not touch it and should not; a cache there is the follow-up that matches
-  the evidence.
+  and 189 of the 204 were `tailor.system`, and none of it persisted. That is
+  `packages/tailor/evaluate.py`, an offline harness with no session, re-run
+  over the same fixtures. This cache does not touch it and should not; a cache
+  there is the follow-up that matches the evidence.
+
+  This paragraph used to reach that conclusion by way of "the database holds
+  one résumé and no tailored ones", which is no longer true: on **2026-09-12**
+  it holds **6 résumés — 2 base, 4 tailored** — against 1 profile and 1
+  candidate. The conclusion is unaffected, because what makes the cache
+  near-useless today is the one profile and no two postings sharing a
+  `content_hash`, not the row count. The sentence is corrected rather than left
+  to be believed.
 
 Gate 3 passed without either of them for as long as neither existed, because
 it tests fabrication and the PDF round trip — the part with consequences — and
