@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching export-labels import-csv probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching export-labels import-csv probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -78,6 +78,12 @@ eval-tailor:
 
 doctor:
 	$(PY)/python -m scripts.doctor
+
+# A fresh Fernet key for VAULT_KEY. Printed, never written: .env is
+# gitignored and stays that way, and appending blindly would leave two
+# VAULT_KEY lines with the stale one winning on some readers.
+vault-key:
+	@$(PY)/python -c 'from packages.core.vault import generate_key; print(generate_key())'
 
 validate-seeds:
 	$(PY)/python -m packages.crawler.validate seeds/companies.yaml

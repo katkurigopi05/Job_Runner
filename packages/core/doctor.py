@@ -342,6 +342,60 @@ def check_vault_key() -> Check:
     return Check("vault", Health.OK, "key present and parseable")
 
 
+#: The three settings an IMAP poll cannot run without. The port has a default
+#: that is right for every provider worth naming, so it is not one of them.
+_IMAP_REQUIRED = ("IMAP_HOST", "IMAP_USERNAME", "IMAP_PASSWORD")
+
+
+def check_inbox() -> Check:
+    """Whether the recruiter-reply tracker has a mailbox to poll.
+
+    Phase 6 routes replies back onto applications and the whole chain is inert
+    without one, but nothing said so: an unconfigured inbox looked exactly like
+    a quiet one. That is the dead-board failure again — zero messages reads
+    identically to nothing new since the last poll.
+
+    Does no network. `make doctor` is used as a precondition in scripts, and a
+    check that dials an unreachable host hangs the thing it was meant to
+    protect. So this answers "is it configured", and says only that.
+
+    Never reports the password. §2.7 has no exception for diagnostic output,
+    which is pasted into chat windows more readily than anything else here.
+    """
+    settings = get_settings()
+    values = {
+        "IMAP_HOST": settings.imap_host,
+        "IMAP_USERNAME": settings.imap_username,
+        "IMAP_PASSWORD": settings.imap_password,
+    }
+    missing = [name for name in _IMAP_REQUIRED if not values[name]]
+
+    if len(missing) == len(_IMAP_REQUIRED):
+        return Check(
+            "inbox",
+            Health.FAIL,
+            "no mailbox configured — recruiter replies are not ingested",
+            fix="set IMAP_HOST, IMAP_USERNAME and IMAP_PASSWORD in .env",
+            required=False,
+        )
+
+    if missing:
+        # The worst of the three states: it looks set up and cannot connect.
+        return Check(
+            "inbox",
+            Health.FAIL,
+            f"partly configured — {', '.join(missing)} not set",
+            fix=f"set {', '.join(missing)} in .env",
+            required=False,
+        )
+
+    return Check(
+        "inbox",
+        Health.OK,
+        f"configured for {settings.imap_username} at {settings.imap_host}:{settings.imap_port}",
+    )
+
+
 def check_storage() -> Check:
     """Check that storage root is writable."""
     settings = get_settings()
@@ -435,6 +489,7 @@ async def run(*, include_optional: bool = True) -> Report:
         check_np_tagger(),
         await check_playwright_browser(),
         check_vault_key(),
+        check_inbox(),
         check_llm_provider(),
         await check_database(),
     ]
