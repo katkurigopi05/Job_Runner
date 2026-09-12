@@ -14,6 +14,7 @@ Gate 5 asks that a second run emits zero postings. That falls out of this.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -26,6 +27,10 @@ from packages.crawler.extract import CompanySeed, ExtractedPosting, extractor_fo
 from packages.crawler.fetch import Blocked, PoliteFetcher
 
 log = structlog.get_logger(__name__)
+
+#: Called with each company's outcome as the cycle produces it. The `Company`
+#: is `None` when the seed never reached the registry — see `crawl_company`.
+ResultHook = Callable[["Company | None", "CompanyResult"], Awaitable[None]]
 
 
 @dataclass
@@ -42,10 +47,36 @@ class CompanyResult:
     #: open postings for it. Almost always a broken extractor, not an empty
     #: board, so nothing is closed and this is surfaced instead.
     suspect_parse: bool = False
+    #: robots.txt said no, as opposed to any other reason for skipping.
+    #:
+    #: A separate flag rather than reading `skipped_reason`, which carries
+    #: three unrelated outcomes — "not due yet", "no extractor for X", and the
+    #: text of a `Blocked`. Telling them apart by substring works until a
+    #: reason is reworded, and the caller that gets it wrong here is the one
+    #: deciding how long to back a host off.
+    blocked: bool = False
+    #: True when the board answered but was byte-identical to last time. The
+    #: cycle did its job; there was simply nothing new.
+    unchanged: bool = False
 
     @property
     def emitted(self) -> int:
         return self.new_postings + self.updated_postings
+
+    @property
+    def status(self) -> str:
+        """One word for what happened, for `CompanyCrawlState.last_status`."""
+        if self.error:
+            return "error"
+        if self.blocked:
+            return "blocked"
+        if self.suspect_parse:
+            return "suspect"
+        if self.skipped_reason:
+            return "skipped"
+        if self.unchanged:
+            return "unchanged"
+        return "ok"
 
 
 @dataclass
@@ -212,7 +243,7 @@ async def _close_missing(
     return closed, False
 
 
-async def crawl_company(
+async def _poll_company(
     session: AsyncSession,
     seed: CompanySeed,
     fetcher: PoliteFetcher,
@@ -241,6 +272,7 @@ async def crawl_company(
         # Being told no is a normal outcome, not an error to work around.
         log.info("crawl_blocked", company=seed.name, reason=str(exc))
         result.skipped_reason = str(exc)
+        result.blocked = True
         return result
     except Exception as exc:  # noqa: BLE001 - one bad host must not stop the cycle
         log.warning("crawl_fetch_failed", company=seed.name, error=type(exc).__name__)
@@ -265,6 +297,7 @@ async def crawl_company(
     # Board-level short circuit: identical bytes means nothing to parse.
     if company.board_hash == response.content_hash:
         log.debug("board_unchanged", company=seed.name)
+        result.unchanged = True
         return result
 
     extracted = extractor.parse(response.text, seed.slug)
@@ -282,16 +315,54 @@ async def crawl_company(
     return result
 
 
+async def crawl_company(
+    session: AsyncSession,
+    seed: CompanySeed,
+    fetcher: PoliteFetcher,
+    *,
+    force: bool = False,
+    on_result: ResultHook | None = None,
+) -> CompanyResult:
+    """Poll one company, and hand the outcome to `on_result` if given.
+
+    The hook is the seam through which crawl *state* is written without this
+    module knowing that such a thing exists. `packages.crawler.runs` imports
+    `CompanyResult` from here; if the recording were called from here the two
+    would import each other, and the rule that survives refactors is the one
+    the import graph enforces rather than the one a comment asks for.
+
+    It is handed the `Company` row rather than the seed because the state it
+    writes is keyed on that row — and `None` when there is no row, which
+    happens when the seed names an ATS we have no extractor for and nothing
+    was ever upserted.
+    """
+    result = await _poll_company(session, seed, fetcher, force=force)
+    if on_result is not None:
+        company = await session.scalar(select(Company).where(Company.name == seed.name))
+        await on_result(company, result)
+    return result
+
+
 async def crawl_all(
     session: AsyncSession,
     seeds: list[CompanySeed],
     fetcher: PoliteFetcher,
     *,
     force: bool = False,
+    on_result: ResultHook | None = None,
+    report: CrawlReport | None = None,
 ) -> CrawlReport:
-    """Run a full cycle over the registry. Does not commit."""
-    report = CrawlReport()
+    """Run a full cycle over the registry. Does not commit.
+
+    A caller may pass the `report` in rather than take the returned one. That
+    looks redundant until the cycle raises partway: the report built here is
+    lost with the stack frame, so a caller recording the run would write zeros
+    over a cycle that had in fact polled most of the registry.
+    """
+    report = report if report is not None else CrawlReport()
     for seed in seeds:
-        report.results.append(await crawl_company(session, seed, fetcher, force=force))
+        report.results.append(
+            await crawl_company(session, seed, fetcher, force=force, on_result=on_result)
+        )
     log.info("crawl_cycle_complete", summary=report.summary())
     return report

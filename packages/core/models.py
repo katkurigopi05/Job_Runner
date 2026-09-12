@@ -306,6 +306,136 @@ class Posting(Base):
     )
 
 
+class CrawlRun(Base):
+    """One crawl cycle, kept after the process that ran it has gone.
+
+    `CrawlReport` already summarises a cycle, but it is an in-memory object
+    owned by whichever worker ran the loop: it lives exactly as long as the
+    process and is then reduced to a single log line. That is enough while a
+    cycle *is* one process making one pass over the seed file.
+
+    It stops being enough twice over at 3,500 companies. A cycle that takes
+    hours will span worker restarts, and once companies are dispatched as
+    individual tasks no single process sees the whole cycle at all — so there
+    is no object anywhere that could hold the summary. The questions the owner
+    actually asks ("did last night's run finish", "is the new-posting rate
+    falling because hiring slowed or because an extractor broke") are about a
+    cycle as a whole, over time, and they need a row.
+    """
+
+    __tablename__ = "crawl_runs"
+
+    id: Mapped[uuid.UUID] = _pk()
+    #: What started it: `scheduled`, `manual`, or `forced` (a cycle run with
+    #: change detection bypassed).
+    trigger: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'running'")
+    )
+    started_at: Mapped[datetime] = _created_at()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: How many companies the run intended to poll. Recorded up front so a run
+    #: that died halfway is distinguishable from one that had little to do —
+    #: both otherwise show a small `companies_fetched` and no error.
+    companies_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    companies_fetched: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    companies_skipped: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    companies_failed: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+    postings_new: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    postings_updated: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    postings_closed: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+    #: Companies whose board fetched cleanly and parsed to nothing while we
+    #: still held open postings — `crawl._close_missing`'s refusal case. Kept
+    #: by name because the useful form of this is "which ones", and because a
+    #: count of 0 is the thing worth being able to prove afterwards.
+    suspect_companies: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'completed', 'aborted')", name="ck_crawl_runs_status"
+        ),
+        CheckConstraint(
+            "trigger IN ('scheduled', 'manual', 'forced')", name="ck_crawl_runs_trigger"
+        ),
+        Index("ix_crawl_runs_started_at", text("started_at DESC")),
+    )
+
+
+class CompanyCrawlState(Base):
+    """Scheduling and health for one company's board, kept off the registry row.
+
+    Two things live here that `Company` cannot answer at scale.
+
+    **When is this company next due.** `is_due` computes
+    `last_polled_at + poll_interval_s` per row, which no index can help with
+    because the interval varies by row. A scheduler asking "what is due" every
+    tick would scan the whole registry each time. `next_due_at` is that sum,
+    materialized and indexed, so the question becomes a range scan.
+
+    **How badly is it going.** CLAUDE.md §9 records that 21 of the original 50
+    seeds had left Greenhouse and returned 404 from both the board API and the
+    rendered page. At 29 companies a handful of dead boards is a line in a
+    report; at 3,500 it is a standing tax on every cycle, spending the rate
+    limiter's budget on hosts that have not answered in months.
+    `consecutive_failures` is what lets a failing board back off without being
+    dropped — a 404 today may be a board that moved, not a company that died,
+    and deleting the row would lose the evidence CLAUDE.md §9 deliberately
+    keeps.
+
+    Separate from `Company` rather than more columns on it, because the two
+    have different writers. The registry is written by imports and by the
+    owner curating `seeds/companies.yaml`; this is written by the crawler on
+    every attempt. Keeping them apart means re-importing the registry cannot
+    reset crawl health, and a crawl cannot silently edit the registry.
+
+    `Company.board_hash` deliberately stays where it is. It identifies the
+    *content* last seen, not the schedule, and moving it would mean two places
+    holding crawl state during the transition — which is the parallel
+    architecture this work is supposed to avoid.
+    """
+
+    __tablename__ = "company_crawl_states"
+
+    id: Mapped[uuid.UUID] = _pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    #: When this company may next be polled. NULL means "as soon as possible",
+    #: which is the correct reading for a company that has never been crawled.
+    next_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Distinct from `last_attempt_at`: the gap between them is exactly how
+    #: long a board has been failing, which is the number worth alerting on.
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consecutive_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    #: The last `CompanyResult` outcome: `ok`, `unchanged`, `skipped`,
+    #: `blocked`, `error`, or `suspect`.
+    last_status: Mapped[str | None] = mapped_column(String(20))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    #: The run that last touched this company. SET NULL so pruning old runs is
+    #: a decision about history, not something that can orphan a company.
+    last_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("crawl_runs.id", ondelete="SET NULL")
+    )
+
+    __table_args__ = (
+        UniqueConstraint("company_id", name="uq_company_crawl_states_company"),
+        # The scheduler's only query: the due ones, soonest first.
+        Index("ix_company_crawl_states_next_due_at", "next_due_at"),
+    )
+
+
 class CorpusStats(Base):
     """Document frequencies over the postings, at a point in time.
 
