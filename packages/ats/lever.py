@@ -37,10 +37,13 @@ from packages.ats.form import field_selector, fill_form, submit_form
 from packages.ats.greenhouse import _clean_label, _kind_for
 from packages.ats.navigate import (
     FORM_READY_TIMEOUT_MS,
+    POSTING_READY_TIMEOUT_MS,
     application_route,
     locate_form,
+    longest_text,
 )
 from packages.ats.navigate import wait_for_form as _wait_for_form
+from packages.ats.navigate import wait_for_posting as _wait_for_posting
 
 #: https://jobs.lever.co/<company>/<posting-uuid>[/apply]
 _URL_RE = re.compile(
@@ -52,7 +55,12 @@ SELECTORS: dict[str, str] = {
     "form": "#application-form, form[id*='application']",
     "posting_title": ".posting-header h2, .posting-headline h2, h2",
     "posting_location": ".location, .posting-categories .location",
-    "posting_body": ".posting-description, .section-wrapper .section, [data-qa='job-description']",
+    # `.content` wraps the whole posting; the `.section` blocks are its parts,
+    # and the first of them is the header. `longest_text` is what stops that
+    # header being reported as the job description.
+    "posting_body": (
+        ".content, .posting-description, .section-wrapper .section, [data-qa='job-description']"
+    ),
     "fields": (
         "input:not([type='hidden']):not([type='submit']):not([type='button']), textarea, select"
     ),
@@ -121,8 +129,23 @@ class LeverAdapter:
         return match.group("job_id") if match else None
 
     @staticmethod
+    def profile_key_for(field_name: str) -> str | None:
+        """The profile key this field takes its answer from, or None.
+
+        The module-level function is the implementation; this is how
+        `build_answers` reaches it without importing one adapter by name.
+        """
+        return profile_key_for(field_name)
+
+    @staticmethod
     def application_url(url: str) -> str:
         return application_route(url, _URL_RE, APPLICATION_SEGMENT)
+
+    async def wait_for_posting(self, page: Any, timeout_ms: int = POSTING_READY_TIMEOUT_MS) -> None:
+        """Give the posting a chance to render before reading it."""
+        await _wait_for_posting(
+            page, title_selector=SELECTORS["posting_title"], timeout_ms=timeout_ms
+        )
 
     async def wait_for_form(self, page: Any, timeout_ms: int = FORM_READY_TIMEOUT_MS) -> None:
         """Block until the employer's questions are actually on the page."""
@@ -159,7 +182,7 @@ class LeverAdapter:
             external_id=self.external_id(url),
             title=await _text(SELECTORS["posting_title"]),
             location=await _text(SELECTORS["posting_location"]),
-            description_raw=await _text(SELECTORS["posting_body"]),
+            description_raw=await longest_text(page, SELECTORS["posting_body"]),
             closed=closed,
         )
 

@@ -14,7 +14,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from packages.ats.base import Question, QuestionKind
+from packages.ats.base import Question, QuestionKind, UnsupportedSiteError
+from packages.ats.registry import adapter_by_name
 from packages.core.models import Candidate, Profile
 
 #: Normalized label fragments → profile attribute. Ordered: first match wins,
@@ -86,11 +87,44 @@ def profile_values(
 
 
 def _match_attribute(question: Question) -> str | None:
-    haystack = f"{question.label} {question.key}".lower()
-    for pattern, attribute in LABEL_RULES:
-        if pattern.search(haystack):
-            return attribute
+    """The profile attribute this question is asking for, by its wording.
+
+    Label first, then the key. Searching them joined defeated every anchored
+    rule: `^name$` could never fire, because the haystack was always the label
+    *plus* the field name — so Ashby's `name` field, labelled exactly `name`,
+    matched nothing at all.
+
+    The label is also the better evidence of the two. It is what the employer
+    wrote for a person to read; a field name is an internal handle, and on
+    three of the four ATSes it is a uuid.
+    """
+    for haystack in (question.label.lower(), question.key.lower()):
+        for pattern, attribute in LABEL_RULES:
+            if pattern.search(haystack):
+                return attribute
     return None
+
+
+def _mapped_attribute(question: Question, ats: str | None) -> str | None:
+    """What the ATS itself says this field is for.
+
+    Consulted before the label rules, because it is not a guess: `ashby.py`
+    states that `_systemfield_name` is the full name, and that is better
+    evidence than any regex over the wording beside it.
+
+    These maps existed in three adapters from the day each was written and had
+    no caller outside their own tests. On a live ElevenLabs posting the
+    label rules alone filled 1 field of 9.
+    """
+    if not ats:
+        return None
+    try:
+        adapter = adapter_by_name(ats)
+    except UnsupportedSiteError:
+        # A stored `ats` string this registry no longer knows must not raise
+        # in the middle of an apply; the label rules still work.
+        return None
+    return adapter.profile_key_for(question.key)
 
 
 def asks_for_cover_letter(question: Question) -> bool:
@@ -114,6 +148,7 @@ def build_answers(
     cover_letter_text: str | None = None,
     cover_letter_path: str | None = None,
     reply_to: str | None = None,
+    ats: str | None = None,
 ) -> dict[str, Any]:
     """Answers keyed by `Question.key`, for `ATSAdapter.fill()`.
 
@@ -129,6 +164,9 @@ def build_answers(
     `reply_to` overrides the email field with this application's alias, so
     the employer's reply comes back carrying an exact key. None applies with
     the candidate's own address.
+
+    `ats` lets the adapter's own field-name map answer first. Omitted, this
+    behaves exactly as it did before: label rules only.
     """
     values = profile_values(candidate, profile, reply_to=reply_to)
     owner_supplied = extra or {}
@@ -142,7 +180,7 @@ def build_answers(
             answers[question.key] = owner_supplied[question.key]
             continue
 
-        attribute = _match_attribute(question)
+        attribute = _mapped_attribute(question, ats) or _match_attribute(question)
         if attribute is None:
             continue
 

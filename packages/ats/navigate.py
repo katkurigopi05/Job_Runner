@@ -26,9 +26,20 @@ from urllib.parse import urlsplit, urlunsplit
 
 import structlog
 
-from packages.ats.base import ManualCompletionRequired, SiteError
+from packages.ats.base import (
+    ManualCompletionRequired,
+    PostingGone,
+    SiteError,
+    UnsupportedSiteError,
+)
 
 log = structlog.get_logger(__name__)
+
+#: How long to give a posting page to render before parsing it. Shorter
+#: than the form wait because nothing here fails when it elapses: a
+#: withdrawn posting legitimately has no title, and every posting would
+#: otherwise pay this in full on its way to `job_closed`.
+POSTING_READY_TIMEOUT_MS = 8_000
 
 #: How long to give a React form to mount. Generous because the alternative is
 #: a false "no form here" on a page that has one, and that failure is recorded
@@ -102,12 +113,81 @@ async def open_application(page: Any, adapter: Any, url: str) -> str:
     away a parse we already did.
     """
     target: str = adapter.application_url(url)
-    if target != page.url:
+
+    # Compared against the URL we were *given*, not against `page.url`. The
+    # caller has already navigated to `url`, and a board that redirects leaves
+    # `page.url` pointing somewhere else — so comparing with the landing
+    # address made every same-page adapter navigate a second time, throwing
+    # away the parse it had just done and spending another request on it.
+    if target != url and target != page.url:
         log.info("opening_application_route", ats=adapter.name, url=target)
         await page.goto(target, wait_until="domcontentloaded")
 
+    _check_still_ours(adapter, page.url, adapter.external_id(url))
+
     await adapter.wait_for_form(page)
     return target
+
+
+def _check_still_ours(adapter: Any, landed_on: str, external_id: str | None) -> None:
+    """Refuse a page the employer redirected us off the ATS onto.
+
+    Without this the run waits for a form that is not there and fails as
+    `site_error` — our side is broken, retry this — when neither half is true.
+
+    Which of the two honest verdicts it is turns on whether the page we landed
+    on still names this job:
+
+    - **It does.** The employer hosts the application on their own site.
+      `job-boards.greenhouse.io/stripe/jobs/8172487` answers 200 at
+      `stripe.com/careers/listing/abuse-investigator/8172487?gh_jid=8172487`,
+      with no form on it at all — and Stripe does this for all 635 of its
+      postings, live ones included. `import_portals.py` already refuses a
+      bespoke careers page for the same reason, so `unsupported_site` it is.
+    - **It does not.** The posting is gone.
+      `job-boards.greenhouse.io/cloudflare/jobs/7168950` lands on
+      `cloudflare.com/careers/#open-roles`, the careers index, naming no job.
+      Cloudflare's board is fine; this role was taken down. Calling that
+      `unsupported_site` would libel a board we poll successfully.
+
+    A redirect *within* the ATS is not an exit at all: `boards.` to
+    `job-boards.` is Greenhouse's own move and both URLs are still ours.
+    """
+    if adapter.matches(landed_on):
+        return
+
+    if external_id and external_id in landed_on:
+        log.info("employer_hosts_its_own_application", ats=adapter.name, landed_on=landed_on)
+        raise UnsupportedSiteError(
+            f"{adapter.name} redirected to a page it does not serve; "
+            "this employer's application lives on their own site"
+        )
+
+    log.info("posting_redirected_away", ats=adapter.name, landed_on=landed_on)
+    raise PostingGone(
+        f"{adapter.name} redirected away from this posting to a page that does not "
+        "name it — the role has been taken down"
+    )
+
+
+async def wait_for_posting(page: Any, *, title_selector: str, timeout_ms: int) -> None:
+    """Give the posting a chance to render. Never raises.
+
+    Best-effort on purpose. A withdrawn posting has no title, and turning that
+    into an exception would report `site_error` — our side is broken, retry
+    this — for the one outcome that is both expected and permanent. So this
+    waits, and then `parse_posting` reports whatever is actually there.
+
+    Worth having even so: without it, a live Ashby posting parsed to a None
+    title and an empty `description_raw`, and the application was then tailored
+    against nothing and filtered on a location that had not been read.
+    """
+    from playwright.async_api import TimeoutError as PlaywrightTimeout
+
+    try:
+        await page.locator(title_selector).first.wait_for(state="attached", timeout=timeout_ms)
+    except PlaywrightTimeout:
+        log.info("posting_did_not_render", timeout_ms=timeout_ms)
 
 
 #: Enough candidates to find the application on any real careers page, few
@@ -144,3 +224,33 @@ async def locate_form(page: Any, *, form_selector: str, field_selector: str) -> 
     if best is None:
         raise SiteError("no application form found on page")
     return best
+
+
+#: A description is long. Reading more than this many candidates to find the
+#: longest one is a sign the selector is matching the whole page.
+MAX_BODY_CANDIDATES = 40
+
+
+async def longest_text(page: Any, selector: str) -> str | None:
+    """The richest of the elements a selector matches, not the first of them.
+
+    Lever splits a posting across eight `.section-wrapper .section` blocks and
+    the first is the header, so `.first` reported a 109-character job
+    description for a 4,967-character posting. That is the quiet kind of wrong:
+    it is not empty, so nothing downstream looks broken — the tailorer simply
+    has almost nothing to work from and the ATS keyword score almost no
+    vocabulary, and both report that as a weak match.
+
+    Same rule as `locate_form`, for the same reason: when a selector admits
+    several candidates, the useful one is the one with the content on it.
+    """
+    nodes = page.locator(selector)
+    count = min(await nodes.count(), MAX_BODY_CANDIDATES)
+
+    best: str | None = None
+    for index in range(count):
+        text = (await nodes.nth(index).inner_text()).strip()
+        if best is None or len(text) > len(best):
+            best = text
+
+    return best or None

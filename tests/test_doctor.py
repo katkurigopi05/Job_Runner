@@ -187,11 +187,28 @@ async def test_the_real_report_runs_without_raising() -> None:
 # board: indistinguishable from working.
 
 
-def test_an_unconfigured_inbox_is_reported_not_silent(monkeypatch) -> None:
-    monkeypatch.setenv("IMAP_HOST", "")
-    monkeypatch.setenv("IMAP_USERNAME", "")
-    monkeypatch.setenv("IMAP_PASSWORD", "")
-    get_settings.cache_clear()
+@pytest.fixture
+def inbox_env(monkeypatch):
+    """Set IMAP_* for one check, and put the settings cache back afterwards.
+
+    `get_settings` is cached, so clearing it only on the way in leaves the
+    next test reading this test's mailbox. That is how a green suite starts
+    reporting a configured inbox to a module that has none.
+    """
+
+    def _set(**values: str) -> None:
+        for name, value in values.items():
+            monkeypatch.setenv(name, value)
+        get_settings.cache_clear()
+
+    try:
+        yield _set
+    finally:
+        get_settings.cache_clear()
+
+
+def test_an_unconfigured_inbox_is_reported_not_silent(inbox_env) -> None:
+    inbox_env(IMAP_HOST="", IMAP_USERNAME="", IMAP_PASSWORD="")
 
     check = check_inbox()
 
@@ -201,12 +218,9 @@ def test_an_unconfigured_inbox_is_reported_not_silent(monkeypatch) -> None:
     assert check.fix
 
 
-def test_a_half_configured_inbox_names_what_is_missing(monkeypatch) -> None:
+def test_a_half_configured_inbox_names_what_is_missing(inbox_env) -> None:
     """The worst state of the three: it looks set up and cannot connect."""
-    monkeypatch.setenv("IMAP_HOST", "imap.gmail.com")
-    monkeypatch.setenv("IMAP_USERNAME", "owner@gmail.com")
-    monkeypatch.setenv("IMAP_PASSWORD", "")
-    get_settings.cache_clear()
+    inbox_env(IMAP_HOST="imap.gmail.com", IMAP_USERNAME="owner@gmail.com", IMAP_PASSWORD="")
 
     check = check_inbox()
 
@@ -215,12 +229,9 @@ def test_a_half_configured_inbox_names_what_is_missing(monkeypatch) -> None:
     assert "IMAP_HOST" not in check.detail
 
 
-def test_the_inbox_password_never_reaches_the_output(monkeypatch) -> None:
+def test_the_inbox_password_never_reaches_the_output(inbox_env) -> None:
     """§2.7 — diagnostic output is pasted into chat windows more than anything."""
-    monkeypatch.setenv("IMAP_HOST", "imap.gmail.com")
-    monkeypatch.setenv("IMAP_USERNAME", "owner@gmail.com")
-    monkeypatch.setenv("IMAP_PASSWORD", "hunter2")
-    get_settings.cache_clear()
+    inbox_env(IMAP_HOST="imap.gmail.com", IMAP_USERNAME="owner@gmail.com", IMAP_PASSWORD="hunter2")
 
     check = check_inbox()
 
@@ -228,17 +239,14 @@ def test_the_inbox_password_never_reaches_the_output(monkeypatch) -> None:
     assert "hunter2" not in f"{check.detail} {check.fix}"
 
 
-def test_a_configured_inbox_is_not_claimed_to_be_reachable(monkeypatch) -> None:
+def test_a_configured_inbox_is_not_claimed_to_be_reachable(inbox_env) -> None:
     """Settings being present is not the same as a mailbox answering.
 
     The check does no network: `make doctor` is a precondition in scripts and
     must not hang on an unreachable host. Saying more than it knows is how a
     green check stops being worth reading.
     """
-    monkeypatch.setenv("IMAP_HOST", "imap.gmail.com")
-    monkeypatch.setenv("IMAP_USERNAME", "owner@gmail.com")
-    monkeypatch.setenv("IMAP_PASSWORD", "hunter2")
-    get_settings.cache_clear()
+    inbox_env(IMAP_HOST="imap.gmail.com", IMAP_USERNAME="owner@gmail.com", IMAP_PASSWORD="hunter2")
 
     check = check_inbox()
 

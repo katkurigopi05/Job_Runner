@@ -29,10 +29,13 @@ from packages.ats.base import (
 from packages.ats.form import field_selector, fill_form, submit_form
 from packages.ats.navigate import (
     FORM_READY_TIMEOUT_MS,
+    POSTING_READY_TIMEOUT_MS,
     application_route,
     locate_form,
+    longest_text,
 )
 from packages.ats.navigate import wait_for_form as _wait_for_form
+from packages.ats.navigate import wait_for_posting as _wait_for_posting
 
 log = structlog.get_logger(__name__)
 
@@ -160,8 +163,26 @@ class GreenhouseAdapter:
         return match.group("company") if match else None
 
     @staticmethod
+    def profile_key_for(field_name: str) -> str | None:
+        """Greenhouse has no key map, and does not need one.
+
+        Its field names are already the words a label rule matches —
+        `first_name`, `email`, `resume` — so there is nothing here that
+        reading the label does not already answer. Present so every adapter
+        answers the same question rather than the caller checking which have
+        one.
+        """
+        return None
+
+    @staticmethod
     def application_url(url: str) -> str:
         return application_route(url, _URL_RE, APPLICATION_SEGMENT)
+
+    async def wait_for_posting(self, page: Any, timeout_ms: int = POSTING_READY_TIMEOUT_MS) -> None:
+        """Give the posting a chance to render before reading it."""
+        await _wait_for_posting(
+            page, title_selector=SELECTORS["posting_title"], timeout_ms=timeout_ms
+        )
 
     async def wait_for_form(self, page: Any, timeout_ms: int = FORM_READY_TIMEOUT_MS) -> None:
         """Block until the employer's questions are actually on the page."""
@@ -197,10 +218,7 @@ class GreenhouseAdapter:
                 return " ".join(text.split()) or None
             return None
 
-        body = None
-        body_locator = page.locator(SELECTORS["posting_body"]).first
-        if await body_locator.count():
-            body = await body_locator.inner_text()
+        body = await longest_text(page, SELECTORS["posting_body"])
 
         return ParsedPosting(
             external_id=self.external_id(url),
