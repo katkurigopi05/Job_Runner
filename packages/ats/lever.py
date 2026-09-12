@@ -33,6 +33,7 @@ from packages.ats.base import (
     QuestionKind,
     Receipt,
 )
+from packages.ats.form import field_selector, fill_form, submit_form
 from packages.ats.greenhouse import _clean_label, _kind_for
 from packages.ats.navigate import (
     FORM_READY_TIMEOUT_MS,
@@ -220,6 +221,9 @@ class LeverAdapter:
                     kind=kind,
                     required=await control.get_attribute("required") is not None,
                     options=options,
+                    selector=field_selector(
+                        await control.get_attribute("id"), await control.get_attribute("name")
+                    ),
                 )
             )
 
@@ -245,11 +249,9 @@ class LeverAdapter:
         return key
 
     async def fill(self, page: Any, answers: dict[str, Any]) -> FillReport:
-        raise NotImplementedError(
-            "Lever fill is not implemented. enumerate_fields and parse_posting are "
-            "verified against a live board; filling is not, and shipping an "
-            "unverified fill path would put unchecked values on a real application."
-        )
+        """Fill what we have answers for. Never invent one."""
+        return await fill_form(self, page, answers, selectors=SELECTORS)
 
     async def submit(self, page: Any) -> Receipt:
-        raise NotImplementedError("Lever submit is not implemented.")
+        """Click submit and capture what the site says back."""
+        return await submit_form(self, page, selectors=SELECTORS)

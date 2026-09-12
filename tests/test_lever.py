@@ -125,11 +125,3 @@ async def test_captcha_stops_enumeration(page) -> None:
 
     with pytest.raises(ManualCompletionRequired):
         await LeverAdapter().enumerate_fields(page)
-
-
-async def test_fill_is_not_pretended_to_work(page) -> None:
-    """An unverified fill path would put unchecked values on a real application."""
-    await page.set_content(_LEVER_FORM)
-
-    with pytest.raises(NotImplementedError):
-        await LeverAdapter().fill(page, {})

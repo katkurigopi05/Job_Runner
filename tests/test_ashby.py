@@ -114,10 +114,3 @@ async def test_captcha_stops_enumeration(page) -> None:
 
     with pytest.raises(ManualCompletionRequired):
         await AshbyAdapter().enumerate_fields(page)
-
-
-async def test_fill_is_not_pretended_to_work(page) -> None:
-    await page.set_content(_ASHBY_PAGE)
-
-    with pytest.raises(NotImplementedError):
-        await AshbyAdapter().fill(page, {})

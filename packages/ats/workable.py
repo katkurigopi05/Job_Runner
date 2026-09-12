@@ -28,6 +28,7 @@ from packages.ats.base import (
     QuestionKind,
     Receipt,
 )
+from packages.ats.form import field_selector, fill_form, submit_form
 from packages.ats.greenhouse import _clean_label, _kind_for
 from packages.ats.navigate import (
     FORM_READY_TIMEOUT_MS,
@@ -228,7 +229,16 @@ class WorkableAdapter:
                 or (await control.get_attribute("aria-required")) == "true"
             )
             questions.append(
-                Question(key=key, label=label, kind=kind, required=required, options=options)
+                Question(
+                    key=key,
+                    label=label,
+                    kind=kind,
+                    required=required,
+                    options=options,
+                    selector=field_selector(
+                        await control.get_attribute("id"), await control.get_attribute("name")
+                    ),
+                )
             )
 
         return questions
@@ -253,12 +263,9 @@ class WorkableAdapter:
         return key.replace("_", " ")
 
     async def fill(self, page: Any, answers: dict[str, Any]) -> FillReport:
-        """Fill a Workable form (not implemented)."""
-        raise NotImplementedError(
-            "Workable fill is not implemented. Parsing and enumeration were verified "
-            "against a live form; filling was not, so no unchecked values are written."
-        )
+        """Fill what we have answers for. Never invent one."""
+        return await fill_form(self, page, answers, selectors=SELECTORS)
 
     async def submit(self, page: Any) -> Receipt:
-        """Submit a Workable application (not implemented)."""
-        raise NotImplementedError("Workable submit is not implemented.")
+        """Click submit and capture what the site says back."""
+        return await submit_form(self, page, selectors=SELECTORS)

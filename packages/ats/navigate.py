@@ -101,7 +101,7 @@ async def open_application(page: Any, adapter: Any, url: str) -> str:
     navigation, which matters: a second `goto` of the posting page would throw
     away a parse we already did.
     """
-    target = adapter.application_url(url)
+    target: str = adapter.application_url(url)
     if target != page.url:
         log.info("opening_application_route", ats=adapter.name, url=target)
         await page.goto(target, wait_until="domcontentloaded")

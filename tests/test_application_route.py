@@ -144,9 +144,7 @@ async def test_waiting_on_a_page_with_no_form_reports_that(page) -> None:
 
 async def test_waiting_returns_at_once_when_the_form_is_already_there(page) -> None:
     """A form present at parse time must not cost a timeout."""
-    await page.set_content(
-        "<form id='application-form'><input name='email' type='email' /></form>"
-    )
+    await page.set_content("<form id='application-form'><input name='email' type='email' /></form>")
     await LeverAdapter().wait_for_form(page, timeout_ms=500)
 
 
@@ -184,9 +182,7 @@ async def test_the_pipeline_navigates_from_the_posting_to_the_form(page) -> None
 
     def _serve(route):
         body = _APPLY_PAGE if route.request.url.endswith("/apply") else _POSTING_PAGE
-        return asyncio.ensure_future(
-            route.fulfill(status=200, content_type="text/html", body=body)
-        )
+        return asyncio.ensure_future(route.fulfill(status=200, content_type="text/html", body=body))
 
     await page.route("**/*", _serve)
     await page.goto(_LEVER_POSTING, wait_until="domcontentloaded")
