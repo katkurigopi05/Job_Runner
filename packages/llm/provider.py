@@ -598,12 +598,12 @@ class _OpenAICompatibleProvider:
     #: production.
     REASONING_HEADROOM = REASONING_HEADROOM_TOKENS
 
-    #: Pinned for the same reason Gemini's is — the trail should name what ran.
-    #: `stealth/*` routes are pre-release and get withdrawn without notice, at
-    #: which point every call 404s; §7's `LLM_FALLBACK_LOCAL` is what keeps that
-    #: from stopping tailoring, and the fallback is recorded so a résumé written
-    #: by the local model after a withdrawal is not mistaken for this one's work.
-    DEFAULT_MODEL = "stealth/ox-alpha"
+    #: Declared, never defaulted. This used to hold `stealth/ox-alpha` — an
+    #: OpenRouter route sitting on the *shared* base, so `TokenRouterProvider`
+    #: inherited a model from the other gateway on any path that reached it.
+    #: Both subclasses set their own, and a subclass that forgets should fail
+    #: loudly rather than quietly dial a competitor's withdrawn preview.
+    DEFAULT_MODEL: str
 
     def __init__(self, model: str | None = None) -> None:
         from packages.core.config import get_settings
@@ -779,7 +779,23 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
     KEY_SETTING = "openrouter_api_key"
     MODEL_ENV = "OPENROUTER_MODEL"
     MODEL_SETTING = "openrouter_model"
-    DEFAULT_MODEL = "stealth/ox-alpha"
+
+    #: This *was* `stealth/ox-alpha`, which made the shipped default a member
+    #: of the category this class's own 404 message warns about — pre-release,
+    #: withdrawn without notice, guaranteed to break. It did, twice:
+    #: `stealth/ox-alpha` first and `minimax/minimax-m3:free` after it.
+    #:
+    #: No free route here is contractual, so a default cannot be made safe.
+    #: What it can do is avoid the one class that is *designed* to be
+    #: temporary. Measured 2026-09-12 this was the longest-standing free route
+    #: OpenRouter served — added 2026-03-11, where nine of the nineteen free
+    #: routes had appeared in the preceding two months — and it answered a real
+    #: 300-token tailoring call with content rather than an empty
+    #: `finish_reason="length"`.
+    #:
+    #: Its vendor is also nameable, which a cloaked route's is not. §2.8's
+    #: trail is worth more when it can record a destination and not only a hop.
+    DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 
     def _missing_route_message(self) -> str:
         return (
