@@ -64,10 +64,10 @@ def backoff_for(poll_interval_s: int, consecutive_failures: int) -> timedelta:
     enforced in `ratelimit.HostRateLimiter` on the way to the socket and apply
     whatever this returns.
     """
-    interval = timedelta(seconds=poll_interval_s)
+    interval = timedelta(seconds=int(poll_interval_s))
     if consecutive_failures <= 0:
         return interval
-    grown = interval * (2 ** min(consecutive_failures, MAX_BACKOFF_DOUBLINGS))
+    grown: timedelta = interval * (2 ** min(consecutive_failures, MAX_BACKOFF_DOUBLINGS))
     return min(grown, interval + MAX_BACKOFF)
 
 
@@ -104,9 +104,10 @@ async def finish_run(
 
 
 async def get_state(session: AsyncSession, company_id: uuid.UUID) -> CompanyCrawlState | None:
-    return await session.scalar(
+    state: CompanyCrawlState | None = await session.scalar(
         select(CompanyCrawlState).where(CompanyCrawlState.company_id == company_id)
     )
+    return state
 
 
 async def ensure_state(session: AsyncSession, company_id: uuid.UUID) -> CompanyCrawlState:

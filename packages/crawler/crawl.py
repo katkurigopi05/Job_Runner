@@ -18,7 +18,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from sqlalchemy import case, func, select, update
@@ -28,6 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.models import Company, Posting
 from packages.crawler.extract import CompanySeed, ExtractedPosting, extractor_for
 from packages.crawler.fetch import Blocked, PoliteFetcher, content_hash
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import CursorResult
 
 log = structlog.get_logger(__name__)
 
@@ -396,9 +399,11 @@ async def _close_missing(
         )
         .values(closed_at=seen_at)
     )
-    result = await session.execute(statement)
+    closed = await session.execute(statement)
     await session.flush()
-    return result.rowcount or 0, False
+    # `rowcount` is on `CursorResult`; `execute` is typed as returning the
+    # `Result` base, which does not advertise it.
+    return cast("CursorResult[Any]", closed).rowcount or 0, False
 
 
 async def _poll_company(

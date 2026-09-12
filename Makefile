@@ -143,7 +143,11 @@ GATE3_TESTS := tests/test_no_fabrication.py tests/test_cover_letter.py \
 GATE4_TESTS := tests/test_mcp.py
 GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
   tests/test_bespoke_probe.py tests/test_labeling_loop.py \
-  tests/test_posting_url_is_reachable.py
+  tests/test_posting_url_is_reachable.py \
+  tests/test_crawl_store.py tests/test_crawl_runs.py tests/test_crawl_dispatch.py \
+  tests/test_crawl_scheduler.py tests/test_shared_ratelimit.py \
+  tests/test_incremental_matching.py tests/test_workday.py \
+  tests/test_migration_posting_dedupe.py
 GATE6_TESTS := tests/test_inbox.py tests/test_inbox_duplicates.py
 
 gate-0: lint typecheck check-migrations

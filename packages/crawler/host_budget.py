@@ -191,7 +191,7 @@ class SharedHostRateLimiter:
         # The statement returned the marker *after* it was pushed out, so the
         # slot this caller was given is one effective delay behind it.
         slot = row.next_allowed_at - timedelta(seconds=float(row.delay_seconds))
-        waited = (slot - row.observed_now).total_seconds()
+        waited = float((slot - row.observed_now).total_seconds())
         if waited <= 0:
             return 0.0
         log.debug("rate_limit_wait", host=host, seconds=round(waited, 1))

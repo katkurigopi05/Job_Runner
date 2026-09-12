@@ -45,7 +45,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Match, Posting, Profile
-from packages.matching.embed import LexicalEmbedder, get_embedder
+from packages.matching.embed import Embedder, LexicalEmbedder, get_embedder
 from packages.matching.idf import CorpusView, refresh_corpus_stats
 from packages.matching.score import embed_postings, score_and_store
 
@@ -72,7 +72,7 @@ class MatchingReport:
         return f"{scope}: {self.embedded} embedded, {self.scored} scored"
 
 
-def _embedder_for(view: CorpusView):
+def _embedder_for(view: CorpusView) -> Embedder | None:
     return LexicalEmbedder(frequencies=view.frequencies) if view.frequencies.usable else None
 
 

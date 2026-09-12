@@ -23,10 +23,12 @@ gets faster and the people who notice are at the far end.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, literal, select, text, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Company, CrawlRun, QueueTask
@@ -34,6 +36,9 @@ from packages.core.queue import enqueue
 from packages.crawler.crawl import CompanyResult, CrawlReport
 from packages.crawler.extract import CompanySeed, extractor_for
 from packages.crawler.runs import due_companies, finish_run, start_run
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import CursorResult
 
 log = structlog.get_logger(__name__)
 
@@ -49,11 +54,10 @@ class DispatchReport:
     #: rather than counted: each one is a registry entry that will never be
     #: crawled until someone fixes it, which is a silence worth being able to
     #: read.
-    unusable: list[str] | None = None
+    unusable: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
-        unusable = len(self.unusable or ())
-        return f"{self.enqueued} companies dispatched, {unusable} unusable"
+        return f"{self.enqueued} companies dispatched, {len(self.unusable)} unusable"
 
 
 def seed_from(company: Company) -> CompanySeed | None:
@@ -90,7 +94,7 @@ async def dispatch(
     force: bool = False,
 ) -> DispatchReport:
     """Enqueue one crawl task per company. Does not commit."""
-    report = DispatchReport(run_id=run.id, unusable=[])
+    report = DispatchReport(run_id=run.id)
 
     for company in companies:
         seed = seed_from(company)
@@ -190,7 +194,7 @@ async def fold_into_run(session: AsyncSession, run_id: uuid.UUID, result: Compan
         # workers appending in Python would each write a list missing the
         # other's name.
         values["suspect_companies"] = CrawlRun.suspect_companies.concat(
-            func.to_jsonb(func.cast([result.company], CrawlRun.suspect_companies.type))
+            literal([result.company], JSONB)
         )
     await session.execute(update(CrawlRun).where(CrawlRun.id == run_id).values(**values))
 
@@ -216,7 +220,7 @@ async def close_if_complete(session: AsyncSession, run_id: uuid.UUID) -> bool:
         )
         .values(status="completed", finished_at=func.clock_timestamp())
     )
-    closed = bool(result.rowcount)
+    closed = bool(cast("CursorResult[Any]", result).rowcount)
     if closed:
         log.info("crawl_run_finished", run_id=str(run_id), status="completed")
     return closed

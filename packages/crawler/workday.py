@@ -65,6 +65,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import urlparse
 
 import structlog
@@ -144,7 +145,7 @@ def api_url(host: str, tenant: str, site: str) -> str:
     return f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
 
 
-def _external_id(entry: dict) -> str | None:
+def _external_id(entry: dict[str, Any]) -> str | None:
     """The employer's own requisition id.
 
     `bulletFields` is where Workday puts it on most tenants; the tail of

@@ -11,6 +11,7 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from typing import Any
 
 import httpx
 import structlog
@@ -134,21 +135,23 @@ class PoliteFetcher:
         for a fetcher someone reuses afterwards.
         """
         if self._client is None or self._client.is_closed:
-            limits = None
+            options: dict[str, Any] = {
+                "transport": self.transport,
+                "timeout": self.timeout,
+                "headers": {"User-Agent": self.user_agent},
+                # Redirects are followed by hand, one hop at a time, so each
+                # hop goes through both gates. See `_walk`.
+                "follow_redirects": False,
+            }
+            # Omitted rather than passed as None: httpx reads `None` inside
+            # `Limits` as *unlimited*, which is not what "no pool size
+            # configured" should mean.
             if self.max_connections is not None or self.max_keepalive is not None:
-                limits = httpx.Limits(
+                options["limits"] = httpx.Limits(
                     max_connections=self.max_connections,
                     max_keepalive_connections=self.max_keepalive,
                 )
-            self._client = httpx.AsyncClient(
-                transport=self.transport,
-                timeout=self.timeout,
-                headers={"User-Agent": self.user_agent},
-                # Redirects are followed by hand, one hop at a time, so each
-                # hop goes through both gates. See `_walk`.
-                follow_redirects=False,
-                **({"limits": limits} if limits is not None else {}),
-            )
+            self._client = httpx.AsyncClient(**options)
         return self._client
 
     async def aclose(self) -> None:
