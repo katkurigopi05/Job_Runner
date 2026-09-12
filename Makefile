@@ -132,14 +132,18 @@ worktree:
 # ran 150 where the gate ran 243. Both still *ran* under gate-0, so nothing was
 # unchecked; what was lost is the label saying which phase regressed, which is
 # the exact cost §13 warns about. One definition, read by both.
-GATE1_TESTS := tests/test_greenhouse.py tests/test_greenhouse_har.py
+GATE1_TESTS := tests/test_greenhouse.py tests/test_greenhouse_har.py \
+  tests/test_lever.py tests/test_ashby.py tests/test_workable.py \
+  tests/test_application_route.py tests/test_adapter_fill.py \
+  tests/test_posting_readiness.py tests/test_answers_use_the_adapters_key_map.py
 GATE2_TESTS := tests/test_gate2.py tests/test_worker.py
 GATE3_TESTS := tests/test_no_fabrication.py tests/test_cover_letter.py \
   tests/test_apply_cover_letter.py tests/test_tailor_cache.py \
   tests/test_apply_uploads_tailored.py
 GATE4_TESTS := tests/test_mcp.py
 GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
-  tests/test_bespoke_probe.py tests/test_labeling_loop.py
+  tests/test_bespoke_probe.py tests/test_labeling_loop.py \
+  tests/test_posting_url_is_reachable.py
 GATE6_TESTS := tests/test_inbox.py tests/test_inbox_duplicates.py
 
 gate-0: lint typecheck check-migrations
