@@ -15,7 +15,12 @@ from email.utils import parsedate_to_datetime
 import httpx
 import structlog
 
-from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter, host_key
+from packages.crawler.ratelimit import (
+    MIN_DELAY_SECONDS,
+    HostRateLimiter,
+    RateLimiter,
+    host_key,
+)
 from packages.crawler.robots import USER_AGENT, RobotsCache
 
 log = structlog.get_logger(__name__)
@@ -97,7 +102,7 @@ def content_hash(text: str) -> str:
 class PoliteFetcher:
     """An HTTP client that cannot outrun the rules."""
 
-    rate_limiter: HostRateLimiter | None = None
+    rate_limiter: RateLimiter | None = None
     robots: RobotsCache | None = None
     user_agent: str = USER_AGENT
     transport: httpx.AsyncBaseTransport | None = None
@@ -200,7 +205,7 @@ class PoliteFetcher:
                         # This is the half that makes the faster shared-API
                         # floor defensible rather than merely faster, so it is
                         # recorded against the host that actually sent it.
-                        self.rate_limiter.penalize(  # type: ignore[union-attr]
+                        await self.rate_limiter.penalize(  # type: ignore[union-attr]
                             host, _retry_after(response, default=_DEFAULT_BACKOFF)
                         )
                         # The body is not read: nothing in it is worth having,
@@ -229,7 +234,7 @@ class PoliteFetcher:
                 # Same machine, so no second robots fetch and no second wait —
                 # the hop is part of one logical request. It still cost the
                 # server a round trip, so it is recorded.
-                self.rate_limiter.record(host)  # type: ignore[union-attr]
+                await self.rate_limiter.record(host)  # type: ignore[union-attr]
 
             url = next_url
 
@@ -262,7 +267,7 @@ class PoliteFetcher:
                 site_delay=decision.crawl_delay,
                 our_delay=current,
             )
-            self.rate_limiter.host_delays[host] = float(decision.crawl_delay)
+            await self.rate_limiter.raise_delay(host, float(decision.crawl_delay))
 
         waited = await self.rate_limiter.acquire(host)
 
@@ -297,8 +302,20 @@ class PoliteFetcher:
         return b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
 
 
-def build_fetcher(delay_seconds: float | None = None, **kwargs: object) -> PoliteFetcher:
-    """Construct a fetcher from settings, refusing an unsafe delay."""
+def build_fetcher(
+    delay_seconds: float | None = None,
+    *,
+    shared: bool | None = None,
+    **kwargs: object,
+) -> PoliteFetcher:
+    """Construct a fetcher from settings, refusing an unsafe delay.
+
+    `shared` selects where the §2.6 counters live. `None` takes the setting;
+    `True` puts them in Postgres, which is what any caller that crawls from
+    more than one process at a time must ask for — an in-process limiter gives
+    each worker its own counters, and N workers then make the effective floor
+    the floor divided by N.
+    """
     from packages.core.config import get_settings
 
     configured = delay_seconds
@@ -307,8 +324,16 @@ def build_fetcher(delay_seconds: float | None = None, **kwargs: object) -> Polit
 
     settings = get_settings()
 
-    # HostRateLimiter raises rather than clamps, which is the point.
-    limiter = HostRateLimiter(delay_seconds=max(configured, MIN_DELAY_SECONDS))
+    # Both implementations raise rather than clamp, which is the point.
+    use_shared = settings.crawler_shared_rate_limiter if shared is None else shared
+    safe_delay = max(configured, MIN_DELAY_SECONDS)
+    limiter: RateLimiter
+    if use_shared:
+        from packages.crawler.host_budget import SharedHostRateLimiter
+
+        limiter = SharedHostRateLimiter(delay_seconds=safe_delay)
+    else:
+        limiter = HostRateLimiter(delay_seconds=safe_delay)
     if configured < MIN_DELAY_SECONDS:
         log.warning(
             "configured_delay_below_floor",

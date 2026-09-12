@@ -43,6 +43,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 from urllib.parse import urlparse
 
 import structlog
@@ -120,6 +121,39 @@ def floor_for(host: str) -> float:
     return MIN_SHARED_API_DELAY_SECONDS if host in SHARED_API_HOSTS else MIN_DELAY_SECONDS
 
 
+class RateLimiter(Protocol):
+    """What `PoliteFetcher` needs from whatever is enforcing §2.6.
+
+    Two implementations: `HostRateLimiter`, which holds its counters in this
+    process, and `packages.crawler.host_budget.SharedHostRateLimiter`, which
+    holds them in Postgres so that several workers share one counter per host.
+
+    Every mutating method is async. The in-process one never awaits inside
+    them, and says so; the shape is set by the implementation that has to
+    reach a database, because a call site cannot call two spellings.
+    """
+
+    async def acquire(self, host: str) -> float:
+        """Wait until `host` may be requested. Returns how long it waited."""
+        ...
+
+    async def record(self, host: str) -> None:
+        """Note a request that `acquire` did not already account for."""
+        ...
+
+    async def penalize(self, host: str, seconds: float) -> None:
+        """Back `host` off for at least `seconds`. Only ever extends."""
+        ...
+
+    async def raise_delay(self, host: str, seconds: float) -> None:
+        """Honour a site's `Crawl-delay` when it exceeds ours."""
+        ...
+
+    def delay_for(self, host: str) -> float:
+        """The delay currently applied to `host`."""
+        ...
+
+
 class RateLimitTooLow(ValueError):
     """A configured delay below the floor. Refused, never clamped."""
 
@@ -169,17 +203,44 @@ class HostRateLimiter:
             return MIN_SHARED_API_DELAY_SECONDS
         return self.delay_seconds
 
-    def penalize(self, host: str, seconds: float) -> None:
+    async def penalize(self, host: str, seconds: float) -> None:
         """Back off `host` for `seconds` — a 429, or a Retry-After header.
 
         Only ever extends. A server asking for a longer pause than we planned
         gets it; one asking for a shorter pause does not shorten ours.
+
+        Async only to match `RateLimiter`. Nothing here awaits — the shared
+        implementation has to reach the database, and one call site cannot
+        call two spellings.
         """
         if seconds <= 0:
             return
         until = self.clock() + seconds
         self._blocked_until[host] = max(self._blocked_until.get(host, 0.0), until)
         log.info("rate_limit_penalty", host=host, seconds=round(seconds, 1))
+
+    async def raise_delay(self, host: str, seconds: float) -> None:
+        """Honour a site's own `Crawl-delay`, when it asks for more than ours.
+
+        A method rather than `limiter.host_delays[host] = ...` at the call
+        site, because the shared limiter has to write this where other workers
+        can see it: a `Crawl-delay` one worker reads is a rule for all of them,
+        and a dict on one process is not.
+
+        Asking for *less* than we already apply is not an error, it simply
+        changes nothing — §2.6 is configurable upward only.
+
+        Nothing is refused here, and the absence of a floor check is the
+        point rather than an omission. `delay_for` never returns less than the
+        host's floor — `__post_init__` validates every override, and this
+        method only ever writes a value larger than the one it just compared
+        against — so anything that gets past the line above is already above
+        the floor. A check there could not fire, and a safety check that
+        cannot fire is worse than none: it reads as protection.
+        """
+        if seconds <= self.delay_for(host):
+            return
+        self.host_delays[host] = float(seconds)
 
     def time_until_ready(self, host: str) -> float:
         """Seconds a caller must wait before touching `host`. 0.0 if ready."""
@@ -195,13 +256,27 @@ class HostRateLimiter:
     def is_ready(self, host: str) -> bool:
         return self.time_until_ready(host) <= 0.0
 
-    def record(self, host: str) -> None:
+    def _mark(self, host: str) -> None:
+        """The state change behind `record`, with no `async` in front of it.
+
+        `acquire` calls this rather than `record` deliberately. The property
+        `tests/test_ratelimit_concurrency.py` exists to protect is that there
+        is no await between `acquire`'s final readiness check and the moment
+        the request is recorded — with one, two coroutines could both pass the
+        check and fire together, and the people who find out are at the far
+        end. `await record(...)` on a coroutine that never suspends happens to
+        be safe today, and is one added `await` inside `record` away from not
+        being.
+        """
+        self._last_request[host] = self.clock()
+
+    async def record(self, host: str) -> None:
         """Mark a request as just made. Call this even for failed requests.
 
         A 500 still cost the host a round trip; retrying immediately because
         it did not succeed is exactly the behaviour the floor exists to stop.
         """
-        self._last_request[host] = self.clock()
+        self._mark(host)
 
     async def acquire(self, host: str) -> float:
         """Wait until `host` may be requested. Returns how long it waited.
@@ -223,7 +298,8 @@ class HostRateLimiter:
                 f"rate limiter never became ready for {host}; the clock is not "
                 "advancing (in tests, the fake sleeper must advance the fake clock)"
             )
-        self.record(host)
+        # `_mark`, not `await self.record(...)` — see `_mark`.
+        self._mark(host)
         return waited
 
     def reset(self, host: str | None = None) -> None:

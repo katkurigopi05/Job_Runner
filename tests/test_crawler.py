@@ -88,11 +88,11 @@ def test_first_request_to_a_host_is_immediate() -> None:
     assert lim.time_until_ready("example.com") == 0.0
 
 
-def test_second_request_must_wait_the_full_delay() -> None:
+async def test_second_request_must_wait_the_full_delay() -> None:
     clock = FakeClock(1000.0)
     lim = limiter(clock)
 
-    lim.record("example.com")
+    await lim.record("example.com")
     assert lim.time_until_ready("example.com") == 60.0
 
     clock.now += 59.0
@@ -102,17 +102,17 @@ def test_second_request_must_wait_the_full_delay() -> None:
     assert lim.is_ready("example.com")
 
 
-def test_hosts_are_tracked_independently() -> None:
+async def test_hosts_are_tracked_independently() -> None:
     lim = limiter()
-    lim.record("a.com")
+    await lim.record("a.com")
     assert not lim.is_ready("a.com")
     assert lim.is_ready("b.com")
 
 
-def test_a_failed_request_still_counts() -> None:
+async def test_a_failed_request_still_counts() -> None:
     """A 500 cost the host a round trip; retrying instantly is the abuse."""
     lim = limiter()
-    lim.record("example.com")  # caller records regardless of status
+    await lim.record("example.com")  # caller records regardless of status
     assert not lim.is_ready("example.com")
 
 
@@ -135,7 +135,7 @@ async def test_acquire_fails_loudly_on_a_stopped_clock() -> None:
         return None
 
     lim = HostRateLimiter(clock=stopped, sleeper=never_advance)
-    lim.record("example.com")
+    await lim.record("example.com")
 
     with pytest.raises(RuntimeError, match="clock is not advancing"):
         await lim.acquire("example.com")
@@ -932,24 +932,24 @@ def test_a_company_host_override_below_60s_is_refused() -> None:
         HostRateLimiter(host_delays={"careers.acme.com": 5.0})
 
 
-def test_a_429_backs_the_host_off() -> None:
+async def test_a_429_backs_the_host_off() -> None:
     """The half that makes a faster floor defensible: we listen."""
     now = 1000.0
     limiter_ = HostRateLimiter(clock=lambda: now)
 
-    limiter_.penalize("api.lever.co", 300.0)
+    await limiter_.penalize("api.lever.co", 300.0)
 
     assert limiter_.time_until_ready("api.lever.co") == 300.0
     assert limiter_.is_ready("boards-api.greenhouse.io")
 
 
-def test_a_penalty_only_ever_extends() -> None:
+async def test_a_penalty_only_ever_extends() -> None:
     """A server asking for a shorter pause does not shorten ours."""
     now = 1000.0
     limiter_ = HostRateLimiter(clock=lambda: now)
 
-    limiter_.penalize("api.lever.co", 300.0)
-    limiter_.penalize("api.lever.co", 5.0)
+    await limiter_.penalize("api.lever.co", 300.0)
+    await limiter_.penalize("api.lever.co", 5.0)
 
     assert limiter_.time_until_ready("api.lever.co") == 300.0
 

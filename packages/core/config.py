@@ -190,6 +190,17 @@ class Settings(BaseSettings):
     crawler_http_max_keepalive: int = 16
     crawler_http_timeout_s: float = 30.0
 
+    #: Enforce the §2.6 floor in Postgres rather than in this process.
+    #:
+    #: Required the moment more than one worker crawls at a time: an
+    #: in-process limiter gives each worker its own counters, so N workers
+    #: make the effective floor the floor divided by N. Off by default because
+    #: the crawl is a single cycle in a single worker today and the in-process
+    #: limiter is the one with tests measuring it; `build_fetcher(shared=True)`
+    #: turns it on for a caller that does fan out, which is the safer place
+    #: for the decision than a default that can be forgotten.
+    crawler_shared_rate_limiter: bool = False
+
     #: The owner's search is United States only, California first. On by
     #: default because it is a standing preference rather than a per-search
     #: one — §1 calls filters the owner's input, and this is that input stated

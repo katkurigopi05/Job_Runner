@@ -306,6 +306,45 @@ class Posting(Base):
     )
 
 
+class CrawlerHostBudget(Base):
+    """One row per host: when it may next be touched. CLAUDE.md §2.6.
+
+    `HostRateLimiter` keeps the same facts in a dict, which is correct and
+    sufficient for exactly as long as one process does all the crawling. The
+    moment companies are dispatched to several workers, each worker has its
+    own dict and its own idea of when a host was last hit — so N workers make
+    the effective floor the floor divided by N, and the people who find out
+    are at the far end of it.
+
+    That is worst precisely where it matters most. A shared ATS API serves
+    thousands of boards from one host at the amended 2s floor, so it is the
+    host every worker is talking to at once.
+
+    Keyed on the host string produced by `ratelimit.host_key`, not on a URL or
+    an origin: §2.6 counts requests against a machine.
+
+    `next_allowed_at` is a reservation rather than a record of the last
+    request. A caller takes the next free slot and pushes the marker out by
+    one delay, all inside a single statement, so two workers arriving together
+    get two different slots instead of both reading the same "last request"
+    and both concluding they may go.
+    """
+
+    __tablename__ = "crawler_host_budgets"
+
+    host: Mapped[str] = mapped_column(String(255), primary_key=True)
+    #: The next instant at which *some* caller may request this host. Written
+    #: with `clock_timestamp()`, never `now()`: `now()` is the transaction's
+    #: start time, identical for every statement inside it, which would hand
+    #: every host in a cycle the same instant.
+    next_allowed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: The delay currently applied to this host — the floor, or more if the
+    #: site's own `Crawl-delay` asked for more. Shared so that a rule one
+    #: worker read from robots.txt binds the others too.
+    delay_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    updated_at: Mapped[datetime] = _created_at()
+
+
 class CrawlRun(Base):
     """One crawl cycle, kept after the process that ran it has gone.
 
