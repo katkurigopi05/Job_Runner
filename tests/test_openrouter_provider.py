@@ -342,3 +342,77 @@ async def test_a_withdrawn_route_names_the_one_line_fix(monkeypatch) -> None:
     message = str(caught.value)
     assert "stealth/ox-alpha" in message
     assert "OPENROUTER_MODEL" in message
+
+
+def test_the_shipped_default_is_not_a_route_that_vanishes() -> None:
+    """The default was itself the class of route this module warns about.
+
+    `DEFAULT_MODEL` was `stealth/ox-alpha`, and the docstring two lines above
+    it says pre-release routes "get withdrawn without notice, at which point
+    every call 404s". So the shipped default was guaranteed to break, and did:
+    the owner hit it, and hit it again on `minimax/minimax-m3:free` after
+    swapping to another pre-release route.
+
+    A default cannot be guaranteed to survive — no free route on this gateway
+    is contractual — but it can avoid the one category that is *designed* to be
+    temporary. Measured on 2026-09-12, `nvidia/nemotron-3-super-120b-a12b:free`
+    was the longest-standing free route OpenRouter served: added 2026-03-11,
+    where the next oldest was three weeks younger and nine of the nineteen were
+    added in the preceding two months.
+
+    Two properties beyond age, both load-bearing:
+
+    - **The vendor is nameable.** §2.8 permits one third-party upload of the
+      résumé and the trail records where it went. A `stealth/*` route forwards
+      to an upstream that is undisclosed by design, so the trail can record
+      the hop but not the destination.
+    - **The weights are open.** A single-vendor preview disappears when that
+      vendor withdraws it; an open-weight model can be served by more than one
+      provider, so the route outliving any one of them is at least possible.
+    """
+    from packages.llm.provider import OpenRouterProvider
+
+    default = OpenRouterProvider.DEFAULT_MODEL
+
+    assert not default.startswith("stealth/"), (
+        "the default must not be a pre-release route — this module's own "
+        "docstring says those are withdrawn without notice"
+    )
+    for marker in ("preview", "alpha", "beta", "experimental"):
+        assert marker not in default.lower(), f"{default!r} reads as temporary"
+
+
+def test_the_default_is_still_overridable() -> None:
+    """Changing the default must not take the escape hatch with it."""
+    import os
+
+    from packages.llm.provider import OpenRouterProvider
+
+    os.environ["OPENROUTER_API_KEY"] = "k"
+    os.environ["OPENROUTER_MODEL"] = "some/other-route:free"
+    try:
+        assert OpenRouterProvider().model == "some/other-route:free"
+    finally:
+        os.environ.pop("OPENROUTER_MODEL", None)
+
+
+def test_each_gateway_names_its_own_default_route() -> None:
+    """The shared base must not hand one gateway the other's model.
+
+    `_OpenAICompatibleProvider.DEFAULT_MODEL` held `stealth/ox-alpha` — an
+    OpenRouter id — so `TokenRouterProvider` inherited it on any path that did
+    not set `TOKENROUTER_MODEL`. It happens to define its own, so nothing broke;
+    a third gateway added later would have dialled a withdrawn OpenRouter
+    preview and reported it as its own 404.
+    """
+    from packages.llm.provider import (
+        OpenRouterProvider,
+        TokenRouterProvider,
+        _OpenAICompatibleProvider,
+    )
+
+    assert "DEFAULT_MODEL" not in vars(_OpenAICompatibleProvider), (
+        "the shared base must declare DEFAULT_MODEL, not supply one"
+    )
+    for provider in (OpenRouterProvider, TokenRouterProvider):
+        assert "DEFAULT_MODEL" in vars(provider), f"{provider.__name__} must name its own"
