@@ -28,6 +28,7 @@ from packages.ats.base import (
     SiteError,
     UnsupportedSiteError,
 )
+from packages.ats.navigate import open_application
 from packages.ats.registry import adapter_for
 from packages.ats.screen import ScreenReport, screen
 from packages.core.config import get_settings
@@ -167,6 +168,20 @@ async def _run_pipeline(
         if posting.closed:
             await _fail(session, application, FailureReason.JOB_CLOSED, "posting is closed")
             return
+
+        # The posting URL is not always the form. Greenhouse serves both on one
+        # page; Lever, Ashby and Workable each put the application on a route of
+        # its own, and all three render it with React *after*
+        # `domcontentloaded`. Enumerating straight off the `goto` above
+        # therefore read an empty page and reported "no application form found"
+        # — which reads as a broken selector, and sent a live run looking at the
+        # adapter instead of at the navigation that never happened. A live probe
+        # of those routes found 40 Lever controls and nine Ashby fields waiting.
+        #
+        # `application.url` is deliberately not updated: it is half of the
+        # `UNIQUE(candidate_id, url)` that stops us applying twice, and the
+        # posting URL is the stable identity of the job.
+        await open_application(page, adapter, application.url)
 
         questions = await adapter.enumerate_fields(page)
 

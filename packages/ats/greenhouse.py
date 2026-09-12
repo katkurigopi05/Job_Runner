@@ -30,6 +30,12 @@ from packages.ats.base import (
     SkippedField,
     UnansweredQuestion,
 )
+from packages.ats.navigate import (
+    FORM_READY_TIMEOUT_MS,
+    application_route,
+    locate_form,
+)
+from packages.ats.navigate import wait_for_form as _wait_for_form
 
 log = structlog.get_logger(__name__)
 
@@ -67,6 +73,11 @@ SELECTORS: dict[str, str] = {
         "text=/this job is closed/i, text=/position has been filled/i"
     ),
 }
+
+#: Greenhouse serves the form on the posting page itself — there is no
+#: second route, and navigating to one would leave the only page that
+#: carries the form.
+APPLICATION_SEGMENT: str | None = None
 
 #: Greenhouse marks required fields with an asterisk in the label.
 _REQUIRED_MARKERS = ("*", "(required)", "required")
@@ -151,6 +162,20 @@ class GreenhouseAdapter:
         match = _URL_RE.match(url) or _EMBED_RE.search(url)
         return match.group("company") if match else None
 
+    @staticmethod
+    def application_url(url: str) -> str:
+        return application_route(url, _URL_RE, APPLICATION_SEGMENT)
+
+    async def wait_for_form(self, page: Any, timeout_ms: int = FORM_READY_TIMEOUT_MS) -> None:
+        """Block until the employer's questions are actually on the page."""
+        await _wait_for_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+            captcha_selector=SELECTORS["captcha"],
+            timeout_ms=timeout_ms,
+        )
+
     async def _guard_automation_blocks(self, page: Any) -> None:
         """Stop on a captcha rather than trying to get around it.
 
@@ -193,9 +218,11 @@ class GreenhouseAdapter:
         """Walk the real form. The field list comes from the page, not a guess."""
         await self._guard_automation_blocks(page)
 
-        form = page.locator(SELECTORS["form"]).first
-        if not await form.count():
-            raise SiteError("no application form found on page")
+        form = await locate_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+        )
 
         controls = form.locator(SELECTORS["fields"])
         count = await controls.count()

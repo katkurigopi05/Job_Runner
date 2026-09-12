@@ -32,9 +32,14 @@ from packages.ats.base import (
     Question,
     QuestionKind,
     Receipt,
-    SiteError,
 )
 from packages.ats.greenhouse import _clean_label, _kind_for
+from packages.ats.navigate import (
+    FORM_READY_TIMEOUT_MS,
+    application_route,
+    locate_form,
+)
+from packages.ats.navigate import wait_for_form as _wait_for_form
 
 #: https://jobs.lever.co/<company>/<posting-uuid>[/apply]
 _URL_RE = re.compile(
@@ -65,6 +70,9 @@ SELECTORS: dict[str, str] = {
         "text=/this posting is closed/i, text=/position has been filled/i"
     ),
 }
+
+#: Lever puts the form on `/apply`.
+APPLICATION_SEGMENT: str | None = "apply"
 
 #: Lever's own names for the fields every posting has. Anything else is a
 #: `cards[...]` question, which only its label describes.
@@ -111,6 +119,20 @@ class LeverAdapter:
         match = _URL_RE.match(url)
         return match.group("job_id") if match else None
 
+    @staticmethod
+    def application_url(url: str) -> str:
+        return application_route(url, _URL_RE, APPLICATION_SEGMENT)
+
+    async def wait_for_form(self, page: Any, timeout_ms: int = FORM_READY_TIMEOUT_MS) -> None:
+        """Block until the employer's questions are actually on the page."""
+        await _wait_for_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+            captcha_selector=SELECTORS["captcha"],
+            timeout_ms=timeout_ms,
+        )
+
     async def _guard_automation_blocks(self, page: Any) -> None:
         """Stop on a captcha rather than trying to get around it.
 
@@ -144,9 +166,11 @@ class LeverAdapter:
         """Walk the real form. The field list comes from the page, not a guess."""
         await self._guard_automation_blocks(page)
 
-        form = page.locator(SELECTORS["form"]).first
-        if not await form.count():
-            raise SiteError("no application form found on page")
+        form = await locate_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+        )
 
         controls = form.locator(SELECTORS["fields"])
         count = await controls.count()

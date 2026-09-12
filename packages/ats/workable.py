@@ -27,9 +27,14 @@ from packages.ats.base import (
     Question,
     QuestionKind,
     Receipt,
-    SiteError,
 )
 from packages.ats.greenhouse import _clean_label, _kind_for
+from packages.ats.navigate import (
+    FORM_READY_TIMEOUT_MS,
+    application_route,
+    locate_form,
+)
+from packages.ats.navigate import wait_for_form as _wait_for_form
 
 #: https://apply.workable.com/<company>/j/<id>[/apply]
 _URL_RE = re.compile(
@@ -39,7 +44,11 @@ _URL_RE = re.compile(
 )
 
 SELECTORS: dict[str, str] = {
-    "form": "form[action*='/apply']",
+    # The live form carries no `action`. The fixture that passed for months
+    # did, because it was written beside this selector. `locate_form` picks the
+    # candidate with the most fields, so admitting a bare `form` here does not
+    # hand back the site search box.
+    "form": "form[action*='/apply'], form",
     "posting_title": "[data-ui='job-title']",
     "posting_location": "[data-ui='job-workplace']",
     "posting_body": (
@@ -63,6 +72,9 @@ SELECTORS: dict[str, str] = {
         "text=/this job is closed/i, text=/position has been filled/i"
     ),
 }
+
+#: Workable puts the form on `/apply`.
+APPLICATION_SEGMENT: str | None = "apply"
 
 _FILE_PROMPT = "Choose file or drag and drop here"
 _EMPLOYER_PREFIX = "QA_"
@@ -113,6 +125,20 @@ class WorkableAdapter:
         match = _URL_RE.match(url)
         return match.group("job_id") if match else None
 
+    @staticmethod
+    def application_url(url: str) -> str:
+        return application_route(url, _URL_RE, APPLICATION_SEGMENT)
+
+    async def wait_for_form(self, page: Any, timeout_ms: int = FORM_READY_TIMEOUT_MS) -> None:
+        """Block until the employer's questions are actually on the page."""
+        await _wait_for_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+            captcha_selector=SELECTORS["captcha"],
+            timeout_ms=timeout_ms,
+        )
+
     async def _guard_automation_blocks(self, page: Any) -> None:
         """Stop on CAPTCHA; never attempt to bypass it. CLAUDE.md §2.5."""
         if await page.locator(SELECTORS["captcha"]).count():
@@ -149,9 +175,11 @@ class WorkableAdapter:
         """Walk the live form without changing any value."""
         await self._guard_automation_blocks(page)
 
-        form = page.locator(SELECTORS["form"]).first
-        if not await form.count():
-            raise SiteError("no application form found on page")
+        form = await locate_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+        )
 
         controls = form.locator(SELECTORS["fields"])
         questions: list[Question] = []

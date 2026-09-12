@@ -154,6 +154,25 @@ class ATSAdapter(Protocol):
         """True if this adapter handles the given posting URL."""
         ...
 
+    @staticmethod
+    def application_url(url: str) -> str:
+        """Where the application form for this posting lives.
+
+        Greenhouse answers with the posting URL itself; the other three put the
+        form on a route of its own. Returning the input unchanged is always
+        valid — an adapter never invents a route for a URL it cannot read.
+        """
+        ...
+
+    async def wait_for_form(self, page: Any, timeout_ms: int = ...) -> None:
+        """Block until the employer's questions have rendered.
+
+        Three of the four ATSes render the form with React after
+        `domcontentloaded`, so a check that runs immediately sees an empty
+        page and reports a missing form that is merely late.
+        """
+        ...
+
     async def parse_posting(self, page: Any) -> ParsedPosting: ...
 
     async def enumerate_fields(self, page: Any) -> list[Question]: ...

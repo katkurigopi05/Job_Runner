@@ -23,6 +23,8 @@ import structlog
 import yaml
 from pydantic import BaseModel, Field
 
+from packages.ats.registry import detect_ats
+
 log = structlog.get_logger(__name__)
 
 _WS_RE = re.compile(r"[ \t]+")
@@ -205,6 +207,38 @@ class GreenhouseExtractor:
     def board_url(self, company_slug: str) -> str:
         return self.BOARD_URL.format(slug=company_slug)
 
+    #: The board URL every Greenhouse posting has, whatever the employer's
+    #: `absolute_url` points at. Slug and id are both in hand here, so this is
+    #: always constructible without a fetch.
+    CANONICAL_URL = "https://job-boards.greenhouse.io/{slug}/jobs/{job_id}"
+
+    def _reachable_url(self, absolute_url: object, company_slug: str, job_id: object) -> str:
+        """A URL the worker can actually drive.
+
+        `absolute_url` is whatever the employer configured, and it is not
+        always a board: Stripe returns `stripe.com/jobs/search?gh_jid=<id>` for
+        all 635 of its postings. `detect_ats` claims none of those, the worker
+        routes by URL, and so a board we poll first-hand produced postings that
+        could only ever fail as `unsupported_site`.
+
+        Kept as written whenever an adapter claims it — most employers leave it
+        pointing at the board, and the employer's own URL is the friendlier one
+        for a human opening it from the dashboard.
+        """
+        canonical = self.CANONICAL_URL.format(slug=company_slug, job_id=job_id)
+        if not isinstance(absolute_url, str) or not absolute_url:
+            return canonical
+
+        if detect_ats(absolute_url) is None:
+            log.info(
+                "posting_url_resolved_to_board",
+                company=company_slug,
+                job_id=str(job_id),
+            )
+            return canonical
+
+        return absolute_url
+
     def parse(self, body: str, company_slug: str) -> list[ExtractedPosting]:
         try:
             payload = json.loads(body)
@@ -229,8 +263,7 @@ class GreenhouseExtractor:
 
             posting = ExtractedPosting(
                 external_id=str(job_id),
-                url=job.get("absolute_url")
-                or f"https://boards.greenhouse.io/{company_slug}/jobs/{job_id}",
+                url=self._reachable_url(job.get("absolute_url"), company_slug, job_id),
                 title=job.get("title") or None,
                 location=location,
                 description_raw=strip_html(job.get("content")),

@@ -35,6 +35,11 @@ from packages.ats.base import (
     SiteError,
 )
 from packages.ats.greenhouse import _clean_label, _kind_for
+from packages.ats.navigate import (
+    FORM_READY_TIMEOUT_MS,
+    application_route,
+)
+from packages.ats.navigate import wait_for_form as _wait_for_form
 
 #: https://jobs.ashbyhq.com/<company>/<posting-uuid>[/application]
 _URL_RE = re.compile(
@@ -65,6 +70,9 @@ SELECTORS: dict[str, str] = {
         "text=/this job is closed/i, text=/position has been filled/i"
     ),
 }
+
+#: Ashby puts the form on `/application`.
+APPLICATION_SEGMENT: str | None = "application"
 
 #: Ashby prefixes the fields every posting has. Everything else is a uuid.
 _SYSTEM_PREFIX = "_systemfield_"
@@ -113,6 +121,20 @@ class AshbyAdapter:
     def external_id(url: str) -> str | None:
         match = _URL_RE.match(url)
         return match.group("job_id") if match else None
+
+    @staticmethod
+    def application_url(url: str) -> str:
+        return application_route(url, _URL_RE, APPLICATION_SEGMENT)
+
+    async def wait_for_form(self, page: Any, timeout_ms: int = FORM_READY_TIMEOUT_MS) -> None:
+        """Block until the employer's questions are actually on the page."""
+        await _wait_for_form(
+            page,
+            form_selector=SELECTORS["form"],
+            field_selector=SELECTORS["fields"],
+            captcha_selector=SELECTORS["captcha"],
+            timeout_ms=timeout_ms,
+        )
 
     async def _guard_automation_blocks(self, page: Any) -> None:
         """Stop on a captcha rather than trying to get around it. §2.5."""
