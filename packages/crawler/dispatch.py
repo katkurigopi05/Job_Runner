@@ -26,13 +26,14 @@ import uuid
 from dataclasses import dataclass
 
 import structlog
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.core.models import Company, CrawlRun
+from packages.core.models import Company, CrawlRun, QueueTask
 from packages.core.queue import enqueue
-from packages.crawler.crawl import CompanyResult
+from packages.crawler.crawl import CompanyResult, CrawlReport
 from packages.crawler.extract import CompanySeed, extractor_for
+from packages.crawler.runs import due_companies, finish_run, start_run
 
 log = structlog.get_logger(__name__)
 
@@ -107,6 +108,7 @@ async def dispatch(
     # A run whose total counted companies it declined to enqueue would never
     # reach its total and would sit `running` for ever.
     run.companies_total = report.enqueued
+    await _claim(session, [c.id for c in companies if c.name not in set(report.unusable)])
     await session.flush()
 
     if report.unusable:
@@ -117,6 +119,48 @@ async def dispatch(
         )
     log.info("crawl_dispatched", run_id=str(run.id), summary=report.summary())
     return report
+
+
+async def _claim(session: AsyncSession, company_ids: list[uuid.UUID]) -> None:
+    """Push the dispatched companies' next poll out, provisionally.
+
+    Without this the scheduler enqueues the same companies on every tick until
+    their tasks are actually processed: `next_due_at` only moves when
+    `record_attempt` runs, and a tick is far shorter than a crawl. Two minutes
+    of that is the registry enqueued several times over, and the run
+    accounting stops meaning anything.
+
+    Provisional, because the authoritative value is written by
+    `record_attempt` when the crawl reports. If the task is never processed —
+    a worker lost, a queue drained — the company simply waits one ordinary
+    interval and is picked up by a later tick. Self-healing, and in the
+    direction of crawling *less* rather than more.
+    """
+    if not company_ids:
+        return
+    await session.execute(
+        text("""
+        UPDATE company_crawl_states AS s
+           SET next_due_at = clock_timestamp() + make_interval(secs => c.poll_interval_s)
+          FROM companies AS c
+         WHERE c.id = s.company_id
+           AND s.company_id = ANY(:ids)
+        """),
+        {"ids": company_ids},
+    )
+    # A company dispatched before it had a state row — promoted by discovery,
+    # added by an import — needs one, or it is claimed by nothing and comes
+    # back on the very next tick.
+    await session.execute(
+        text("""
+        INSERT INTO company_crawl_states (company_id, next_due_at)
+        SELECT c.id, clock_timestamp() + make_interval(secs => c.poll_interval_s)
+          FROM companies AS c
+         WHERE c.id = ANY(:ids)
+        ON CONFLICT (company_id) DO NOTHING
+        """),
+        {"ids": company_ids},
+    )
 
 
 #: Folded into the run with SQL arithmetic rather than read-modify-write.
@@ -190,14 +234,13 @@ async def due_for_dispatch(
     if force:
         rows = await session.scalars(select(Company).order_by(Company.name).limit(limit))
         return list(rows.all())
-
-    from packages.crawler.runs import due_companies
-
     return await due_companies(session, limit=limit)
 
 
 __all__ = [
     "CRAWL_COMPANY_TASK_KIND",
+    "backlog",
+    "tick",
     "DispatchReport",
     "close_if_complete",
     "dispatch",
@@ -205,3 +248,59 @@ __all__ = [
     "fold_into_run",
     "seed_from",
 ]
+
+
+async def backlog(session: AsyncSession) -> int:
+    """Crawl tasks enqueued and not yet finished."""
+    return int(
+        await session.scalar(
+            select(func.count())
+            .select_from(QueueTask)
+            .where(
+                QueueTask.kind == CRAWL_COMPANY_TASK_KIND,
+                QueueTask.status.in_(("pending", "running")),
+            )
+        )
+        or 0
+    )
+
+
+async def tick(
+    session: AsyncSession,
+    *,
+    limit: int,
+    max_backlog: int,
+    force: bool = False,
+    trigger: str = "scheduled",
+) -> DispatchReport | None:
+    """One sweep: open a run, enqueue what is due, claim it. Does not commit.
+
+    `None` when nothing was dispatched, which has two quite different causes
+    and they are logged apart. Nothing is due — the ordinary state of a
+    registry between polls — or the backlog is already too long, which is the
+    crawler being told it is behind.
+
+    Refusing to dispatch while behind is the point of `max_backlog`. A queue
+    that keeps accepting work it cannot start does not go faster; it converts
+    a slow cycle into an unbounded one, and hides how far behind it is inside
+    a number nobody reads until the disk fills.
+    """
+    outstanding = await backlog(session)
+    if outstanding >= max_backlog:
+        log.warning("crawl_tick_skipped_backlog", outstanding=outstanding, limit=max_backlog)
+        return None
+
+    companies = await due_for_dispatch(
+        session, limit=min(limit, max_backlog - outstanding), force=force
+    )
+    if not companies:
+        log.debug("crawl_tick_nothing_due")
+        return None
+
+    run = await start_run(session, trigger=trigger)
+    report = await dispatch(session, companies, run, force=force)
+    if report.enqueued == 0:
+        # Every candidate was unusable, so nothing will ever report and
+        # nothing would ever close this run.
+        await finish_run(session, run, CrawlReport())
+    return report

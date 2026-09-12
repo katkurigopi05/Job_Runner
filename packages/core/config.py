@@ -201,6 +201,21 @@ class Settings(BaseSettings):
     #: for the decision than a default that can be forgotten.
     crawler_shared_rate_limiter: bool = False
 
+    #: How often the dispatching cycle wakes to enqueue whatever has come due.
+    #:
+    #: Not the poll interval — that is per company. This is only how finely
+    #: the registry is swept. Five minutes means a company is crawled within
+    #: five minutes of becoming due, which against an hourly interval is
+    #: noise, and it keeps each tick's batch small.
+    crawler_tick_seconds: int = 300
+    #: Companies enqueued per tick. The cap is the difference between a queue
+    #: and one long cycle wearing a queue as a disguise.
+    crawler_dispatch_batch: int = 250
+    #: Stop dispatching while this many crawl tasks are still outstanding.
+    #: Workers that cannot keep up should make the backlog visible, not carry
+    #: it — an unbounded queue turns a slow cycle into an unbounded one.
+    crawler_max_backlog: int = 2000
+
     #: The owner's search is United States only, California first. On by
     #: default because it is a standing preference rather than a per-search
     #: one — §1 calls filters the owner's input, and this is that input stated

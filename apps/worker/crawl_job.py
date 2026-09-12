@@ -8,14 +8,17 @@ keeps another worker from reclaiming the task mid-cycle.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.core.models import Posting, Profile
-from packages.core.queue import ClaimedTask
+from packages.core.config import get_settings
+from packages.core.models import Posting, Profile, QueueTask
+from packages.core.queue import ClaimedTask, enqueue
 from packages.crawler.crawl import CrawlReport, crawl_all
-from packages.crawler.dispatch import dispatch, due_for_dispatch
+from packages.crawler.dispatch import tick
 from packages.crawler.extract import load_seed
 from packages.crawler.fetch import build_fetcher
 from packages.crawler.runs import finish_run, start_run, state_recorder
@@ -31,6 +34,37 @@ CRAWL_TASK_KIND = "crawl"
 #: flag rather than named directly, so it is not listed as something a caller
 #: asks for by name.
 VALID_TRIGGERS = frozenset({"scheduled", "manual"})
+
+
+async def _schedule_next_tick(session: AsyncSession, payload: dict, seconds: int) -> None:
+    """Enqueue the next sweep, unless one is already waiting.
+
+    The dispatching cycle reschedules itself rather than being driven by a
+    timer thread: the queue already survives restarts, already has a
+    `run_after`, and a task row is a schedule anyone can read.
+
+    The guard is what stops it multiplying. Every tick that enqueued a
+    successor unconditionally would double the number of ticks each time two
+    ever ran at once — and at-least-once delivery means two eventually will.
+    A single pending sweep is all this ever needs.
+    """
+    waiting = await session.scalar(
+        select(func.count())
+        .select_from(QueueTask)
+        .where(
+            QueueTask.kind == CRAWL_TASK_KIND,
+            QueueTask.status == "pending",
+            QueueTask.payload_json["dispatch"].astext == "true",
+        )
+    )
+    if waiting:
+        return
+    await enqueue(
+        session,
+        CRAWL_TASK_KIND,
+        {**payload, "force": False, "trigger": "scheduled"},
+        run_after=datetime.now(UTC) + timedelta(seconds=seconds),
+    )
 
 
 async def handle_crawl(session: AsyncSession, claimed: ClaimedTask) -> None:
@@ -63,17 +97,20 @@ async def handle_crawl(session: AsyncSession, claimed: ClaimedTask) -> None:
 
     if payload.get("dispatch"):
         # One task per company instead of one loop over all of them. The run
-        # row is opened here and closed by whichever company task reports
-        # last — no process sees the whole cycle any more.
-        run = await start_run(session, trigger=trigger)
-        companies = await due_for_dispatch(
-            session, limit=int(payload.get("limit", 500)), force=force
+        # row is opened by the tick and closed by whichever company task
+        # reports last — no process sees the whole cycle any more.
+        settings = get_settings()
+        report = await tick(
+            session,
+            limit=int(payload.get("limit", settings.crawler_dispatch_batch)),
+            max_backlog=int(payload.get("max_backlog", settings.crawler_max_backlog)),
+            force=force,
+            trigger=trigger,
         )
-        report = await dispatch(session, companies, run, force=force)
-        log.info("crawl_dispatch_done", summary=report.summary())
-        if report.enqueued == 0:
-            # Nothing to wait for, so nothing will ever close it.
-            await finish_run(session, run, CrawlReport())
+        if report is not None:
+            log.info("crawl_dispatch_done", summary=report.summary())
+        if payload.get("repeat", True):
+            await _schedule_next_tick(session, payload, settings.crawler_tick_seconds)
         return
 
     run = await start_run(session, trigger=trigger, companies_total=len(seeds))
