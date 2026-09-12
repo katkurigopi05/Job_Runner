@@ -14,12 +14,14 @@ Gate 5 asks that a second run emits zero postings. That falls out of this.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import case, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Company, Posting
@@ -40,6 +42,10 @@ class CompanyResult:
     new_postings: int = 0
     updated_postings: int = 0
     closed_postings: int = 0
+    #: Postings that were closed and are listed again unchanged. Counted
+    #: apart from `updated` because nothing about them changed — there is
+    #: nothing to re-embed, only a feed to correct.
+    reopened_postings: int = 0
     skipped_reason: str | None = None
     error: str | None = None
     waited_seconds: float = 0.0
@@ -58,6 +64,10 @@ class CompanyResult:
     #: True when the board answered but was byte-identical to last time. The
     #: cycle did its job; there was simply nothing new.
     unchanged: bool = False
+    #: Ids of the postings a downstream stage would have to look at again.
+    #: Carried so matching can work from what changed rather than re-reading
+    #: every open posting in the database.
+    changed_posting_ids: list[uuid.UUID] = field(default_factory=list)
 
     @property
     def emitted(self) -> int:
@@ -146,62 +156,170 @@ def is_due(company: Company, *, now: datetime | None = None) -> bool:
     return (current - last).total_seconds() >= company.poll_interval_s
 
 
-async def _store(
-    session: AsyncSession, company: Company, extracted: list[ExtractedPosting]
-) -> tuple[int, int]:
-    """Upsert postings, returning (new, updated)."""
-    existing = {
-        posting.external_id: posting
-        for posting in (
-            await session.scalars(select(Posting).where(Posting.company_id == company.id))
-        ).all()
-        if posting.external_id
-    }
+@dataclass
+class StoreResult:
+    """What one board's postings did, by id rather than by count.
 
-    new_count = 0
-    updated_count = 0
+    Counts are what a report needs; ids are what the next stage needs.
+    `handle_crawl` re-embeds and re-scores every open posting whenever a cycle
+    emits anything, which is affordable at 29 companies and is the whole cost
+    of a cycle at 3,500. It cannot do better than that while the crawler only
+    says *how many* postings changed.
+    """
+
+    new: list[uuid.UUID] = field(default_factory=list)
+    updated: list[uuid.UUID] = field(default_factory=list)
+    #: Postings that were closed and are listed again, byte for byte as
+    #: before. Not `updated`: nothing about them changed, so there is nothing
+    #: to re-embed — but they are open again and the feed has to say so.
+    reopened: list[uuid.UUID] = field(default_factory=list)
+
+    @property
+    def changed(self) -> list[uuid.UUID]:
+        """Everything a downstream stage would have to look at again."""
+        return [*self.new, *self.updated]
+
+
+async def _store(
+    session: AsyncSession,
+    company: Company,
+    extracted: list[ExtractedPosting],
+    *,
+    now: datetime | None = None,
+) -> StoreResult:
+    """Upsert a board's postings in one statement, returning what changed.
+
+    Three things happen here that did not before.
+
+    **Every sighting is recorded, not only the changes.** A posting whose
+    content is identical used to be skipped entirely, so `last_seen_at` is
+    written for all of them. That is what makes "still listed" a fact rather
+    than an inference from `_close_missing`'s set difference.
+
+    **A posting that reappears is open again even if nothing about it
+    changed.** The old code cleared `closed_at` inside the branch it took only
+    when the hash differed, so a posting that was closed and then relisted
+    unchanged — a requisition put on hold and resumed, which is the ordinary
+    case — stayed closed forever, invisible to matching, with the board saying
+    plainly that it was open.
+
+    **The read is narrow.** Classifying used to load whole `Posting` objects
+    for the company, including `description_raw` and a 384-dimension vector
+    per row, to compare a hash. Only four small columns are needed.
+    """
+    current = now or datetime.now(UTC)
+    result = StoreResult()
+    if not extracted:
+        return result
+
+    # A board that lists the same id twice would otherwise take the cycle
+    # down: Postgres refuses an `ON CONFLICT DO UPDATE` whose VALUES touch one
+    # row twice ("cannot affect row a second time"), and it refuses the whole
+    # statement, so one malformed board would cost every posting in it. The
+    # last listing wins, which is the one a sequential read would have left in
+    # place.
+    deduped = {item.external_id: item for item in extracted}
+    if len(deduped) != len(extracted):
+        log.warning(
+            "board_listed_a_posting_twice",
+            company=company.name,
+            listed=len(extracted),
+            distinct=len(deduped),
+        )
+    extracted = list(deduped.values())
+
+    # Four columns, on the new `company_id` index. The embeddings and
+    # descriptions this used to pull back were never looked at.
+    rows = await session.execute(
+        select(Posting.id, Posting.external_id, Posting.content_hash, Posting.closed_at).where(
+            Posting.company_id == company.id
+        )
+    )
+    existing = {row.external_id: row for row in rows if row.external_id}
+
+    values = [
+        {
+            "company_id": company.id,
+            "ats_type": item.ats_type,
+            "external_id": item.external_id,
+            "url": item.url,
+            "title": item.title,
+            "location": item.location,
+            "description_raw": item.description_raw,
+            "published_at": item.published_at,
+            "content_hash": item.content_hash,
+            "first_seen_at": current,
+            "last_seen_at": current,
+        }
+        for item in extracted
+    ]
+
+    statement = pg_insert(Posting).values(values)
+    changed = Posting.content_hash.is_distinct_from(statement.excluded.content_hash)
+    statement = statement.on_conflict_do_update(
+        constraint="uq_postings_company_external_id",
+        set_={
+            # Always: the board listed it just now, and it is open whatever we
+            # believed a moment ago.
+            "last_seen_at": statement.excluded.last_seen_at,
+            "closed_at": None,
+            # Small columns, written unconditionally. `url` is deliberately
+            # among them: `posting_hash` covers title, location and body but
+            # not the link, so a posting that moved used to keep the old URL
+            # indefinitely — the apply pipeline would follow a dead link and
+            # report the posting closed.
+            "url": statement.excluded.url,
+            "title": statement.excluded.title,
+            "location": statement.excluded.location,
+            "content_hash": statement.excluded.content_hash,
+            # A board that stops reporting a date must not erase the one we
+            # already have; `published_at` is the only evidence that
+            # `poll_interval_s` is set sensibly.
+            "published_at": func.coalesce(statement.excluded.published_at, Posting.published_at),
+            # Guarded, unlike the rest. A job description is large enough to
+            # be stored out of line, and assigning it its own current value
+            # still rewrites it. Every other column here is a few bytes.
+            "description_raw": case(
+                (changed, statement.excluded.description_raw), else_=Posting.description_raw
+            ),
+        },
+    )
+    # `first_seen_at` is absent from the update set on purpose: it is when we
+    # noticed the posting, and a posting we notice again was not born again.
+    await session.execute(statement)
 
     for item in extracted:
-        current = existing.get(item.external_id)
+        previous = existing.get(item.external_id)
+        if previous is None:
+            continue
+        if previous.content_hash != item.content_hash:
+            result.updated.append(previous.id)
+        elif previous.closed_at is not None:
+            result.reopened.append(previous.id)
 
-        if current is None:
-            session.add(
-                Posting(
-                    company_id=company.id,
-                    ats_type=item.ats_type,
-                    external_id=item.external_id,
-                    url=item.url,
-                    title=item.title,
-                    location=item.location,
-                    description_raw=item.description_raw,
-                    published_at=item.published_at,
-                    content_hash=item.content_hash,
-                )
+    # New rows have no id until the insert lands, so they are read back rather
+    # than guessed at.
+    if len(existing) < len(extracted):
+        inserted = await session.execute(
+            select(Posting.id).where(
+                Posting.company_id == company.id,
+                Posting.external_id.in_(
+                    [item.external_id for item in extracted if item.external_id not in existing]
+                ),
             )
-            new_count += 1
-            continue
-
-        if current.content_hash == item.content_hash:
-            # Unchanged since the last poll — emit nothing.
-            continue
-
-        current.url = item.url
-        current.title = item.title
-        if item.published_at is not None:
-            current.published_at = item.published_at
-        current.location = item.location
-        current.description_raw = item.description_raw
-        current.content_hash = item.content_hash
-        # An edited posting is open again even if we had closed it.
-        current.closed_at = None
-        updated_count += 1
+        )
+        result.new = list(inserted.scalars().all())
 
     await session.flush()
-    return new_count, updated_count
+    return result
 
 
 async def _close_missing(
-    session: AsyncSession, company: Company, extracted: list[ExtractedPosting]
+    session: AsyncSession,
+    company: Company,
+    extracted: list[ExtractedPosting],
+    *,
+    seen_at: datetime,
 ) -> tuple[int, bool]:
     """Mark postings the board no longer lists as closed.
 
@@ -217,30 +335,52 @@ async def _close_missing(
     like normal churn. Declining to act costs one stale posting until the
     extractor is fixed; the alternative costs the feed.
     """
-    open_postings = (
-        await session.scalars(
-            select(Posting).where(Posting.company_id == company.id, Posting.closed_at.is_(None))
-        )
-    ).all()
+    open_count = await session.scalar(
+        select(func.count())
+        .select_from(Posting)
+        .where(Posting.company_id == company.id, Posting.closed_at.is_(None))
+    )
 
-    if not extracted and open_postings:
+    if not extracted and open_count:
         log.warning(
             "crawl_parse_yielded_nothing",
             company=company.name,
-            open_postings=len(open_postings),
+            open_postings=open_count,
             action="left open; extractor is the likely fault",
         )
         return 0, True
 
-    seen = {item.external_id for item in extracted}
-    closed = 0
-    for posting in open_postings:
-        if posting.external_id and posting.external_id not in seen:
-            posting.closed_at = datetime.now(UTC)
-            closed += 1
-
+    # One statement, and no `Posting` objects. This used to load every open
+    # posting for the company — `description_raw` and a 384-dimension vector
+    # per row — in order to write one timestamp on some of them.
+    #
+    # "Absent from the board" is read off `last_seen_at` rather than from a
+    # `NOT IN` list of everything that *was* present. `_store` has just
+    # stamped `seen_at` on every posting this response listed, so anything
+    # still carrying an older stamp was not in it. That is the same question
+    # asked the cheap way round: a board with 5,000 open roles would otherwise
+    # put 5,000 ids into the statement to describe the handful that are gone.
+    #
+    # It is only sound because both halves share one timestamp, which is why
+    # `seen_at` is a parameter here rather than a fresh `now()` — two clocks a
+    # few milliseconds apart would close the entire board.
+    #
+    # `external_id IS NOT NULL` keeps the old loop's guard: a posting with no
+    # external id cannot be matched against the board's list, so it cannot be
+    # concluded to be absent from it.
+    statement = (
+        update(Posting)
+        .where(
+            Posting.company_id == company.id,
+            Posting.closed_at.is_(None),
+            Posting.external_id.is_not(None),
+            (Posting.last_seen_at.is_(None)) | (Posting.last_seen_at < seen_at),
+        )
+        .values(closed_at=seen_at)
+    )
+    result = await session.execute(statement)
     await session.flush()
-    return closed, False
+    return result.rowcount or 0, False
 
 
 async def _poll_company(
@@ -301,8 +441,18 @@ async def _poll_company(
         return result
 
     extracted = extractor.parse(response.text, seed.slug)
-    result.new_postings, result.updated_postings = await _store(session, company, extracted)
-    result.closed_postings, result.suspect_parse = await _close_missing(session, company, extracted)
+    # One timestamp for both halves of the write. `_close_missing` decides
+    # what is gone by comparing against exactly the stamp `_store` wrote, so
+    # they cannot be allowed to read the clock separately.
+    seen_at = datetime.now(UTC)
+    stored = await _store(session, company, extracted, now=seen_at)
+    result.new_postings = len(stored.new)
+    result.updated_postings = len(stored.updated)
+    result.reopened_postings = len(stored.reopened)
+    result.changed_posting_ids = stored.changed
+    result.closed_postings, result.suspect_parse = await _close_missing(
+        session, company, extracted, seen_at=seen_at
+    )
 
     # A suspect parse deliberately does not record the hash. Recording it
     # would make the next cycle short-circuit on "unchanged" and the warning
