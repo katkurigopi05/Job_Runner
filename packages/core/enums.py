@@ -93,6 +93,38 @@ OUTCOME_FOR_CLASSIFICATION: dict[Classification, Outcome] = {
 }
 
 
+class SourceStatus(StrEnum):
+    """How much we actually know about where a company's jobs are listed.
+
+    `Company.careers_url` was one undifferentiated field, so a Google search
+    link imported from a spreadsheet was indistinguishable from a Greenhouse
+    board we had polled successfully for a month. A dashboard reading that
+    column has no way to avoid presenting the first as a career page, which is
+    the one thing it must not do.
+
+    These are ordered by how much evidence stands behind them, and nothing
+    promotes a row except evidence.
+    """
+
+    #: No usable website and no usable careers URL. There is nothing to try,
+    #: which is a different problem from having tried and failed — it is fixed
+    #: by finding a URL, not by crawling better.
+    NO_WEBSITE = "no_website"
+    #: A lead: a search-engine link, or the company's home page. Imported as
+    #: supplied, never shown as a career page, and the input to discovery.
+    HINT = "hint"
+    #: A candidate board, not yet confirmed to belong to this company. A slug
+    #: guessed from a name lands here — `acme` on Greenhouse may be somebody
+    #: else's `acme`.
+    UNVERIFIED = "unverified"
+    #: The board answered and the evidence ties it to this company.
+    VERIFIED = "verified"
+    #: Discovery ran and found nothing. Distinct from `no_website` because it
+    #: is worth retrying later, and from `unverified` because there is no
+    #: candidate to confirm.
+    FAILED = "failed"
+
+
 class EmailMode(StrEnum):
     """Email management mode for candidates."""
 

@@ -210,9 +210,52 @@ class Company(Base):
     #: sha256 of the last board response. When it is unchanged, the crawler
     #: skips parsing entirely instead of re-hashing every posting.
     board_hash: Mapped[str | None] = mapped_column(String(64))
+
+    # --- What we know about the source, and how we came to know it ---------
+    #
+    # `careers_url` alone could not answer "is this a career page or a guess".
+    # A Google search link imported from a spreadsheet sat in the same column
+    # as a Greenhouse board polled successfully for a month, so any screen
+    # reading it presented the first as the second.
+    #: A `SourceStatus`. Nothing promotes a row except evidence.
+    source_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'unverified'")
+    )
+    #: What justified `source_status` — the method, what answered, when. Kept
+    #: as a record rather than a flag because "verified" with no account of
+    #: how is the claim this column exists to stop being taken on trust.
+    source_evidence: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    source_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Why the last discovery attempt produced nothing. Distinct from
+    #: `CompanyCrawlState.last_error`, which is about polling a board we have;
+    #: this is about failing to find one at all.
+    discovery_failure: Mapped[str | None] = mapped_column(Text)
+
+    # --- Provenance, for a row that came from a spreadsheet ----------------
+    #
+    # The supplied values are never overwritten by discovery. A careers URL we
+    # resolved to a board is an improvement on what the sheet said, not a
+    # correction of it — and when a resolution turns out to be wrong, the only
+    # way back is the original text.
+    supplied_website: Mapped[str | None] = mapped_column(Text)
+    supplied_career_url: Mapped[str | None] = mapped_column(Text)
+    #: File and 1-based row the company was imported from. A duplicate name
+    #: three thousand rows in is otherwise unfindable.
+    source_file: Mapped[str | None] = mapped_column(Text)
+    source_row: Mapped[int | None] = mapped_column(Integer)
+
     created_at: Mapped[datetime] = _created_at()
 
     __table_args__ = (
+        CheckConstraint(
+            "source_status IN ('no_website', 'hint', 'unverified', 'verified', 'failed')",
+            name="ck_companies_source_status",
+        ),
+        # The import and the dashboard both group by this, over the whole
+        # registry, every time they run.
+        Index("ix_companies_source_status", "source_status"),
         # The scheduler asks "which companies are due?" every tick. At 29 rows
         # that is a sequential scan nobody notices; at 3,500 it is the query
         # that runs most often in the whole system.
@@ -462,6 +505,22 @@ class CompanyCrawlState(Base):
     #: `blocked`, `error`, or `suspect`.
     last_status: Mapped[str | None] = mapped_column(String(20))
     last_error: Mapped[str | None] = mapped_column(Text)
+
+    #: Discovery's own schedule, kept apart from the crawl's.
+    #:
+    #: A company with no board yet cannot be crawled, so it would never come
+    #: due under `next_due_at` and would never be retried. And the two cadences
+    #: are genuinely different: a board is polled hourly, while a careers page
+    #: that yielded nothing is worth another look in days, not minutes.
+    #:
+    #: Here rather than on `Company` for the reason the rest of this table is:
+    #: it is written on every attempt, and re-importing the registry must not
+    #: reset it.
+    discovery_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    discovery_last_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    discovery_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     #: The run that last touched this company. SET NULL so pruning old runs is
     #: a decision about history, not something that can orphan a company.
     last_run_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -472,6 +531,8 @@ class CompanyCrawlState(Base):
         UniqueConstraint("company_id", name="uq_company_crawl_states_company"),
         # The scheduler's only query: the due ones, soonest first.
         Index("ix_company_crawl_states_next_due_at", "next_due_at"),
+        # Discovery asks the same question of its own column.
+        Index("ix_company_crawl_states_discovery_next_at", "discovery_next_at"),
     )
 
 
