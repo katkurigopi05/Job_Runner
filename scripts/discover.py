@@ -15,7 +15,8 @@ from packages.crawler.fetch import build_fetcher
 
 async def main() -> None:
     async with core_db.get_sessionmaker()() as session:
-        report = await ingest(session, build_fetcher())
+        async with build_fetcher() as fetcher:
+            report = await ingest(session, fetcher)
         print(report.summary())
 
         for result in report.sources:

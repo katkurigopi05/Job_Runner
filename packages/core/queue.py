@@ -265,6 +265,52 @@ async def release_task(session: AsyncSession, task: QueueTask) -> None:
     await session.flush()
 
 
+class TaskDeferred(Exception):  # noqa: N818 - an outcome, not an error
+    """Raised by a handler that handed its task back rather than doing the work.
+
+    Needed because returning normally is indistinguishable from success, and
+    `run.py::_process` calls `complete_task` on a clean return — which marked a
+    freshly deferred task `done` and dropped the work. Caught there and
+    **committed**, not rolled back: the deferral is the thing to keep.
+
+    Not a failure: `attempts` is untouched, so being asked to wait never
+    exhausts a task's retries.
+    """
+
+    def __init__(self, reason: str, *, run_after: datetime) -> None:
+        super().__init__(reason)
+        self.run_after = run_after
+
+
+async def defer_task(session: AsyncSession, task: QueueTask, *, run_after: datetime) -> None:
+    """Put a task back with a later start time, without consuming a retry.
+
+    Distinct from `fail_task`, which increments `attempts` and eventually gives
+    up. Being asked to wait by the rate limiter is not a failure and must never
+    exhaust a task's retries: a company on a busy host would otherwise be
+    dropped for being popular.
+
+    Distinct from `release_task` too, which hands a task back for *now* — that
+    is right for an approval, and here it would spin: the worker would reclaim
+    the same task immediately and find the host still busy.
+
+    **The claim's attempt is given back.** `claim_task` increments `attempts`
+    when it takes the task, which is right in general — a worker that dies
+    mid-task must have consumed one, or a crash loop would retry for ever. A
+    deferral is neither a crash nor a try: nothing was requested. Leaving the
+    increment would spend a task's whole retry budget on being unlucky about
+    which host it belongs to, and `DEFAULT_MAX_ATTEMPTS` would then drop a
+    perfectly good company for being on a busy board.
+    """
+    task.status = QueueTaskStatus.PENDING.value
+    task.locked_by = None
+    task.locked_at = None
+    task.lease_expires_at = None
+    task.run_after = run_after
+    task.attempts = max(0, task.attempts - 1)
+    await session.flush()
+
+
 async def pending_count(session: AsyncSession, *, kind: str | None = None) -> int:
     """Count pending tasks, optionally filtered by kind."""
     stmt = select(QueueTask).where(QueueTask.status == QueueTaskStatus.PENDING.value)

@@ -90,7 +90,7 @@ function Column({
       </p>
 
       {side.provider_failures && side.changed === 0 ? (
-        <p className="mt-2 max-w-prose font-mono text-xs text-stop">
+        <p className="mt-2 max-w-prose text-xs text-stop">
           This model did not produce a rewrite, so this column is your résumé unchanged. That is
           not a judgment on the model — it never answered. Worth re-running before reading
           anything into the comparison.
@@ -125,7 +125,7 @@ function Column({
           ) : null}
         </form>
       ) : (
-        <p className="mt-4 font-mono text-xs text-attn">
+        <p className="mt-4 text-xs text-attn">
           No document was produced, so there is nothing to choose here.
         </p>
       )}
@@ -231,7 +231,7 @@ function CloudSides({
         ))}
       </div>
       {picked.length === 0 ? (
-        <p className="max-w-prose font-mono text-xs text-ink-faint">
+        <p className="max-w-prose text-xs text-ink-faint">
           None ticked — the remote half will be whatever real tailoring would use.
         </p>
       ) : (
@@ -274,7 +274,7 @@ export function TailoringCompare({
             ) : null}
           </div>
         </form>
-        <p className="max-w-prose font-mono text-xs text-ink-faint">
+        <p className="max-w-prose text-xs text-ink-faint">
           Runs the tailorer once per column and shows them side by side. Every cloud column
           uploads your résumé again, so this happens only when you ask — and a posting already
           tailored for by that provider sends nothing. Ticking providers here applies to this

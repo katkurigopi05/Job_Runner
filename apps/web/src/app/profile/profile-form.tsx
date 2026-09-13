@@ -79,8 +79,38 @@ export function ProfileForm({ profile }: { profile: Profile }) {
             defaultChecked={profile.needs_sponsorship ?? false}
             className="size-4 accent-attn"
           />
-          <span className="text-sm">I will need visa sponsorship</span>
+          <span className="text-sm">I will need visa sponsorship in future</span>
         </label>
+
+        {/* A separate question from the one above, and the reason the column
+            exists: a permanent resident needs no sponsorship and still fails
+            "US citizens only". Unstated is the shipped state and never
+            excludes a posting — an explicit restriction is surfaced on the
+            match card instead of acted on. */}
+        <div className="mt-5">
+          <label
+            htmlFor={`citizenship-${profile.id}`}
+            className="font-mono text-xs uppercase tracking-widest text-ink-soft"
+          >
+            Current status, for filtering only
+          </label>
+          <p className="mt-1 max-w-prose text-sm text-ink-soft">
+            Never typed onto an application — the box above is what gets copied. This only decides
+            which postings you are shown: leave it unset and nothing is filtered out.
+          </p>
+          <select
+            id={`citizenship-${profile.id}`}
+            name="citizenship_status"
+            defaultValue={profile.citizenship_status ?? ""}
+            className="mt-2 w-full max-w-sm rounded-md border border-rule bg-paper px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+          >
+            <option value="">Not stated — filter nothing</option>
+            <option value="us_citizen">US citizen</option>
+            <option value="permanent_resident">Permanent resident / green card</option>
+            <option value="other_authorized">Otherwise authorized to work now</option>
+            <option value="not_authorized">Not currently authorized</option>
+          </select>
+        </div>
       </div>
 
       <fieldset className="border border-rule px-5 py-5">

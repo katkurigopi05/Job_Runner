@@ -12,6 +12,7 @@ from apps.api.routers import (
     audit,
     candidates,
     chat,
+    companies,
     crawl,
     detect,
     inbox,
@@ -44,6 +45,7 @@ app.include_router(postings.router)
 app.include_router(inbox.router)
 app.include_router(chat.router)
 app.include_router(crawl.router)
+app.include_router(companies.router)
 app.include_router(matches.router)
 app.include_router(labels.router)
 app.include_router(analytics.router)

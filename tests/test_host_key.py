@@ -26,7 +26,7 @@ def test_every_spelling_of_one_host_is_one_key() -> None:
     assert len({host_key(url) for url in SPELLINGS}) == 1
 
 
-def test_a_second_spelling_does_not_buy_a_second_request() -> None:
+async def test_a_second_spelling_does_not_buy_a_second_request() -> None:
     """`netloc` gave each spelling its own counter, so the floor was 5x looser.
 
     Reachable rather than theoretical: `bespoke.probe_page` and
@@ -34,19 +34,19 @@ def test_a_second_spelling_does_not_buy_a_second_request() -> None:
     `resolve.find_embedded` takes them out of an aggregator's own HTML.
     """
     limiter = HostRateLimiter(clock=lambda: 0.0)
-    limiter.record(host_key(SPELLINGS[0]))
+    await limiter.record(host_key(SPELLINGS[0]))
 
     for url in SPELLINGS[1:]:
         assert not limiter.is_ready(host_key(url)), url
 
 
-def test_a_retry_after_binds_every_spelling() -> None:
+async def test_a_retry_after_binds_every_spelling() -> None:
     """§2.6 permits the 2s shared floor only "while also listening".
 
     A backoff one spelling of the host can walk around is not listening.
     """
     limiter = HostRateLimiter(clock=lambda: 0.0)
-    limiter.penalize(host_key(SPELLINGS[0]), 600)
+    await limiter.penalize(host_key(SPELLINGS[0]), 600)
 
     for url in SPELLINGS:
         assert limiter.time_until_ready(host_key(url)) == pytest.approx(600.0), url

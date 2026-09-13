@@ -187,7 +187,7 @@ export function ResumeEditor({
 
       <header className="flex flex-wrap items-baseline justify-between gap-3 border-b border-rule px-5 py-3">
         <p className={legend}>editing — this is the document, type in it</p>
-        <p className="font-mono text-xs text-ink-faint">
+        <p className="text-xs text-ink-faint">
           from v{parsed.version} · saves as a new version
         </p>
       </header>

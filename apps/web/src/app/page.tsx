@@ -135,9 +135,13 @@ export default async function DeskPage() {
       </header>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat value={digest.postings_seen.toLocaleString()} label="postings, 7 days" />
+        <Stat
+          value={digest.applications_submitted.toLocaleString()}
+          label="sent, 7 days"
+          href="/applications"
+        />
         <Stat value={matchCounts.total.toLocaleString()} label="matches" href="/matches" />
-        <Stat value={matchCounts.undecided.toLocaleString()} label="unrated" href="/swipe" />
+        <Stat value={digest.postings_seen.toLocaleString()} label="postings, 7 days" />
         <Stat value={waiting.length} label="waiting on you" href="/finish" />
       </div>
 
@@ -168,9 +172,9 @@ export default async function DeskPage() {
 
         <Panel title="This week" href="/tracker" linkLabel="tracker">
           {digest.quiet_week ? (
-            <p className="text-sm text-attn">
-              Nothing in, nothing out. A quiet week usually means the crawler stopped, not that the
-              market did.
+            <p className="text-sm text-ink-soft">
+              A quiet week. Worth checking the crawler is still running before reading anything
+              into it — <span className="font-mono text-xs">make crawl</span> starts a cycle.
             </p>
           ) : (
             <dl className="space-y-2 text-sm">

@@ -38,6 +38,11 @@ export async function saveProfile(
     salary_expectation: text("salary_expectation"),
     needs_sponsorship: form.get("needs_sponsorship") === "on",
     auto_submit: form.get("auto_submit") === "on",
+    // "" is the "not stated" option and has to reach the API as null, not as
+    // an empty string the CHECK constraint would reject. `text()` already
+    // maps blank to null; this only keeps the field out of the payload when
+    // the form did not carry it at all.
+    citizenship_status: text("citizenship_status"),
   };
 
   const score = form.get("min_match_score");

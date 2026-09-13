@@ -59,6 +59,7 @@ from dataclasses import dataclass, field
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy import text as sql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import CorpusStats
@@ -210,3 +211,84 @@ async def rebuild_if_stale(
         previous_documents=current.total,
     )
     return DocumentFrequencies(total=fresh.total, counts=kept), next_revision
+
+
+#: The text each posting contributes to the corpus, as SQL. Must match what
+#: the callers build in Python — `f"{title}\n{description_raw}"` — or the
+#: document count below counts a different corpus than the rebuild does.
+#
+# The character set is explicit because Postgres's `btrim` strips *spaces*
+# only. `btrim(E'\n')` is `E'\n'`, not `''` — so a posting with no title and
+# no description counted as a document here while `from_texts`, which uses
+# Python's `strip()`, skipped it. The two corpora would then disagree about
+# their own size, which is the number the rebuild threshold is computed from.
+_WHITESPACE = "E' \\t\\n\\r\\f\\v'"
+_DOCUMENT_TEXT = (
+    f"btrim(coalesce(title, '') || E'\\n' || coalesce(description_raw, ''), {_WHITESPACE})"
+)
+
+
+async def open_document_count(session: AsyncSession) -> int:
+    """How many open postings would contribute a document.
+
+    `DocumentFrequencies.from_texts` skips blank ones, so the condition here
+    is the same condition it applies.
+    """
+    return int(
+        await session.scalar(
+            sql(f"SELECT count(*) FROM postings WHERE closed_at IS NULL AND {_DOCUMENT_TEXT} <> ''")  # noqa: S608, E501
+        )
+        or 0
+    )
+
+
+async def load_corpus_texts(session: AsyncSession) -> list[str]:
+    """Every open posting's document text, and nothing else from the row."""
+    rows = await session.execute(
+        sql(f"SELECT {_DOCUMENT_TEXT} AS document FROM postings WHERE closed_at IS NULL")  # noqa: S608
+    )
+    return [row.document for row in rows if row.document]
+
+
+@dataclass(frozen=True)
+class CorpusView:
+    """The active statistics, and whether this call is what rebuilt them."""
+
+    frequencies: DocumentFrequencies
+    revision: int | None
+    rebuilt: bool = False
+
+
+async def refresh_corpus_stats(session: AsyncSession, *, force: bool = False) -> CorpusView:
+    """`rebuild_if_stale`, without reading the corpus to decide.
+
+    The growth test is `(new_total - stored_total) / stored_total`, and
+    `new_total` is a count of documents — so answering it needs a count, not
+    the documents. `rebuild_if_stale` builds the full term statistics first
+    and then usually throws them away, which means every cycle reads every
+    open posting's title and description to discover that nothing needs doing.
+
+    At 29 companies that is invisible. At 3,500 it is the largest read in the
+    system, performed on the overwhelmingly common path where the answer is
+    "no".
+
+    `rebuilt` is on the return because it decides how much work the caller
+    then has to do: a new revision invalidates every stored vector, so the
+    next pass is over the whole corpus rather than over what changed.
+    """
+    current, revision = await load_active(session)
+    total = await open_document_count(session)
+
+    if total < MIN_DOCUMENTS:
+        # Not enough corpus to weight anything by. Leave whatever is stored.
+        return CorpusView(current, revision)
+
+    if not force and revision is not None and current.total:
+        growth = (total - current.total) / current.total
+        if growth < REBUILD_GROWTH:
+            return CorpusView(current, revision)
+
+    frequencies, new_revision = await rebuild_if_stale(
+        session, await load_corpus_texts(session), force=True
+    )
+    return CorpusView(frequencies, new_revision, rebuilt=new_revision != revision)

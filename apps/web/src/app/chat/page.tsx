@@ -23,7 +23,7 @@ export default function ChatPage() {
         <Assistant />
       </div>
 
-      <p className="max-w-prose font-mono text-xs leading-relaxed text-ink-faint">
+      <p className="max-w-prose text-xs leading-relaxed text-ink-faint">
         Needs Ollama running locally (<code>ollama serve</code>). If it is not, the assistant says
         so rather than falling back to a cloud provider — chat context is your own data, and §2.8
         covers only the tailoring call.

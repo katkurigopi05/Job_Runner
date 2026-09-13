@@ -88,11 +88,11 @@ def test_first_request_to_a_host_is_immediate() -> None:
     assert lim.time_until_ready("example.com") == 0.0
 
 
-def test_second_request_must_wait_the_full_delay() -> None:
+async def test_second_request_must_wait_the_full_delay() -> None:
     clock = FakeClock(1000.0)
     lim = limiter(clock)
 
-    lim.record("example.com")
+    await lim.record("example.com")
     assert lim.time_until_ready("example.com") == 60.0
 
     clock.now += 59.0
@@ -102,17 +102,17 @@ def test_second_request_must_wait_the_full_delay() -> None:
     assert lim.is_ready("example.com")
 
 
-def test_hosts_are_tracked_independently() -> None:
+async def test_hosts_are_tracked_independently() -> None:
     lim = limiter()
-    lim.record("a.com")
+    await lim.record("a.com")
     assert not lim.is_ready("a.com")
     assert lim.is_ready("b.com")
 
 
-def test_a_failed_request_still_counts() -> None:
+async def test_a_failed_request_still_counts() -> None:
     """A 500 cost the host a round trip; retrying instantly is the abuse."""
     lim = limiter()
-    lim.record("example.com")  # caller records regardless of status
+    await lim.record("example.com")  # caller records regardless of status
     assert not lim.is_ready("example.com")
 
 
@@ -135,7 +135,7 @@ async def test_acquire_fails_loudly_on_a_stopped_clock() -> None:
         return None
 
     lim = HostRateLimiter(clock=stopped, sleeper=never_advance)
-    lim.record("example.com")
+    await lim.record("example.com")
 
     with pytest.raises(RuntimeError, match="clock is not advancing"):
         await lim.acquire("example.com")
@@ -471,12 +471,16 @@ async def test_seed_validation_checks_rendered_board_after_api_404() -> None:
 
 
 async def test_seed_validation_keeps_recorded_unsupported_ats() -> None:
-    """An ATS we cannot read is reported, never rewritten or dropped."""
+    """An ATS we cannot read is reported, never rewritten or dropped.
+
+    Stood in for by `taleo` rather than `workday`, which is what this said
+    until Workday gained an extractor. The test is about what happens to a
+    registry row naming an ATS with no reader, so it needs one that really
+    has none.
+    """
     fetcher = PoliteFetcher(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
 
-    results = await validate_seeds(
-        [CompanySeed(name="Moved", slug="moved", ats="workday")], fetcher
-    )
+    results = await validate_seeds([CompanySeed(name="Moved", slug="moved", ats="taleo")], fetcher)
 
     assert results[0].state is SeedState.OTHER_ATS
 
@@ -682,7 +686,10 @@ async def test_empty_200_board_is_not_a_failure(db_session, seed) -> None:
 
 
 async def test_unknown_ats_is_skipped(db_session) -> None:
-    seed = CompanySeed(name="Acme", slug="acme", ats="workday")
+    """`taleo` rather than `workday`, which this used before Workday gained an
+    extractor — and which then passed for the wrong reason, because the slug
+    error it started raising happened to contain the word being asserted on."""
+    seed = CompanySeed(name="Acme", slug="acme", ats="taleo")
     fetcher = PoliteFetcher(
         transport=_board_transport({"jobs": []}),
         rate_limiter=limiter(),
@@ -691,7 +698,7 @@ async def test_unknown_ats_is_skipped(db_session) -> None:
     result = await crawl_company(db_session, seed, fetcher, force=True)
 
     assert result.skipped_reason is not None
-    assert "workday" in result.skipped_reason
+    assert "taleo" in result.skipped_reason
 
 
 async def test_full_cycle_respects_the_rate_limit(db_session) -> None:
@@ -932,24 +939,24 @@ def test_a_company_host_override_below_60s_is_refused() -> None:
         HostRateLimiter(host_delays={"careers.acme.com": 5.0})
 
 
-def test_a_429_backs_the_host_off() -> None:
+async def test_a_429_backs_the_host_off() -> None:
     """The half that makes a faster floor defensible: we listen."""
     now = 1000.0
     limiter_ = HostRateLimiter(clock=lambda: now)
 
-    limiter_.penalize("api.lever.co", 300.0)
+    await limiter_.penalize("api.lever.co", 300.0)
 
     assert limiter_.time_until_ready("api.lever.co") == 300.0
     assert limiter_.is_ready("boards-api.greenhouse.io")
 
 
-def test_a_penalty_only_ever_extends() -> None:
+async def test_a_penalty_only_ever_extends() -> None:
     """A server asking for a shorter pause does not shorten ours."""
     now = 1000.0
     limiter_ = HostRateLimiter(clock=lambda: now)
 
-    limiter_.penalize("api.lever.co", 300.0)
-    limiter_.penalize("api.lever.co", 5.0)
+    await limiter_.penalize("api.lever.co", 300.0)
+    await limiter_.penalize("api.lever.co", 5.0)
 
     assert limiter_.time_until_ready("api.lever.co") == 300.0
 
@@ -1168,3 +1175,84 @@ def test_a_registry_written_as_a_bare_list_is_refused(tmp_path) -> None:
 
     with pytest.raises(SeedFileError):
         load_seed(str(path))
+
+
+# --------------------------------------------------------------------------
+# Connection reuse — setup cost, never politeness
+# --------------------------------------------------------------------------
+
+
+async def test_one_client_serves_many_fetches(monkeypatch) -> None:
+    """A client per request meant a handshake per request.
+
+    Against a shared ATS API — one host serving thousands of boards at the
+    amended §2.6 floor of 2s — that is the same TCP and TLS setup to the same
+    machine, once per company, for the whole registry.
+    """
+    built: list[object] = []
+    real = httpx.AsyncClient
+
+    class Counting(real):  # type: ignore[misc, valid-type]
+        def __init__(self, *args, **kwargs) -> None:
+            built.append(self)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", Counting)
+
+    fetcher = PoliteFetcher(
+        transport=_board_transport({"jobs": []}),
+        rate_limiter=limiter(),
+    )
+    for _ in range(3):
+        await fetcher.fetch("https://boards-api.greenhouse.io/v1/boards/acme/jobs")
+
+    # One for the pages, one for robots.txt — which keeps its own because it
+    # follows redirects and the page client deliberately does not.
+    assert len(built) == 2, f"expected one pooled client per role, got {len(built)}"
+    await fetcher.aclose()
+
+
+async def test_pooling_does_not_shorten_the_wait() -> None:
+    """The floor is enforced before a connection is reached for.
+
+    This is the assertion that makes reuse safe to keep: §2.6 is about how
+    often a host is touched, and pooling changes only what is reused between
+    touches.
+    """
+    clock = FakeClock()
+    fetcher = PoliteFetcher(
+        transport=_board_transport({"jobs": []}),
+        rate_limiter=limiter(clock=clock),
+    )
+    url = "https://boards-api.greenhouse.io/v1/boards/acme/jobs"
+
+    await fetcher.fetch(url)
+    second = await fetcher.fetch(url)
+
+    assert second.waited >= MIN_SHARED_API_DELAY_SECONDS
+    await fetcher.aclose()
+
+
+async def test_a_closed_fetcher_can_be_used_again() -> None:
+    """`aclose` releases the pool; it is not a one-way door."""
+    fetcher = PoliteFetcher(
+        transport=_board_transport({"jobs": []}),
+        rate_limiter=limiter(),
+    )
+    url = "https://boards-api.greenhouse.io/v1/boards/acme/jobs"
+
+    await fetcher.fetch(url)
+    await fetcher.aclose()
+    again = await fetcher.fetch(url)
+
+    assert again.ok
+    await fetcher.aclose()
+
+
+async def test_fetcher_works_as_a_context_manager() -> None:
+    async with PoliteFetcher(
+        transport=_board_transport({"jobs": []}), rate_limiter=limiter()
+    ) as fetcher:
+        result = await fetcher.fetch("https://boards-api.greenhouse.io/v1/boards/acme/jobs")
+
+    assert result.ok

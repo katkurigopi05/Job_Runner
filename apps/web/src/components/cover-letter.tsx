@@ -24,7 +24,7 @@ export function CoverLetterView({ letter }: { letter: CoverLetter }) {
         <p className="text-sm text-attn">
           No letter is attached. {letter.rejected_reason ?? "The fabrication guard refused it."}
         </p>
-        <p className="font-mono text-xs text-ink-faint">
+        <p className="text-xs text-ink-faint">
           Nothing false was sent. Write one by hand if this posting needs it.
         </p>
       </div>

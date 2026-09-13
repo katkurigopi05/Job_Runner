@@ -552,6 +552,234 @@ companies:
   ats: greenhouse
   checked: '2026-09-07'
   state: api
+- name: 1X Technologies
+  slug: 1x
+  ats: ashby
+- name: Abridge
+  slug: abridge
+  ats: ashby
+- name: Aurora
+  slug: aurora-operations-inc
+  ats: ashby
+- name: Baseten
+  slug: baseten
+  ats: ashby
+- name: Browserbase
+  slug: browserbase
+  ats: ashby
+- name: Collaborative Robotics
+  slug: cobot
+  ats: ashby
+- name: Crusoe
+  slug: crusoe
+  ats: ashby
+- name: Cursor
+  slug: cursor
+  ats: ashby
+- name: Etched
+  slug: etched
+  ats: ashby
+- name: Fireworks AI
+  slug: fireworks
+  ats: ashby
+- name: Harvey
+  slug: harvey
+  ats: ashby
+- name: Ideogram
+  slug: ideogram
+  ats: ashby
+- name: LanceDB
+  slug: lancedb
+  ats: ashby
+- name: Lightning AI
+  slug: lightning
+  ats: ashby
+- name: Linear
+  slug: linear
+  ats: ashby
+- name: Mercor
+  slug: mercor
+  ats: ashby
+- name: Modal Labs
+  slug: modal
+  ats: ashby
+- name: Normal Computing
+  slug: normalcomputing
+  ats: ashby
+- name: OpenAI
+  slug: openai
+  ats: ashby
+- name: Physical Intelligence
+  slug: physicalintelligence
+  ats: ashby
+- name: Pika
+  slug: pika
+  ats: ashby
+- name: Poolside
+  slug: poolside
+  ats: ashby
+- name: Ramp
+  slug: ramp
+  ats: ashby
+- name: Reflection AI
+  slug: reflectionai
+  ats: ashby
+- name: Replit
+  slug: replit
+  ats: ashby
+- name: Runway
+  slug: runway
+  ats: ashby
+- name: Saronic
+  slug: saronic
+  ats: ashby
+- name: Standard Bots
+  slug: standardbots
+  ats: ashby
+- name: Suno
+  slug: suno
+  ats: ashby
+- name: Tavus
+  slug: tavus
+  ats: ashby
+- name: Temporal
+  slug: temporal
+  ats: ashby
+- name: Weaviate
+  slug: weaviate
+  ats: ashby
+- name: Writer
+  slug: writer
+  ats: ashby
+- name: Agility Robotics
+  slug: agilityrobotics
+  ats: greenhouse
+- name: AssemblyAI
+  slug: assemblyai
+  ats: greenhouse
+- name: Bot Auto
+  slug: botauto
+  ats: greenhouse
+- name: Carbon Robotics
+  slug: carbonrobotics
+  ats: greenhouse
+- name: Chainguard
+  slug: chainguard
+  ats: greenhouse
+- name: ClickHouse
+  slug: clickhouse
+  ats: greenhouse
+- name: Cockroach Labs
+  slug: cockroachlabs
+  ats: greenhouse
+- name: Cresta
+  slug: cresta
+  ats: greenhouse
+- name: Cribl
+  slug: cribl
+  ats: greenhouse
+- name: Dropbox
+  slug: dropbox
+  ats: greenhouse
+- name: Fastly
+  slug: fastly
+  ats: greenhouse
+- name: Figure
+  slug: figureai
+  ats: greenhouse
+- name: GitLab
+  slug: gitlab
+  ats: greenhouse
+- name: Honeycomb
+  slug: honeycomb
+  ats: greenhouse
+- name: Huntress
+  slug: huntress
+  ats: greenhouse
+- name: Imply
+  slug: imply
+  ats: greenhouse
+- name: Kodiak Robotics
+  slug: kodiak
+  ats: greenhouse
+- name: Labelbox
+  slug: labelbox
+  ats: greenhouse
+- name: Mercury
+  slug: mercury
+  ats: greenhouse
+- name: Motional
+  slug: motional
+  ats: greenhouse
+- name: Nebius
+  slug: nebius
+  ats: greenhouse
+- name: Netlify
+  slug: netlify
+  ats: greenhouse
+- name: New Relic
+  slug: newrelic
+  ats: greenhouse
+- name: Nuro
+  slug: nuro
+  ats: greenhouse
+- name: Path Robotics
+  slug: pathrobotics
+  ats: greenhouse
+- name: Samsara
+  slug: samsara
+  ats: greenhouse
+- name: Scale AI
+  slug: scaleai
+  ats: greenhouse
+- name: SoFi
+  slug: sofi
+  ats: greenhouse
+- name: Starburst
+  slug: starburst
+  ats: greenhouse
+- name: Striveworks
+  slug: striveworks
+  ats: greenhouse
+- name: Tailscale
+  slug: tailscale
+  ats: greenhouse
+- name: Together AI
+  slug: togetherai
+  ats: greenhouse
+- name: Torc Robotics
+  slug: torcrobotics
+  ats: greenhouse
+- name: Twilio
+  slug: twilio
+  ats: greenhouse
+- name: Verkada
+  slug: verkada
+  ats: greenhouse
+- name: Waymo
+  slug: waymo
+  ats: greenhouse
+- name: Ambi Robotics
+  slug: ambirobotics
+  ats: lever
+- name: Dexterity
+  slug: dexterity
+  ats: lever
+- name: Match Group
+  slug: matchgroup
+  ats: lever
+- name: Shield AI
+  slug: shieldai
+  ats: lever
+- name: Waabi
+  slug: waabi
+  ats: lever
+- name: WeRide
+  slug: weride
+  ats: lever
+- name: Zoox
+  slug: zoox
+  ats: lever
 retired:
 - name: Temporal
   slug: temporaltechnologies

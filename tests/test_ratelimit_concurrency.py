@@ -144,7 +144,7 @@ async def test_different_hosts_do_not_wait_on_each_other() -> None:
 async def test_a_penalty_still_holds_under_concurrency() -> None:
     """A 429 backs the host off for everyone, not just the coroutine that saw it."""
     limiter, clock = _limiter()
-    limiter.penalize(SHARED, 30.0)
+    await limiter.penalize(SHARED, 30.0)
 
     stamps = await _acquire_all(limiter, clock, SHARED, 3)
 

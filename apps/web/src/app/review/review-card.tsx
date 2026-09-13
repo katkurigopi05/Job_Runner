@@ -112,7 +112,7 @@ export function ReviewCard({
 
       {review.cover_letter ? (
         <section className="border-b border-rule px-6 py-5">
-          <p className="font-mono text-xs text-ink-faint">
+          <p className="text-xs text-ink-faint">
             cover letter — every sentence traced back to your résumé before it got here
             {review.cover_letter.answered_by ? ` · written by ${review.cover_letter.answered_by}` : null}
           </p>
@@ -124,7 +124,7 @@ export function ReviewCard({
             /* A refusal has to read differently from a form that never asked.
                The guard offers no fallback here, so the alternative to a bad
                letter is none — and whether to write one by hand is yours. */
-            <p className="mt-2 font-mono text-xs text-stop">
+            <p className="mt-2 text-xs text-stop">
               the guard refused this letter
               {review.cover_letter.rejected_reason
                 ? `: ${review.cover_letter.rejected_reason}`
@@ -150,7 +150,7 @@ export function ReviewCard({
             <Submitting tone="go">send code</Submitting>
           </div>
           {otpState ? (
-            <p className={`mt-3 font-mono text-xs ${otpState.ok ? "text-go" : "text-stop"}`}>
+            <p className={`mt-3 text-xs ${otpState.ok ? "text-go" : "text-stop"}`}>
               {otpState.message}
             </p>
           ) : null}
@@ -223,7 +223,7 @@ export function ReviewCard({
               <span className="text-ink-soft"> — {review.base_resume.reason}</span>
             </p>
             {review.base_resume.considered && review.base_resume.considered.length > 1 ? (
-              <p className="mt-1 font-mono text-xs text-ink-soft">
+              <p className="mt-1 text-xs text-ink-soft">
                 {review.base_resume.considered
                   .map((c) => `v${c.version} ${c.score.toFixed(3)}`)
                   .join("  ·  ")}
@@ -300,7 +300,7 @@ export function ReviewCard({
       <form action={runReject} className="border-t border-rule px-6 py-4">
         <div className="flex items-center gap-4">
           <Submitting tone="stop">reject</Submitting>
-          <p className="font-mono text-xs text-ink-faint">
+          <p className="text-xs text-ink-faint">
             Marks it failed as rejected_at_review. Nothing is sent.
           </p>
         </div>
@@ -309,7 +309,7 @@ export function ReviewCard({
       {approveState || rejectState ? (
         <p
           role="status"
-          className={`px-6 pb-5 font-mono text-xs ${
+          className={`px-6 pb-5 text-xs ${
             (approveState ?? rejectState)?.ok ? "text-go" : "text-stop"
           }`}
         >
@@ -332,7 +332,7 @@ function FilledSummary({ review }: { review: NonNullable<Application["review"]> 
       <dl className="mt-4 grid gap-x-8 gap-y-3 sm:grid-cols-[minmax(0,14rem)_1fr]">
         {filled.map((field, index) => (
           <div key={`${field.key ?? index}`} className="contents">
-            <dt className="font-mono text-xs text-ink-faint">{field.question ?? field.key}</dt>
+            <dt className="text-xs text-ink-faint">{field.question ?? field.key}</dt>
             <dd className="text-sm break-words">{String(field.value ?? "")}</dd>
           </div>
         ))}
@@ -428,7 +428,7 @@ function AdoptBase() {
       />
       <span>
         Also make this my base résumé
-        <span className="mt-0.5 block font-mono text-xs text-ink-faint">
+        <span className="mt-0.5 block text-xs text-ink-faint">
           Off by default. A résumé tailored for this posting makes a poor starting point for the
           next one — tick this only for a fix that is true everywhere, like a typo or a changed
           phone number.
@@ -464,7 +464,7 @@ function ReadinessPanel({ readiness }: { readiness?: Readiness | null }) {
           // Not a low score. An application nobody could measure and one that
           // measured badly are different answers and must not look alike at
           // the moment of sending.
-          <p className="font-mono text-xs text-ink-faint">not assessed — too little measured</p>
+          <p className="text-xs text-ink-faint">not assessed — too little measured</p>
         ) : (
           <p className="font-display text-2xl leading-none">
             {Math.round(score * 100)}
@@ -477,21 +477,21 @@ function ReadinessPanel({ readiness }: { readiness?: Readiness | null }) {
 
       {blockers.length > 0 ? (
         <div className="mt-3 rounded-[var(--radius)] border border-stop/40 bg-stop-soft px-3 py-2">
-          <p className="font-mono text-xs text-stop">
+          <p className="text-xs text-stop">
             {blockers.length === 1
               ? "one thing is stopping this going"
               : `${blockers.length} things are stopping this going`}
           </p>
           <ul className="mt-2 space-y-1">
             {blockers.map((blocker) => (
-              <li key={`${blocker.code}:${blocker.detail}`} className="font-mono text-xs text-stop/80">
+              <li key={`${blocker.code}:${blocker.detail}`} className="text-xs text-stop/80">
                 {blocker.detail}
               </li>
             ))}
           </ul>
         </div>
       ) : ready ? null : (
-        <p className="mt-3 font-mono text-xs text-attn">
+        <p className="mt-3 text-xs text-attn">
           nothing blocks this — it simply scores below the floor. Approving is still yours.
         </p>
       )}
@@ -506,7 +506,7 @@ function ReadinessPanel({ readiness }: { readiness?: Readiness | null }) {
               <dd className="font-display text-lg leading-tight">
                 {Math.round(component.score * 100)}
               </dd>
-              <dd className="font-mono text-xs text-ink-faint">{component.finding}</dd>
+              <dd className="text-xs text-ink-faint">{component.finding}</dd>
             </div>
           ))}
         </dl>
@@ -517,7 +517,7 @@ function ReadinessPanel({ readiness }: { readiness?: Readiness | null }) {
         // input does reads as one that passed.
         <ul className="mt-3 space-y-1">
           {unmeasured.map((component) => (
-            <li key={component.name} className="font-mono text-xs text-ink-faint">
+            <li key={component.name} className="text-xs text-ink-faint">
               {component.name}: {component.finding}
             </li>
           ))}
@@ -536,14 +536,14 @@ function ScreeningPanel({ screening }: { screening?: Screening | null }) {
     <section className="border-b border-rule px-6 py-5">
       {knockOuts.length > 0 ? (
         <div className="rounded-[var(--radius)] border border-stop/40 bg-stop-soft px-3 py-2">
-          <p className="font-mono text-xs text-stop">
+          <p className="text-xs text-stop">
             {knockOuts.length === 1
               ? "this form asks a question your profile likely fails"
               : `this form asks ${knockOuts.length} questions your profile likely fails`}
           </p>
           <ul className="mt-2 space-y-1">
             {knockOuts.map((question) => (
-              <li key={question.key} className="font-mono text-xs text-stop/80">
+              <li key={question.key} className="text-xs text-stop/80">
                 “{question.label}” — {question.reason}
               </li>
             ))}
@@ -557,10 +557,10 @@ function ScreeningPanel({ screening }: { screening?: Screening | null }) {
             knockOuts.length > 0 ? "mt-3" : ""
           }`}
         >
-          <p className="font-mono text-xs text-attn">worth knowing before you answer</p>
+          <p className="text-xs text-attn">worth knowing before you answer</p>
           <ul className="mt-2 space-y-1">
             {cautions.map((question) => (
-              <li key={question.key} className="font-mono text-xs text-attn/80">
+              <li key={question.key} className="text-xs text-attn/80">
                 “{question.label}” — {question.reason}
               </li>
             ))}

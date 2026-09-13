@@ -158,7 +158,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
           reworded question is an answer to a different question. */}
       {packet.unanswered.length ? (
         <section aria-labelledby="unanswered" className="space-y-4">
-          <h2 id="unanswered" className="font-mono text-xs uppercase tracking-widest text-attn">
+          <h2 id="unanswered" className="text-xs uppercase tracking-widest text-attn">
             4 · You have to answer these
           </h2>
           <ul className="space-y-4">
@@ -178,7 +178,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
         </section>
       ) : null}
 
-      <footer className="border-t border-rule-soft pt-6 font-mono text-xs text-ink-faint">
+      <footer className="border-t border-rule-soft pt-6 text-xs text-ink-faint">
         {blocking.length
           ? `${blocking.length} required question${blocking.length === 1 ? "" : "s"} still needs your answer.`
           : packet.ready_to_submit

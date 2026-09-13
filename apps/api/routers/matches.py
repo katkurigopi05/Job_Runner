@@ -31,6 +31,7 @@ from packages.core.schemas import (
     MatchOut,
     MatchSummaryOut,
 )
+from packages.matching.filters import eligibility_of
 from packages.matching.locality import locality_of
 from packages.matching.locality import rank as locality_rank
 from packages.matching.search import (
@@ -196,8 +197,18 @@ async def list_matches(
     # reading it here would emit a lazy load from a thread that has no session.
     kept = await run_in_threadpool(_filter)
 
+    page = kept[:limit]
+    # Same reasoning as `kept` above: this reads every posting's description
+    # with a handful of regexes, which is CPU work, and this API is one process.
+    # Bounded by the page rather than the corpus, so it is much cheaper than the
+    # filter — but cheap work on the event loop still queues every other route
+    # behind it.
+    authorizations = await run_in_threadpool(
+        lambda: [eligibility_of(posting).as_dict() for _, posting in page]
+    )
+
     feed: list[MatchOut] = []
-    for match, posting in kept[:limit]:
+    for (match, posting), authorization in zip(page, authorizations, strict=True):
         reasons = match.reasons_json or {}
         feed.append(
             MatchOut(
@@ -224,6 +235,14 @@ async def list_matches(
                 legitimacy=dict(reasons["legitimacy"]) if reasons.get("legitimacy") else None,
                 rubric=dict(reasons["rubric"]) if reasons.get("rubric") else None,
                 excluded_by=list(reasons.get("excluded_by") or []),
+                # Read live rather than from `reasons_json`. Two reasons: the
+                # stored reasons were written by whichever rescore last ran, so
+                # a posting scored before this existed would show nothing at
+                # all — and "nothing" is the one rendering that must not happen
+                # here, since a blank authorization line reads as "no
+                # restrictions". It also means the filter and the card cannot
+                # disagree: both call `filters.eligibility_of`.
+                eligibility=authorization,
             )
         )
     return feed

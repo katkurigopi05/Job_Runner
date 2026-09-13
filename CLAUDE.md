@@ -105,19 +105,50 @@ Postgres runs on **5433** on the owner's machine, not the 5432 in the row above:
 another project holds 5432. The remap lives in an uncommitted
 `docker-compose.override.yml`, and `.env` points at 5433 to match.
 
-`next dev` binds **0.0.0.0:3001**, not the localhost:3000 the row implies. Port
-3001 because 3000 is taken; `0.0.0.0` so the dashboard can be read from the
-owner's phone on the same LAN, which is how a review queue gets checked away
-from the desk.
+`next dev` binds **127.0.0.1:3001**, not the localhost:3000 the row implies.
+Port 3001 because 3000 is taken. `next start` binds 127.0.0.1 too.
 
-This is a real narrowing of §1's "runs entirely on localhost", and it is worth
-naming rather than burying. What §1 is protecting is that no résumé, no
-recruiter thread, and no vault secret leaves the owner's control — and binding
-a dev server to the LAN does widen who can reach that surface. It is defensible
-only on a trusted network, and only for `dev`: `next start` is unchanged and
-still binds localhost, so nothing about a non-dev run is affected. On an
-untrusted network — a café, a conference, shared housing — set it back. The
-dashboard has no authentication, because until now it never needed any.
+**This paragraph used to say `0.0.0.0`, and that is now reversed.** The reason
+for the LAN bind was real — reading the review queue from a phone away from the
+desk — and the reason for reversing it is that the cost was larger than this
+paragraph understood. It described the risk as "who can reach the dashboard".
+The actual reach was the **API**, in full, with no authentication.
+
+`apps/web/next.config.ts` rewrites `/api/:path*` to `127.0.0.1:8000`, and
+`apps/api/middleware.py` refuses non-loopback callers by reading the socket
+peer. Through the rewrite that peer is always the Next server, on loopback. So
+the guard never saw a network client and never had cause to refuse one. It is
+not the `--proxy-headers` hole the middleware's docstring warns about; no header
+is involved, and no misconfiguration. Binding the dashboard to the LAN was
+sufficient on its own.
+
+Measured, with `make api` on 127.0.0.1 and `make web` as it was:
+
+```text
+GET  http://127.0.0.1:8000/health        from a LAN address -> refused
+GET  http://<lan-ip>:3001/api/health     from a LAN address -> 200
+GET  http://<lan-ip>:3001/api/candidates from a LAN address -> 200   (PII)
+GET  http://<lan-ip>:3001/applications   from a LAN address -> 200
+POST http://<lan-ip>:3001/api/applications                  -> 400, not 401
+```
+
+The last line is the one that settles it. A validation error means the request
+reached the handler: the write path — the one that submits real job
+applications under the owner's name — was reachable from the network.
+
+Two smaller corrections come with it. This paragraph claimed "`next start` is
+unchanged and still binds localhost": it never did. `next start` took no `-H`,
+and Next passes an undefined hostname straight to `server.listen`, which binds
+every interface. And "set it back on an untrusted network" was advice nobody
+can act on before the fact — the exposure is the default, and the café is
+exactly where you forget.
+
+The phone case is kept as an opt-in rather than deleted: `JOBRUNNER_WEB_HOST`
+(and `JOBRUNNER_WEB_PORT`) override the default in both scripts, so
+`JOBRUNNER_WEB_HOST=0.0.0.0 make web` is the old behaviour, typed out, on a
+network the owner has decided to trust. `tests/test_dashboard_binds_loopback.py`
+holds the default, and holds these documents to it — the stale `next start`
+claim survived in two files precisely because nothing checked prose.
 
 ---
 
@@ -551,20 +582,31 @@ worse than an absent one: it yields zero postings, which reads identically to
 
 The import of career-ops' company list then added 90 entries, taking it to 119.
 
-**It is now 105 live boards and 14 retired ones**, and this paragraph carried
+**It is now 181 live boards and 14 retired ones**, and this paragraph carried
 three wrong claims until someone read the file. It has said "29", then "119",
-and twice described a state of the registry that had already been superseded —
-which is the failure mode worth naming here, because a count in prose goes
-stale the moment anything writes to the file it describes.
+then "105", and twice described a state of the registry that had already been
+superseded — which is the failure mode worth naming here, because a count in
+prose goes stale the moment anything writes to the file it describes. It went
+stale again the same day, when the OpenHire import below added 76.
 
-What is actually true, read from `seeds/companies.yaml` on **2026-09-12**:
+What is actually true, read from `seeds/companies.yaml` on **2026-09-13**:
 
 | | |
 |---|---|
-| live entries under `companies:` | 105 — greenhouse 64, ashby 33, lever 8 |
+| live entries under `companies:` | 181 — greenhouse 100, ashby 66, lever 15 |
 | entries under `retired:` | 14 |
-| stamped `checked` | **105 of 105**, all `2026-09-07`, all state `api` |
-| re-swept `2026-09-12` | **105 of 105 answered `api=200`. Zero dead.** |
+| stamped `checked` | **105 of 181**, all `2026-09-07`, all state `api` |
+| **unstamped** | **76** — the OpenHire import, never verified from here |
+| last full sweep | `2026-09-12`, over the 105 then present: all `api=200` |
+
+**Those 76 are the state this section spent three paragraphs warning about**,
+and they are here deliberately rather than by oversight. They came from a peer
+project that verified each one live, and no machine in this session can reach
+an ATS host to confirm it — so they are added *unstamped*, which is the one
+honest representation of "somebody else says these work". `make
+validate-seeds-write` from the owner's machine is what turns them into
+evidence, and until it runs a dead one among them yields zero postings exactly
+like a quiet board.
 
 So the two claims this paragraph used to make are both retired with it:
 
@@ -979,6 +1021,34 @@ before trusting either number.
   a bug — but it means the fill path is proven only against a fixture.
 - **Gate 2** needs a real posting and a real profile by definition.
   `make gate-2` checks the offline half; `make gate-2-live` is the other half.
+
+- **The Workday extractor's payload shape has never been seen.**
+  `packages/crawler/workday.py` reads a board across pages, and
+  `tests/test_workday.py` covers the pagination, the failure handling and the
+  truncation rule — all of which are testable offline and all of which are the
+  risk specific to a multi-request board. What is *not* established is that
+  `title`, `externalPath`, `locationsText` and `bulletFields` are the keys a
+  real tenant sends: the machine it was written on has no egress to
+  `*.myworkdayjobs.com`, so the fixture was written from the API's documented
+  shape. That is the same artifact as the pre-HAR Greenhouse fixture above,
+  with the same failure available to it. Run
+  `python -m scripts.record_workday <careers-url>` and compare before adding a
+  Workday row to the registry.
+
+  Two consequences of Workday itself, neither a defect to fix:
+
+  - A tenant is its own host, so §2.6's 60s floor applies **per page**. A
+    400-role employer is 20 pages, so 20 minutes for one company per cycle.
+    `MAX_PAGES` bounds it at an hour and marks the board truncated, and a
+    truncated board closes nothing.
+  - The listing carries no descriptions — those are one request per posting,
+    which at 60s is eight hours for a 500-role employer. So Workday postings
+    have no `description_raw`, `embed_postings` skips them, and they score on
+    title alone.
+
+  This is an **extractor, not an adapter**. §11 still holds: nothing fills or
+  submits a Workday form, and an application to one fails as
+  `unsupported_site`.
 
 ### The tailored résumé was not the one being sent
 
@@ -1796,6 +1866,41 @@ in CPython, so the two addresses matched. Round-tripping through a bytearray
 forces a separate allocation. A test that cannot fail is the thing this file
 keeps finding.
 
+### §2.6 did not hold for `make workers n=4`
+
+The shared host limiter landed with `CRAWLER_SHARED_RATE_LIMITER=false`, on the
+reasoning that the crawl was one cycle in one worker and the in-process limiter
+was the one with tests measuring it. That reasoning was wrong about its own
+codebase, and measuring took four lines:
+
+```text
+a = build_fetcher(); b = build_fetcher()
+await a.rate_limiter.acquire("boards-api.greenhouse.io")  -> waited 0.000s
+await b.rate_limiter.acquire("boards-api.greenhouse.io")  -> waited 0.000s
+```
+
+`build_fetcher()` constructs a **new** `HostRateLimiter` on every call. So the
+counters were never per-process, they were per-fetcher — and `make workers n=4`
+is a documented command that runs four claimants in one process. Four
+independent counters, four simultaneous requests to a host owed 2s, measured
+0.000s apart. Only `crawl_company_job` passed `shared=True`, so every other
+path — discovery, `validate-seeds`, `probe-bespoke`, the inline cycle — ran at
+up to 4× the permitted rate.
+
+Every gate passed throughout, and `tests/test_ratelimit_concurrency.py` passed
+too, because it builds its limiter explicitly and therefore shares one by
+construction. The suite proved the limiter worked and never asked whether
+callers got the same one. The two new tests go through `build_fetcher`, which
+is the part that was wrong; with the default reverted they report requests
+0.000s apart.
+
+The default is now `true`. That makes a reachable database a requirement for
+fetching, and an unreachable one fails the fetch rather than falling back to
+per-process counting — the right way round, because a fallback here is a breach
+nobody would ever see. The table fixes both halves at once: two limiters in one
+process and two in separate processes reserve from the same row, so there is no
+arrangement of workers that outruns the floor.
+
 ### What is still not fixed, and why
 
 - **Gate 1's live half is refused, not pending.** It reaches the form and is
@@ -2016,6 +2121,286 @@ path: a site that publishes `JobPosting` only on individual posting pages,
 with none on the index, still reads as empty. And the sweep needs network
 egress from the owner's machine, like `make validate-seeds` — so how many of
 the ~3,000 bespoke pages actually publish is, today, an unmeasured number.
+
+### Using it felt tense, and two mechanical choices were most of the reason
+
+The owner's words. Not that the dashboard was ugly — that applying for jobs
+through it felt worse than it needed to. Worth measuring rather than
+sympathising with: **56% of the interface's sentences contained a negation or
+a warning.** Every reassurance was phrased as a prohibition, every empty state
+opened with "Nothing", and the app talked mostly about what it would not do
+and what the owner lacked.
+
+Two of those were structural rather than verbal.
+
+**The feed showed only what you lack.** `/matches` rendered `missing_terms`
+three times and `matched_terms` zero times — the API had been sending both all
+along. So the screen's answer to "how do I look for this job" was eight chips
+of absent skills and nothing about the ones on the résumé. Fit now leads, in
+the positive colour, on the face of the card; the gaps sit inside the
+breakdown and no longer open with the word "not".
+
+**The score graded the owner against an unreachable bar.** It is a cosine
+similarity, and §15 already recorded that the shipped 0.75 threshold was
+unreachable — the first real run peaked at 0.271. On the owner's current
+database: **74 matches spanning 0.000–0.081, thresholds of 0.75 and 0.0.** A
+big "8%" on every card reads as "you are a poor fit for everything", and it
+does not mean that.
+
+The first attempt at this replaced the number with a word and kept comparing
+against the threshold, which is worse: with those numbers every posting is a
+"long shot" under one profile and a "strong match" under the other. Both
+collapse. **The label is rank within the feed** — measured spread on the live
+data: 5 / 13 / 17 / 15 across four labels. Rank cannot degenerate, and "near
+the top of what you are being shown" stays true whatever the absolute scale
+turns out to be. Clearing the owner's own threshold is reported separately,
+because that is the one number they actually set.
+
+`legitimacy.py` reached this conclusion first, for the other score in this
+app: "a tier and a findings table, never a number", because a number invites a
+precision the thing does not have. This is the same argument arriving late.
+
+The verbal half: the line on every page went from "Nothing submits without
+your approval" to "You approve every application before it is sent" — the same
+promise, and only one of them opens by naming what will not happen. The
+warning that renders most often, work authorization "Unknown", went from three
+lines to one. The home page's headline numbers were two counts of work not
+done out of four; one is now work done. The ratio is 50% and should not be
+driven lower by deleting real warnings — a résumé an ATS cannot parse needs to
+say so.
+
+`tests/test_feed_reads_as_encouraging.py` holds the two structural ones, since
+both are a one-line revert away and neither would fail anything else.
+
+### The tracker dropped five of seven outcomes, and looked fine doing it
+
+Phase 6's whole deliverable. Found by screenshotting the dashboard rather than
+reading it: the page rendered a heading, a paragraph, and nothing at all, while
+the database held two rejected applications.
+
+The column keys came from the wrong enum. `Classification` is what an inbound
+*email* is; `Outcome` is what lands on the application, and the board was keyed
+on the first:
+
+| column key | what the API sends | matched |
+|---|---|---|
+| `rejection` | `rejected` | never |
+| `info_request` | `info_requested` | never |
+| — | `assessment` | no column |
+| — | `acknowledged` | no column |
+| — | `awaiting` | no column |
+
+Five of seven, including the one §15 argues is the most time-critical: an
+assessment is an opportunity with a deadline, and the window closes while the
+tracker looks calm.
+
+**It did not look broken, and that is the part worth keeping.** `columnFor`
+returned a non-null key, so `tracked.length` was 2 and the "nothing submitted
+yet" empty state did not fire either. The failure produced an empty `<div>`
+between the header and the footer — no error, no zero, nothing to notice.
+
+Two fixes rather than one. The keys are `Outcome` values now, and
+`columnsFor` renders an unnamed column for any outcome nothing matched, so the
+next value added to the enum surfaces unstyled instead of vanishing. A column
+nobody designed is a much smaller problem than an application nobody can see.
+
+`tests/test_tracker_columns.py` reads the TSX and the enum rather than a list
+of expected strings, which would be a third place for the same drift, and it
+is in `GATE6_TESTS`. Against the old keys it fails on five outcomes.
+
+### The design pass, and what it turned up
+
+`/matches` was a 31,000px wall and `/` was fine, which is what said the tokens
+were not the problem. Four habits were, and they are written into
+`globals.css` because a rule nobody can point at is a preference: **mono is
+for values, not prose**; **one meaning per accent** (amber had drifted onto
+eight missing-skill chips per card, so the "needs you" colour was the most
+common thing on a card needing nothing); **proximity carries the grouping**;
+**no boxes inside boxes**.
+
+Two of the findings were not cosmetic at all, and both came from looking at a
+rendered page rather than at source:
+
+- The tracker, above.
+- **The same score read `8%` on `/matches` and `0.081` on `/swipe`** — one
+  number, two notations, on two screens the owner moves between while making
+  the same judgement.
+
+And one thing the screenshots caught that no test would have: `/matches`
+returned **500** on a database where the `citizenship_status` migration had
+not been applied. That is ordinary — a model column without its migration is
+always a hard failure — but worth knowing that it takes the whole page rather
+than degrading, because the review queue is what the owner opens first.
+
+`profiles.citizenship_status` also had no control. The column, the schema, the
+filter and the tests all shipped in one commit and the owner had no way to set
+the value, so the citizenship filter could never fire on real data. It is on
+`/profile` now, inside the work-authorization aside, and the screen states the
+distinction the column exists for: this one filters, the box above it is what
+gets copied onto a form.
+
+### What six outside repositories were worth
+
+Surveyed on request: `punkpeye/awesome-mcp-servers`, `twentyhq/twenty`,
+`nexu-io/open-design`, `Arindam200/awesome-ai-apps`, `sindresorhus/awesome`,
+`langflow-ai/langflow`. One produced something to import. Recording the other
+five so nobody re-reads them looking for it.
+
+**`punkpeye/awesome-mcp-servers` → one entry, and it is the closest peer this
+project has.** `gzchenhao/openhire` (MIT) is an MCP job-search server over the
+same ATS APIs — Greenhouse, Lever, Ashby, plus Beisen and Moka for China — with
+139 employers against our 105. Three things came out of reading it:
+
+- **76 employer boards we did not have.** Its seed roster carries 114 tenants
+  on ATSes we support; 38 were already ours and **none** collided with our
+  `retired:` section, so 76 are new. Appended through
+  `import_portals.append_to_registry` — the file's single writer — and left
+  **unstamped**, because their verification is theirs and not ours. See §9.
+- **Its `ghost_score` is a weaker version of what we already have.** A pure
+  function of relist count and age past a 45-day grace, which is exactly the
+  two inputs `legitimacy._reposting` and `legitimacy._freshness` already feed
+  into a tier with six other signals. Adopting it would replace a findings
+  table with a number, which `legitimacy.py`'s own docstring argues against:
+  a well-written ghost job scores well precisely because it is well written,
+  and a single number hides which signal fired. Declined, on the strength of
+  a decision this repo already made rather than on taste.
+- **Its structural-privacy test does not transfer, and the reason is the
+  interesting part.** OpenHire fails its build if anyone adds a résumé field
+  to the protocol, because its server is *shared* — the résumé must never
+  reach it. Ours is the owner's own machine, and `inspect_resume` returning
+  résumé text to the owner's own assistant is the feature. Same words, opposite
+  threat model. Copying the test would have broken three tools to satisfy a
+  constraint we do not have.
+
+**The other five, and why each is a no:**
+
+- **`twentyhq/twenty`** — an open-source CRM. §11 puts multi-tenancy, accounts
+  and billing out of scope, and its pipeline board is the one part that rhymes
+  with Phase 6's tracker. Not worth carrying a CRM to get a kanban.
+- **`langflow-ai/langflow`** (MIT) — a visual builder for LLM workflows,
+  deployed as an API. §11 rules out a hosted runtime, and §7's provider
+  abstraction already does the part we need with an audit trail Langflow has no
+  equivalent of. A visual graph over five tasks would be scaffolding around a
+  60-line router.
+- **`nexu-io/open-design`** — an agent-native design tool for prototypes, decks
+  and images, fronting a paid model service. Nothing in this project renders a
+  deck. Its `DESIGN.md`-as-brand-contract idea is neat and has no application
+  to a résumé the fabrication guard governs.
+- **`Arindam200/awesome-ai-apps`** — 132 examples; the three nearest are a job
+  search agent, a résumé optimizer and a LinkedIn job finder. Every one of them
+  needs a paid key (ExaAI, Nebius, Bright Data), which §3 refuses without
+  asking, and the job finder is built on Bright Data's scraping network —
+  §2.5's proxy-rotation clause, not a borderline case. The résumé optimizer's
+  taxonomy is worth one glance and no more: "Career Gap Framing" is a §2.1
+  fabrication with a friendly name.
+- **`sindresorhus/awesome`** — an index of indexes. Two pointers looked
+  relevant, `tramcar/awesome-job-boards` and `lukasz-madon/awesome-remote-job`,
+  and both list *aggregator sites* rather than employer ATS boards: zero
+  greenhouse/lever/ashby/workable URLs across the whole file. That is discovery
+  input, not registry input, and `discover.py` already covers that path.
+
+The pattern worth keeping: of six repositories, the useful one was the only one
+solving the *same problem*, and what it contributed was **data** — a list of
+employers someone else had verified — not code. The code it has that overlaps
+ours is worse than ours, which is the ordinary outcome and the reason to read
+before importing.
+
+### The dashboard put the API on the network, and the guard could not see it
+
+Reported by a reader of the source and confirmed by running it. Worth recording
+because the control that failed was working exactly as designed, and was
+looking at the wrong end of the connection.
+
+`apps/api/middleware.py` refuses non-loopback callers by reading the socket
+peer, which cannot be forged. Its docstring names the one way that goes wrong —
+`uvicorn --proxy-headers`, which makes the app trust `X-Forwarded-For`. That is
+not what happened here. `next dev -H 0.0.0.0` bound the dashboard to every
+interface, and `next.config.ts` rewrites `/api/:path*` to `127.0.0.1:8000`, so
+the peer FastAPI saw was always the Next server, on loopback. No header, no
+misconfiguration, no flag: the shipped default was enough.
+
+The measurements are in §3. The line that settles it is
+`POST /api/applications` answering **400, not 401** — a validation error means
+the request reached the handler, so the endpoint that submits real applications
+under the owner's name was reachable from the LAN.
+
+Both scripts now bind `127.0.0.1`, and `JOBRUNNER_WEB_HOST` is the opt-in for
+the phone case that motivated the original exposure. Two things are worth
+keeping visible beyond the fix:
+
+- **`next start` was never loopback-bound**, though §3 and `docs/USAGE.md` both
+  said it was. It passed no `-H`, and Next hands an undefined hostname to
+  `server.listen`, which binds everything. A wrong reassurance is worse than
+  none: it is what a reader checks against before deciding whether they are
+  exposed.
+- **The guard is unchanged and still worth having.** With the dashboard on
+  loopback it is what refuses a direct `uvicorn --host 0.0.0.0`. It was never
+  wrong; it was answering a question about the proxy rather than about the
+  person.
+
+`tests/test_dashboard_binds_loopback.py` holds the default, and holds these
+documents to it — the stale `next start` claim survived in two files precisely
+because nothing checked prose. It allows a retraction to quote what it
+retracts, because this file's convention is to record what a paragraph used to
+say rather than edit it away.
+
+### One regex was answering three questions about work authorization
+
+Also reported from the source, also confirmed by running it. `filters.py` had a
+single pattern list for sponsorship, and it was wrong in both directions at
+once:
+
+```text
+"We do not offer visa sponsorship."                    kept      (wrong)
+"We cannot sponsor now or in the future."              kept      (wrong)
+"Candidates with or without sponsorship ... apply."    EXCLUDED  (wrong)
+"US citizens only."                                    kept, unflagged
+```
+
+The first two are false negatives, and they are the *commonest* English form of
+a refusal: the list matched literal phrases like `unable to sponsor` and never
+learned negation, so `do not offer` sailed through. The third is the expensive
+error — `without sponsorship` is a substring of `with or without sponsorship`,
+a phrase that exists to say sponsorship is **not** a barrier, so the postings
+that go furthest out of their way to welcome the owner were the ones excluded.
+
+`packages/matching/eligibility.py` reads the posting instead of scanning it,
+and four rules shape it:
+
+- **Silence is not an answer.** A posting that never mentions sponsorship has
+  said nothing — not "available", not "none". §2.2's caution about work
+  authorization applies to reading as much as to answering.
+- **Ambiguity is not an answer either.** `with or without sponsorship`, and a
+  posting that both refuses and offers, are `AMBIGUOUS`. Neither excludes: a
+  hard filter needs evidence, and a contradiction is not evidence.
+- **Citizenship is a separate fact.** "US citizens only" is not a statement
+  about sponsorship. A permanent resident needs no sponsorship and still fails
+  it, and no employer generosity fixes it. It gets its own verdict and its own
+  exclusion reason.
+- **Nothing is inferred from an absence.** No OPT or STEM-OPT acceptance, no
+  E-Verify participation, no history of sponsoring. A feed that labelled a job
+  "OPT-friendly" because the posting happened not to mention visas would be
+  inventing the one fact an applicant cannot afford to be wrong about.
+
+`profiles.citizenship_status` is the profile half, and it is deliberately
+**not** `work_auth`. §2.2 keeps that field verbatim for forms; this one is a
+search filter (§1: the owner's input, not a reading of their profile) and is
+never typed onto an application. NULL is what every existing row gets and means
+unstated — the filter then *surfaces* an explicit restriction rather than
+excluding on it, because dropping a posting on a field nobody filled in hides
+real jobs, and parsing a legal status out of free text to decide which jobs the
+owner ever sees would be the §1 violation in the other direction.
+
+The feed shows the verdict with the posting's own sentence, every time,
+including when the answer is "Unknown — verify with employer". A card that
+carried an authorization line only when a restriction was found would teach the
+reader that a missing line means "fine".
+
+One incidental find, from a test rather than from reading: `Must be a U.S.
+Citizen or Green Card holder.` split at the full stop in `U.S.`, so the
+citizens-and-residents rule — which needs both halves in one clause — never
+fired and the posting read as citizens-only. A permanent resident would have
+been excluded from a job that names them.
 
 ### What two outside specs were worth
 

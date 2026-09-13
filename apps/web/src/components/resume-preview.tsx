@@ -55,14 +55,14 @@ export function ResumeDocumentView({
             <p className="mt-1 font-mono text-xs text-ink-soft">{contactBits.slice(1).join("  ·  ")}</p>
           </>
         ) : (
-          <p className="font-mono text-xs text-stop">
+          <p className="text-xs text-stop">
             The parser found no contact details. An ATS will not either.
           </p>
         )}
       </div>
 
       {names.length === 0 ? (
-        <p className="px-5 py-6 font-mono text-xs text-stop">
+        <p className="px-5 py-6 text-xs text-stop">
           No sections were recognized. This résumé will not survive an ATS parse — check the
           headings before applying with it.
         </p>

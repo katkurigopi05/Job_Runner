@@ -184,7 +184,7 @@ export function ResumeDiffView({ diff }: { diff: ResumeDiff }) {
     return (
       <div className="space-y-3">
         <div className="rounded-[var(--radius)] border border-attn/40 bg-attn-soft px-3 py-2">
-          <p className="font-mono text-xs text-attn">
+          <p className="text-xs text-attn">
             {byHand
               ? "you edited this résumé after tailoring wrote it"
               : "you chose this version from the model comparison"}
@@ -266,7 +266,7 @@ export function ResumeDiffView({ diff }: { diff: ResumeDiff }) {
         ))}
       </ul>
 
-      <p className="font-mono text-xs text-ink-faint">
+      <p className="text-xs text-ink-faint">
         Nothing here may introduce a fact your source résumé does not already support. Anything
         that tried was rejected and the original kept.
       </p>

@@ -294,6 +294,17 @@ export interface Profile {
   location: string | null;
   work_auth: string | null;
   needs_sponsorship: boolean | null;
+  /**
+   * Current work authorization — a *filter*, never typed onto a form.
+   * `work_auth` above is the field §2.2 copies verbatim; this one only decides
+   * which postings are shown, and null means unstated, which filters nothing.
+   */
+  citizenship_status:
+    | "us_citizen"
+    | "permanent_resident"
+    | "other_authorized"
+    | "not_authorized"
+    | null;
   salary_expectation: string | null;
   min_match_score: number;
   auto_submit: boolean;
@@ -458,6 +469,32 @@ export interface Match {
   rubric: Rubric | null;
   /** Hard filters that ruled it out — location, seniority, sponsorship. */
   excluded_by: string[];
+  /**
+   * What the posting says about work authorization, with its own wording as
+   * evidence. Always present — `summary` reads "Unknown — verify with
+   * employer" when the posting said nothing, because a blank line here would
+   * read as "no restrictions", which is a claim no posting made.
+   */
+  eligibility: Eligibility;
+}
+
+/**
+ * A posting's authorization statements, never an inference from their absence.
+ *
+ * `unstated` means the posting is silent and `ambiguous` means it said
+ * something that does not resolve ("with or without sponsorship"). Neither is
+ * permission, and nothing here implies OPT or STEM-OPT acceptance, E-Verify
+ * participation, or a history of sponsoring — none of those follow from
+ * silence.
+ */
+export interface Eligibility {
+  sponsorship: "available" | "unavailable" | "ambiguous" | "unstated";
+  citizenship: "citizens_only" | "citizens_or_residents_only" | "unstated";
+  /** Whether the posting resolved either question at all. */
+  certain: boolean;
+  summary: string;
+  /** The posting's own sentences behind each claim. */
+  evidence: { claim: string; quote: string }[];
 }
 
 /** Whether the posting looks real and open. Never folded into the score. */
@@ -654,9 +691,35 @@ export interface CrawlStatus {
   newest_posting_at?: string | null;
 }
 
+/**
+ * Where the registry has got to. `CrawlStatus` answers "is a crawl running";
+ * this answers "did my companies get anywhere", which has several quite
+ * different causes when the feed is empty.
+ */
+export interface DiscoveryStatus {
+  companies_total: number;
+  pending: number;
+  unverified: number;
+  verified: number;
+  retrying: number;
+  retrying_next_at?: string | null;
+  needs_review: number;
+  discovery_queue: number;
+  fetch_queue: number;
+  postings_total: number;
+  postings_open: number;
+  postings_unembedded: number;
+  matches_total: number;
+  corpus_documents: number;
+  corpus_min_documents: number;
+  weighting: string;
+  weighting_reason: string;
+}
+
 export const api = {
   health: () => request<Health>("/health"),
   crawlStatus: () => request<CrawlStatus>("/crawl/status"),
+  discoveryStatus: () => request<DiscoveryStatus>("/companies/status"),
 
   applications: () => request<Application[]>("/applications"),
   application: (id: string) => request<Application>(`/applications/${id}`),

@@ -238,12 +238,25 @@ async def score_and_store(
     embedder: Embedder | None = None,
     target_seniority: str | None = None,
     store_excluded: bool = False,
+    frequencies: DocumentFrequencies | None = None,
 ) -> list[ScoredPosting]:
     """Score postings for a profile and upsert Match rows. Does not commit.
 
     Excluded postings are not stored by default — the feed is for things worth
     looking at, and a table of zeros is noise. Pass `store_excluded=True` when
     debugging why something never appeared.
+
+    `frequencies` is how a *subset* of the corpus can be scored safely. Term
+    weights are computed from the postings passed in when this is not given,
+    which is right when that is the whole corpus and quietly wrong when it is
+    not. It changes the *explanation*, not the number — similarity comes from
+    the embedder — but `missing_terms` and the legitimacy assessment both go
+    into `Match.reasons_json`, and the owner reads those.
+
+    A batch is usually smaller than `MIN_DOCUMENTS`, so its own statistics are
+    not `usable` and the report falls back to the hand-written stopword list
+    rather than measuring. The incrementally scored postings would then be
+    explained by one standard and the rest of the feed by another.
     """
     active = embedder or get_embedder()
     # Kept, not discarded after encoding: the same text is what the matched
@@ -259,9 +272,13 @@ async def score_and_store(
     # One pass over the corpus, reused for every posting in it. Built here
     # rather than cached anywhere because it is cheap at this size and a
     # stale copy would silently describe a corpus that no longer exists.
-    frequencies = DocumentFrequencies.from_texts(
-        f"{p.title or ''}\n{p.description_raw or ''}" for p in postings
-    )
+    #
+    # Unless the caller supplied corpus-wide statistics, which is the only way
+    # scoring a subset can mean the same thing as scoring the whole.
+    if frequencies is None:
+        frequencies = DocumentFrequencies.from_texts(
+            f"{p.title or ''}\n{p.description_raw or ''}" for p in postings
+        )
 
     existing = {
         str(match.posting_id): match

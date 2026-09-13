@@ -54,7 +54,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import structlog
 
@@ -341,6 +341,62 @@ def board_root(url: str) -> tuple[str, str] | None:
     return None
 
 
+#: Hrefs that look like a careers page. Deliberately generous about the words
+#: and strict about the count: see `MAX_CAREERS_HOPS`.
+_CAREERS_HREF_RE = re.compile(
+    r"""href=["']([^"'#?]*(?:career|careers|jobs|join-us|joinus|work-with-us|
+        open-roles|openings|opportunities)[^"']*)["']""",
+    re.I | re.X,
+)
+
+#: How many careers links to follow from a supplied page. **One.**
+#:
+#: Each hop is a second request to the *company's own host*, where §2.6's
+#: ordinary 60s floor applies — the shared-API amendment covers multi-tenant ATS
+#: endpoints, not `acme.com`. So the first hop costs a minute on that host, and
+#: a second would cost another. Across thousands of distinct hosts those waits
+#: overlap and cost nothing in aggregate; within one company they are the whole
+#: duration of its discovery task.
+#:
+#: One hop is what the common shape needs: a home page linking to `/careers`,
+#: with the board embedded there. A site that buries it deeper is reported
+#: unresolved rather than paid for by a crawl.
+MAX_CAREERS_HOPS = 1
+
+
+def careers_links(html: str, base: str) -> list[str]:
+    """Absolute, deduplicated careers-ish links from a page, in document order.
+
+    Same-host only. A careers link pointing at another domain is usually the
+    ATS itself — which `find_embedded` has already had its chance at — or a
+    job-board aggregator, and following either from here would fetch a host
+    nobody decided to crawl.
+    """
+    try:
+        base_host = (urlparse(base).hostname or "").lower()
+    except ValueError:
+        return []
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for href in _CAREERS_HREF_RE.findall(html):
+        absolute = urljoin(base, href.strip())
+        if not absolute.lower().startswith(("http://", "https://")):
+            continue
+        try:
+            host = (urlparse(absolute).hostname or "").lower()
+        except ValueError:
+            continue
+        if host != base_host:
+            continue
+        key = absolute.rstrip("/").lower()
+        if key in seen or key == base.rstrip("/").lower():
+            continue
+        seen.add(key)
+        found.append(absolute)
+    return found
+
+
 async def from_url(url: str, fetcher: PoliteFetcher) -> tuple[str, str] | None:
     """`(vendor, slug)` for a URL the owner supplied, or None.
 
@@ -382,14 +438,86 @@ async def from_url(url: str, fetcher: PoliteFetcher) -> tuple[str, str] | None:
     if not response.ok:
         return None
 
-    embedded = find_embedded(response.text)
-    if not embedded:
-        return None
+    found = _board_in(response.text)
+    if found:
+        return found
 
-    vendor = detect_ats(embedded)
-    slug = slug_from_ats_url(embedded)
-    if vendor and slug and SLUG_RE.match(slug):
-        return vendor, slug
+    # The supplied URL was a home page with no board on it. The board is
+    # usually one link away — `/careers` — and following it is the difference
+    # between resolving a company from evidence and falling back to guessing a
+    # slug from its name.
+    for link in careers_links(response.text, url)[:MAX_CAREERS_HOPS]:
+        try:
+            page = await fetcher.fetch(link)
+        except Blocked as exc:
+            log.info("careers_page_blocked", url=link, reason=str(exc))
+            continue
+        except Exception as exc:  # noqa: BLE001 - a careers page is a hint
+            log.debug("careers_page_failed", url=link, error=type(exc).__name__)
+            continue
+        if not page.ok:
+            continue
+        found = _board_in(page.text)
+        if found:
+            log.info("board_found_via_careers_link", company_page=url, careers_page=link)
+            return found
+    return None
+
+
+#: Any supported-ATS URL as it appears in a page's markup — href, iframe src,
+#: canonical link, or plain text. Deliberately host-only: what the path has to
+#: look like is decided afterwards by `slug_from_ats_url` and `board_root`,
+#: which are the two definitions already in the tree.
+_ATS_URL_IN_PAGE_RE = re.compile(
+    r"""https?://(?:www\.)?(?:
+        (?:job-)?boards\.greenhouse\.io
+        |jobs\.(?:eu\.)?lever\.co
+        |jobs\.ashbyhq\.com
+        |apply\.workable\.com
+    )/[^\s"'<>\\)\]]*""",
+    re.I | re.X,
+)
+
+
+#: Punctuation markup puts right up against a URL. No slug ends in any of it.
+_TRAILING_PUNCTUATION = "\".,;:'"
+
+
+def _board_in(html: str) -> tuple[str, str] | None:
+    """`(vendor, slug)` for the first supported ATS board named in a page.
+
+    Two shapes count, and only the first one used to.
+
+    **A link to one posting** — `boards.greenhouse.io/acmeco/jobs/9001`.
+    `find_embedded` finds those, because that is what `resolve.py` needs: it is
+    answering "where does this job apply", and a board front page is not an
+    answer to that.
+
+    **A link to the board itself** — `boards.greenhouse.io/acmeco`, or the
+    `embed/job_board?for=` iframe. This is the commoner shape by far on a
+    company's own careers page, which links "View all openings" rather than one
+    role, and it was not matched at all. The cost of missing it is not a
+    failure to resolve: `resolve_one` falls through to *guessing slugs from the
+    company name*, so a page that stated its board outright produced a guess —
+    measured, `acme.example` naming `boards.greenhouse.io/acmeco` resolved as
+    slug `acme`, which is a different company's board if it is anybody's.
+
+    `resolve.py`'s posting-level regex is deliberately left alone. Loosening it
+    would let the apply path claim an ATS for a page that only links a board,
+    which its own docstring explains is how a worker ends up filling a form
+    that is not there.
+    """
+    embedded = find_embedded(html)
+    if embedded:
+        vendor = detect_ats(embedded)
+        slug = slug_from_ats_url(embedded)
+        if vendor and slug and SLUG_RE.match(slug):
+            return vendor, slug
+
+    for candidate in _ATS_URL_IN_PAGE_RE.findall(html):
+        root = board_root(candidate.rstrip(_TRAILING_PUNCTUATION))
+        if root:
+            return root
     return None
 
 

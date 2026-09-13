@@ -93,6 +93,38 @@ OUTCOME_FOR_CLASSIFICATION: dict[Classification, Outcome] = {
 }
 
 
+class SourceStatus(StrEnum):
+    """How much we actually know about where a company's jobs are listed.
+
+    `Company.careers_url` was one undifferentiated field, so a Google search
+    link imported from a spreadsheet was indistinguishable from a Greenhouse
+    board we had polled successfully for a month. A dashboard reading that
+    column has no way to avoid presenting the first as a career page, which is
+    the one thing it must not do.
+
+    These are ordered by how much evidence stands behind them, and nothing
+    promotes a row except evidence.
+    """
+
+    #: No usable website and no usable careers URL. There is nothing to try,
+    #: which is a different problem from having tried and failed — it is fixed
+    #: by finding a URL, not by crawling better.
+    NO_WEBSITE = "no_website"
+    #: A lead: a search-engine link, or the company's home page. Imported as
+    #: supplied, never shown as a career page, and the input to discovery.
+    HINT = "hint"
+    #: A candidate board, not yet confirmed to belong to this company. A slug
+    #: guessed from a name lands here — `acme` on Greenhouse may be somebody
+    #: else's `acme`.
+    UNVERIFIED = "unverified"
+    #: The board answered and the evidence ties it to this company.
+    VERIFIED = "verified"
+    #: Discovery ran and found nothing. Distinct from `no_website` because it
+    #: is worth retrying later, and from `unverified` because there is no
+    #: candidate to confirm.
+    FAILED = "failed"
+
+
 class EmailMode(StrEnum):
     """Email management mode for candidates."""
 
@@ -147,3 +179,36 @@ class SeniorityLevel(StrEnum):
     MID = "mid"
     SENIOR = "senior"
     PRINCIPAL = "principal"
+
+
+class CitizenshipStatus(StrEnum):
+    """The owner's *current* authorization, as a fact a filter can act on.
+
+    Separate from `Profile.needs_sponsorship`, which is about the *future*: one
+    boolean was deciding both, and they are different questions. A permanent
+    resident needs no sponsorship and still fails "US citizens only"; a citizen
+    passes both; somebody on OPT may need sponsorship later and be authorized
+    now. Collapsing that into one flag is how a posting restricted to citizens
+    passed a filter that only knew about sponsorship.
+
+    **For filtering only.** §2.2 makes the answers typed onto an application
+    verbatim copies of `Profile.work_auth`, and that is unchanged — nothing
+    here is ever written into a form, because a structured guess at a legal
+    status is exactly what that rule forbids. This says which postings the owner
+    wants to see, which §1 calls the owner's input.
+
+    NULL is the shipped state and means *unstated*: the filter then flags an
+    explicit restriction rather than excluding on it, because excluding on a
+    field nobody filled in hides real jobs and inferring a status from a résumé
+    would be the §1 violation in the other direction.
+    """
+
+    US_CITIZEN = "us_citizen"
+    PERMANENT_RESIDENT = "permanent_resident"
+    #: Authorized to work now by some other means — OPT, TN, H-1B already held.
+    #: Deliberately one value: the distinctions between them change what
+    #: sponsorship is needed later, not whether a citizens-only posting
+    #: excludes the applicant, and this enum answers only the second question.
+    OTHER_AUTHORIZED = "other_authorized"
+    #: Not currently authorized in the United States.
+    NOT_AUTHORIZED = "not_authorized"

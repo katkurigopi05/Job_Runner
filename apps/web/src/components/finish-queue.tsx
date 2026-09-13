@@ -183,7 +183,7 @@ export function FinishQueue({ initial }: { initial: ApplicationPacket[] }) {
         </div>
 
         {current.resume && !current.resume.is_tailored ? (
-          <p className="mt-3 font-mono text-xs text-attn">
+          <p className="mt-3 text-xs text-attn">
             base résumé — tailoring produced nothing for this run
           </p>
         ) : null}

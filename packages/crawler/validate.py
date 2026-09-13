@@ -266,7 +266,8 @@ async def _run(path: str, *, write: bool = False) -> int:
     if never:
         print(f"{never} of {len(seeds)} entries have never been validated.")
 
-    results = await validate_seeds(seeds, build_fetcher())
+    async with build_fetcher() as fetcher:
+        results = await validate_seeds(seeds, fetcher)
     for result in results:
         print(_line(result))
 

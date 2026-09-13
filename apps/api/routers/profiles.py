@@ -35,6 +35,7 @@ async def create_profile(body: ProfileCreate, session: SessionDep) -> Profile:
         min_match_score=body.min_match_score,
         auto_submit=body.auto_submit,
         target_seniority=body.target_seniority,
+        citizenship_status=body.citizenship_status,
     )
     session.add(profile)
     await session.commit()
@@ -69,6 +70,7 @@ _UPDATE_FIELDS = {
     "min_match_score": "min_match_score",
     "auto_submit": "auto_submit",
     "target_seniority": "target_seniority",
+    "citizenship_status": "citizenship_status",
 }
 
 

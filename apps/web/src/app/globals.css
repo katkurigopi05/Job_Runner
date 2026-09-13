@@ -144,6 +144,43 @@ body {
   background: var(--color-rule-soft);
 }
 
+/* ---------------------------------------------------------------------------
+   Four rules, written down because breaking them is what made `/matches`
+   unreadable while `/` stayed fine — the tokens were never the problem.
+
+   1. MONO IS FOR VALUES, NOT PROSE. Scores, ids, URLs, skill terms. A
+      sentence set in mono reads as terminal output: uniform character width
+      and one weight, so nothing can be more important than anything else.
+      `/matches` had eight sentences in mono and two in sans.
+
+   2. ONE MEANING PER ACCENT. Amber means "this needs you" — the theme's own
+      comment says so. A card that paints eight missing-skill chips amber
+      spends the alarm colour on information, and the one panel that really
+      wants the owner then shouts at the same volume.
+
+   3. PROXIMITY CARRIES THE GROUPING. Related lines 4–6px apart, groups 20px.
+      Every row 16px from every other row is one long stream with headings.
+
+   4. NO BOXES INSIDE BOXES. Inside a card, an aside is a left rule and
+      indentation — `.aside` below, the same idiom as `.quoted`. Nesting a
+      second bordered, rounded, tinted panel inside the first reads as a
+      widget that escaped rather than a remark about the thing above it.
+   --------------------------------------------------------------------------- */
+
+/* An aside inside a card: a rule and a step in, never another border. */
+.aside {
+  border-left: 2px solid var(--color-rule);
+  padding-left: 0.75rem;
+}
+
+.aside-attn {
+  border-left-color: var(--color-attn);
+}
+
+.aside-stop {
+  border-left-color: var(--color-stop);
+}
+
 /* The employer's own words, quoted back. Never restyled into UI copy — it has
    to stay visibly *theirs*, because answering it wrong has consequences. */
 .quoted {

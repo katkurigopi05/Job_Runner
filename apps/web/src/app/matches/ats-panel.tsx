@@ -76,7 +76,7 @@ export function AtsPanel({ postingId, profileId }: { postingId: string; profileI
             {report.scored_against_posting ? `${Math.round(report.keywords * 100)}%` : "—"}
           </dd>
           {!report.scored_against_posting ? (
-            <dd className="font-mono text-xs text-ink-faint">
+            <dd className="text-xs text-ink-faint">
               this posting has no description to match against
             </dd>
           ) : null}

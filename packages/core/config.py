@@ -170,6 +170,76 @@ class Settings(BaseSettings):
     #: Floor, not a default — the crawler refuses to go below this.
     crawler_min_delay_s: int = 60
 
+    #: Connection pooling for the crawler's HTTP client.
+    #:
+    #: A client was built and torn down around every request, so each fetch
+    #: paid a fresh TCP handshake and a fresh TLS negotiation. Against a
+    #: shared ATS API — one host serving thousands of boards at the amended
+    #: §2.6 floor of 2s — that is the same handshake to the same machine, over
+    #: and over, for the entire registry.
+    #:
+    #: Pooling changes nothing about politeness: robots.txt and the per-host
+    #: floor are enforced in `PoliteFetcher.fetch` before a connection is
+    #: reached for, so a reused socket waits exactly as long as a new one
+    #: would have. It removes setup cost, not delay.
+    crawler_http_max_connections: int = 32
+    #: Kept well below `max_connections`. These are sockets held open against
+    #: hosts we are about to wait at least 2s before touching again, so a
+    #: large idle pool is memory spent on connections the far end is likely to
+    #: have dropped anyway.
+    crawler_http_max_keepalive: int = 16
+    crawler_http_timeout_s: float = 30.0
+
+    #: Enforce the §2.6 floor in Postgres rather than in this process.
+    #:
+    #: **On by default**, and it was off for exactly as long as it took to
+    #: measure what that meant. `build_fetcher()` constructs a *new*
+    #: `HostRateLimiter` on every call, so two concurrent tasks in one process
+    #: hold two independent counters and both fire at once:
+    #:
+    #:     a = build_fetcher(); b = build_fetcher()
+    #:     await a.rate_limiter.acquire(shared_host)  -> waited 0.0s
+    #:     await b.rate_limiter.acquire(shared_host)  -> waited 0.0s
+    #:
+    #: against a host owed 2s. `make workers n=4` is a documented command and
+    #: runs four claimants in one process, so the shipped default was up to 4×
+    #: the permitted request rate on every path except the one handler that
+    #: passed `shared=True` explicitly. That is not a tuning choice, it is §2.6
+    #: not holding.
+    #:
+    #: The table fixes both halves at once: two limiters in one process and two
+    #: in separate processes all reserve from the same row, so there is no
+    #: arrangement of workers that can outrun the floor.
+    #:
+    #: The cost is that fetching now needs a reachable database, and an
+    #: unreachable one fails the fetch instead of quietly falling back to a
+    #: per-process counter. That is the right way round: a fallback here is a
+    #: politeness breach nobody would see.
+    crawler_shared_rate_limiter: bool = True
+
+    #: How often the dispatching cycle wakes to enqueue whatever has come due.
+    #:
+    #: Not the poll interval — that is per company. This is only how finely
+    #: the registry is swept. Five minutes means a company is crawled within
+    #: five minutes of becoming due, which against an hourly interval is
+    #: noise, and it keeps each tick's batch small.
+    #: Vendors discovery may probe when evidence-based resolution fails, as a
+    #: comma-separated list. All four by default. Narrowing it is a budget
+    #: control, not a speedup: CLAUDE.md records Workable at ~3.9s per probe
+    #: against ~1.5s for the others and resolving nothing in a 60-company
+    #: sample, so `greenhouse,lever,ashby` is a defensible pilot setting — and
+    #: a real coverage loss, since genuine Workable employers become invisible.
+    crawler_discovery_vendors: str = "greenhouse,lever,ashby,workable"
+
+    crawler_tick_seconds: int = 300
+    #: Companies enqueued per tick. The cap is the difference between a queue
+    #: and one long cycle wearing a queue as a disguise.
+    crawler_dispatch_batch: int = 250
+    #: Stop dispatching while this many crawl tasks are still outstanding.
+    #: Workers that cannot keep up should make the backlog visible, not carry
+    #: it — an unbounded queue turns a slow cycle into an unbounded one.
+    crawler_max_backlog: int = 2000
+
     #: The owner's search is United States only, California first. On by
     #: default because it is a standing preference rather than a per-search
     #: one — §1 calls filters the owner's input, and this is that input stated

@@ -8,14 +8,22 @@ forget to be polite; it has no way to reach the network that skips this.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from typing import Any
 
 import httpx
 import structlog
 
-from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter, host_key
+from packages.crawler.meter import record_request
+from packages.crawler.ratelimit import (
+    MIN_DELAY_SECONDS,
+    HostRateLimiter,
+    RateLimiter,
+    host_key,
+)
 from packages.crawler.robots import USER_AGENT, RobotsCache
 
 log = structlog.get_logger(__name__)
@@ -83,6 +91,14 @@ class FetchResult:
     content_hash: str
     #: Seconds spent waiting on the rate limiter.
     waited: float = 0.0
+    #: Seconds spent in the request itself, once both gates were passed.
+    #:
+    #: The pair is the point. "The crawl is slow" has two quite different
+    #: causes — a floor we chose (§2.6) and a network we did not — and without
+    #: both numbers the only way to tell them apart is arithmetic over
+    #: constants, which is what someone had to do the last time it was asked.
+    #: Measured around the request, so it excludes the wait by construction.
+    network: float = 0.0
 
     @property
     def ok(self) -> bool:
@@ -97,17 +113,70 @@ def content_hash(text: str) -> str:
 class PoliteFetcher:
     """An HTTP client that cannot outrun the rules."""
 
-    rate_limiter: HostRateLimiter | None = None
+    rate_limiter: RateLimiter | None = None
     robots: RobotsCache | None = None
     user_agent: str = USER_AGENT
     transport: httpx.AsyncBaseTransport | None = None
     timeout: float = 30.0
+    #: Connection pool size. `None` means httpx's own defaults, which is what
+    #: a directly-constructed fetcher gets; `build_fetcher` fills these from
+    #: settings.
+    max_connections: int | None = None
+    max_keepalive: int | None = None
+    _client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.rate_limiter is None:
             self.rate_limiter = HostRateLimiter()
         if self.robots is None:
             self.robots = RobotsCache(user_agent=self.user_agent, transport=self.transport)
+
+    def _client_for_requests(self) -> httpx.AsyncClient:
+        """The pooled client, built on first use.
+
+        Lazily, because a fetcher is constructed in ordinary synchronous code
+        — `build_fetcher()` at the top of a handler — and an `AsyncClient`
+        binds to the event loop that first uses it. Building it in
+        `__post_init__` would tie the object to whichever loop happened to be
+        running at construction, which is how a fetcher built once and used by
+        two cycles fails with an error about a different loop.
+
+        Rebuilt if it has been closed, so `aclose()` is not a one-way door
+        for a fetcher someone reuses afterwards.
+        """
+        if self._client is None or self._client.is_closed:
+            options: dict[str, Any] = {
+                "transport": self.transport,
+                "timeout": self.timeout,
+                "headers": {"User-Agent": self.user_agent},
+                # Redirects are followed by hand, one hop at a time, so each
+                # hop goes through both gates. See `_walk`.
+                "follow_redirects": False,
+            }
+            # Omitted rather than passed as None: httpx reads `None` inside
+            # `Limits` as *unlimited*, which is not what "no pool size
+            # configured" should mean.
+            if self.max_connections is not None or self.max_keepalive is not None:
+                options["limits"] = httpx.Limits(
+                    max_connections=self.max_connections,
+                    max_keepalive_connections=self.max_keepalive,
+                )
+            self._client = httpx.AsyncClient(**options)
+        return self._client
+
+    async def aclose(self) -> None:
+        """Release the pool, and the robots cache's with it."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
+        if self.robots is not None:
+            await self.robots.aclose()
+
+    async def __aenter__(self) -> PoliteFetcher:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.aclose()
 
     #: How many hops a redirect chain may take before we call it a loop. httpx
     #: defaults to 20; a careers page that needs more than five is broken.
@@ -149,7 +218,7 @@ class PoliteFetcher:
                         # This is the half that makes the faster shared-API
                         # floor defensible rather than merely faster, so it is
                         # recorded against the host that actually sent it.
-                        self.rate_limiter.penalize(  # type: ignore[union-attr]
+                        await self.rate_limiter.penalize(  # type: ignore[union-attr]
                             host, _retry_after(response, default=_DEFAULT_BACKOFF)
                         )
                         # The body is not read: nothing in it is worth having,
@@ -178,14 +247,28 @@ class PoliteFetcher:
                 # Same machine, so no second robots fetch and no second wait —
                 # the hop is part of one logical request. It still cost the
                 # server a round trip, so it is recorded.
-                self.rate_limiter.record(host)  # type: ignore[union-attr]
+                await self.rate_limiter.record(host)  # type: ignore[union-attr]
 
             url = next_url
 
         raise Blocked(f"{url}: more than {self._MAX_REDIRECTS} redirects")
 
-    async def fetch(self, url: str) -> FetchResult:
+    async def fetch(
+        self, url: str, *, method: str = "GET", json: object | None = None
+    ) -> FetchResult:
         """Fetch `url`, waiting as long as politeness requires.
+
+        `method`/`json` exist for one reason: Workday's careers API is a POST
+        whose body carries the page offset. Everything before the request is
+        unchanged — robots.txt is consulted, the site's `Crawl-delay` is
+        honoured, and the host's floor is waited out — because those gates are
+        about *touching a host*, which a POST does exactly as much as a GET.
+
+        A non-GET is sent as a single request and its redirects are not
+        followed. Following one correctly means deciding whether to re-send
+        the body, which differs by status code and is a decision no caller
+        here needs made for it: an API that answers a redirect to a POST has
+        changed shape, and a 3xx returned plainly says so.
 
         Raises:
             Blocked: robots.txt says no, or could not be read.
@@ -211,19 +294,24 @@ class PoliteFetcher:
                 site_delay=decision.crawl_delay,
                 our_delay=current,
             )
-            self.rate_limiter.host_delays[host] = float(decision.crawl_delay)
+            await self.rate_limiter.raise_delay(host, float(decision.crawl_delay))
 
         waited = await self.rate_limiter.acquire(host)
 
-        async with httpx.AsyncClient(
-            transport=self.transport,
-            timeout=self.timeout,
-            headers={"User-Agent": self.user_agent},
-            # Redirects are followed by hand, one hop at a time, so each hop
-            # goes through both gates. See `_follow`.
-            follow_redirects=False,
-        ) as client:
+        # Both gates are behind us. Reusing the connection from here changes
+        # how much setup is repeated, never how long anything waited.
+        client = self._client_for_requests()
+        started = time.monotonic()
+        if method.upper() == "GET":
             status, text, host = await self._walk(client, url, host)
+        else:
+            status, text = await self._send(client, method, url, host, json)
+        network = time.monotonic() - started
+
+        # Recorded against the host the request *ended* on: `_walk` follows
+        # redirects across machines, and a redirect's cost belongs to the host
+        # that served it, not to the one that pointed there.
+        await record_request(host, waited=waited, network=network)
 
         return FetchResult(
             url=url,
@@ -231,7 +319,29 @@ class PoliteFetcher:
             text=text,
             content_hash=content_hash(text),
             waited=waited,
+            network=network,
         )
+
+    async def _send(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        host: str,
+        json: object | None,
+    ) -> tuple[int, str]:
+        """One non-GET request, with the same 429 handling `_walk` applies."""
+        async with client.stream(method.upper(), url, json=json) as response:
+            if response.status_code in (429, 503):
+                await self.rate_limiter.penalize(  # type: ignore[union-attr]
+                    host, _retry_after(response, default=_DEFAULT_BACKOFF)
+                )
+                return response.status_code, ""
+            if response.is_redirect:
+                # See `fetch`. Returned rather than followed.
+                log.info("post_redirected", url=url, status=response.status_code)
+                return response.status_code, ""
+            return response.status_code, await self._read_body(response, url)
 
     async def _read_body(self, response: httpx.Response, url: str) -> str:
         """The body, or `TooLarge` before it can exhaust the worker.
@@ -252,20 +362,47 @@ class PoliteFetcher:
         return b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
 
 
-def build_fetcher(delay_seconds: float | None = None, **kwargs: object) -> PoliteFetcher:
-    """Construct a fetcher from settings, refusing an unsafe delay."""
+def build_fetcher(
+    delay_seconds: float | None = None,
+    *,
+    shared: bool | None = None,
+    **kwargs: object,
+) -> PoliteFetcher:
+    """Construct a fetcher from settings, refusing an unsafe delay.
+
+    `shared` selects where the §2.6 counters live. `None` takes the setting;
+    `True` puts them in Postgres, which is what any caller that crawls from
+    more than one process at a time must ask for — an in-process limiter gives
+    each worker its own counters, and N workers then make the effective floor
+    the floor divided by N.
+    """
     from packages.core.config import get_settings
 
     configured = delay_seconds
     if configured is None:
         configured = float(get_settings().crawler_min_delay_s)
 
-    # HostRateLimiter raises rather than clamps, which is the point.
-    limiter = HostRateLimiter(delay_seconds=max(configured, MIN_DELAY_SECONDS))
+    settings = get_settings()
+
+    # Both implementations raise rather than clamp, which is the point.
+    use_shared = settings.crawler_shared_rate_limiter if shared is None else shared
+    safe_delay = max(configured, MIN_DELAY_SECONDS)
+    limiter: RateLimiter
+    if use_shared:
+        from packages.crawler.host_budget import SharedHostRateLimiter
+
+        limiter = SharedHostRateLimiter(delay_seconds=safe_delay)
+    else:
+        limiter = HostRateLimiter(delay_seconds=safe_delay)
     if configured < MIN_DELAY_SECONDS:
         log.warning(
             "configured_delay_below_floor",
             configured=configured,
             using=MIN_DELAY_SECONDS,
         )
+    # Only supplied when the caller has not; a test handing in its own pool
+    # size or timeout keeps it.
+    kwargs.setdefault("max_connections", settings.crawler_http_max_connections)
+    kwargs.setdefault("max_keepalive", settings.crawler_http_max_keepalive)
+    kwargs.setdefault("timeout", settings.crawler_http_timeout_s)
     return PoliteFetcher(rate_limiter=limiter, **kwargs)  # type: ignore[arg-type]

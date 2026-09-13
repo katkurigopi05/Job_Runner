@@ -199,6 +199,48 @@ async def test_a_careers_page_is_read_for_the_board_behind_it() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_careers_page_linking_the_board_itself_is_read_too() -> None:
+    """The commoner shape, and the one that used to fall through to guessing.
+
+    A careers page links "View all openings" — the board's front page — far
+    more often than it links one specific role. `find_embedded` matches only a
+    posting URL, because that is what the apply path needs, so a page naming
+    its board outright resolved by *guessing a slug from the company name*: a
+    page saying `boards.greenhouse.io/acmeco` produced `acme`, which is a
+    different company's board if it is anybody's.
+
+    Without the board-root read in `_board_in` this test resolves to `acme`.
+    """
+    page = "<html><a href='https://boards.greenhouse.io/acmeco'>View all openings</a></html>"
+    body = '{"jobs": [{"id": 1, "title": "Engineer", "absolute_url": "https://x/1"}]}'
+    fetcher = PoliteFetcher(transport=_transport({"careers": page, "boards/acmeco": body}))
+
+    outcome = await resolve_one("Acme", fetcher, url="https://acme.com/careers")
+
+    assert isinstance(outcome, Resolved)
+    assert outcome.slug == "acmeco", "read from the page, not guessed from the name"
+
+
+@pytest.mark.asyncio
+async def test_the_greenhouse_embed_iframe_names_the_board() -> None:
+    """`boards.greenhouse.io/embed/job_board?for=slug` is the iframe form.
+
+    `board_root` already understood it; nothing scanned a page for it.
+    """
+    page = (
+        "<html><iframe src='https://boards.greenhouse.io/embed/job_board?for=acmeco'>"
+        "</iframe></html>"
+    )
+    body = '{"jobs": [{"id": 1, "title": "Engineer", "absolute_url": "https://x/1"}]}'
+    fetcher = PoliteFetcher(transport=_transport({"careers": page, "boards/acmeco": body}))
+
+    outcome = await resolve_one("Acme", fetcher, url="https://acme.com/careers")
+
+    assert isinstance(outcome, Resolved)
+    assert outcome.slug == "acmeco"
+
+
+@pytest.mark.asyncio
 async def test_a_named_board_with_no_roles_does_not_fall_back_to_guessing() -> None:
     """The company's own page named this board. Empty means not hiring.
 
