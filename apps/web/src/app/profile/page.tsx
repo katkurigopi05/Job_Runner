@@ -31,7 +31,14 @@ export default async function ProfilePage() {
         <div className="space-y-14">
           {profiles.map((profile) => (
             <section key={profile.id} aria-labelledby={`p-${profile.id}`}>
-              <h2 id={`p-${profile.id}`} className="sr-only">
+              {/* Visible, not sr-only. Four profiles rendered as four
+                  identical forms, each opening with "LABEL / default" and no
+                  heading — 3,400px in which nothing said which one you were
+                  editing. */}
+              <h2
+                id={`p-${profile.id}`}
+                className="mb-5 border-b border-rule pb-2 font-display text-xl"
+              >
                 {profile.label}
               </h2>
               <ProfileForm profile={profile} />

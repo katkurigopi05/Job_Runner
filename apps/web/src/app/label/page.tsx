@@ -146,8 +146,9 @@ export default async function LabelPage({
         ) : null}
 
         {summary.usable ? (
-          <p className="mt-4 font-mono text-xs text-go">
-            Usable. Export with: make export-labels kind=owner
+          <p className="mt-4 text-xs text-go">
+            Usable. Export with{" "}
+            <code className="font-mono">make export-labels kind=owner</code>
           </p>
         ) : null}
       </section>

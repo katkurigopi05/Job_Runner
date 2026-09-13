@@ -90,14 +90,16 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
       >
         <div className="flex items-start justify-between gap-6">
           <h2 className="font-display text-2xl leading-tight">{current.title ?? "Untitled role"}</h2>
-          <span className="shrink-0 font-mono text-sm text-ink-faint">
-            {current.score.toFixed(3)}
+          <span className="shrink-0 font-mono text-2xl leading-none tabular-nums text-ink-soft">
+            {Math.round(current.score * 100)}
+            <span className="text-sm text-ink-faint">%</span>
           </span>
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 font-mono text-xs text-ink-faint">
+        <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-ink-soft">
           {current.location ? <span>{current.location}</span> : null}
-          {current.ats_type ? <span>{current.ats_type}</span> : null}
+          {current.location && current.ats_type ? <span className="text-ink-faint">·</span> : null}
+          {current.ats_type ? <span className="font-mono">{current.ats_type}</span> : null}
         </div>
 
         {/* Shown before the keep/skip, not after: a citizens-only posting is a
@@ -125,13 +127,13 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
         {current.missing_terms?.length ? (
           <div className="mt-5">
             <div className="font-mono text-xs uppercase tracking-widest text-ink-faint">
-              Wants, and your résumé does not show
+              Asked for, not on your résumé
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {current.missing_terms.slice(0, 10).map((term) => (
                 <span
                   key={term}
-                  className="rounded-full border border-attn/40 px-3 py-1 text-xs text-attn"
+                  className="rounded-full border border-rule px-3 py-1 text-xs text-ink-soft"
                 >
                   {term}
                 </span>
@@ -143,7 +145,7 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
         <a
           href={current.url}
           target="jobrunner-form"
-          className="mt-7 inline-block font-mono text-xs text-ink-soft underline decoration-rule underline-offset-4 hover:text-ink"
+          className="mt-7 inline-block text-xs text-ink-soft underline decoration-rule underline-offset-4 hover:text-ink"
         >
           read the posting ↗
         </a>

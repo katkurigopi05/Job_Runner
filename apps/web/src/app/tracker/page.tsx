@@ -12,7 +12,21 @@ export const dynamic = "force-dynamic";
 
 /* The board is keyed on *outcome*, not status. Status is our side of the work
    and stops moving at `submitted`; outcome is what the employer said back, and
-   it is the only column that answers "how is the search going". */
+   it is the only column that answers "how is the search going".
+
+   **These keys are `core.enums.Outcome` values, and two of them were not.**
+   `rejection` and `info_request` are `Classification` values — what an inbound
+   *email* is — while the API returns `rejected` and `info_requested` on the
+   application. Neither column could ever match, and `assessment`,
+   `acknowledged` and `awaiting` had no column at all.
+
+   The board did not look broken, which is the whole problem: `columnFor`
+   returned a non-null key, so `tracked.length` was 2 and the empty state did
+   not render either. Two rejections in the database produced a page with a
+   heading, a paragraph and nothing else. Found by screenshotting it.
+
+   `tests/test_tracker_columns.py` now reads both this file and the enum, so
+   the next value added to `Outcome` cannot silently fall through. */
 const COLUMNS: { key: string; title: string; blurb: string; tone: string }[] = [
   {
     key: "offer",
@@ -27,19 +41,34 @@ const COLUMNS: { key: string; title: string; blurb: string; tone: string }[] = [
     tone: "border-attn/40 bg-attn-soft text-attn",
   },
   {
-    key: "info_request",
+    // Above info_requested for the reason §15 gives: an assessment is an
+    // opportunity with a deadline, and the window closes while the tracker
+    // looks calm.
+    key: "assessment",
+    title: "Assessment",
+    blurb: "a timed exercise, usually with a deadline",
+    tone: "border-attn/40 bg-attn-soft text-attn",
+  },
+  {
+    key: "info_requested",
     title: "They asked something",
     blurb: "needs a reply from you",
     tone: "border-attn/40 bg-attn-soft text-attn",
   },
   {
-    key: "waiting",
+    key: "acknowledged",
+    title: "Acknowledged",
+    blurb: "received, nothing decided",
+    tone: "border-rule text-ink-soft",
+  },
+  {
+    key: "awaiting",
     title: "Waiting",
     blurb: "sent, nothing back yet",
     tone: "border-wait/40 bg-wait-soft text-wait",
   },
   {
-    key: "rejection",
+    key: "rejected",
     title: "Rejection",
     blurb: "closed",
     tone: "border-stop/40 bg-stop-soft text-stop",
@@ -56,10 +85,33 @@ const CLASSIFICATION_LABEL: Record<Classification, string> = {
   noise: "noise",
 };
 
+/** The named columns, plus one for any outcome nothing named.
+ *
+ * Without this, an `Outcome` value with no column here is silently dropped —
+ * the application disappears from the board while `tracked` still counts it,
+ * so even the empty state does not fire. That is exactly how two rejections
+ * rendered as a blank page. A column nobody styled is a much smaller problem
+ * than an application nobody can see.
+ */
+function columnsFor(tracked: Application[]) {
+  const named = new Set(COLUMNS.map((c) => c.key));
+  const orphans = [...new Set(tracked.map(columnFor))]
+    .filter((key): key is string => key !== null && !named.has(key))
+    .map((key) => ({
+      key,
+      title: key.replace(/_/g, " "),
+      blurb: "no column defined for this outcome yet",
+      tone: "border-rule text-ink-soft",
+    }));
+  return [...COLUMNS, ...orphans];
+}
+
 function columnFor(application: Application): string | null {
   if (application.outcome) return application.outcome;
-  // Sent and silent is its own state, and the most common one.
-  return application.status === "submitted" ? "waiting" : null;
+  // Sent and silent is its own state, and the most common one. It uses the
+  // `awaiting` key rather than a synthetic one so there is a single Waiting
+  // column whether the state was recorded by the inbox or inferred here.
+  return application.status === "submitted" ? "awaiting" : null;
 }
 
 export default async function TrackerPage() {
@@ -98,12 +150,12 @@ export default async function TrackerPage() {
       </header>
 
       {tracked.length === 0 ? (
-        <p className="border border-dashed border-rule px-6 py-16 text-center font-mono text-sm text-ink-faint">
+        <p className="border border-dashed border-rule px-6 py-16 text-center text-sm text-ink-faint">
           nothing submitted yet
         </p>
       ) : (
         <div className="space-y-10">
-          {COLUMNS.map((column) => {
+          {columnsFor(tracked).map((column) => {
             const rows = tracked.filter((a) => columnFor(a) === column.key);
             if (rows.length === 0) return null;
             return (
@@ -148,7 +200,7 @@ export default async function TrackerPage() {
                                 outcome, and the owner should be able to see
                                 that rather than wonder. */}
                             {latest.link_method === "inferred" ? (
-                              <p className="mt-1 font-mono text-xs text-attn">
+                              <p className="mt-1 text-xs text-attn">
                                 matched to this application by sender and content, not by
                                 our reply address — check it belongs here. Nothing was
                                 recorded against the application on this basis.
@@ -183,7 +235,7 @@ export default async function TrackerPage() {
             <h2 id="unrouted" className="font-display text-xl">
               Matched nothing
             </h2>
-            <span className="font-mono text-xs text-ink-faint">
+            <span className="text-xs text-ink-faint">
               arrived, but no application claimed them
             </span>
             <span className="ml-auto font-mono text-sm tabular-nums text-ink-soft">

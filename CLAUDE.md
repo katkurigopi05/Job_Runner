@@ -2122,6 +2122,73 @@ with none on the index, still reads as empty. And the sweep needs network
 egress from the owner's machine, like `make validate-seeds` — so how many of
 the ~3,000 bespoke pages actually publish is, today, an unmeasured number.
 
+### The tracker dropped five of seven outcomes, and looked fine doing it
+
+Phase 6's whole deliverable. Found by screenshotting the dashboard rather than
+reading it: the page rendered a heading, a paragraph, and nothing at all, while
+the database held two rejected applications.
+
+The column keys came from the wrong enum. `Classification` is what an inbound
+*email* is; `Outcome` is what lands on the application, and the board was keyed
+on the first:
+
+| column key | what the API sends | matched |
+|---|---|---|
+| `rejection` | `rejected` | never |
+| `info_request` | `info_requested` | never |
+| — | `assessment` | no column |
+| — | `acknowledged` | no column |
+| — | `awaiting` | no column |
+
+Five of seven, including the one §15 argues is the most time-critical: an
+assessment is an opportunity with a deadline, and the window closes while the
+tracker looks calm.
+
+**It did not look broken, and that is the part worth keeping.** `columnFor`
+returned a non-null key, so `tracked.length` was 2 and the "nothing submitted
+yet" empty state did not fire either. The failure produced an empty `<div>`
+between the header and the footer — no error, no zero, nothing to notice.
+
+Two fixes rather than one. The keys are `Outcome` values now, and
+`columnsFor` renders an unnamed column for any outcome nothing matched, so the
+next value added to the enum surfaces unstyled instead of vanishing. A column
+nobody designed is a much smaller problem than an application nobody can see.
+
+`tests/test_tracker_columns.py` reads the TSX and the enum rather than a list
+of expected strings, which would be a third place for the same drift, and it
+is in `GATE6_TESTS`. Against the old keys it fails on five outcomes.
+
+### The design pass, and what it turned up
+
+`/matches` was a 31,000px wall and `/` was fine, which is what said the tokens
+were not the problem. Four habits were, and they are written into
+`globals.css` because a rule nobody can point at is a preference: **mono is
+for values, not prose**; **one meaning per accent** (amber had drifted onto
+eight missing-skill chips per card, so the "needs you" colour was the most
+common thing on a card needing nothing); **proximity carries the grouping**;
+**no boxes inside boxes**.
+
+Two of the findings were not cosmetic at all, and both came from looking at a
+rendered page rather than at source:
+
+- The tracker, above.
+- **The same score read `8%` on `/matches` and `0.081` on `/swipe`** — one
+  number, two notations, on two screens the owner moves between while making
+  the same judgement.
+
+And one thing the screenshots caught that no test would have: `/matches`
+returned **500** on a database where the `citizenship_status` migration had
+not been applied. That is ordinary — a model column without its migration is
+always a hard failure — but worth knowing that it takes the whole page rather
+than degrading, because the review queue is what the owner opens first.
+
+`profiles.citizenship_status` also had no control. The column, the schema, the
+filter and the tests all shipped in one commit and the owner had no way to set
+the value, so the citizenship filter could never fire on real data. It is on
+`/profile` now, inside the work-authorization aside, and the screen states the
+distinction the column exists for: this one filters, the box above it is what
+gets copied onto a form.
+
 ### What six outside repositories were worth
 
 Surveyed on request: `punkpeye/awesome-mcp-servers`, `twentyhq/twenty`,

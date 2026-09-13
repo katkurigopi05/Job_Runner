@@ -79,7 +79,7 @@ export default async function MatchesPage({
 
       {matches.length === 0 ? (
         <div className="rounded-[var(--radius-lg)] border border-dashed border-rule px-6 py-16 text-center">
-          <p className="font-mono text-sm text-ink-faint">nothing scored yet</p>
+          <p className="text-sm text-ink-faint">nothing scored yet</p>
           <p className="mx-auto mt-3 max-w-prose text-sm text-ink-soft">
             Scoring happens during a crawl. Run the worker and give it a cycle over the company
             registry in <code className="font-mono text-xs">seeds/companies.yaml</code>, or{" "}

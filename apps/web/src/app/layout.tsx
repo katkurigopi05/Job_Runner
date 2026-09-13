@@ -62,7 +62,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
         <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>
         <footer className="mx-auto max-w-5xl px-6 pb-12">
-          <p className="border-t border-rule pt-5 font-mono text-xs leading-relaxed text-ink-faint">
+          <p className="border-t border-rule pt-5 text-xs leading-relaxed text-ink-faint">
             Nothing submits without your approval. Work-authorization answers are copied from your
             profile verbatim, never generated.
           </p>

@@ -151,7 +151,8 @@ GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py
   tests/test_registry_sync.py tests/test_worker_host_blocking.py \
   tests/test_matching_threshold.py tests/test_csv_to_match_e2e.py \
   tests/test_eligibility.py tests/test_matches_api.py
-GATE6_TESTS := tests/test_inbox.py tests/test_inbox_duplicates.py
+GATE6_TESTS := tests/test_inbox.py tests/test_inbox_duplicates.py \
+  tests/test_tracker_columns.py
 
 gate-0: lint typecheck check-migrations
 	REQUIRE_DB=1 $(PY)/pytest -q

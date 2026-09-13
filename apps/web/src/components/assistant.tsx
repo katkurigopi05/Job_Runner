@@ -182,7 +182,7 @@ export function Assistant({
           ))}
         </select>
         <p
-          className={`min-w-0 flex-1 font-mono text-xs ${chosen.local ? "text-ink-faint" : "text-attn"}`}
+          className={`min-w-0 flex-1 text-xs ${chosen.local ? "text-ink-faint" : "text-attn"}`}
         >
           {chosen.hint}
         </p>
@@ -194,7 +194,7 @@ export function Assistant({
           not showing a control. */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule px-3 py-2.5">
         {chosen.local ? (
-          <p className="font-mono text-xs text-ink-faint">
+          <p className="text-xs text-ink-faint">
             recruiter mail: included — it never leaves this machine
           </p>
         ) : (
@@ -209,7 +209,7 @@ export function Assistant({
               />
               send recruiter mail to {chosen.label}
             </label>
-            <p className="min-w-0 flex-1 font-mono text-xs text-ink-faint">
+            <p className="min-w-0 flex-1 text-xs text-ink-faint">
               {shareMail
                 ? "Their emails about you go with the question."
                 : "Withheld. Replies stay on this machine; the rest of the context still goes."}
@@ -244,7 +244,7 @@ export function Assistant({
         className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-rule/25 p-3"
       >
         {turns.length === 0 ? (
-          <p className="px-1 py-8 text-center font-mono text-xs text-ink-faint">
+          <p className="px-1 py-8 text-center text-xs text-ink-faint">
             {chosen.local
               ? "runs on your machine. asks nothing of the internet."
               : `answers come from ${chosen.label}. your job search goes with the question.`}
@@ -314,7 +314,7 @@ export function Assistant({
       {/* Status line, bottom-left — the photo-editor's. */}
       <p
         role="status"
-        className="border-t border-rule px-3 py-1.5 text-left font-mono text-xs text-ink-faint"
+        className="border-t border-rule px-3 py-1.5 text-left text-xs text-ink-faint"
       >
         {status}
       </p>

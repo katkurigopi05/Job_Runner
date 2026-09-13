@@ -67,7 +67,7 @@ export default async function ReviewPage() {
       </header>
 
       {waiting.length === 0 ? (
-        <p className="border border-dashed border-rule px-6 py-16 text-center font-mono text-sm text-ink-faint">
+        <p className="border border-dashed border-rule px-6 py-16 text-center text-sm text-ink-faint">
           empty queue
         </p>
       ) : (

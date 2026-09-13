@@ -294,6 +294,17 @@ export interface Profile {
   location: string | null;
   work_auth: string | null;
   needs_sponsorship: boolean | null;
+  /**
+   * Current work authorization — a *filter*, never typed onto a form.
+   * `work_auth` above is the field §2.2 copies verbatim; this one only decides
+   * which postings are shown, and null means unstated, which filters nothing.
+   */
+  citizenship_status:
+    | "us_citizen"
+    | "permanent_resident"
+    | "other_authorized"
+    | "not_authorized"
+    | null;
   salary_expectation: string | null;
   min_match_score: number;
   auto_submit: boolean;
