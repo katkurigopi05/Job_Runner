@@ -2658,3 +2658,60 @@ retrieval data pipeline`. The refusal count measures how hard a model pushed
 against the guard, not whether the résumé got better, and tuning against it is
 the trap `docs/REFERENCE.md` §3.6 names. These three changes make the counts
 mean what the screen says they mean; they do not make either model good.
+
+### Two failing tests that no commit had broken
+
+Worth recording because the time went on the wrong suspect, and because the
+failure is available to anyone working on this repo.
+
+`tests/test_worker_host_blocking.py` failed twice in a full run —
+`assert 0 == 1` on a posting count, in the test that measures the scheduling
+defect — and passed in isolation, passed in a 1,078-test slice, and passed in
+the next full run. The captured logs said what had actually happened:
+
+```text
+task_failed error=DBAPIError kind=crawl_company will_retry=True
+StaleDataError: UPDATE on 'queue_tasks' expected to update 1 row(s); 0 matched
+crawl_company_gone company_id=9baa8b41-…
+```
+
+Rows the test had **committed seconds earlier** were gone: the queue task it
+was holding, and the company it had created. Nothing in the tree deletes a
+`Company` except `conftest`'s truncate, and the session fixture there does more
+than truncate — it **drops and recreates the whole schema** on startup, which
+is right for a suite that owns its database.
+
+A second `pytest` had been started while the full run was in flight — one file,
+to check an unrelated fix. Its session fixture dropped the schema under the
+running suite. The product was not involved at any point, and the first
+hypothesis — that the new per-request metering was exhausting the connection
+pool — was wrong in a way that would have cost a day to disprove by reading
+code.
+
+The fix is a claim rather than any amount of per-test defensiveness: the
+session fixture takes a Postgres **advisory lock** on the test database and
+keeps it for the run, so a second process is refused in 0.2s with the reason
+and the remedy instead of silently wrecking the first. No test survives its
+tables being dropped, so there is nothing to harden at that level.
+
+Four details:
+
+- **Refused, never skipped.** An absent database is a skip on purpose —
+  `pytest` is green on a fresh checkout before `docker compose up`. A database
+  already in use is a mistake with a remedy, and skipping 2,500 tests would
+  hide it exactly as well as the collision did. `REQUIRE_DB` does not get a
+  vote.
+- **Session-level, not transaction-level.** The claiming connection commits
+  immediately — the drop that follows waits on table locks and the claim must
+  not be holding any — and a `pg_advisory_xact_lock` would be released by that
+  commit, leaving a guard that reads like one and is not.
+- **Released by closing the connection**, so an interrupted or crashed run
+  leaves nothing to clear by hand. That matters because the fixture's *other*
+  failure mode is already "a previous run left locks behind".
+- **Scoped to one database.** Two suites against two databases still run at
+  once; `TEST_DATABASE_URL` is how you do that, and the refusal message says
+  so.
+
+`tests/test_one_run_per_database.py` asserts the claim is held *while the suite
+is running* — from inside the run, on a second connection — rather than that it
+was taken once at startup.

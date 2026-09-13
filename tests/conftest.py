@@ -116,9 +116,74 @@ _ALL_TABLES = (
 REQUIRE_DB = os.environ.get("REQUIRE_DB") == "1"
 
 
+#: Claimed for the whole session by the first pytest process to reach the
+#: database, so a second one is refused instead of quietly wrecking it.
+#:
+#: This is the fix for two failures in `test_worker_host_blocking` that took a
+#: morning to explain. A second `pytest` was started — one file, to check an
+#: unrelated fix — while the full suite was still running, and the session
+#: fixture below *drops and recreates the whole schema* on startup. So rows a
+#: running test had committed vanished underneath it: `complete_task` updated a
+#: `queue_tasks` row that no longer existed, and `crawl_company` logged
+#: `crawl_company_gone` for a company it had created seconds earlier.
+#:
+#: Nothing in the product was wrong, and that is the expensive part. The
+#: failures named an unrelated feature, landed in whichever test happened to be
+#: running at the time, and could not be reproduced — the suite is green either
+#: side of the collision. A fast, explanatory refusal is worth more here than
+#: any amount of per-test defensiveness, because there is no arrangement of a
+#: test that survives its tables being dropped.
+#:
+#: Arbitrary but fixed. Advisory locks are scoped to one database, so pointing
+#: `TEST_DATABASE_URL` at a second database still runs two suites at once — two
+#: processes sharing *one* database is the only thing refused. The lock is
+#: session-level, so it is released when the connection closes: a crashed or
+#: interrupted run leaves nothing behind to clear by hand.
+SCHEMA_LOCK_KEY = 4_917_204
+
+_CONCURRENT_RUN = (
+    f"another pytest process is already using {TEST_DATABASE_URL}.\n"
+    "The session fixture drops and recreates the schema, so two runs against "
+    "one database delete each other's rows mid-test and fail somewhere "
+    "unrelated. Wait for the other run, or point TEST_DATABASE_URL at a "
+    "second database for this one."
+)
+
+
 @pytest_asyncio.fixture(scope="session")
 async def engine():
     eng = create_async_engine(TEST_DATABASE_URL)
+    # Held open for the whole session: closing it is what releases the lock.
+    claim = None
+    try:
+        claim = await eng.connect()
+        held = await claim.scalar(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": SCHEMA_LOCK_KEY}
+        )
+        # Committed rather than left idle in a transaction — the drop below
+        # waits on locks, and this connection must not be holding any. The
+        # advisory lock is session-level and survives the commit.
+        await claim.commit()
+    except Exception as exc:  # noqa: BLE001 - no database reachable at all
+        if claim is not None:
+            await claim.close()
+        await eng.dispose()
+        message = (
+            f"no database at {TEST_DATABASE_URL}: {exc}\n"
+            "Start one with `make up`, or point TEST_DATABASE_URL elsewhere."
+        )
+        if REQUIRE_DB:
+            pytest.fail(message, pytrace=False)
+        pytest.skip(message)
+
+    if not held:
+        # Never a skip, whatever REQUIRE_DB says: this is a mistake with a
+        # remedy, not an absent dependency, and skipping 2,500 tests would
+        # hide it exactly as well as the collision did.
+        await claim.close()
+        await eng.dispose()
+        pytest.fail(_CONCURRENT_RUN, pytrace=False)
+
     try:
         async with eng.begin() as conn:
             # Drop first. `create_all` only creates missing *tables*, so a
@@ -147,6 +212,7 @@ async def engine():
             # next. Start every session from an empty database.
             await conn.execute(text(f"TRUNCATE {', '.join(_ALL_TABLES)} RESTART IDENTITY CASCADE"))
     except Exception as exc:  # noqa: BLE001 - any connection failure means skip
+        await claim.close()
         await eng.dispose()
         message = (
             f"no database at {TEST_DATABASE_URL}: {exc}\n"
@@ -156,6 +222,7 @@ async def engine():
             pytest.fail(message, pytrace=False)
         pytest.skip(message)
     yield eng
+    await claim.close()
     await eng.dispose()
 
 
