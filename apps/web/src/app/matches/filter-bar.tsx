@@ -124,7 +124,7 @@ export function FilterBar({ resultCount }: { resultCount: number }) {
           <button
             type="button"
             onClick={() => router.replace("/matches", { scroll: false })}
-            className="rounded-[var(--radius)] border border-rule px-3 py-1.5 font-mono text-xs text-ink-soft transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+            className="rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink-soft transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
           >
             clear
           </button>
@@ -135,7 +135,7 @@ export function FilterBar({ resultCount }: { resultCount: number }) {
         </span>
       </div>
 
-      <p className="mt-3 max-w-prose font-mono text-xs text-ink-faint">
+      <p className="mt-3 max-w-prose text-xs text-ink-faint">
         These filter what you see. They do not touch your profile, which is what gets typed
         into application forms.
       </p>

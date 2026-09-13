@@ -22,27 +22,26 @@ import type { Eligibility } from "@/lib/api";
 export function EligibilityNote({ eligibility }: { eligibility: Eligibility }) {
   const restricted =
     eligibility.citizenship !== "unstated" || eligibility.sponsorship === "unavailable";
-  const tone = restricted
-    ? "border-stop/40 bg-stop-soft text-stop"
-    : eligibility.certain
-      ? "border-rule text-ink-soft"
-      : "border-dashed border-rule text-ink-faint";
+  // A restriction is the owner's problem to act on; anything else is a remark.
+  const tone = restricted ? "aside-stop text-stop" : "text-ink-soft";
 
   return (
-    <div className={`mt-3 rounded-[var(--radius)] border px-3 py-2 ${tone}`}>
-      <p className="font-mono text-xs">work authorization: {eligibility.summary}</p>
+    <div className={`aside mt-4 ${tone}`}>
+      <p className="text-xs">
+        <span className="text-ink-faint">Work authorization</span>{" "}
+        <span className={restricted ? "font-medium" : ""}>{eligibility.summary}</span>
+      </p>
       {eligibility.evidence.length > 0 ? (
-        <ul className="mt-2 space-y-1">
+        <ul className="mt-1.5 space-y-1">
           {eligibility.evidence.map((item) => (
             <li key={`${item.claim}:${item.quote}`} className="text-xs text-ink-soft">
-              <span className="font-mono text-ink-faint">{item.claim.replace(/_/g, " ")}</span>{" "}
               <q className="italic">{item.quote}</q>
             </li>
           ))}
         </ul>
       ) : null}
       {!eligibility.certain ? (
-        <p className="mt-1 text-xs text-ink-faint">
+        <p className="mt-1 max-w-prose text-xs text-ink-faint">
           The posting does not say. Nothing is assumed either way — ask the employer before
           counting on it.
         </p>

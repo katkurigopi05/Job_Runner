@@ -33,7 +33,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/" className="font-display text-xl tracking-tight">
               jobrunner
             </Link>
-            <nav aria-label="Main" className="flex gap-6 font-mono text-xs uppercase tracking-widest">
+            {/* `flex-wrap` because it did not: eleven items in a nowrap row
+                overflowed a 390px screen and put seven pages out of reach on
+                the phone this dashboard is meant to be read from. */}
+            <nav
+              aria-label="Main"
+              className="flex flex-wrap gap-x-5 gap-y-2 font-mono text-xs uppercase tracking-widest"
+            >
               {NAV.map((item) => (
                 <Link
                   key={item.href}

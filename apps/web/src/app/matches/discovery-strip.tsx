@@ -31,7 +31,7 @@ export async function DiscoveryStrip() {
 
   return (
     <section className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised px-5 py-4">
-      <dl className="flex flex-wrap gap-x-8 gap-y-2 font-mono text-xs text-ink-soft">
+      <dl className="flex flex-wrap gap-x-7 gap-y-2">
         <Stat label="companies" value={status.companies_total} />
         <Stat label="boards found" value={status.verified} />
         <Stat label="still unresolved" value={unresolved} />
@@ -65,11 +65,12 @@ export async function DiscoveryStrip() {
 }
 
 
+/** A counted thing: the number leads, the label explains it underneath. */
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="flex gap-2">
-      <dt className="text-ink-faint">{label}</dt>
-      <dd className="tabular-nums">{value}</dd>
+    <div>
+      <dd className="font-mono text-lg leading-none tabular-nums text-ink">{value}</dd>
+      <dt className="mt-1 text-xs text-ink-faint">{label}</dt>
     </div>
   );
 }
