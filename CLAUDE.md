@@ -582,20 +582,31 @@ worse than an absent one: it yields zero postings, which reads identically to
 
 The import of career-ops' company list then added 90 entries, taking it to 119.
 
-**It is now 105 live boards and 14 retired ones**, and this paragraph carried
+**It is now 181 live boards and 14 retired ones**, and this paragraph carried
 three wrong claims until someone read the file. It has said "29", then "119",
-and twice described a state of the registry that had already been superseded —
-which is the failure mode worth naming here, because a count in prose goes
-stale the moment anything writes to the file it describes.
+then "105", and twice described a state of the registry that had already been
+superseded — which is the failure mode worth naming here, because a count in
+prose goes stale the moment anything writes to the file it describes. It went
+stale again the same day, when the OpenHire import below added 76.
 
-What is actually true, read from `seeds/companies.yaml` on **2026-09-12**:
+What is actually true, read from `seeds/companies.yaml` on **2026-09-13**:
 
 | | |
 |---|---|
-| live entries under `companies:` | 105 — greenhouse 64, ashby 33, lever 8 |
+| live entries under `companies:` | 181 — greenhouse 100, ashby 66, lever 15 |
 | entries under `retired:` | 14 |
-| stamped `checked` | **105 of 105**, all `2026-09-07`, all state `api` |
-| re-swept `2026-09-12` | **105 of 105 answered `api=200`. Zero dead.** |
+| stamped `checked` | **105 of 181**, all `2026-09-07`, all state `api` |
+| **unstamped** | **76** — the OpenHire import, never verified from here |
+| last full sweep | `2026-09-12`, over the 105 then present: all `api=200` |
+
+**Those 76 are the state this section spent three paragraphs warning about**,
+and they are here deliberately rather than by oversight. They came from a peer
+project that verified each one live, and no machine in this session can reach
+an ATS host to confirm it — so they are added *unstamped*, which is the one
+honest representation of "somebody else says these work". `make
+validate-seeds-write` from the owner's machine is what turns them into
+evidence, and until it runs a dead one among them yields zero postings exactly
+like a quiet board.
 
 So the two claims this paragraph used to make are both retired with it:
 
@@ -2110,6 +2121,72 @@ path: a site that publishes `JobPosting` only on individual posting pages,
 with none on the index, still reads as empty. And the sweep needs network
 egress from the owner's machine, like `make validate-seeds` — so how many of
 the ~3,000 bespoke pages actually publish is, today, an unmeasured number.
+
+### What six outside repositories were worth
+
+Surveyed on request: `punkpeye/awesome-mcp-servers`, `twentyhq/twenty`,
+`nexu-io/open-design`, `Arindam200/awesome-ai-apps`, `sindresorhus/awesome`,
+`langflow-ai/langflow`. One produced something to import. Recording the other
+five so nobody re-reads them looking for it.
+
+**`punkpeye/awesome-mcp-servers` → one entry, and it is the closest peer this
+project has.** `gzchenhao/openhire` (MIT) is an MCP job-search server over the
+same ATS APIs — Greenhouse, Lever, Ashby, plus Beisen and Moka for China — with
+139 employers against our 105. Three things came out of reading it:
+
+- **76 employer boards we did not have.** Its seed roster carries 114 tenants
+  on ATSes we support; 38 were already ours and **none** collided with our
+  `retired:` section, so 76 are new. Appended through
+  `import_portals.append_to_registry` — the file's single writer — and left
+  **unstamped**, because their verification is theirs and not ours. See §9.
+- **Its `ghost_score` is a weaker version of what we already have.** A pure
+  function of relist count and age past a 45-day grace, which is exactly the
+  two inputs `legitimacy._reposting` and `legitimacy._freshness` already feed
+  into a tier with six other signals. Adopting it would replace a findings
+  table with a number, which `legitimacy.py`'s own docstring argues against:
+  a well-written ghost job scores well precisely because it is well written,
+  and a single number hides which signal fired. Declined, on the strength of
+  a decision this repo already made rather than on taste.
+- **Its structural-privacy test does not transfer, and the reason is the
+  interesting part.** OpenHire fails its build if anyone adds a résumé field
+  to the protocol, because its server is *shared* — the résumé must never
+  reach it. Ours is the owner's own machine, and `inspect_resume` returning
+  résumé text to the owner's own assistant is the feature. Same words, opposite
+  threat model. Copying the test would have broken three tools to satisfy a
+  constraint we do not have.
+
+**The other five, and why each is a no:**
+
+- **`twentyhq/twenty`** — an open-source CRM. §11 puts multi-tenancy, accounts
+  and billing out of scope, and its pipeline board is the one part that rhymes
+  with Phase 6's tracker. Not worth carrying a CRM to get a kanban.
+- **`langflow-ai/langflow`** (MIT) — a visual builder for LLM workflows,
+  deployed as an API. §11 rules out a hosted runtime, and §7's provider
+  abstraction already does the part we need with an audit trail Langflow has no
+  equivalent of. A visual graph over five tasks would be scaffolding around a
+  60-line router.
+- **`nexu-io/open-design`** — an agent-native design tool for prototypes, decks
+  and images, fronting a paid model service. Nothing in this project renders a
+  deck. Its `DESIGN.md`-as-brand-contract idea is neat and has no application
+  to a résumé the fabrication guard governs.
+- **`Arindam200/awesome-ai-apps`** — 132 examples; the three nearest are a job
+  search agent, a résumé optimizer and a LinkedIn job finder. Every one of them
+  needs a paid key (ExaAI, Nebius, Bright Data), which §3 refuses without
+  asking, and the job finder is built on Bright Data's scraping network —
+  §2.5's proxy-rotation clause, not a borderline case. The résumé optimizer's
+  taxonomy is worth one glance and no more: "Career Gap Framing" is a §2.1
+  fabrication with a friendly name.
+- **`sindresorhus/awesome`** — an index of indexes. Two pointers looked
+  relevant, `tramcar/awesome-job-boards` and `lukasz-madon/awesome-remote-job`,
+  and both list *aggregator sites* rather than employer ATS boards: zero
+  greenhouse/lever/ashby/workable URLs across the whole file. That is discovery
+  input, not registry input, and `discover.py` already covers that path.
+
+The pattern worth keeping: of six repositories, the useful one was the only one
+solving the *same problem*, and what it contributed was **data** — a list of
+employers someone else had verified — not code. The code it has that overlaps
+ours is worse than ours, which is the ordinary outcome and the reason to read
+before importing.
 
 ### The dashboard put the API on the network, and the guard could not see it
 
