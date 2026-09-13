@@ -23,6 +23,8 @@ from packages.matching.eligibility import (
     Sponsorship,
     read_posting,
 )
+from packages.matching.experience import PostingExperience
+from packages.matching.experience import read_posting as read_experience
 from packages.matching.locality import (
     Locality,
     is_domestic,
@@ -288,6 +290,39 @@ def clearance_ok(posting: Posting) -> bool:
     return not _CLEARANCE_RE.search(posting.description_raw or "")
 
 
+def experience_of(posting: Posting) -> PostingExperience:
+    """What the posting demands in years. See `matching/experience.py`."""
+    return read_experience(posting.description_raw)
+
+
+def experience_ok(
+    posting: Posting,
+    max_years: int | None,
+    *,
+    demand: PostingExperience | None = None,
+) -> bool:
+    """Whether the posting's *mandatory* years demand is within the owner's bound.
+
+    Three things this deliberately does not do:
+
+    - **It never excludes on a preferred demand.** "8+ years preferred" is the
+      posting saying the requirement is optional, and a filter that dropped it
+      anyway would be overruling the employer. That half is visible in
+      `rubric.py` instead, where it lowers a dimension rather than hiding a job.
+    - **It never excludes on an ambiguous one**, for the reason
+      `eligibility.py` gives at length: a hard filter needs evidence, and a
+      years line under no heading at all is not evidence about how firm it is.
+    - **It never infers the bound from the résumé.** `max_years` is the owner's
+      stated limit (CLAUDE.md §1 — a search filter is their input, not a
+      reading of their profile). NULL means do not filter on experience, which
+      is what every existing profile gets.
+    """
+    if max_years is None:
+        return True
+    minimum = (demand or experience_of(posting)).mandatory_minimum
+    return minimum is None or minimum <= max_years
+
+
 def seniority_ok(posting: Posting, target: str | None, *, tolerance: int = 1) -> bool:
     """Whether the posting's level is within `tolerance` rungs of `target`."""
     if not target:
@@ -309,6 +344,8 @@ def apply_filters(
     posting: Posting,
     *,
     target_seniority: str | None = None,
+    max_required_experience_years: int | None = None,
+    experience: PostingExperience | None = None,
     require_open: bool = True,
 ) -> FilterResult:
     """Run every hard filter, collecting all reasons rather than the first.
@@ -322,6 +359,8 @@ def apply_filters(
     """
     if target_seniority is None:
         target_seniority = profile.target_seniority
+    if max_required_experience_years is None:
+        max_required_experience_years = profile.max_required_experience_years
 
     reasons: list[str] = []
 
@@ -340,5 +379,22 @@ def apply_filters(
         reasons.append("posting requires a security clearance")
     if not seniority_ok(posting, target_seniority):
         reasons.append(f"seniority mismatch for target {target_seniority!r}")
+    # Read only when there is a bound to check it against, and accepted from
+    # the caller when it has already read it — `score_posting` needs the same
+    # reading for the card whether or not a bound is set.
+    #
+    # Measured at 178µs per posting, so 2.7s over the 14,892 crawled postings
+    # in the owner's database: small beside the 15.9s `eligibility_of` above it
+    # already costs, and entirely wasted on the common case of no bound set.
+    demanded = experience
+    if demanded is None and max_required_experience_years is not None:
+        demanded = experience_of(posting)
+    if demanded is not None and not experience_ok(
+        posting, max_required_experience_years, demand=demanded
+    ):
+        reasons.append(
+            f"posting requires {demanded.mandatory_minimum}+ years of experience, "
+            f"above the {max_required_experience_years}-year limit"
+        )
 
     return FilterResult(passed=not reasons, reasons=reasons)

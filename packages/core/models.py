@@ -130,6 +130,20 @@ class Profile(Base):
     #: own. It stays opt-in because the right rung is the owner's to state,
     #: not something to infer from a résumé (CLAUDE.md §1).
     target_seniority: Mapped[str | None] = mapped_column(String(20))
+    #: The most years of experience a posting may demand and still be shown.
+    #:
+    #: The owner's bound, not a count of their experience. §1 keeps a search
+    #: filter separate from the profile's description of the applicant, and the
+    #: two are genuinely different numbers: somebody with two years may still
+    #: want to see the five-year roles, and somebody with ten may not want the
+    #: twelve-year ones.
+    #:
+    #: NULL means "do not filter on experience", which is what every existing
+    #: row gets and what the migration deliberately does not backfill —
+    #: inferring it from a résumé would narrow the feed on a number nobody
+    #: stated. Only a *mandatory* demand is ever excluded on; see
+    #: `matching/experience.py` for why a preferred one is not.
+    max_required_experience_years: Mapped[int | None] = mapped_column(Integer)
     #: The owner's *current* work authorization, as a `CitizenshipStatus`.
     #:
     #: Separate from `needs_sponsorship`, which is about the future. One boolean
@@ -154,6 +168,19 @@ class Profile(Base):
             "citizenship_status IS NULL OR citizenship_status IN "
             "('us_citizen', 'permanent_resident', 'other_authorized', 'not_authorized')",
             name="ck_profiles_citizenship_status",
+        ),
+        # Declared here as well as in the migration because `alembic check` is
+        # a gate: a constraint the models do not know about reads as schema
+        # drift, which is the same reasoning that put the one above here.
+        #
+        # 0 is inside the range deliberately — "only roles that ask for no
+        # experience" is a real search for a new graduate, and a bound the
+        # filter cannot use would read as "no preference" and leave the feed
+        # looking unfiltered with nothing to explain it.
+        CheckConstraint(
+            "max_required_experience_years IS NULL OR "
+            "max_required_experience_years BETWEEN 0 AND 50",
+            name="ck_profiles_max_required_experience_years",
         ),
     )
 
@@ -425,6 +452,31 @@ class CrawlerHostBudget(Base):
     #: only half where a speed-up is actually available.
     network_seconds: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
     updated_at: Mapped[datetime] = _created_at()
+
+
+class CrawlerRequestBudget(Base):
+    """How many requests the crawl has made in the current window. One row.
+
+    The rate limiter answers "how fast", per host. This answers "how many",
+    across all of them — a question nothing could answer, which is why a
+    bounded pilot could cap companies and wall-clock but not requests.
+
+    Shared for the reason the host budget is: `make workers n=4` is four
+    processes, and a per-process ceiling of 200 is a real ceiling of 800 with
+    nobody told. `packages/crawler/budget.py` reserves from it in one
+    statement, so two workers cannot both take the last slot.
+
+    A single row, pinned to `id = 1`. There is one crawler.
+    """
+
+    __tablename__ = "crawler_request_budgets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    #: When the current window began. Rolled lazily on the first request after
+    #: it lapses rather than by a job — a budget with no window is a lifetime
+    #: quota, and a crawler that stops forever looks like a bug months later.
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
 
 
 class CrawlRun(Base):

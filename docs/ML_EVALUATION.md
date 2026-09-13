@@ -86,11 +86,27 @@ everything. This is where the matcher's real weakness lives, and it was
 invisible before there were hard negatives to expose it.
 
 **The seniority filter is off by default and costs precision.** `filters.seniority_ok`
-returns `True` whenever `target_seniority` is unset, and no production caller
-sets one. The consequence is measurable: `Junior Backend Engineer` — a perfect
-technology match at the wrong level — ranks in the top ten, and P@10 goes from
-0.900 to 1.000 when the target is armed. Deciding whether to arm it by default
-is a separate change; this is the number to decide it against.
+returns `True` whenever `target_seniority` is unset. The consequence is
+measurable: `Junior Backend Engineer` — a perfect technology match at the wrong
+level — ranks in the top ten, and P@10 goes from 0.900 to 1.000 when the target
+is armed. Deciding whether to arm it by default is a separate change; this is
+the number to decide it against.
+
+This used to add "and no production caller sets one", which was true of the code
+and is no longer true of the product: `apply_filters` reads the profile's own
+rung, and `/profile` has the control it shipped without. Unset is still the
+default, so the number above is still the number — what changed is that arming
+it no longer takes curl.
+
+**The same is now true of a years demand, and it has no number yet.**
+`filters.experience_ok` excludes a posting whose *mandatory* experience
+requirement exceeds `profiles.max_required_experience_years`
+(`matching/experience.py`). It is unmeasured here on purpose: the Gate 5
+postings are fixtures and none of them states a years requirement, so running
+the benchmark with a bound armed would report a difference of exactly zero and
+invite the reading that the filter does nothing. The twelve crawled postings in
+`tests/fixtures/golden/` do state them — 7 of 12 — but carry no relevance
+labels, which is P1 again.
 
 ---
 

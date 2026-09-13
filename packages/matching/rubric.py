@@ -38,6 +38,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from packages.core.models import Posting, Profile
+from packages.matching.experience import read_posting as read_experience
 from packages.matching.filters import SENIORITY_LEVELS, detect_seniority
 from packages.matching.salary import Comparison, compare
 from packages.matching.score import ScoredPosting
@@ -194,12 +195,53 @@ def _salary(posting: Posting, profile: Profile) -> Dimension:
     return Dimension("salary", score, 0.15, finding.finding)
 
 
+def _experience(posting: Posting, max_years: int | None) -> Dimension:
+    """The years the posting demands, against the owner's bound.
+
+    This is where a *preferred* demand has its effect. `filters.experience_ok`
+    refuses to exclude on one — the posting said the requirement was optional,
+    and overruling that would hide a job the employer was inviting — so the
+    cost of being under it belongs here, where it lowers a dimension the owner
+    can read and argue with instead of removing the posting from the feed.
+
+    Zero weight when the posting states nothing or the owner set no bound,
+    matching `_salary`: a terse posting is not a worse posting.
+
+    An ambiguous demand also carries zero weight and still reports its finding.
+    `experience.py` refuses to treat a years line under no heading as evidence
+    of how firm it is, and a dimension that scored one anyway would be deciding
+    in the rubric what the filter declined to decide.
+    """
+    demanded = read_experience(posting.description_raw)
+    if not demanded.stated:
+        return Dimension("experience", NEUTRAL, 0.0, "posting does not state a years requirement")
+
+    summary = demanded.summary() or ""
+    if max_years is None:
+        return Dimension("experience", NEUTRAL, 0.0, f"{summary}; no limit set")
+
+    mandatory = demanded.mandatory_minimum
+    if mandatory is not None:
+        score = 5.0 if mandatory <= max_years else 1.0
+        return Dimension("experience", score, 0.15, f"{summary}, limit {max_years}")
+
+    preferred = demanded.preferred_minimum
+    if preferred is not None:
+        score = 5.0 if preferred <= max_years else 2.5
+        return Dimension("experience", score, 0.15, f"{summary}, limit {max_years}")
+
+    return Dimension(
+        "experience", NEUTRAL, 0.0, f"{summary}, stated as neither required nor preferred"
+    )
+
+
 def evaluate(
     posting: Posting,
     profile: Profile,
     scored: ScoredPosting,
     *,
     target_seniority: str | None = None,
+    max_required_experience_years: int | None = None,
 ) -> Rubric:
     """Break a score down into dimensions the owner can act on.
 
@@ -211,6 +253,12 @@ def evaluate(
             _role_fit(scored),
             _skills_coverage(scored),
             _seniority(posting, target_seniority),
+            _experience(
+                posting,
+                max_required_experience_years
+                if max_required_experience_years is not None
+                else profile.max_required_experience_years,
+            ),
             _eligibility(scored),
             _salary(posting, profile),
         ]

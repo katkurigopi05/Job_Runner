@@ -308,6 +308,17 @@ export interface Profile {
   salary_expectation: string | null;
   min_match_score: number;
   auto_submit: boolean;
+  /**
+   * The rung being applied at. A *filter*: null means "do not filter on
+   * level", which is the shipped default.
+   */
+  target_seniority: string | null;
+  /**
+   * The most years a posting may demand and still be shown — the owner's
+   * bound, not a count of their experience (§1). null filters nothing, and
+   * only a demand the posting states as mandatory is ever excluded on.
+   */
+  max_required_experience_years: number | null;
 }
 
 export interface Resume {
@@ -476,6 +487,36 @@ export interface Match {
    * read as "no restrictions", which is a claim no posting made.
    */
   eligibility: Eligibility;
+  /**
+   * Years of experience the posting demands, and how firmly it asks.
+   *
+   * `null` when the posting states none, which is most of them. Unlike the
+   * authorization line, a silence here is genuinely the absence of a
+   * requirement rather than an unanswered question, so it renders as nothing.
+   */
+  experience: PostingExperience | null;
+}
+
+/** One years requirement and the line it was read from. */
+export interface YearsDemand {
+  years: number;
+  /**
+   * `mandatory` is the only kind that excludes. `preferred` means the posting
+   * itself said the requirement was optional, and `ambiguous` means it sat
+   * under no heading that said either way — neither is enough for a hard
+   * filter, so both are shown rather than acted on.
+   */
+  demand: "mandatory" | "preferred" | "ambiguous";
+  quote: string;
+}
+
+export interface PostingExperience {
+  stated: boolean;
+  /** The smallest number of years the posting insists on, if it insists. */
+  mandatory_minimum: number | null;
+  preferred_minimum: number | null;
+  summary: string | null;
+  demands: YearsDemand[];
 }
 
 /**
@@ -654,7 +695,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let code = "internal_error";
     let message = response.statusText;
     try {
-      const body = (await response.json()) as { error?: { code: string; message: string } };
+      const body = (await response.json()) as {
+        error?: { code: string; message: string };
+      };
       if (body.error) {
         code = body.error.code;
         message = body.error.message;
@@ -723,8 +766,10 @@ export const api = {
 
   applications: () => request<Application[]>("/applications"),
   application: (id: string) => request<Application>(`/applications/${id}`),
-  events: (id: string) => request<ApplicationEvent[]>(`/applications/${id}/events`),
-  packet: (id: string) => request<ApplicationPacket>(`/applications/${id}/packet`),
+  events: (id: string) =>
+    request<ApplicationEvent[]>(`/applications/${id}/events`),
+  packet: (id: string) =>
+    request<ApplicationPacket>(`/applications/${id}/packet`),
   manualQueue: (limit = 25) =>
     request<ApplicationPacket[]>(`/applications/queue/manual?limit=${limit}`),
   markSubmitted: (id: string, note?: string) =>
@@ -736,7 +781,9 @@ export const api = {
   // Scoped to a candidate by the API, not optional. Single-user or not,
   // the route requires it.
   resumes: (candidateId: string) =>
-    request<Resume[]>(`/resumes?candidate_id=${encodeURIComponent(candidateId)}`),
+    request<Resume[]>(
+      `/resumes?candidate_id=${encodeURIComponent(candidateId)}`,
+    ),
   resumeParsed: (id: string) => request<ResumeParsed>(`/resumes/${id}/parsed`),
 
   /** How an ATS reads this profile's résumé against one posting. */
@@ -754,7 +801,12 @@ export const api = {
   editResume: (
     id: string,
     body: {
-      contact: { name?: string; email?: string; phone?: string; links?: string[] };
+      contact: {
+        name?: string;
+        email?: string;
+        phone?: string;
+        links?: string[];
+      };
       sections: Record<string, string[]>;
       adopt?: boolean;
     },
@@ -768,7 +820,8 @@ export const api = {
   matches: (includeApplied = false) =>
     request<Match[]>(`/matches?include_applied=${includeApplied}`),
   /** Filters are the owner's search, passed straight through as query params. */
-  matchesFiltered: (query: URLSearchParams) => request<Match[]>(`/matches?${query}`),
+  matchesFiltered: (query: URLSearchParams) =>
+    request<Match[]>(`/matches?${query}`),
   calibration: () => request<Calibration>("/matches/calibration"),
   /**
    * `profileId` is optional because the route is: `/labels/next` picks the
@@ -780,7 +833,9 @@ export const api = {
       `/labels/next?size=${size}${profileId ? `&profile_id=${profileId}` : ""}`,
     ),
   labelSummary: (profileId?: string) =>
-    request<LabelSummary>(`/labels/summary${profileId ? `?profile_id=${profileId}` : ""}`),
+    request<LabelSummary>(
+      `/labels/summary${profileId ? `?profile_id=${profileId}` : ""}`,
+    ),
   /**
    * `servedStream` is a hint the server may only use to *weaken* the recorded
    * stream, never to strengthen it — it cannot be used to claim `unseen`.
@@ -811,13 +866,24 @@ export const api = {
   matchSummary: () => request<MatchSummary>("/matches/summary"),
   /** Returns a confirmation, not a full Match — the handler has no posting. */
   decide: (matchId: string, decision: Decision) =>
-    request<{ id: string; decision: Decision | null; decided_at: string | null }>(
-      `/matches/${matchId}/decision`,
-      { method: "POST", body: JSON.stringify({ decision }) },
-    ),
+    request<{
+      id: string;
+      decision: Decision | null;
+      decided_at: string | null;
+    }>(`/matches/${matchId}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
+    }),
   unrouted: () => request<InboundMessage[]>("/inbox/unrouted"),
 
-  review: (id: string, body: { approve: boolean; answers?: Record<string, unknown>; note?: string }) =>
+  review: (
+    id: string,
+    body: {
+      approve: boolean;
+      answers?: Record<string, unknown>;
+      note?: string;
+    },
+  ) =>
     request<Application>(`/applications/${id}/review`, {
       method: "POST",
       body: JSON.stringify({ answers: {}, ...body }),
@@ -843,7 +909,9 @@ export const api = {
       // résumé to another third party, so the list is what the owner ticked
       // and never "everything with a key". Empty sends null, which the server
       // reads as "whatever real tailoring would use".
-      body: JSON.stringify({ clouds: clouds && clouds.length > 0 ? clouds : null }),
+      body: JSON.stringify({
+        clouds: clouds && clouds.length > 0 ? clouds : null,
+      }),
     }),
 
   /**
@@ -857,7 +925,12 @@ export const api = {
   editApplicationResume: (
     id: string,
     body: {
-      contact: { name?: string; email?: string; phone?: string; links?: string[] };
+      contact: {
+        name?: string;
+        email?: string;
+        phone?: string;
+        links?: string[];
+      };
       sections: Record<string, string[]>;
       adopt?: boolean;
     },

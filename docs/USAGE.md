@@ -694,12 +694,13 @@ employers' hosts are touched, so bound it explicitly rather than trusting
 yourself to stop.
 
 ```bash
-# 20 companies, one tick that does not re-arm itself, one worker, 15 minutes.
+# 20 companies, 200 requests, 15 minutes. One tick that does not re-arm.
 head -21 companies.csv > /tmp/pilot.csv          # header + 20 rows
 make import-csv src=/tmp/pilot.csv register=1
 make crawl dispatch=1 limit=20 once=1
-timeout 900 make worker                          # ^C or the timeout ends it
+CRAWLER_REQUEST_BUDGET=200 timeout 900 make worker
 curl -s localhost:8000/companies/status | python -m json.tool
+make crawl-metrics                               # what it actually cost
 ```
 
 Three bounds, and each one is a different failure it prevents:
@@ -709,10 +710,17 @@ Three bounds, and each one is a different failure it prevents:
 - `once=1` stops the tick scheduling its successor. A dispatch tick normally
   re-arms every five minutes, which is what makes the sweep continuous — and
   what makes an unattended pilot keep running after you stop watching.
-- `timeout 900` is the wall clock. The rate limiter is what keeps the request
-  count down inside it: the four ATS API hosts sit at a 2s floor and a
-  company's own host at 60s, so a single worker cannot exceed roughly 450
-  requests in 15 minutes even if every company needs several probes.
+- `timeout 900` is the wall clock.
+- `CRAWLER_REQUEST_BUDGET=200` is the request ceiling, across every host and
+  every worker. This is the bound the rate limiter cannot give you: the
+  limiter caps how *fast* one host is touched, not how many requests happen in
+  total. Exhausting it raises rather than waits, and the window
+  (`CRAWLER_BUDGET_WINDOW_SECONDS`, an hour by default) rolls on first use
+  after it lapses.
+
+  Unlimited by default, deliberately: a ceiling that silently halts a sweep
+  looks exactly like the "board yields nothing" failure this project has been
+  bitten by twice. Set it for a run you are watching.
 
 Request counts per host are in `crawler_host_budgets`; `make workers n=4`
 shares those counters rather than multiplying them, so raising the worker count
