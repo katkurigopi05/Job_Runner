@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 import structlog
 
+from packages.crawler.budget import reserve
 from packages.crawler.meter import record_request
 from packages.crawler.ratelimit import (
     MIN_DELAY_SECONDS,
@@ -123,6 +124,10 @@ class PoliteFetcher:
     #: settings.
     max_connections: int | None = None
     max_keepalive: int | None = None
+    #: Requests permitted per window across every host and worker. 0 is
+    #: unlimited and is the shipped default — see `crawler/budget.py`.
+    request_budget: int = 0
+    budget_window_seconds: float = 3600.0
     _client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -296,6 +301,12 @@ class PoliteFetcher:
             )
             await self.rate_limiter.raise_delay(host, float(decision.crawl_delay))
 
+        # The third gate, and the only one that is off by default. Taken
+        # *before* the limiter: a request the budget will refuse should not
+        # first spend a minute waiting for a slot it will not use.
+        if self.request_budget > 0:
+            await reserve(self.request_budget, self.budget_window_seconds)
+
         waited = await self.rate_limiter.acquire(host)
 
         # Both gates are behind us. Reusing the connection from here changes
@@ -405,4 +416,8 @@ def build_fetcher(
     kwargs.setdefault("max_connections", settings.crawler_http_max_connections)
     kwargs.setdefault("max_keepalive", settings.crawler_http_max_keepalive)
     kwargs.setdefault("timeout", settings.crawler_http_timeout_s)
+    # 0 is unlimited and is the default, so this is a no-op unless the owner
+    # set a ceiling for a run they are watching.
+    kwargs.setdefault("request_budget", settings.crawler_request_budget)
+    kwargs.setdefault("budget_window_seconds", settings.crawler_budget_window_seconds)
     return PoliteFetcher(rate_limiter=limiter, **kwargs)  # type: ignore[arg-type]

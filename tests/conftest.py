@@ -101,6 +101,10 @@ _ALL_TABLES = (
     "company_crawl_states",
     "crawl_runs",
     "crawler_host_budgets",
+    # Same class as the two above and found the same way: a budget row left
+    # behind made the next test's first request its second, so a ceiling of
+    # two was already spent before that test made a request.
+    "crawler_request_budgets",
     "corpus_stats",
     "companies",
     "users",

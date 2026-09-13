@@ -231,6 +231,23 @@ class Settings(BaseSettings):
     #: a real coverage loss, since genuine Workable employers become invisible.
     crawler_discovery_vendors: str = "greenhouse,lever,ashby,workable"
 
+    #: Requests the crawler may make per window, across every host and every
+    #: worker. **0 means unlimited, and that is the shipped default.**
+    #:
+    #: Off by default because a budget that silently halts a sweep is worse
+    #: than none: the symptom is a crawl that stops early, which reads exactly
+    #: like the "board yields nothing" failure §9 records twice. Turning it on
+    #: is for a run you are watching — a pilot, or a first sweep of an imported
+    #: sheet.
+    #:
+    #: The rate limiter caps how *fast* a host is touched; this caps how many
+    #: requests happen at all, which is the bound a pilot actually needs and
+    #: the one that did not exist.
+    crawler_request_budget: int = 0
+    #: The window that budget applies to. Rolling, reset on first use after it
+    #: lapses.
+    crawler_budget_window_seconds: float = 3600.0
+
     crawler_tick_seconds: int = 300
     #: Companies enqueued per tick. The cap is the difference between a queue
     #: and one long cycle wearing a queue as a disguise.

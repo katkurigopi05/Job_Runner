@@ -427,6 +427,31 @@ class CrawlerHostBudget(Base):
     updated_at: Mapped[datetime] = _created_at()
 
 
+class CrawlerRequestBudget(Base):
+    """How many requests the crawl has made in the current window. One row.
+
+    The rate limiter answers "how fast", per host. This answers "how many",
+    across all of them — a question nothing could answer, which is why a
+    bounded pilot could cap companies and wall-clock but not requests.
+
+    Shared for the reason the host budget is: `make workers n=4` is four
+    processes, and a per-process ceiling of 200 is a real ceiling of 800 with
+    nobody told. `packages/crawler/budget.py` reserves from it in one
+    statement, so two workers cannot both take the last slot.
+
+    A single row, pinned to `id = 1`. There is one crawler.
+    """
+
+    __tablename__ = "crawler_request_budgets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    #: When the current window began. Rolled lazily on the first request after
+    #: it lapses rather than by a job — a budget with no window is a lifetime
+    #: quota, and a crawler that stops forever looks like a bug months later.
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+
 class CrawlRun(Base):
     """One crawl cycle, kept after the process that ran it has gone.
 
