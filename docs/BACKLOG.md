@@ -39,10 +39,10 @@ Same as PARITY.md, plus one:
 | §5 | Generic fallback crawler | **PARTIAL** | `crawler/jsonld.py` reads schema.org `JobPosting` off a bespoke page; `make probe-bespoke` promotes the pages that publish it. No sitemap path yet, and a page publishing nothing stays unreadable |
 | §5 | robots.txt, rate limits | **HAVE** | `crawler/robots.py`, `ratelimit.py` |
 | §5 | CAPTCHA bypass | **REFUSED** | CLAUDE.md §2.5, hard scope boundary |
-| §6 | Common job schema | **PARTIAL** | `Posting` holds 13 columns against the spec's ~40 fields. No salary, no split required/preferred skills, no parsed education or experience → **P7** |
+| §6 | Common job schema | **PARTIAL** | `Posting` holds 13 columns against the spec's ~40 fields. Experience is now *read* rather than stored (`matching/experience.py`, with the MANDATORY/PREFERRED split §13 asks for); still no salary column, no required/preferred **skills** split, no parsed education → **P7** |
 | §7 | Relevance beyond the title | **HAVE** | `matching/score.py` weights body 0.65, `roles.py` aliases titles |
 | §8 | Multi-category job taxonomy | **PARTIAL** | `roles.py` maps a title to exactly one canonical role; the spec wants a job in several → **P11** |
-| §9 | Internship / early-career detection | **PARTIAL** | `filters.py::detect_seniority` reads intern/junior/new-grad markers from the title. Not a first-class entity, and minimum-experience text is never parsed → **P7** |
+| §9 | Internship / early-career detection | **PARTIAL** | `filters.py::detect_seniority` reads intern/junior/new-grad markers from the title, and `matching/experience.py` now parses the minimum-experience text a cosine cannot refuse. Not a first-class entity → **P7** |
 | §39 | Canonical job entity, cross-board dedupe | **BUILD** | `content_hash` is per-posting change detection and `legitimacy.py` is ghost-job scoring — neither merges the same job seen on two boards → **P6** |
 | §40 | Lifecycle: reposted, salary changed, requirements changed | **PARTIAL** | `first_seen_at`/`closed_at` exist; no `job_versions`, so a changed posting overwrites its own history → **P6** |
 
@@ -73,7 +73,7 @@ Same as PARITY.md, plus one:
 | §11 | Never fabricate | **HAVE** | `tailor/guard.py`, `tests/test_no_fabrication.py` is a merge gate |
 | §11, §34 | FACT / INFERENCE / MISSING / UNVERIFIED classification with confidence | **BUILD** | The guard is binary — supported or refused. Nothing labels a claim's evidentiary status or attaches confidence → **P5** |
 | §15 | Transferable-skill reasoning | **PARTIAL** | The guard correctly refuses "knows FastAPI" from Flask experience. It cannot express "may transfer", so transferable evidence is discarded rather than recorded → **P5** |
-| §18 | Choose the best base résumé of several | **BUILD** | Every path reads `profile.base_resume_id`. With three résumés the other two are unreachable → **P2** (small) |
+| §18 | Choose the best base résumé of several | **HAVE** | `matching/pick_resume.py` scores each base résumé against the posting; `/review` names the one it started from and the runners-up. Tailored rows are excluded and a win inside the noise defers to `base_resume_id` — CLAUDE.md §15 records both |
 | §19–§22 | Targeted rewrite, bullets, ATS and keyword optimization | **HAVE** | `tailor/rewrite.py`, `bullets.py`, `keywords.py` |
 | §23 | ATS score before and after | **HAVE** | `tailor/ats.py`, shown on `/review` |
 | §29 | Résumé version database | **HAVE** | `Resume.version`, `tailored_by`, content hashes |
@@ -152,21 +152,24 @@ stream**, and `make bench-matching` stops printing the fixture-only blocker.
 
 ---
 
-### P2 — Pick the right base résumé
+### P2 — Pick the right base résumé — **built**
 **Spec:** §18 · **Size:** S
 
-Every path reads `profile.base_resume_id`. Upload a data résumé, a backend
-one and an ML one, and two of them are unreachable — the spec's exact
-complaint about blindly using the newest.
+Every path read `profile.base_resume_id`. Upload a data résumé, a backend one
+and an ML one, and two of them were unreachable — the spec's exact complaint
+about blindly using the newest. Silent, too: the tailorer did its whole job on
+the wrong document, and the employer received a competent ML résumé for a
+backend role.
 
-**Build:** score each of the candidate's résumés against the posting, select
-the closest, and record which and why on the application.
+**Built:** `packages/matching/pick_resume.py`, and `/review` names the résumé
+it started from, its reason, and the runners-up with their scores.
 
-**Reuse:** `matching/score.py::score_posting` already scores text against a
-posting. This is that function in a loop plus an `argmax`.
-
-**Done when:** a candidate with three résumés gets the closest one selected
-per posting, and `/review` names the base résumé and the reason.
+Four things it had to get right, all recorded in CLAUDE.md §15: tailored rows
+are excluded (`tailored_for_posting_id`), a win inside the noise defers to the
+owner's own `base_resume_id` rather than letting a float decide, the choice is
+recorded and reused so approving a parked application cannot swap the document,
+and it takes the posting's *text* rather than a `Posting` row because the apply
+pipeline has a parsed page and no row.
 
 ---
 
@@ -275,6 +278,33 @@ already parses seniority and sponsorship from free text.
 
 **Done when:** "5+ years required" excludes and "Kubernetes preferred" only
 lowers, with the distinction visible in `rubric.py`.
+
+**The experience half is built.** `packages/matching/experience.py` reads every
+years demand out of a posting and classifies it MANDATORY / PREFERRED /
+AMBIGUOUS from the heading it sits under and its own wording;
+`filters.experience_ok` excludes on the mandatory kind against
+`profiles.max_required_experience_years` — the owner's bound, NULL meaning do
+not filter — and `rubric._experience` is where a preferred demand the owner is
+under lowers a dimension instead of hiding a job.
+
+Measured on the twelve real crawled postings in `tests/fixtures/golden/`:
+**7 state a years requirement, 9 demands in total, all 9 classified**, ranges
+read at their lower bound (`8–12+ years` is eight), and the two prose mentions
+of a year — "A Year at Palantir", "Come join us for a year" — are correctly not
+demands. Three of the seven needed heading vocabulary taken from the corpus
+rather than guessed: `What We Look For`, `What you bring to the table`, `Your
+background looks something like this`.
+
+**What is left of P7 is the skills half** — MANDATORY vs PREFERRED for a
+*technology* rather than for years, which is the harder one because it has no
+number to compare — plus the salary, education and requirement columns on
+`Posting`. Nothing here writes to the schema: the demand is re-read per scoring
+run, which is cheap and keeps one definition.
+
+One honest gap: none of the twelve postings puts a years line under a
+nice-to-have heading, so the PREFERRED path is exercised by real heading
+wording around a constructed placement. The filter's refusal to exclude on it
+is therefore argued rather than observed in the wild.
 
 ---
 

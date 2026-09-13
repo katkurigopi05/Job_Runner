@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from packages.matching.legitimacy import Assessment
 
 from packages.matching.embed import Embedder, cosine, get_embedder, tokenize
-from packages.matching.filters import apply_filters
+from packages.matching.filters import apply_filters, experience_of
 from packages.matching.idf import DocumentFrequencies
 from packages.matching.roles import canonical, roles_in
 from packages.matching.salary import compare
@@ -78,6 +78,13 @@ class ScoredPosting:
     #: Advertised pay against the profile's expectation. A report, never an
     #: answer — §2.2 keeps salary_expectation verbatim for forms.
     salary: dict[str, object] = field(default_factory=dict)
+    #: Years of experience the posting demands, from
+    #: `packages/matching/experience.py`. Carried even when the owner set no
+    #: bound: the rubric only renders a *scored* dimension, so without this a
+    #: posting demanding twelve years would show nothing at all to an owner who
+    #: has not set a limit — which is the "weak match" / "never looked at it"
+    #: confusion §15 keeps finding, in its quietest form.
+    experience: dict[str, object] = field(default_factory=dict)
     #: A stale `Match` row was removed because this posting now fails a hard
     #: filter. Only ever set for an excluded posting, and only when the row
     #: carried nothing of the owner's — see `score_and_store`.
@@ -98,6 +105,7 @@ class ScoredPosting:
             "legitimacy": self.legitimacy,
             "rubric": self.rubric,
             "salary": self.salary,
+            "experience": self.experience,
         }
 
 
@@ -183,12 +191,22 @@ def score_posting(
     the score carry the human-readable half — which terms matched, and which
     the posting wants that the profile does not show.
     """
-    verdict = apply_filters(profile, posting, target_seniority=target_seniority)
+    # Read once and shared: the filter, the rubric dimension and the card all
+    # want the same reading, and it is a regex pass over the whole description.
+    demanded = experience_of(posting)
+    verdict = apply_filters(
+        profile, posting, target_seniority=target_seniority, experience=demanded
+    )
     if not verdict.passed:
         # An excluded posting still gets a rubric. This is the case where the
         # owner most wants to know *why* — a bare 0.0 with no reason reads as
         # a bad match rather than a filtered one.
-        excluded = ScoredPosting(posting_id=str(posting.id), score=0.0, excluded_by=verdict.reasons)
+        excluded = ScoredPosting(
+            posting_id=str(posting.id),
+            score=0.0,
+            excluded_by=verdict.reasons,
+            experience=demanded.as_dict(),
+        )
         excluded.rubric = _rubric(posting, profile, excluded, target_seniority=target_seniority)
         return excluded
 
@@ -222,6 +240,7 @@ def score_posting(
             else []
         ),
         legitimacy=_assess(posting, siblings=siblings, frequencies=frequencies).as_dict(),
+        experience=demanded.as_dict(),
     )
     # Built from the result rather than inside it: every dimension reads
     # fields the scoring above has already filled in.

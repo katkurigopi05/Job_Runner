@@ -31,7 +31,7 @@ from packages.core.schemas import (
     MatchOut,
     MatchSummaryOut,
 )
-from packages.matching.filters import eligibility_of
+from packages.matching.filters import eligibility_of, experience_of
 from packages.matching.locality import locality_of
 from packages.matching.locality import rank as locality_rank
 from packages.matching.search import (
@@ -203,12 +203,17 @@ async def list_matches(
     # Bounded by the page rather than the corpus, so it is much cheaper than the
     # filter — but cheap work on the event loop still queues every other route
     # behind it.
-    authorizations = await run_in_threadpool(
-        lambda: [eligibility_of(posting).as_dict() for _, posting in page]
+    #
+    # The experience demand is read in the same pass, for the same two reasons
+    # the authorization is read live: a posting scored before the reading
+    # existed would otherwise show nothing, and one definition means the filter
+    # and the card cannot disagree.
+    readings = await run_in_threadpool(
+        lambda: [(eligibility_of(posting).as_dict(), experience_of(posting)) for _, posting in page]
     )
 
     feed: list[MatchOut] = []
-    for (match, posting), authorization in zip(page, authorizations, strict=True):
+    for (match, posting), (authorization, demanded) in zip(page, readings, strict=True):
         reasons = match.reasons_json or {}
         feed.append(
             MatchOut(
@@ -243,6 +248,11 @@ async def list_matches(
                 # restrictions". It also means the filter and the card cannot
                 # disagree: both call `filters.eligibility_of`.
                 eligibility=authorization,
+                # None when the posting states nothing, so the card renders no
+                # line at all. An "unknown" here would be wrong in a way the
+                # authorization line is not: a posting that does not mention
+                # years has not left a question open, it has no requirement.
+                experience=demanded.as_dict() if demanded.stated else None,
             )
         )
     return feed

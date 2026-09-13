@@ -528,3 +528,81 @@ async def test_the_feed_claims_nothing_about_opt_or_e_verify(
     body = (await client.get("/matches", params={"profile_id": authorization_feed})).text.lower()
     for claim in ("opt-friendly", "stem-opt", "e-verify", "h-1b sponsor"):
         assert claim not in body
+
+
+@pytest.fixture
+async def experience_feed(
+    client: AsyncClient, worker_session: AsyncSession, complete_candidate
+) -> str:
+    """Three postings: one that requires years, one that prefers them, one silent."""
+    profile_id = uuid.UUID(complete_candidate["profile_id"])
+    postings = [
+        Posting(
+            url="https://boards.greenhouse.io/acme/jobs/20",
+            title="Staff Backend Engineer",
+            description_raw="Requirements\n10+ years of software engineering experience",
+        ),
+        Posting(
+            url="https://boards.greenhouse.io/acme/jobs/21",
+            title="Backend Engineer",
+            description_raw="Nice to have\n8+ years of experience with Kubernetes",
+        ),
+        Posting(
+            url="https://boards.greenhouse.io/acme/jobs/22",
+            title="Data Engineer",
+            description_raw="Own the warehouse. We will teach you the rest.",
+        ),
+    ]
+    worker_session.add_all(postings)
+    await worker_session.flush()
+    worker_session.add_all(
+        [
+            Match(profile_id=profile_id, posting_id=p.id, score=score, reasons_json={})
+            for p, score in zip(postings, (0.9, 0.8, 0.7), strict=True)
+        ]
+    )
+    await worker_session.commit()
+    return str(profile_id)
+
+
+async def test_a_posting_that_demands_years_says_so_with_its_own_line(
+    client: AsyncClient, experience_feed: str
+) -> None:
+    """Read live, like the authorization line, and for the same two reasons.
+
+    A posting scored before this reading existed has nothing in its stored
+    `reasons_json`, and the filter and the card must not be able to disagree —
+    both call `filters.experience_of`.
+    """
+    rows = (await client.get("/matches", params={"profile_id": experience_feed})).json()
+
+    required = rows[0]["experience"]
+    assert required["mandatory_minimum"] == 10
+    assert required["summary"] == "requires 10+ years"
+    assert required["demands"][0]["quote"] == "10+ years of software engineering experience"
+
+
+async def test_a_preferred_demand_is_carried_as_preferred(
+    client: AsyncClient, experience_feed: str
+) -> None:
+    """The card renders the difference, because the filter acts on only one of them."""
+    rows = (await client.get("/matches", params={"profile_id": experience_feed})).json()
+
+    preferred = rows[1]["experience"]
+    assert preferred["mandatory_minimum"] is None
+    assert preferred["preferred_minimum"] == 8
+    assert [d["demand"] for d in preferred["demands"]] == ["preferred"]
+
+
+async def test_a_posting_with_no_years_requirement_carries_null(
+    client: AsyncClient, experience_feed: str
+) -> None:
+    """Null, not an "unknown" — and this is the one place it differs from authorization.
+
+    A posting that does not mention visas has left a question open, so that line
+    is rendered every time and says "Unknown — verify with employer". A posting
+    that does not mention years has no requirement, and inventing an unknown
+    there would put a worry on every card in the feed.
+    """
+    rows = (await client.get("/matches", params={"profile_id": experience_feed})).json()
+    assert rows[2]["experience"] is None

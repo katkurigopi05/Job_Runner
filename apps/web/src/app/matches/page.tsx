@@ -75,22 +75,28 @@ export default async function MatchesPage({
       const value = params[key];
       if (typeof value === "string" && value) query.set(key, value);
     }
-    [matches, profiles] = await Promise.all([api.matchesFiltered(query), api.profiles()]);
+    [matches, profiles] = await Promise.all([
+      api.matchesFiltered(query),
+      api.profiles(),
+    ]);
   } catch (error) {
     if (error instanceof ApiError) return <ErrorPanel error={error} />;
     throw error;
   }
 
   const thresholdFor = (profileId: string) =>
-    profiles.find((profile) => profile.id === profileId)?.min_match_score ?? 0.75;
+    profiles.find((profile) => profile.id === profileId)?.min_match_score ??
+    0.75;
 
   return (
     <div className="space-y-10">
       <header>
-        <h1 className="font-display text-display leading-[1.05] tracking-tight">Matches</h1>
+        <h1 className="font-display text-display leading-[1.05] tracking-tight">
+          Matches
+        </h1>
         <p className="mt-3 max-w-prose text-ink-soft">
-          What the crawler found, scored against your profile. Every score shows its working, so
-          you can disagree with it.
+          What the crawler found, scored against your profile. Every score shows
+          its working, so you can disagree with it.
         </p>
       </header>
 
@@ -109,10 +115,12 @@ export default async function MatchesPage({
         <div className="rounded-[var(--radius-lg)] border border-dashed border-rule px-6 py-16 text-center">
           <p className="text-sm text-ink-faint">nothing scored yet</p>
           <p className="mx-auto mt-3 max-w-prose text-sm text-ink-soft">
-            Scoring happens during a crawl. Run the worker and give it a cycle over the company
-            registry in <code className="font-mono text-xs">seeds/companies.yaml</code>, or{" "}
-            <code className="font-mono text-xs">make crawl dispatch=1</code> for companies imported
-            from a spreadsheet. The counts above say which of those is still outstanding.
+            Scoring happens during a crawl. Run the worker and give it a cycle
+            over the company registry in{" "}
+            <code className="font-mono text-xs">seeds/companies.yaml</code>, or{" "}
+            <code className="font-mono text-xs">make crawl dispatch=1</code> for
+            companies imported from a spreadsheet. The counts above say which of
+            those is still outstanding.
           </p>
         </div>
       ) : (
@@ -137,13 +145,17 @@ export default async function MatchesPage({
                     </h2>
                     <p className="mt-1.5 text-xs text-ink-soft">
                       {match.location ?? "location not stated"} ·{" "}
-                      <span className="font-mono">{match.ats_type ?? "unknown ats"}</span>
+                      <span className="font-mono">
+                        {match.ats_type ?? "unknown ats"}
+                      </span>
                       {match.closed ? " · closed" : ""}
                       {/* How long we took to notice. The board not saying is
                           different from us being instant, so it reads
                           differently. */}
                       {match.lag_hours !== null ? (
-                        <span className={match.lag_hours <= 24 ? "text-go" : ""}>
+                        <span
+                          className={match.lag_hours <= 24 ? "text-go" : ""}
+                        >
                           {" "}
                           · found{" "}
                           {match.lag_hours < 1
@@ -157,7 +169,11 @@ export default async function MatchesPage({
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className={`font-display text-lg leading-none ${call.tone}`}>{call.label}</p>
+                    <p
+                      className={`font-display text-lg leading-none ${call.tone}`}
+                    >
+                      {call.label}
+                    </p>
                     <p
                       className="mt-1.5 font-mono text-xs tabular-nums text-ink-faint"
                       title="Cosine similarity between this posting and your profile. It orders the feed; it is not a grade out of 100."
@@ -165,7 +181,9 @@ export default async function MatchesPage({
                       {percent}% similar
                     </p>
                     {clears ? (
-                      <p className="mt-0.5 text-xs text-go">above your threshold</p>
+                      <p className="mt-0.5 text-xs text-go">
+                        above your threshold
+                      </p>
                     ) : null}
                   </div>
                 </div>
@@ -193,7 +211,9 @@ export default async function MatchesPage({
                   {match.rubric?.weakest ? (
                     <div className="flex gap-2">
                       <dt className="text-ink-faint">held back by</dt>
-                      <dd className="text-attn">{match.rubric.weakest.replace(/_/g, " ")}</dd>
+                      <dd className="text-attn">
+                        {match.rubric.weakest.replace(/_/g, " ")}
+                      </dd>
                     </div>
                   ) : null}
                 </dl>
@@ -205,7 +225,9 @@ export default async function MatchesPage({
                      this job" was a collapsed list of what you lack, and
                      nothing at all about what you have. */
                   <div className="mt-4">
-                    <p className="text-xs text-ink-faint">What you already have for this</p>
+                    <p className="text-xs text-ink-faint">
+                      What you already have for this
+                    </p>
                     <ul className="mt-2 flex flex-wrap gap-1.5">
                       {match.matched_terms.slice(0, 12).map((term) => (
                         <li
@@ -231,8 +253,12 @@ export default async function MatchesPage({
                 match.missing_terms.length > 0 ? (
                   <details className="group mt-2">
                     <summary className="cursor-pointer list-none text-xs text-ink-faint underline-offset-4 hover:text-ink-soft hover:underline">
-                      <span className="group-open:hidden">Show the breakdown ▸</span>
-                      <span className="hidden group-open:inline">Hide the breakdown ▾</span>
+                      <span className="group-open:hidden">
+                        Show the breakdown ▸
+                      </span>
+                      <span className="hidden group-open:inline">
+                        Hide the breakdown ▾
+                      </span>
                     </summary>
 
                     {match.rubric && match.rubric.dimensions.length > 0 ? (
@@ -240,46 +266,71 @@ export default async function MatchesPage({
                     ) : null}
 
                     {match.missing_terms.length > 0 ? (
-                  /* Neutral, not amber. These are things to know, not things
+                      /* Neutral, not amber. These are things to know, not things
                      to act on, and painting eight of them in the "needs you"
                      colour made the alarm the most common thing on the card. */
-                  <div className="mt-6">
-                    <p className="text-xs text-ink-faint">
-                      Worth adding, if any of it is true of you
-                    </p>
-                    <ul className="mt-2 flex flex-wrap gap-1.5">
-                      {match.missing_terms.map((term) => (
-                        <li
-                          key={term}
-                          className="rounded border border-rule px-2 py-0.5 font-mono text-xs text-ink-soft"
-                        >
-                          {term}
-                        </li>
-                      ))}
-                    </ul>
-                    <p className="mt-2 max-w-prose text-xs text-ink-faint">
-                      The tailorer works from what your résumé already supports, so these stay off
-                      it until you add them.
-                    </p>
-                  </div>
+                      <div className="mt-6">
+                        <p className="text-xs text-ink-faint">
+                          Worth adding, if any of it is true of you
+                        </p>
+                        <ul className="mt-2 flex flex-wrap gap-1.5">
+                          {match.missing_terms.map((term) => (
+                            <li
+                              key={term}
+                              className="rounded border border-rule px-2 py-0.5 font-mono text-xs text-ink-soft"
+                            >
+                              {term}
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="mt-2 max-w-prose text-xs text-ink-faint">
+                          The tailorer works from what your résumé already
+                          supports, so these stay off it until you add them.
+                        </p>
+                      </div>
                     ) : null}
 
-                    <AtsPanel postingId={match.posting_id} profileId={match.profile_id} />
+                    <AtsPanel
+                      postingId={match.posting_id}
+                      profileId={match.profile_id}
+                    />
                   </details>
                 ) : null}
 
                 {/* Never collapsed. A ghost-job signal and a restriction the
                     owner may not clear are the two things that should stop
                     them before they spend an hour, so neither hides. */}
-                {match.legitimacy && match.legitimacy.tier !== "high_confidence" ? (
+                {match.legitimacy &&
+                match.legitimacy.tier !== "high_confidence" ? (
                   <LegitimacyPanel legitimacy={match.legitimacy} />
                 ) : null}
 
                 <EligibilityNote eligibility={match.eligibility} />
 
+                {/* Shown whenever the posting states one, with or without a
+                    bound set on the profile. The rubric only renders a
+                    *scored* dimension, so without this a posting demanding
+                    twelve years showed the owner nothing at all until they had
+                    set a limit — and what the posting asked for is worth
+                    knowing before you decide what to ask of the feed. */}
+                {match.experience?.summary ? (
+                  <p className="aside mt-4 text-xs text-ink-soft">
+                    <span className="text-ink-faint">Experience</span>{" "}
+                    {match.experience.summary}
+                    {match.experience.mandatory_minimum === null ? (
+                      <span className="text-ink-faint">
+                        {" "}
+                        — stated as preferred rather than required, so it is not
+                        filtered on
+                      </span>
+                    ) : null}
+                  </p>
+                ) : null}
+
                 {match.excluded_by.length > 0 ? (
                   <p className="aside aside-stop mt-4 text-xs text-stop">
-                    Ruled out by {match.excluded_by.join(", ")} — a hard filter, not a low score.
+                    Ruled out by {match.excluded_by.join(", ")} — a hard filter,
+                    not a low score.
                   </p>
                 ) : null}
 
@@ -309,7 +360,6 @@ export default async function MatchesPage({
   );
 }
 
-
 /** The score, broken into the parts that produced it. */
 function RubricBars({ rubric }: { rubric: Rubric }) {
   const scored = rubric.dimensions.filter((d) => d.weight > 0);
@@ -325,7 +375,10 @@ function RubricBars({ rubric }: { rubric: Rubric }) {
         {scored.map((dimension) => {
           const isWeakest = dimension.name === rubric.weakest;
           return (
-            <div key={dimension.name} className="flex items-center gap-3 text-xs">
+            <div
+              key={dimension.name}
+              className="flex items-center gap-3 text-xs"
+            >
               <span className="w-32 shrink-0 text-ink-faint">
                 {dimension.name.replace(/_/g, " ")}
               </span>
@@ -338,7 +391,9 @@ function RubricBars({ rubric }: { rubric: Rubric }) {
               <span className="w-10 shrink-0 font-mono tabular-nums text-ink-soft">
                 {dimension.score.toFixed(1)}
               </span>
-              <span className="min-w-0 text-ink-faint">{dimension.finding}</span>
+              <span className="min-w-0 text-ink-faint">
+                {dimension.finding}
+              </span>
             </div>
           );
         })}
@@ -352,8 +407,13 @@ function RubricBars({ rubric }: { rubric: Rubric }) {
  * high_confidence — a warning on every card is one nobody reads.
  */
 function LegitimacyPanel({ legitimacy }: { legitimacy: Legitimacy }) {
-  const concerning = legitimacy.signals.filter((s) => s.weight === "concerning");
-  const tone = legitimacy.tier === "suspicious" ? "aside-stop text-stop" : "aside-attn text-attn";
+  const concerning = legitimacy.signals.filter(
+    (s) => s.weight === "concerning",
+  );
+  const tone =
+    legitimacy.tier === "suspicious"
+      ? "aside-stop text-stop"
+      : "aside-attn text-attn";
 
   return (
     <div className={`aside mt-4 ${tone}`}>

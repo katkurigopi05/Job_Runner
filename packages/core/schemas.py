@@ -82,6 +82,11 @@ class ProfileCreate(BaseModel):
     #: owner rather than read off the résumé: §1 keeps a search filter separate
     #: from the profile's description of the applicant.
     target_seniority: SeniorityLevel | None = None
+    #: The most years a posting may demand and still be shown. The owner's
+    #: bound, not a reading of their résumé (§1), and None means "do not filter
+    #: on experience" — the shipped default. Only a demand the posting states
+    #: as *mandatory* excludes; see `matching/experience.py`.
+    max_required_experience_years: int | None = Field(default=None, ge=0, le=50)
     #: Current work authorization, for filtering only — never typed onto a form
     #: (§2.2 keeps those verbatim from `work_auth`). Separate from
     #: `needs_sponsorship`, which is about the future: a permanent resident
@@ -110,6 +115,7 @@ class ProfileUpdate(BaseModel):
     min_match_score: float | None = Field(default=None, ge=0.0, le=1.0)
     auto_submit: bool | None = None
     target_seniority: SeniorityLevel | None = None
+    max_required_experience_years: int | None = Field(default=None, ge=0, le=50)
     citizenship_status: CitizenshipStatus | None = None
 
 
@@ -132,6 +138,8 @@ class ProfileOut(BaseModel):
     min_match_score: float
     auto_submit: bool
     target_seniority: str | None
+    #: None means "do not filter on experience", which is the shipped default.
+    max_required_experience_years: int | None = None
     #: None means unstated. Shown as such rather than defaulted, because a
     #: default here would be a claim about someone's immigration status.
     citizenship_status: str | None = None
@@ -705,6 +713,12 @@ class MatchOut(BaseModel):
     #: STEM-OPT acceptance, E-Verify participation, or a history of sponsoring:
     #: none of those follow from silence.
     eligibility: dict[str, Any] = Field(default_factory=dict)
+    #: Years of experience the posting demands, and how firmly —
+    #: `packages/matching/experience.py`. `None` when the posting states none,
+    #: which is most postings: unlike authorization, a silence here really is
+    #: the absence of a requirement rather than an unanswered question, so it
+    #: renders as nothing rather than as "unknown".
+    experience: dict[str, Any] | None = None
 
 
 class PacketPosting(BaseModel):

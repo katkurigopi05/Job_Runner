@@ -43,7 +43,20 @@ export async function saveProfile(
     // maps blank to null; this only keeps the field out of the payload when
     // the form did not carry it at all.
     citizenship_status: text("citizenship_status"),
+    // Same "" -> null mapping, and the same reason: "Any level" has to clear
+    // the filter rather than be stored as a rung nothing matches.
+    target_seniority: text("target_seniority"),
   };
+
+  // A number, so it cannot go through `text()`: an empty box means "no limit"
+  // and must reach the API as null, while 0 is a real answer — "only roles
+  // asking for no experience" is what a new graduate wants. `Number("")` is 0,
+  // which would silently turn the blank box into the strictest filter there is.
+  const maxYears = form.get("max_required_experience_years");
+  if (maxYears !== null) {
+    const raw = String(maxYears).trim();
+    payload.max_required_experience_years = raw === "" ? null : Number(raw);
+  }
 
   const score = form.get("min_match_score");
   if (score !== null && String(score).trim() !== "") {
@@ -66,7 +79,10 @@ export async function saveProfile(
   }).catch(() => null);
 
   if (response === null) {
-    return { ok: false, message: `Cannot reach the API at ${API}. Start it with \`make api\`.` };
+    return {
+      ok: false,
+      message: `Cannot reach the API at ${API}. Start it with \`make api\`.`,
+    };
   }
 
   if (!response.ok) {

@@ -2715,3 +2715,96 @@ Four details:
 `tests/test_one_run_per_database.py` asserts the claim is held *while the suite
 is running* — from inside the run, on a second connection — rather than that it
 was taken once at startup.
+
+### A posting could demand ten years and nothing would notice
+
+`docs/BACKLOG.md` P7, and the half of it that is buildable offline. `Posting`
+records no experience requirement at all, so a role asking for ten years
+reached the feed ranked by cosine similarity alone — and §15 already records
+what a cosine cannot do here: `filters.seniority_ok` exists because a Junior
+Backend Engineer with an excellent technology match ranks in the top ten on
+title and body similarity, and no amount of scoring refuses a rung.
+
+`packages/matching/experience.py` reads the demand. **The split is the point,
+not the number**: a years line under "Minimum qualifications" and the same line
+under "Things we love" are different facts, and only a `MANDATORY` one is
+allowed to exclude. `filters.experience_ok` checks it against
+`profiles.max_required_experience_years`, and `rubric._experience` is where a
+preferred demand the owner is under lowers a dimension rather than hiding a job.
+
+Measured on the twelve real crawled postings in `tests/fixtures/golden/`, which
+is where the rules came from rather than the other way round:
+
+| | |
+|---|---|
+| postings stating a years requirement | 7 of 12 |
+| demands found | 9, **all 9 classified** — none left ambiguous |
+| ranges | read at the lower bound: `8–12+ years` is eight, `10-15 years` is ten |
+| prose mentions of a year | "A Year at Palantir", "Come join us for a year" — neither is a demand |
+
+Four decisions carry weight:
+
+- **The smallest mandatory demand binds, not the largest.** One posting lists
+  "8-10 years of experience in Strategic Finance" and "2+ years of investment
+  banking"; this module cannot tell a conjunction from an alternative, so it
+  keeps the posting at 2 and shows both. Hiding a job the owner might hold is
+  invisible, which is the same asymmetry `locality.py` settled for an unplaced
+  city.
+- **Neither a connector nor an experience noun is sufficient.** `3+ years field
+  experience` never says "years of" and `2+ years of investment banking` never
+  says "experience", so a line counts when an experience noun follows nearby
+  **or** the line opens with its years phrase — which is how a qualification
+  bullet is written and is not how prose mentions a duration ("able to commit
+  to 2 years in the role"). Lines are read one at a time so a duration cannot
+  borrow the next bullet's noun.
+- **An unrecognised heading clears the previous one.** Without that reset a
+  years line under "Benefits" or "Pay Range Transparency" — both real headings
+  from this corpus — inherits `MANDATORY` from a requirements list several
+  screens above, and the filter excludes on a perk.
+- **Three of the seven needed heading wording taken from the corpus.** `What We
+  Look For`, `What you bring to the table` and `Your background looks something
+  like this` were all unrecognised at first and read as `AMBIGUOUS`, which never
+  excludes — so the filter would have looked armed and done nothing. Palantir's
+  pairing is the one worth remembering: `What We Value` is the nice-to-have
+  list and `What We Require` is the requirement, and the first reads like a
+  statement of principles.
+
+`tailor/ats.py::_REQUIREMENT_HEADING` is deliberately not reused. It answers
+where the requirements *start* — it matches "What You'll Do" on purpose — and
+cannot say whether a heading is asking or wishing, which is the only thing this
+module wants from one.
+
+**Nothing here touches the scorer.** `Match.score` stays the cosine for the
+reason `rubric.py` gives at length, so the preferred half costs a visible
+dimension and not a place in the feed. Tuning the ranking function here would
+invalidate Gate 5 and bury the reason in a float.
+
+#### Two filters the owner could not set
+
+Found while wiring this one, and it is the defect §15 already records for
+`citizenship_status` — a column, a schema, a filter and tests, with no control
+anywhere, so the filter could never fire on real data.
+
+**`target_seniority` had shipped exactly that way.** It has a measured payoff —
+P@10 from 0.900 to 1.000 on the Gate 5 set — and the only way to set it was
+curl or the MCP tools. `/profile` now has both controls, in a fieldset of their
+own headed "Which postings you see", because §1's distinction deserves to be
+visible on the screen: these narrow the feed and are never typed onto an
+application.
+
+Two details in the form are load-bearing:
+
+- **The bound cannot go through the form's empty-string mapping.** `Number("")`
+  is 0, and 0 is a real answer here — "only roles that ask for no experience"
+  is what a new graduate wants — so a blank box mapped through it would become
+  the strictest filter in the app rather than no filter at all.
+- **The CHECK constraint is declared on the model as well as in the
+  migration**, because `alembic check` is a gate and a constraint the models do
+  not know about reads as schema drift.
+
+`tests/test_experience_requirements.py` is in `GATE5_TESTS`. Its positives are
+verbatim from the crawled corpus; what the corpus cannot prove is stated in the
+module docstring rather than implied — **no posting in it puts a years line
+under a nice-to-have heading**, so the PREFERRED path is exercised with real
+heading wording around a constructed placement, and the filter's refusal to
+exclude on it is argued rather than observed in the wild.
