@@ -47,8 +47,8 @@ export default async function SwipePage() {
       <header className="space-y-3">
         <h1 className="font-display text-[length:var(--text-display)] leading-none">Rate</h1>
         <p className="text-sm text-ink-soft">
-          Keep or skip. Nothing is applied to — this records what you think of the posting, and
-          the application is still started deliberately from the{" "}
+          Keep or skip — this just records what you think. You start applications yourself, from
+          the{" "}
           <Link href="/matches" className="underline decoration-rule underline-offset-4">
             match feed
           </Link>

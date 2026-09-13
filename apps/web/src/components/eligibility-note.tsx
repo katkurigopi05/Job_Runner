@@ -27,7 +27,14 @@ export function EligibilityNote({ eligibility }: { eligibility: Eligibility }) {
 
   return (
     <div className={`aside mt-4 ${tone}`}>
-      <p className="text-xs">
+      <p
+        className="text-xs"
+        title={
+          eligibility.certain
+            ? undefined
+            : "The posting does not say. Nothing is assumed either way — worth asking the employer."
+        }
+      >
         <span className="text-ink-faint">Work authorization</span>{" "}
         <span className={restricted ? "font-medium" : ""}>{eligibility.summary}</span>
       </p>
@@ -40,12 +47,10 @@ export function EligibilityNote({ eligibility }: { eligibility: Eligibility }) {
           ))}
         </ul>
       ) : null}
-      {!eligibility.certain ? (
-        <p className="mt-1 max-w-prose text-xs text-ink-faint">
-          The posting does not say. Nothing is assumed either way — ask the employer before
-          counting on it.
-        </p>
-      ) : null}
+      {/* Deliberately not a paragraph. "Unknown" is the commonest state by
+          far, so explaining it at length on every card spends the most words
+          on the least news — and a screen that warns constantly is one whose
+          warnings stop landing. The full sentence is the tooltip. */}
     </div>
   );
 }

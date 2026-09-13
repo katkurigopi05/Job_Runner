@@ -90,9 +90,11 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
       >
         <div className="flex items-start justify-between gap-6">
           <h2 className="font-display text-2xl leading-tight">{current.title ?? "Untitled role"}</h2>
-          <span className="shrink-0 font-mono text-2xl leading-none tabular-nums text-ink-soft">
-            {Math.round(current.score * 100)}
-            <span className="text-sm text-ink-faint">%</span>
+          <span
+            className="shrink-0 font-mono text-xs tabular-nums text-ink-faint"
+            title="Cosine similarity between this posting and your profile. Useful for ordering the feed, not as a grade out of 100."
+          >
+            {Math.round(current.score * 100)}% similar
           </span>
         </div>
 

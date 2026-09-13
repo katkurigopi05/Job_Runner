@@ -136,8 +136,8 @@ export function FilterBar({ resultCount }: { resultCount: number }) {
       </div>
 
       <p className="mt-3 max-w-prose text-xs text-ink-faint">
-        These filter what you see. They do not touch your profile, which is what gets typed
-        into application forms.
+        These change what you see here. Your profile — the part that gets typed into forms —
+        stays exactly as it is.
       </p>
     </div>
   );

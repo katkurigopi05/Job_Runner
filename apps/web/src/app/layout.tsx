@@ -7,7 +7,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Jobrunner",
-  description: "Local job-application agent. Nothing submits without your approval.",
+  description: "Local job-application agent. You approve every application before it is sent.",
 };
 
 const NAV = [
@@ -63,7 +63,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>
         <footer className="mx-auto max-w-5xl px-6 pb-12">
           <p className="border-t border-rule pt-5 text-xs leading-relaxed text-ink-faint">
-            Nothing submits without your approval. Work-authorization answers are copied from your
+            You approve every application before it is sent, and your work-authorization answers go
             profile verbatim, never generated.
           </p>
         </footer>

@@ -2122,6 +2122,56 @@ with none on the index, still reads as empty. And the sweep needs network
 egress from the owner's machine, like `make validate-seeds` — so how many of
 the ~3,000 bespoke pages actually publish is, today, an unmeasured number.
 
+### Using it felt tense, and two mechanical choices were most of the reason
+
+The owner's words. Not that the dashboard was ugly — that applying for jobs
+through it felt worse than it needed to. Worth measuring rather than
+sympathising with: **56% of the interface's sentences contained a negation or
+a warning.** Every reassurance was phrased as a prohibition, every empty state
+opened with "Nothing", and the app talked mostly about what it would not do
+and what the owner lacked.
+
+Two of those were structural rather than verbal.
+
+**The feed showed only what you lack.** `/matches` rendered `missing_terms`
+three times and `matched_terms` zero times — the API had been sending both all
+along. So the screen's answer to "how do I look for this job" was eight chips
+of absent skills and nothing about the ones on the résumé. Fit now leads, in
+the positive colour, on the face of the card; the gaps sit inside the
+breakdown and no longer open with the word "not".
+
+**The score graded the owner against an unreachable bar.** It is a cosine
+similarity, and §15 already recorded that the shipped 0.75 threshold was
+unreachable — the first real run peaked at 0.271. On the owner's current
+database: **74 matches spanning 0.000–0.081, thresholds of 0.75 and 0.0.** A
+big "8%" on every card reads as "you are a poor fit for everything", and it
+does not mean that.
+
+The first attempt at this replaced the number with a word and kept comparing
+against the threshold, which is worse: with those numbers every posting is a
+"long shot" under one profile and a "strong match" under the other. Both
+collapse. **The label is rank within the feed** — measured spread on the live
+data: 5 / 13 / 17 / 15 across four labels. Rank cannot degenerate, and "near
+the top of what you are being shown" stays true whatever the absolute scale
+turns out to be. Clearing the owner's own threshold is reported separately,
+because that is the one number they actually set.
+
+`legitimacy.py` reached this conclusion first, for the other score in this
+app: "a tier and a findings table, never a number", because a number invites a
+precision the thing does not have. This is the same argument arriving late.
+
+The verbal half: the line on every page went from "Nothing submits without
+your approval" to "You approve every application before it is sent" — the same
+promise, and only one of them opens by naming what will not happen. The
+warning that renders most often, work authorization "Unknown", went from three
+lines to one. The home page's headline numbers were two counts of work not
+done out of four; one is now work done. The ratio is 50% and should not be
+driven lower by deleting real warnings — a résumé an ATS cannot parse needs to
+say so.
+
+`tests/test_feed_reads_as_encouraging.py` holds the two structural ones, since
+both are a one-line revert away and neither would fail anything else.
+
 ### The tracker dropped five of seven outcomes, and looked fine doing it
 
 Phase 6's whole deliverable. Found by screenshotting the dashboard rather than
