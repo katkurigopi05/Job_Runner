@@ -31,80 +31,49 @@ import csv
 import sys
 from pathlib import Path
 
+from packages.crawler.company_csv import read_rows
 from packages.crawler.find_boards import (
     VENDORS,
     Resolved,
     ResolveReport,
-    normalize_header,
     resolve_all,
-    usable_url,
-)
-
-NAME_COLUMNS = ("name", "company", "company_name", "companies", "employer")
-URL_COLUMNS = (
-    "careers_url",
-    "jobs_careers_url",
-    "careers",
-    "jobs_url",
-    "url",
-    "website_url",
-    "website",
-    "link",
-    "site",
-    "homepage",
 )
 
 
 def read_companies(path: Path) -> list[tuple[str, str | None]]:
     """`(name, url)` pairs from a CSV, with or without a header.
 
-    The URL half is optional and worth a great deal when present: it is
-    evidence about which board a company uses, where the name is only a guess.
-    A row with a URL and no name still counts — the name is used for display
-    and for the fallback guess, nothing else.
+    Delegates to `company_csv.read_rows` rather than carrying its own column
+    lists, which is how the two readers drifted apart: this one scored columns
+    by how many usable URLs they held, `company_csv` picked the first
+    recognised name, and **neither knew `company_url`**. On the owner's
+    3,869-row sheet the result was `company_csv` refusing the file outright and
+    this function returning 3,869 rows with **0 URLs** — so every company fell
+    to guessing a slug from its name and four speculative vendor probes, while
+    `resolve_one` sat there preferring a supplied URL it was never given.
+
+    The URL half is worth a great deal when present: it is evidence about which
+    board a company uses, where the name is only a guess. `read_rows` resolves
+    which column carries it, and drops a search link rather than passing one on
+    as though it named a board.
     """
+    try:
+        rows, _ = read_rows(path)
+    except ValueError:
+        # `read_rows` raises with the header it found, which is the right
+        # contract for an importer told to act on a named column. Here a file
+        # with no recognised column is not a mistake: a bare list of company
+        # names is the likeliest thing to have lying around, and assuming a
+        # header would silently drop a real company. An empty file is no
+        # companies rather than an error, for the same reason.
+        return _headerless(path)
+    return [(row.name, row.url or None) for row in rows]
+
+
+def _headerless(path: Path) -> list[tuple[str, str | None]]:
+    """First column as names, row one included — no header to skip."""
     with path.open(newline="", encoding="utf-8-sig") as handle:
-        rows = list(csv.reader(handle))
-
-    if not rows:
-        return []
-
-    header = [normalize_header(cell) for cell in rows[0]]
-    name_index = next((header.index(c) for c in NAME_COLUMNS if c in header), None)
-
-    # A file can carry several URL columns, and the best-named one is not
-    # always the useful one: a real list had `Jobs/Careers URL` filled with
-    # google.com search links and `Website URL` holding the actual homepages.
-    # So candidate columns are scored by how many usable URLs they hold, not
-    # by what they are called.
-    url_index = None
-    best_usable = 0
-    for column in URL_COLUMNS:
-        if column not in header:
-            continue
-        index = header.index(column)
-        usable = sum(1 for row in rows[1:] if len(row) > index and usable_url(row[index]))
-        if usable > best_usable:
-            url_index, best_usable = index, usable
-
-    if name_index is None and url_index is None:
-        # No recognised header: first column is names, and row one is data.
-        # Assuming a header exists would silently drop a real company.
-        return [(row[0].strip(), None) for row in rows if row and row[0].strip()]
-
-    def cell(row: list[str], index: int | None) -> str | None:
-        if index is None or len(row) <= index:
-            return None
-        return row[index].strip() or None
-
-    out: list[tuple[str, str | None]] = []
-    for row in rows[1:]:
-        name = cell(row, name_index)
-        url = usable_url(cell(row, url_index))
-        if not name and not url:
-            continue
-        out.append((name or (url or ""), url))
-    return out
+        return [(row[0].strip(), None) for row in csv.reader(handle) if row and row[0].strip()]
 
 
 def as_seed_entry(found: Resolved) -> str:

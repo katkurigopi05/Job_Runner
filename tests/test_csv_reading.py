@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.find_boards import read_companies, usable_url
+from packages.crawler.find_boards import usable_url
+from scripts.find_boards import read_companies
 
 
 def _csv(tmp_path: Path, text: str) -> Path:
@@ -83,7 +84,8 @@ def test_a_search_engine_name_elsewhere_in_the_url_is_not_a_search_link() -> Non
 
     Three shapes, all of them legitimate and all of them dropped while
     `usable_url` matched against the whole URL string. The third is the
-    expensive one: `usable_url` gates `company_csv.triage`, so a company whose
+    expensive one: `usable_url` used to gate `company_csv.triage` (it now
+    routes by column role and `is_search_url` instead), so a company whose
     own domain merely contains the word was silently filed as unusable.
     """
     keep = (

@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import select
 
 from apps.worker.crawl_company_job import MalformedCrawlTask, handle_crawl_company
+from packages.core.enums import SourceStatus
 from packages.core.models import Company, CrawlRun, Posting, QueueTask
 from packages.crawler.crawl import CompanyResult
 from packages.crawler.dispatch import (
@@ -39,6 +40,10 @@ def _company(**kwargs) -> Company:
         "slug": "acme",
         "ats_type": "greenhouse",
         "poll_interval_s": 3600,
+        # Verified, because `runs.fetchable()` requires it: an unresolved
+        # candidate has no board to fetch, and a fixture omitting this is
+        # describing a company discovery has not finished with.
+        "source_status": SourceStatus.VERIFIED.value,
     }
     return Company(**{**defaults, **kwargs})
 

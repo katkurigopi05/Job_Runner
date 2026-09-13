@@ -105,19 +105,50 @@ Postgres runs on **5433** on the owner's machine, not the 5432 in the row above:
 another project holds 5432. The remap lives in an uncommitted
 `docker-compose.override.yml`, and `.env` points at 5433 to match.
 
-`next dev` binds **0.0.0.0:3001**, not the localhost:3000 the row implies. Port
-3001 because 3000 is taken; `0.0.0.0` so the dashboard can be read from the
-owner's phone on the same LAN, which is how a review queue gets checked away
-from the desk.
+`next dev` binds **127.0.0.1:3001**, not the localhost:3000 the row implies.
+Port 3001 because 3000 is taken. `next start` binds 127.0.0.1 too.
 
-This is a real narrowing of §1's "runs entirely on localhost", and it is worth
-naming rather than burying. What §1 is protecting is that no résumé, no
-recruiter thread, and no vault secret leaves the owner's control — and binding
-a dev server to the LAN does widen who can reach that surface. It is defensible
-only on a trusted network, and only for `dev`: `next start` is unchanged and
-still binds localhost, so nothing about a non-dev run is affected. On an
-untrusted network — a café, a conference, shared housing — set it back. The
-dashboard has no authentication, because until now it never needed any.
+**This paragraph used to say `0.0.0.0`, and that is now reversed.** The reason
+for the LAN bind was real — reading the review queue from a phone away from the
+desk — and the reason for reversing it is that the cost was larger than this
+paragraph understood. It described the risk as "who can reach the dashboard".
+The actual reach was the **API**, in full, with no authentication.
+
+`apps/web/next.config.ts` rewrites `/api/:path*` to `127.0.0.1:8000`, and
+`apps/api/middleware.py` refuses non-loopback callers by reading the socket
+peer. Through the rewrite that peer is always the Next server, on loopback. So
+the guard never saw a network client and never had cause to refuse one. It is
+not the `--proxy-headers` hole the middleware's docstring warns about; no header
+is involved, and no misconfiguration. Binding the dashboard to the LAN was
+sufficient on its own.
+
+Measured, with `make api` on 127.0.0.1 and `make web` as it was:
+
+```text
+GET  http://127.0.0.1:8000/health        from a LAN address -> refused
+GET  http://<lan-ip>:3001/api/health     from a LAN address -> 200
+GET  http://<lan-ip>:3001/api/candidates from a LAN address -> 200   (PII)
+GET  http://<lan-ip>:3001/applications   from a LAN address -> 200
+POST http://<lan-ip>:3001/api/applications                  -> 400, not 401
+```
+
+The last line is the one that settles it. A validation error means the request
+reached the handler: the write path — the one that submits real job
+applications under the owner's name — was reachable from the network.
+
+Two smaller corrections come with it. This paragraph claimed "`next start` is
+unchanged and still binds localhost": it never did. `next start` took no `-H`,
+and Next passes an undefined hostname straight to `server.listen`, which binds
+every interface. And "set it back on an untrusted network" was advice nobody
+can act on before the fact — the exposure is the default, and the café is
+exactly where you forget.
+
+The phone case is kept as an opt-in rather than deleted: `JOBRUNNER_WEB_HOST`
+(and `JOBRUNNER_WEB_PORT`) override the default in both scripts, so
+`JOBRUNNER_WEB_HOST=0.0.0.0 make web` is the old behaviour, typed out, on a
+network the owner has decided to trust. `tests/test_dashboard_binds_loopback.py`
+holds the default, and holds these documents to it — the stale `next start`
+claim survived in two files precisely because nothing checked prose.
 
 ---
 
@@ -2079,6 +2110,103 @@ path: a site that publishes `JobPosting` only on individual posting pages,
 with none on the index, still reads as empty. And the sweep needs network
 egress from the owner's machine, like `make validate-seeds` — so how many of
 the ~3,000 bespoke pages actually publish is, today, an unmeasured number.
+
+### The dashboard put the API on the network, and the guard could not see it
+
+Reported by a reader of the source and confirmed by running it. Worth recording
+because the control that failed was working exactly as designed, and was
+looking at the wrong end of the connection.
+
+`apps/api/middleware.py` refuses non-loopback callers by reading the socket
+peer, which cannot be forged. Its docstring names the one way that goes wrong —
+`uvicorn --proxy-headers`, which makes the app trust `X-Forwarded-For`. That is
+not what happened here. `next dev -H 0.0.0.0` bound the dashboard to every
+interface, and `next.config.ts` rewrites `/api/:path*` to `127.0.0.1:8000`, so
+the peer FastAPI saw was always the Next server, on loopback. No header, no
+misconfiguration, no flag: the shipped default was enough.
+
+The measurements are in §3. The line that settles it is
+`POST /api/applications` answering **400, not 401** — a validation error means
+the request reached the handler, so the endpoint that submits real applications
+under the owner's name was reachable from the LAN.
+
+Both scripts now bind `127.0.0.1`, and `JOBRUNNER_WEB_HOST` is the opt-in for
+the phone case that motivated the original exposure. Two things are worth
+keeping visible beyond the fix:
+
+- **`next start` was never loopback-bound**, though §3 and `docs/USAGE.md` both
+  said it was. It passed no `-H`, and Next hands an undefined hostname to
+  `server.listen`, which binds everything. A wrong reassurance is worse than
+  none: it is what a reader checks against before deciding whether they are
+  exposed.
+- **The guard is unchanged and still worth having.** With the dashboard on
+  loopback it is what refuses a direct `uvicorn --host 0.0.0.0`. It was never
+  wrong; it was answering a question about the proxy rather than about the
+  person.
+
+`tests/test_dashboard_binds_loopback.py` holds the default, and holds these
+documents to it — the stale `next start` claim survived in two files precisely
+because nothing checked prose. It allows a retraction to quote what it
+retracts, because this file's convention is to record what a paragraph used to
+say rather than edit it away.
+
+### One regex was answering three questions about work authorization
+
+Also reported from the source, also confirmed by running it. `filters.py` had a
+single pattern list for sponsorship, and it was wrong in both directions at
+once:
+
+```text
+"We do not offer visa sponsorship."                    kept      (wrong)
+"We cannot sponsor now or in the future."              kept      (wrong)
+"Candidates with or without sponsorship ... apply."    EXCLUDED  (wrong)
+"US citizens only."                                    kept, unflagged
+```
+
+The first two are false negatives, and they are the *commonest* English form of
+a refusal: the list matched literal phrases like `unable to sponsor` and never
+learned negation, so `do not offer` sailed through. The third is the expensive
+error — `without sponsorship` is a substring of `with or without sponsorship`,
+a phrase that exists to say sponsorship is **not** a barrier, so the postings
+that go furthest out of their way to welcome the owner were the ones excluded.
+
+`packages/matching/eligibility.py` reads the posting instead of scanning it,
+and four rules shape it:
+
+- **Silence is not an answer.** A posting that never mentions sponsorship has
+  said nothing — not "available", not "none". §2.2's caution about work
+  authorization applies to reading as much as to answering.
+- **Ambiguity is not an answer either.** `with or without sponsorship`, and a
+  posting that both refuses and offers, are `AMBIGUOUS`. Neither excludes: a
+  hard filter needs evidence, and a contradiction is not evidence.
+- **Citizenship is a separate fact.** "US citizens only" is not a statement
+  about sponsorship. A permanent resident needs no sponsorship and still fails
+  it, and no employer generosity fixes it. It gets its own verdict and its own
+  exclusion reason.
+- **Nothing is inferred from an absence.** No OPT or STEM-OPT acceptance, no
+  E-Verify participation, no history of sponsoring. A feed that labelled a job
+  "OPT-friendly" because the posting happened not to mention visas would be
+  inventing the one fact an applicant cannot afford to be wrong about.
+
+`profiles.citizenship_status` is the profile half, and it is deliberately
+**not** `work_auth`. §2.2 keeps that field verbatim for forms; this one is a
+search filter (§1: the owner's input, not a reading of their profile) and is
+never typed onto an application. NULL is what every existing row gets and means
+unstated — the filter then *surfaces* an explicit restriction rather than
+excluding on it, because dropping a posting on a field nobody filled in hides
+real jobs, and parsing a legal status out of free text to decide which jobs the
+owner ever sees would be the §1 violation in the other direction.
+
+The feed shows the verdict with the posting's own sentence, every time,
+including when the answer is "Unknown — verify with employer". A card that
+carried an authorization line only when a restriction was found would teach the
+reader that a missing line means "fine".
+
+One incidental find, from a test rather than from reading: `Must be a U.S.
+Citizen or Green Card holder.` split at the full stop in `U.S.`, so the
+citizens-and-residents rule — which needs both halves in one clause — never
+fired and the posting read as citizens-only. A permanent resident would have
+been excluded from a job that names them.
 
 ### What two outside specs were worth
 

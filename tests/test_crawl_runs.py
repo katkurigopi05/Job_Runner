@@ -16,6 +16,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from packages.core.enums import SourceStatus
 from packages.core.models import Company, CompanyCrawlState, CrawlRun
 from packages.crawler.crawl import CompanyResult, CrawlReport, crawl_all, crawl_company
 from packages.crawler.extract import CompanySeed
@@ -125,7 +126,14 @@ def test_backoff_never_shortens_an_interval() -> None:
 
 
 async def _company(db_session, name: str = "Acme") -> Company:
-    company = Company(name=name, slug="acme", ats_type="greenhouse", poll_interval_s=HOUR)
+    company = Company(
+        name=name,
+        slug="acme",
+        ats_type="greenhouse",
+        poll_interval_s=HOUR,
+        # See `runs.fetchable()`: only a verified board is fetch work.
+        source_status=SourceStatus.VERIFIED.value,
+    )
     db_session.add(company)
     await db_session.flush()
     return company

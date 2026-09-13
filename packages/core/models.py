@@ -130,7 +130,32 @@ class Profile(Base):
     #: own. It stays opt-in because the right rung is the owner's to state,
     #: not something to infer from a résumé (CLAUDE.md §1).
     target_seniority: Mapped[str | None] = mapped_column(String(20))
+    #: The owner's *current* work authorization, as a `CitizenshipStatus`.
+    #:
+    #: Separate from `needs_sponsorship`, which is about the future. One boolean
+    #: was answering both, so a posting reading "US citizens only" passed a
+    #: filter that only knew how to ask about sponsorship — a restriction a
+    #: permanent resident also fails and that no sponsorship would fix.
+    #:
+    #: **Never typed onto an application.** §2.2 keeps the form answers verbatim
+    #: copies of `work_auth`, and this is a search filter (§1: the owner's
+    #: input, not a reading of their profile).
+    #:
+    #: NULL is what every existing row gets and means *unstated*: the filter
+    #: then surfaces an explicit restriction rather than excluding on it. The
+    #: migration deliberately does not backfill — a legal status guessed from a
+    #: free-text field, on a screen that decides which jobs the owner ever
+    #: sees, is worse than an honest gap.
+    citizenship_status: Mapped[str | None] = mapped_column(String(30))
     created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (
+        CheckConstraint(
+            "citizenship_status IS NULL OR citizenship_status IN "
+            "('us_citizen', 'permanent_resident', 'other_authorized', 'not_authorized')",
+            name="ck_profiles_citizenship_status",
+        ),
+    )
 
 
 class Resume(Base):

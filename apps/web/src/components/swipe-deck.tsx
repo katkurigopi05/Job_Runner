@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { type Decision, type Match } from "@/lib/api";
 import { recordDecision } from "@/app/swipe/actions";
+import { EligibilityNote } from "@/components/eligibility-note";
 
 /**
  * One posting at a time, kept or discarded.
@@ -98,6 +99,13 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
           {current.location ? <span>{current.location}</span> : null}
           {current.ats_type ? <span>{current.ats_type}</span> : null}
         </div>
+
+        {/* Shown before the keep/skip, not after: a citizens-only posting is a
+            thing to know while rating it, and the rating is what feeds the
+            threshold. Rendered even when the posting said nothing, because a
+            line that appears only for restricted roles teaches the reader that
+            its absence means "fine". */}
+        <EligibilityNote eligibility={current.eligibility} />
 
         {/* The reasoning travels with the number. A score you cannot argue
             with is one you end up ignoring. */}

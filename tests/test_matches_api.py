@@ -442,3 +442,89 @@ def test_an_absent_rubric_is_null_not_an_empty_dict() -> None:
         assert type(None) in getattr(fields[name].annotation, "__args__", ()), (
             f"{name} must be nullable on the wire"
         )
+
+
+@pytest.fixture
+async def authorization_feed(
+    client: AsyncClient, worker_session: AsyncSession, complete_candidate
+) -> str:
+    """Three postings: one that refuses to sponsor, one restricted, one silent."""
+    profile_id = uuid.UUID(complete_candidate["profile_id"])
+    postings = [
+        Posting(
+            url="https://boards.greenhouse.io/acme/jobs/10",
+            title="Backend Engineer",
+            description_raw="Build services in Python. We do not offer visa sponsorship.",
+        ),
+        Posting(
+            url="https://boards.greenhouse.io/acme/jobs/11",
+            title="Platform Engineer",
+            description_raw="Support classified workloads. US citizens only.",
+        ),
+        Posting(
+            url="https://boards.greenhouse.io/acme/jobs/12",
+            title="Data Engineer",
+            description_raw="Own the warehouse. Great team, competitive salary.",
+        ),
+    ]
+    worker_session.add_all(postings)
+    await worker_session.flush()
+    worker_session.add_all(
+        [
+            Match(profile_id=profile_id, posting_id=p.id, score=score, reasons_json={})
+            for p, score in zip(postings, (0.9, 0.8, 0.7), strict=True)
+        ]
+    )
+    await worker_session.commit()
+    return str(profile_id)
+
+
+async def test_every_match_carries_what_the_posting_said_about_authorization(
+    client: AsyncClient, authorization_feed: str
+) -> None:
+    """Including — especially — the ones where it said nothing.
+
+    A field present only on restricted postings teaches the reader that its
+    absence means "fine", so a posting nobody has checked would look identical
+    to one that explicitly sponsors.
+    """
+    rows = (await client.get("/matches", params={"profile_id": authorization_feed})).json()
+    assert len(rows) == 3
+    assert all("eligibility" in row for row in rows)
+
+    refuses, restricted, silent = rows
+    assert refuses["eligibility"]["sponsorship"] == "unavailable"
+    assert restricted["eligibility"]["citizenship"] == "citizens_only"
+    assert silent["eligibility"] == {
+        "sponsorship": "unstated",
+        "citizenship": "unstated",
+        "certain": False,
+        "summary": "Unknown — verify with employer",
+        "evidence": [],
+    }
+
+
+async def test_an_explicit_restriction_arrives_with_the_posting_s_own_words(
+    client: AsyncClient, authorization_feed: str
+) -> None:
+    """A restriction asserted without its wording is unauditable, and this one
+    decides whether the owner spends an hour on an application they cannot
+    accept."""
+    rows = (await client.get("/matches", params={"profile_id": authorization_feed})).json()
+
+    evidence = rows[0]["eligibility"]["evidence"]
+    assert evidence == [
+        {"claim": "sponsorship_unavailable", "quote": "We do not offer visa sponsorship."}
+    ]
+    assert rows[1]["eligibility"]["evidence"] == [
+        {"claim": "citizens_only", "quote": "US citizens only."}
+    ]
+
+
+async def test_the_feed_claims_nothing_about_opt_or_e_verify(
+    client: AsyncClient, authorization_feed: str
+) -> None:
+    """None of it follows from a posting not mentioning visas."""
+    body = (await client.get("/matches", params={"profile_id": authorization_feed})).text.lower()
+    for claim in ("opt-friendly", "stem-opt", "e-verify", "h-1b sponsor"):
+        assert claim not in body

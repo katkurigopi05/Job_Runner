@@ -18,6 +18,24 @@ processes each honouring them independently honour neither.
 Needs `make worker` running to do anything. That is stated by the script rather
 than assumed, because an enqueue that silently sits in a queue nobody is
 draining is the same failure in a new place.
+
+**Two sweeps, and the second one had no caller either.** Without `--dispatch`
+this enqueues the original in-process cycle, which reads `seeds/companies.yaml`
+and polls each board in one long task. `--dispatch` enqueues the per-company
+sweep in `packages/crawler/dispatch.py`, which reads the `companies` **table** —
+so it is the only path that reaches an imported CSV, and the only one that
+dispatches discovery for a company whose board is not known yet.
+
+Nothing enqueued that. `handle_crawl` has handled `dispatch` since the sweep was
+written, and the only producer of such a task was the tick scheduling its own
+successor — which cannot happen until something schedules a first one. The same
+shape as the defect in the paragraph above, one layer in: a whole sweep that
+could run and was never asked.
+
+The default is left alone deliberately. `make crawl` has meant "poll the curated
+registry" for as long as it has existed, and quietly repointing it at a
+thousands-row candidate table would change what one command costs without
+saying so.
 """
 
 from __future__ import annotations
@@ -51,13 +69,49 @@ async def main() -> None:
             "you have a reason to distrust the stored hashes."
         ),
     )
+    parser.add_argument(
+        "--dispatch",
+        action="store_true",
+        help=(
+            "Sweep the companies table rather than the seed file: one task per "
+            "company, discovery for those without a verified board and a fetch for "
+            "those with one. This is the path an imported CSV is reachable by."
+        ),
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Companies to enqueue in this tick. Requires --dispatch.",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help=(
+            "Do not schedule the next tick. A dispatch tick normally re-arms "
+            "itself, which is what makes the sweep continuous — and what makes an "
+            "unattended pilot keep going after you stop watching."
+        ),
+    )
     args = parser.parse_args()
+
+    if (args.limit is not None or args.once) and not args.dispatch:
+        # Both only mean anything to the dispatching path, and silently
+        # accepting them on the other one is how a bounded pilot turns out to
+        # have been unbounded.
+        parser.error("--limit and --once require --dispatch")
 
     payload: dict[str, Any] = {}
     if args.seed_path:
         payload["seed_path"] = args.seed_path
     if args.force:
         payload["force"] = True
+    if args.dispatch:
+        payload["dispatch"] = True
+    if args.limit is not None:
+        payload["limit"] = args.limit
+    if args.once:
+        payload["repeat"] = False
 
     unfinished = (QueueTaskStatus.PENDING.value, QueueTaskStatus.RUNNING.value)
 

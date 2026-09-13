@@ -26,12 +26,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.models import Company
 from packages.core.queue import ClaimedTask
 from packages.crawler.crawl import crawl_company
+from packages.crawler.defer import defer_if_host_busy
 from packages.crawler.dispatch import (
     CRAWL_COMPANY_TASK_KIND,
     close_if_complete,
     fold_into_run,
     seed_from,
 )
+from packages.crawler.extract import extractor_for
 from packages.crawler.fetch import build_fetcher
 from packages.crawler.runs import record_attempt
 
@@ -86,6 +88,13 @@ async def handle_crawl_company(session: AsyncSession, claimed: ClaimedTask) -> N
     # crawl at once — and naming it here means a future change to the default
     # cannot quietly remove the guarantee this file depends on.
     async with build_fetcher(shared=True) as fetcher:
+        # Give the worker slot back rather than sleeping in it when this
+        # company's host is busy. Checked before anything is fetched, so
+        # nothing is replayed and no slot is reserved — see
+        # packages/crawler/defer.py.
+        extractor = extractor_for(seed.ats)
+        assert extractor is not None  # seed_from already refused an unknown ATS
+        await defer_if_host_busy(session, claimed, fetcher, extractor.board_url(seed.slug))
         result = await crawl_company(session, seed, fetcher, force=bool(payload.get("force")))
 
     await record_attempt(session, company, result)

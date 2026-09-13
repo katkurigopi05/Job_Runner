@@ -20,6 +20,10 @@ import structlog
 from apps.worker.apply_job import TaskPayloadError, handle_apply
 from apps.worker.crawl_company_job import CRAWL_COMPANY_TASK_KIND, handle_crawl_company
 from apps.worker.crawl_job import CRAWL_TASK_KIND, handle_crawl
+from apps.worker.discover_company_job import (
+    DISCOVER_COMPANY_TASK_KIND,
+    handle_discover_company,
+)
 from apps.worker.discover_job import DISCOVER_TASK_KIND, handle_discover
 from apps.worker.inbox_job import INBOX_TASK_KIND, handle_inbox
 from packages.core import db as core_db
@@ -29,6 +33,7 @@ from packages.core.models import Application, QueueTask
 from packages.core.queue import (
     DEFAULT_LEASE_SECONDS,
     ClaimedTask,
+    TaskDeferred,
     claim_task,
     complete_task,
     default_worker_id,
@@ -47,6 +52,7 @@ HANDLERS = {
     APPLY_TASK_KIND: handle_apply,
     CRAWL_TASK_KIND: handle_crawl,
     CRAWL_COMPANY_TASK_KIND: handle_crawl_company,
+    DISCOVER_COMPANY_TASK_KIND: handle_discover_company,
     DISCOVER_TASK_KIND: handle_discover,
     INBOX_TASK_KIND: handle_inbox,
 }
@@ -133,6 +139,20 @@ async def _process(session, claimed: ClaimedTask) -> None:
 
     try:
         await handler(session, claimed)
+    except TaskDeferred as exc:
+        # Neither done nor failed. The handler handed the task back because its
+        # host was busy, *before* making any request, so there is nothing to
+        # retry and nothing to complete — and the deferral it wrote has to be
+        # kept, which is why this commits where the generic handler rolls back.
+        await session.commit()
+        log.info(
+            "task_deferred",
+            task_id=str(task_id),
+            kind=task_kind,
+            reason=str(exc),
+            run_after=exc.run_after.isoformat(),
+        )
+        return
     except TaskPayloadError as exc:
         # A malformed payload will never succeed, so do not burn retries on it.
         await session.rollback()

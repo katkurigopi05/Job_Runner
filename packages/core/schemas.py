@@ -8,7 +8,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from packages.core.enums import ApplicationStatus, EmailMode, FailureReason, SeniorityLevel
+from packages.core.enums import (
+    ApplicationStatus,
+    CitizenshipStatus,
+    EmailMode,
+    FailureReason,
+    SeniorityLevel,
+)
 
 
 class ErrorDetail(BaseModel):
@@ -76,6 +82,12 @@ class ProfileCreate(BaseModel):
     #: owner rather than read off the résumé: §1 keeps a search filter separate
     #: from the profile's description of the applicant.
     target_seniority: SeniorityLevel | None = None
+    #: Current work authorization, for filtering only — never typed onto a form
+    #: (§2.2 keeps those verbatim from `work_auth`). Separate from
+    #: `needs_sponsorship`, which is about the future: a permanent resident
+    #: needs no sponsorship and still fails "US citizens only". None means
+    #: unstated, and an unstated status never excludes a posting.
+    citizenship_status: CitizenshipStatus | None = None
 
 
 class ProfileUpdate(BaseModel):
@@ -98,6 +110,7 @@ class ProfileUpdate(BaseModel):
     min_match_score: float | None = Field(default=None, ge=0.0, le=1.0)
     auto_submit: bool | None = None
     target_seniority: SeniorityLevel | None = None
+    citizenship_status: CitizenshipStatus | None = None
 
 
 class ProfileOut(BaseModel):
@@ -119,6 +132,9 @@ class ProfileOut(BaseModel):
     min_match_score: float
     auto_submit: bool
     target_seniority: str | None
+    #: None means unstated. Shown as such rather than defaulted, because a
+    #: default here would be a claim about someone's immigration status.
+    citizenship_status: str | None = None
     created_at: datetime
 
 
@@ -679,6 +695,16 @@ class MatchOut(BaseModel):
     rubric: dict[str, Any] | None = None
     #: Hard filters that ruled it out — location, seniority, sponsorship.
     excluded_by: list[str] = Field(default_factory=list)
+    #: What the posting states about work authorization, with the sentences it
+    #: states it in — `packages/matching/eligibility.py`.
+    #:
+    #: Always present, and `summary` is "Unknown — verify with employer" when
+    #: the posting said nothing. That is the point: an absent field, or a blank
+    #: one, reads as "no restrictions" — which is a claim the posting never
+    #: made and the one this must never imply. Nothing here asserts OPT or
+    #: STEM-OPT acceptance, E-Verify participation, or a history of sponsoring:
+    #: none of those follow from silence.
+    eligibility: dict[str, Any] = Field(default_factory=dict)
 
 
 class PacketPosting(BaseModel):
@@ -979,3 +1005,48 @@ class AuditVerifyRequest(BaseModel):
     """
 
     text: str
+
+
+class DiscoveryStatusOut(BaseModel):
+    """Where the registry has got to — the screen the import path never had.
+
+    Counts by `SourceStatus`, plus the two queue depths and the matching
+    readiness, because "nothing in the feed" has several quite different causes
+    and they are told apart here rather than guessed at: no companies imported,
+    candidates waiting on discovery, boards waiting on a fetch, or postings
+    fetched and scored under fallback weighting.
+    """
+
+    companies_total: int
+    #: A lead, never attempted. Discovery is owed.
+    pending: int
+    #: A board-shaped URL that has not been confirmed against the board API.
+    unverified: int
+    #: Confirmed board; eligible for fetching.
+    verified: int
+    #: Discovery ran, found nothing, and will try again — `retrying_next_at` says
+    #: when. Distinct from `needs_review`, which nothing automatic will fix.
+    retrying: int
+    retrying_next_at: datetime | None = None
+    #: No website and no careers URL: a person has to supply one.
+    needs_review: int
+
+    discovery_queue: int
+    fetch_queue: int
+
+    postings_total: int
+    postings_open: int
+    #: Fetched but carrying no vector — a listing with no description, or one
+    #: not yet reached by a matching pass. Shown because a posting is visible
+    #: long before it is scored, and the two must not be conflated.
+    postings_unembedded: int
+    matches_total: int
+
+    #: Documents the corpus statistics are built from, and whether that is
+    #: enough for IDF weighting. Below the threshold scoring still runs — it
+    #: uses the unweighted embedder, which is a weaker description of the
+    #: domain, not a refusal.
+    corpus_documents: int
+    corpus_min_documents: int
+    weighting: str
+    weighting_reason: str

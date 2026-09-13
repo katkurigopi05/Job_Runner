@@ -17,12 +17,14 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import structlog
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.core.enums import SourceStatus
 from packages.core.models import Company, CompanyCrawlState, CrawlRun
 from packages.crawler.crawl import CompanyResult, CrawlReport, ResultHook
 
@@ -69,6 +71,20 @@ def backoff_for(poll_interval_s: int, consecutive_failures: int) -> timedelta:
         return interval
     grown: timedelta = interval * (2 ** min(consecutive_failures, MAX_BACKOFF_DOUBLINGS))
     return min(grown, interval + MAX_BACKOFF)
+
+
+#: Discovery backoff, in hours, by consecutive attempt. A careers page that
+#: yielded nothing today is worth another look in days, not minutes — unlike a
+#: board, which is polled hourly because its *contents* change. The last value
+#: repeats, so a company is retried about weekly rather than abandoned: a site
+#: without a board today may publish one next month.
+DISCOVERY_BACKOFF_HOURS = (6, 24, 72, 168)
+
+
+def discovery_backoff(attempts: int) -> timedelta:
+    """How long before discovery tries this company again."""
+    index = min(max(attempts, 1), len(DISCOVERY_BACKOFF_HOURS)) - 1
+    return timedelta(hours=DISCOVERY_BACKOFF_HOURS[index])
 
 
 async def start_run(session: AsyncSession, *, trigger: str, companies_total: int = 0) -> CrawlRun:
@@ -222,11 +238,63 @@ async def due_companies(
         select(Company)
         .outerjoin(CompanyCrawlState, CompanyCrawlState.company_id == Company.id)
         .where(
+            fetchable(),
             CompanyCrawlState.company_id.is_(None)
             | CompanyCrawlState.next_due_at.is_(None)
-            | (CompanyCrawlState.next_due_at <= current)
+            | (CompanyCrawlState.next_due_at <= current),
         )
         .order_by(CompanyCrawlState.next_due_at.asc().nullsfirst())
+        .limit(limit)
+    )
+    return list(rows.all())
+
+
+def fetchable() -> Any:
+    """The condition a company must meet before its board is worth fetching.
+
+    Three facts, all required, and the reason they are one function is that
+    "can we fetch this" is asked by the scheduler, the dispatcher and the
+    dashboard, and three copies would disagree.
+
+    A candidate imported from a spreadsheet has a name and a website and no
+    board. Sending it to `crawl_company` would fetch nothing, fail, and retry
+    on a backoff — queue noise standing in for the registry problem it actually
+    is. Before `source_status` existed there was nothing to test: `careers_url`
+    held a verified board and a Google search link in the same column.
+    """
+    return (
+        (Company.source_status == SourceStatus.VERIFIED.value)
+        & Company.slug.is_not(None)
+        & Company.ats_type.is_not(None)
+    )
+
+
+async def due_for_discovery(
+    session: AsyncSession, *, limit: int, now: datetime | None = None
+) -> list[Company]:
+    """Companies that need a board found, soonest first.
+
+    The mirror of `due_companies`, on its own column. Discovery needs its own
+    schedule because a company with no board never comes due under
+    `next_due_at` — it is not fetchable — so it would never be retried at all.
+
+    A NULL `discovery_next_at` means "as soon as possible", and a company with
+    no state row at all is included for the reason the fetch query includes
+    one: a row the import created moments ago must not be invisible.
+    """
+    current = now or datetime.now(UTC)
+    rows = await session.scalars(
+        select(Company)
+        .outerjoin(CompanyCrawlState, CompanyCrawlState.company_id == Company.id)
+        .where(
+            Company.source_status.in_(
+                (SourceStatus.HINT.value, SourceStatus.UNVERIFIED.value, SourceStatus.FAILED.value)
+            ),
+            CompanyCrawlState.company_id.is_(None)
+            | CompanyCrawlState.discovery_next_at.is_(None)
+            | (CompanyCrawlState.discovery_next_at <= current),
+        )
+        .order_by(CompanyCrawlState.discovery_next_at.asc().nullsfirst())
         .limit(limit)
     )
     return list(rows.all())

@@ -223,6 +223,14 @@ class Settings(BaseSettings):
     #: the registry is swept. Five minutes means a company is crawled within
     #: five minutes of becoming due, which against an hourly interval is
     #: noise, and it keeps each tick's batch small.
+    #: Vendors discovery may probe when evidence-based resolution fails, as a
+    #: comma-separated list. All four by default. Narrowing it is a budget
+    #: control, not a speedup: CLAUDE.md records Workable at ~3.9s per probe
+    #: against ~1.5s for the others and resolving nothing in a 60-company
+    #: sample, so `greenhouse,lever,ashby` is a defensible pilot setting — and
+    #: a real coverage loss, since genuine Workable employers become invisible.
+    crawler_discovery_vendors: str = "greenhouse,lever,ashby,workable"
+
     crawler_tick_seconds: int = 300
     #: Companies enqueued per tick. The cap is the difference between a queue
     #: and one long cycle wearing a queue as a disguise.

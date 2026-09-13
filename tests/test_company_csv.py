@@ -332,23 +332,40 @@ def test_a_header_with_a_slash_in_it_is_still_matched(tmp_path: Path) -> None:
     assert rows[0].name == "15Five"
 
 
-def test_a_search_link_is_unusable_not_bespoke(tmp_path: Path) -> None:
-    """The expensive mistake. A `google.com/search?q=site:acme.com+careers` URL
-    is a real http URL that names nothing, and a real sheet had one in the
-    careers column for 3,797 of 3,802 rows.
+def test_a_search_link_is_never_bespoke_and_the_website_is_the_lead(tmp_path: Path) -> None:
+    """The expensive mistake, and the one that was made in avoiding it.
 
-    Filed as bespoke, `make probe-bespoke` would fetch thousands of
+    A `google.com/search?q=site:acme.com+careers` URL is a real http URL that
+    names nothing, and a real sheet had one in the careers column for 3,864 of
+    3,869 rows. Filed as bespoke, `make probe-bespoke` would fetch thousands of
     search-engine pages hunting for JobPosting data that is definitionally not
-    there — a robots violation that learns nothing. `find_boards` from the
-    company's own domain is the tool for these.
+    there — a robots violation that learns nothing. That half is unchanged and
+    still asserted.
+
+    **The other half was wrong.** These rows were filed `unusable`, and they
+    are not: each carries the company's own website, which is exactly the
+    evidence `find_boards` resolves a board from — `resolve_one` tries a
+    supplied URL first and prefers it over guessing from the name. Calling them
+    unusable discarded the lead and made the sheet look 99% dead.
+
+    So they are `candidates` now: discovery work, neither a crawlable board nor
+    a dead end. This is a deliberate behaviour change, not a loosened
+    assertion — `bespoke` and `promotable` are asserted unchanged below.
     """
     rows, _ = read_rows(_sheet(tmp_path, REAL_SHEET))
     report = triage(rows)
 
     assert [c.slug for c in report.promotable] == ["xchg"]
     assert [c.row.name for c in report.bespoke] == ["Twilio"]
-    assert {c.row.name for c in report.unusable} == {"15Five", "23andMe"}
-    assert all("search link" in c.reason for c in report.unusable)
+    assert report.unusable == [], "a row with a website is not unusable"
+    assert {c.row.name for c in report.candidates} == {"15Five", "23andMe"}
+    assert all("search link" in c.reason for c in report.candidates)
+    # The hint is kept rather than discarded — the sheet said something and the
+    # row remembers what.
+    assert all(
+        c.row.career_hint.startswith("https://www.google.com/search") for c in report.candidates
+    )
+    assert all(c.row.website for c in report.candidates)
 
 
 def test_the_two_readers_share_one_header_normaliser() -> None:

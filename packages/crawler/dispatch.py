@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -35,7 +36,13 @@ from packages.core.models import Company, CrawlRun, QueueTask
 from packages.core.queue import enqueue
 from packages.crawler.crawl import CompanyResult, CrawlReport
 from packages.crawler.extract import CompanySeed, extractor_for
-from packages.crawler.runs import due_companies, finish_run, start_run
+from packages.crawler.runs import (
+    due_companies,
+    due_for_discovery,
+    fetchable,
+    finish_run,
+    start_run,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult
@@ -236,13 +243,22 @@ async def due_for_dispatch(
     would be one long cycle again, wearing a queue as a disguise.
     """
     if force:
-        rows = await session.scalars(select(Company).order_by(Company.name).limit(limit))
+        # `force` bypasses the *schedule*, never the eligibility test. An
+        # unresolved candidate has no board to fetch however urgently it is
+        # asked for, and enqueuing one converts a registry problem into a
+        # retrying queue task.
+        rows = await session.scalars(
+            select(Company).where(fetchable()).order_by(Company.name).limit(limit)
+        )
         return list(rows.all())
     return await due_companies(session, limit=limit)
 
 
 __all__ = [
     "CRAWL_COMPANY_TASK_KIND",
+    "DISCOVER_COMPANY_TASK_KIND",
+    "discovery_backlog",
+    "dispatch_discovery",
     "backlog",
     "tick",
     "DispatchReport",
@@ -252,6 +268,56 @@ __all__ = [
     "fold_into_run",
     "seed_from",
 ]
+
+
+#: One company, one discovery task.
+DISCOVER_COMPANY_TASK_KIND = "discover_company"
+
+
+async def dispatch_discovery(
+    session: AsyncSession, companies: list[Company], *, now: datetime | None = None
+) -> int:
+    """Enqueue one discovery task per company, and claim them. Does not commit.
+
+    Claimed for the same reason fetch dispatch claims: `discovery_next_at` only
+    moves when the task reports, and a tick is far shorter than a discovery
+    attempt, so without this every tick re-enqueues everything outstanding.
+
+    The claim is provisional — the handler overwrites it with a real backoff or
+    clears it on success — and it is one hour rather than a full backoff, so a
+    worker lost between claim and report costs an hour rather than a week.
+    """
+    if not companies:
+        return 0
+    current = now or datetime.now(UTC)
+    for company in companies:
+        await enqueue(session, DISCOVER_COMPANY_TASK_KIND, {"company_id": str(company.id)})
+    await session.execute(
+        text("""
+        INSERT INTO company_crawl_states (company_id, discovery_next_at)
+        SELECT id, :claim FROM companies WHERE id = ANY(:ids)
+        ON CONFLICT (company_id) DO UPDATE SET discovery_next_at = :claim
+        """),
+        {"ids": [c.id for c in companies], "claim": current + timedelta(hours=1)},
+    )
+    await session.flush()
+    log.info("discovery_dispatched", companies=len(companies))
+    return len(companies)
+
+
+async def discovery_backlog(session: AsyncSession) -> int:
+    """Discovery tasks enqueued and not yet finished."""
+    return int(
+        await session.scalar(
+            select(func.count())
+            .select_from(QueueTask)
+            .where(
+                QueueTask.kind == DISCOVER_COMPANY_TASK_KIND,
+                QueueTask.status.in_(("pending", "running")),
+            )
+        )
+        or 0
+    )
 
 
 async def backlog(session: AsyncSession) -> int:
@@ -289,6 +355,23 @@ async def tick(
     a slow cycle into an unbounded one, and hides how far behind it is inside
     a number nobody reads until the disk fills.
     """
+    # Discovery first, because it is what turns candidates into fetch work and
+    # a tick that only ever looked for verified boards would leave an imported
+    # registry untouched for ever.
+    discovery_outstanding = await discovery_backlog(session)
+    if discovery_outstanding < max_backlog:
+        owed = await due_for_discovery(
+            session, limit=min(limit, max_backlog - discovery_outstanding)
+        )
+        if owed:
+            await dispatch_discovery(session, owed)
+    else:
+        log.warning(
+            "discovery_tick_skipped_backlog",
+            outstanding=discovery_outstanding,
+            limit=max_backlog,
+        )
+
     outstanding = await backlog(session)
     if outstanding >= max_backlog:
         log.warning("crawl_tick_skipped_backlog", outstanding=outstanding, limit=max_backlog)

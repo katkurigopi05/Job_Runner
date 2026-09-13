@@ -41,6 +41,7 @@ Run all commands from the repository root:
 cp .env.example .env
 make install
 .venv/bin/playwright install chromium
+make nltk-data
 make web-install
 make up
 make migrate
@@ -52,7 +53,8 @@ What each command does:
 - `cp .env.example .env` creates your private local configuration. Never commit `.env`.
 - `make install` creates `.venv` with Python 3.12 and installs the backend and development packages.
 - `.venv/bin/playwright install chromium` installs the browser version required by the worker.
-- `make web-install` installs the dashboard's Node packages.
+- `make nltk-data` downloads the POS tagger the fabrication guard uses. Skipping it does not fail: the guard falls back to a capitalization heuristic that cannot see a lowercase invented claim, and `make doctor` reports which one is active.
+- `make web-install` installs the dashboard's Node packages. `make web` does not do this for you.
 - `make up` starts Postgres and pgvector in Docker.
 - `make migrate` creates or updates the database schema.
 - `make doctor` checks the database, migrations, browser, PDF libraries, vault key, and optional local services. It prints the command needed to fix each failed check.
@@ -115,12 +117,25 @@ make web
 Open `http://localhost:3001`.
 
 Port `3001` because `make web` runs `next dev -p 3001` — `3000` was already taken
-on this machine. The dev server also binds `0.0.0.0`, so the dashboard is
-reachable from a phone on the same network, which is how a review queue gets
-checked away from the desk. That is only defensible on a network you trust: the
-dashboard has no authentication. On a café or conference network, change it back
-in `apps/web/package.json`. `next start` (production) is unchanged and still
-binds localhost on `3000`.
+on this machine.
+
+**The dashboard binds `127.0.0.1` — loopback only — and so does `next start`.**
+It used to bind every interface, so it could be read from a phone on the same
+network. What that also did was put the API on the network: the dashboard
+rewrites `/api/*` to the backend, and the backend's localhost guard reads the
+socket peer, which through the rewrite is always the dashboard itself on
+loopback. A LAN client could read candidate records and reach the endpoint that
+creates applications. There was no misconfiguration involved; that was the
+shipped default.
+
+To get the phone case back, on a network you have decided to trust:
+
+```bash
+JOBRUNNER_WEB_HOST=0.0.0.0 make web
+```
+
+Nothing about the dashboard is authenticated, so that decision is the whole of
+the protection. `JOBRUNNER_WEB_PORT` moves the port the same way.
 
 The header shows a status pill. When everything is up it reads `localhost only`;
 it turns amber for `db down` (run `make up`) and red for `api down` (run
@@ -625,6 +640,83 @@ make import-portals f=/path/to/portals.yml ARGS=--dry-run
 ```
 
 Previews importing a maintained company portal list. Remove `ARGS=--dry-run` after inspecting the result.
+
+### From a spreadsheet of companies to a matched posting
+
+This is the whole path for a CSV of company names and careers URLs. Each step
+is separately resumable, and nothing submits anything.
+
+```bash
+# 1. See what the sheet contains. Offline, read-only, no database.
+make inspect-csv src=companies.csv
+
+# 2. Register every row as a company the crawler can reach.
+#    Idempotent: run it again after editing the sheet. A board that discovery
+#    has already verified is never downgraded back to a hint.
+make import-csv src=companies.csv register=1
+
+# 3. Optional, and a different thing: append the rows that are *already* a
+#    board URL to the curated git-tracked registry.
+make import-csv src=companies.csv write=1
+
+# 4. Project that curated registry into the database too, if you keep one.
+make registry-sync
+
+# 5. Dispatch a cycle: discovery for companies without a board, fetching for
+#    the boards already verified. Enqueues only.
+make crawl
+
+# 6. Drain the queue. This is what does the work, and it is interruptible —
+#    ^C and run it again, nothing is lost and nothing is repeated.
+make workers n=4
+```
+
+Progress, at any point:
+
+```bash
+curl -s localhost:8000/companies/status | python -m json.tool
+```
+
+It reports companies by source status, how many are waiting on a discovery
+retry and when the next one is due, queue depth per kind, postings and matches
+stored, and — when the posting corpus is still small — why scoring is using the
+unweighted embedder rather than looking like a failure to match.
+
+Resuming after an interruption is steps 5 and 6 again. A discovery that failed
+is retried on a widening backoff rather than immediately, so a second `make
+crawl` straight after the first will correctly do less than you expect; the
+`retrying_next_at` field says when.
+
+### A bounded live pilot
+
+Everything above can be exercised offline. A pilot is the first time real
+employers' hosts are touched, so bound it explicitly rather than trusting
+yourself to stop.
+
+```bash
+# 20 companies, one tick that does not re-arm itself, one worker, 15 minutes.
+head -21 companies.csv > /tmp/pilot.csv          # header + 20 rows
+make import-csv src=/tmp/pilot.csv register=1
+make crawl dispatch=1 limit=20 once=1
+timeout 900 make worker                          # ^C or the timeout ends it
+curl -s localhost:8000/companies/status | python -m json.tool
+```
+
+Three bounds, and each one is a different failure it prevents:
+
+- `limit=20` caps the companies enqueued by this tick. Without it the tick
+  enqueues up to `CRAWLER_DISPATCH_BATCH` (250).
+- `once=1` stops the tick scheduling its successor. A dispatch tick normally
+  re-arms every five minutes, which is what makes the sweep continuous — and
+  what makes an unattended pilot keep running after you stop watching.
+- `timeout 900` is the wall clock. The rate limiter is what keeps the request
+  count down inside it: the four ATS API hosts sit at a 2s floor and a
+  company's own host at 60s, so a single worker cannot exceed roughly 450
+  requests in 15 minutes even if every company needs several probes.
+
+Request counts per host are in `crawler_host_budgets`; `make workers n=4`
+shares those counters rather than multiplying them, so raising the worker count
+shortens the wall clock without raising the rate any host sees.
 
 ## 9. Development and verification commands
 

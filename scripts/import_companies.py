@@ -27,6 +27,7 @@ actually has rather than classifying everything as unusable.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
@@ -60,7 +61,29 @@ def _additions(report: TriageReport, existing: list[CompanySeed]) -> list[Compan
     return additions
 
 
+async def _register(report: TriageReport, *, source_file: str) -> str:
+    """Write the triaged rows into the database the dispatcher reads.
+
+    Separate from `--write`, which appends *accepted boards* to the curated
+    YAML. These are candidates: thousands of them, machine-written, and not
+    something to put in a file meant to be read in a diff. See
+    `packages/crawler/registry.py` on which store owns which status.
+    """
+    from packages.core.db import get_sessionmaker
+    from packages.crawler.registry import register_candidates
+
+    async with get_sessionmaker()() as session:
+        outcome = await register_candidates(session, report, source_file=source_file)
+        await session.commit()
+    return f"registered into the database: {outcome.summary()}"
+
+
 def main(argv: list[str] | None = None) -> int:
+    """Sync entry point — the one the Makefile and the shell call."""
+    return asyncio.run(run(argv))
+
+
+async def run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("csv", type=Path, help="companies CSV")
     parser.add_argument("--seeds", type=Path, default=None, help="target registry file")
@@ -69,6 +92,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--write", action="store_true", help="append the promotable rows to the registry"
+    )
+    parser.add_argument(
+        "--register",
+        action="store_true",
+        help=(
+            "write every row into the companies table as a candidate, so discovery "
+            "and dispatch can reach them. Idempotent; never downgrades a verified row."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -97,6 +128,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{len(report.unusable)} rows carry no usable URL, for example:")
         for entry in report.unusable[:5]:
             print(f"  - {entry.row.name or '(unnamed)'}: {entry.reason}")
+
+    if args.register:
+        print()
+        print(await _register(report, source_file=str(args.csv)))
 
     if not additions:
         print("\nNothing new to add to the registry.")

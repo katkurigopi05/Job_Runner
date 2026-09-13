@@ -12,6 +12,23 @@ Caveat: the check reads the socket peer address, which cannot be forged — but
 running uvicorn with `--proxy-headers` makes it trust X-Forwarded-For instead,
 and that header *is* attacker-controlled. Do not combine `--proxy-headers`
 with this guard and expect it to hold.
+
+**A second caveat, found the hard way, and it needs no misconfiguration at
+all.** The peer address is the peer's, not the *user's*. Anything that proxies
+to this app is the peer, so a proxy reachable from the network makes this app
+reachable from the network while every request still arrives from 127.0.0.1.
+
+That was the shipped state: the dashboard bound `0.0.0.0` and
+`apps/web/next.config.ts` rewrites `/api/:path*` here, so a LAN client could
+read candidate records and reach `POST /applications` — which answered 400 for
+a malformed body rather than 401, meaning it had reached the handler. This
+guard behaved perfectly throughout; it was answering a question about the
+dashboard.
+
+The fix is over there — both dashboard scripts bind `127.0.0.1` now
+(CLAUDE.md §3). What this docstring can usefully say is the general rule: **the
+bind address of anything in front of this app is part of this app's exposure**,
+and no check inside a request can see it.
 """
 
 from __future__ import annotations

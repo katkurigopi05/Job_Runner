@@ -109,9 +109,14 @@ the spec asks for, checked against the code, sized as buildable projects.
 - **Secrets never touch the database in plaintext or logs.** ATS account
   passwords go through an encrypted vault, stored outside `storage/` so they
   never travel with your résumés and screenshots.
-- **The API refuses non-local callers.** It has no authentication and can
-  submit real applications, so it rejects anything that is not loopback even
-  if you start it with `--host 0.0.0.0`.
+- **The API refuses non-local callers, and the dashboard binds loopback.** The
+  API has no authentication and can submit real applications, so it rejects any
+  client that is not loopback even if you start it with `--host 0.0.0.0`. That
+  guard reads the socket peer, so it cannot be forged — but it also cannot see
+  past a proxy: the dashboard rewrites `/api/*` to the API, which means a
+  network-bound dashboard is a network-bound API however the guard is set. Both
+  `make web` and `next start` therefore bind `127.0.0.1`. Override deliberately
+  with `JOBRUNNER_WEB_HOST`, on a network you trust.
 - **One worker per `WORKER_ID`.** Browser profiles are locked; a second worker
   sharing an id fails loudly instead of corrupting the session store.
 - **Your résumé and application data are PII.** They stay on your machine in
@@ -120,7 +125,9 @@ the spec asks for, checked against the code, sized as buildable projects.
 ## Running it
 
 Requirements: Python 3.12, Docker (for Postgres + pgvector), Node.js (for the
-dashboard).
+dashboard), and two things pip cannot install — Pango for PDF rendering and a
+Playwright browser. `make doctor` checks all of them and prints the fix for
+whatever is missing; the list is under **First-run notes** below.
 
 ```bash
 git clone <this-repo>
@@ -130,12 +137,29 @@ cp .env.example .env        # fill in your own values — .env is gitignored
 make install                # venv + dependencies
 make up                     # Postgres + pgvector, creates jobrunner and jobrunner_test
 make migrate                # apply the schema
+
+.venv/bin/playwright install chromium   # the browser that fills forms
+make nltk-data              # the POS tagger the fabrication guard needs
+make doctor                 # confirms the above, and says what is still missing
+
 make gate-0                 # lint, types, migration drift, full test suite
 
 make api                    # http://127.0.0.1:8000
 make worker                 # in a second terminal
-make web                    # the dashboard, http://localhost:3001
+make web-install            # once: installs the dashboard's npm dependencies
+make web                    # the dashboard, http://127.0.0.1:3001
 ```
+
+`make web-install` is a separate step and `make web` does not run it — a first
+run without it fails on a missing `next` binary rather than on anything that
+names the real problem.
+
+`make nltk-data` is likewise not part of `make install`, because it is a
+download rather than a package. Skipping it does not fail: the fabrication
+guard falls back to matching on capitalization, which cannot see a lowercase
+invented claim. `GuardReport.extractor` records which one ran and `make doctor`
+reports it — a guard that quietly loses a check is worse than one that never
+had it.
 
 The shipped default costs nothing and sends nothing anywhere: `LLM_PROVIDER=stub`
 for tests, Ollama for anything local. Remote providers — Gemini, Anthropic,
@@ -152,13 +176,27 @@ before `make up`.
 
 ### First-run notes
 
+Run `make doctor` rather than working through these by hand — it checks each
+one and prints the fix. They are listed because knowing *why* a step exists is
+what tells you whether skipping it matters.
+
 - **macOS needs Pango for PDF rendering.** WeasyPrint links against system
-  libraries that macOS does not ship: `brew install pango`. Without it,
-  `import weasyprint` fails with a `libgobject` load error and résumé
-  rendering will not work. Linux users generally already have these.
+  libraries that macOS does not ship: `brew install pango cairo gdk-pixbuf
+  libffi`. Without it, `import weasyprint` fails with a `libgobject` load error
+  and résumé rendering will not work. On Debian or Ubuntu the equivalent is
+  `apt-get install libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0`;
+  most Linux desktops already have them. A missing Pango does not fail cleanly
+  — it segfaults pytest partway through a run.
 - **Install the browser once**: `.venv/bin/playwright install chromium`.
   Playwright pins its browser build to the wheel version, which is why
   `pyproject.toml` pins the wheel to a single minor.
+- **The tagger data is a download**: `make nltk-data`. The fabrication guard
+  (CLAUDE.md §2.1) POS-tags rewritten bullets to find noun-phrase claims;
+  without the data it falls back to a capitalization heuristic that cannot see
+  a lowercase fabrication. Nothing fails loudly, which is exactly why it is
+  worth doing before you trust a tailored résumé.
+- **The dashboard has its own dependencies**: `make web-install` before
+  `make web`, once per checkout.
 - **Port 5432** maps straight through. If you already run Postgres locally
   (Homebrew, Postgres.app), change the host side of the port mapping in
   `docker-compose.yml` or stop the other server first.

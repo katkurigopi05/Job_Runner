@@ -14,11 +14,13 @@ import pytest
 from sqlalchemy import func, select
 
 from apps.worker.crawl_job import CRAWL_TASK_KIND, handle_crawl
+from packages.core.enums import SourceStatus
 from packages.core.models import Company, CompanyCrawlState, CrawlRun, QueueTask
 from packages.crawler.crawl import CompanyResult
 from packages.crawler.dispatch import (
     CRAWL_COMPANY_TASK_KIND,
     backlog,
+    due_for_dispatch,
     tick,
 )
 from packages.crawler.runs import record_attempt
@@ -26,7 +28,14 @@ from packages.crawler.runs import record_attempt
 
 async def _registry(db_session, count: int) -> list[Company]:
     companies = [
-        Company(name=f"Company {n}", slug=f"co{n}", ats_type="greenhouse", poll_interval_s=3600)
+        Company(
+            name=f"Company {n}",
+            slug=f"co{n}",
+            ats_type="greenhouse",
+            poll_interval_s=3600,
+            # See `runs.fetchable()`: only a verified board is fetch work.
+            source_status=SourceStatus.VERIFIED.value,
+        )
         for n in range(count)
     ]
     db_session.add_all(companies)
@@ -148,16 +157,66 @@ async def test_nothing_due_is_not_an_empty_run(db_session) -> None:
     assert await db_session.scalar(select(func.count()).select_from(CrawlRun)) == 0
 
 
-async def test_a_registry_of_unusable_rows_does_not_leave_a_run_open(db_session) -> None:
-    """Nothing will ever report, so nothing would ever close it."""
+async def test_a_candidate_with_no_board_is_not_fetch_work_at_all(db_session) -> None:
+    """It never reaches a run now, which is better than closing one.
+
+    This used to assert that a registry of unusable rows still produced a
+    *completed* run rather than one stuck `running`. `runs.fetchable()` makes
+    the question moot: a company with no slug is not fetch work, so no run is
+    opened and there is nothing to leave open. The row is discovery work — see
+    `test_a_candidate_is_discovery_work_not_fetch_work`.
+    """
     db_session.add(Company(name="No board", slug=None, ats_type="greenhouse"))
     await db_session.flush()
 
     report = await tick(db_session, limit=10, max_backlog=100)
 
+    assert report is None, "nothing was fetchable, so nothing was dispatched"
+    assert await db_session.scalar(select(func.count()).select_from(CrawlRun)) == 0
+
+
+async def test_a_run_whose_every_candidate_is_declined_still_closes(db_session) -> None:
+    """The original concern, reached the way it can still happen.
+
+    A *verified* board whose ATS has no extractor passes `fetchable()` and is
+    then declined by `seed_from`, so the run is opened and nothing will ever
+    report against it. An unclosable run reads exactly like a cycle still in
+    progress.
+    """
+    db_session.add(
+        Company(
+            name="Taleo Co",
+            slug="taleoco",
+            ats_type="taleo",
+            source_status=SourceStatus.VERIFIED.value,
+        )
+    )
+    await db_session.flush()
+
+    report = await tick(db_session, limit=10, max_backlog=100)
+
+    assert report is not None
     assert report.enqueued == 0
+    assert report.unusable == ["Taleo Co"]
     run = await db_session.scalar(select(CrawlRun))
     assert run.status == "completed", "an unclosable run reads as a cycle still running"
+
+
+async def test_a_candidate_is_discovery_work_not_fetch_work(db_session) -> None:
+    """The route an imported row actually takes."""
+    from packages.crawler.runs import due_for_discovery
+
+    db_session.add(
+        Company(
+            name="Candidate",
+            supplied_website="https://candidate.example",
+            source_status=SourceStatus.HINT.value,
+        )
+    )
+    await db_session.flush()
+
+    assert [c.name for c in await due_for_discovery(db_session, limit=10)] == ["Candidate"]
+    assert await due_for_dispatch(db_session, limit=10) == []
 
 
 @pytest.mark.parametrize("force", [False, True])

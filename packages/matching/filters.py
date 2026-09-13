@@ -15,7 +15,14 @@ import re
 from dataclasses import dataclass, field
 
 from packages.core.config import get_settings
+from packages.core.enums import CitizenshipStatus
 from packages.core.models import Posting, Profile
+from packages.matching.eligibility import (
+    Citizenship,
+    PostingEligibility,
+    Sponsorship,
+    read_posting,
+)
 from packages.matching.locality import (
     Locality,
     is_domestic,
@@ -39,11 +46,6 @@ SENIORITY_LEVELS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("principal", ("principal", "distinguished", "architect", "director", "vp", "head of")),
 )
 
-_SPONSORSHIP_RE = re.compile(
-    r"no visa sponsorship|not able to sponsor|unable to sponsor|"
-    r"without sponsorship|cannot provide sponsorship|no sponsorship",
-    re.I,
-)
 _CLEARANCE_RE = re.compile(r"security clearance|ts/sci|top secret|public trust clearance", re.I)
 
 
@@ -205,17 +207,78 @@ def location_matches(
     return is_remote(posting)
 
 
-def sponsorship_ok(profile: Profile, posting: Posting) -> bool:
+def eligibility_of(posting: Posting) -> PostingEligibility:
+    """What this posting states about authorization. See `matching.eligibility`.
+
+    One reading, used by both filters below and by the feed, because two
+    readings of the same sentences would eventually disagree — and the one the
+    owner sees on the card would stop being the one that decided whether the
+    card is there at all.
+    """
+    return read_posting(posting.description_raw)
+
+
+def sponsorship_ok(
+    profile: Profile, posting: Posting, *, eligibility: PostingEligibility | None = None
+) -> bool:
     """Exclude postings that rule out sponsorship when the owner needs it.
 
-    Only fires on an explicit statement in the posting. Silence is not taken
-    as either answer — §2.2's caution about work authorization applies to
-    inference as much as to answering.
+    Only an *explicit refusal* excludes. Three things are deliberately not a
+    refusal, and each was getting the wrong answer before:
+
+    - **Silence.** A posting that never mentions sponsorship has said nothing.
+      §2.2's caution about work authorization applies to reading as much as to
+      answering, so nothing is concluded from an absence.
+    - **Ambiguity.** "Candidates with or without sponsorship requirements may
+      apply" contains the substring `without sponsorship`, and the old pattern
+      excluded on it — hiding the postings that go furthest out of their way to
+      say sponsorship is not a barrier.
+    - **A contradiction.** A posting that both refuses and offers has not
+      established a refusal, and a hard filter needs one.
+
+    Conversely a *negated* refusal now excludes, which is the commonest English
+    phrasing and the one the literal pattern list could not see: "We do not
+    offer visa sponsorship" matched nothing at all.
     """
     if not profile.needs_sponsorship:
         return True
-    text = posting.description_raw or ""
-    return not _SPONSORSHIP_RE.search(text)
+    read = eligibility or eligibility_of(posting)
+    return read.sponsorship is not Sponsorship.UNAVAILABLE
+
+
+def citizenship_ok(
+    profile: Profile, posting: Posting, *, eligibility: PostingEligibility | None = None
+) -> bool:
+    """Exclude postings restricted to a citizenship the owner does not hold.
+
+    A separate filter from `sponsorship_ok` because it is a separate fact.
+    "US citizens only" is not a statement about sponsorship: a permanent
+    resident needs no sponsorship and still fails it, and no employer
+    generosity fixes it. Read through the sponsorship filter it was invisible.
+
+    **An unstated profile never excludes.** `citizenship_status` is NULL on
+    every existing row, and dropping a posting on a field nobody filled in
+    would hide jobs the owner may well be eligible for. The restriction is
+    surfaced instead — `eligibility.PostingEligibility` carries the sentence,
+    and the feed shows it. Silence on the owner's side is not a disqualification
+    any more than silence on the posting's side is a clearance.
+    """
+    read = eligibility or eligibility_of(posting)
+    if read.citizenship is Citizenship.UNSTATED:
+        return True
+    if profile.citizenship_status is None:
+        return True
+
+    status = profile.citizenship_status
+    if status == CitizenshipStatus.US_CITIZEN.value:
+        return True
+    # A permanent resident passes a citizens-*or-residents* posting and fails a
+    # citizens-only one. That distinction is the whole reason the two verdicts
+    # are separate values rather than one "restricted" flag.
+    return (
+        read.citizenship is Citizenship.CITIZENS_OR_RESIDENTS_ONLY
+        and status == CitizenshipStatus.PERMANENT_RESIDENT.value
+    )
 
 
 def clearance_ok(posting: Posting) -> bool:
@@ -266,8 +329,13 @@ def apply_filters(
         reasons.append("posting is closed")
     if not location_matches(profile, posting):
         reasons.append(f"location {posting.location!r} is outside the search area")
-    if not sponsorship_ok(profile, posting):
+    # Read once and handed to both: `eligibility_of` scans the description, and
+    # this runs over every posting in the corpus on every rescore.
+    authorization = eligibility_of(posting)
+    if not sponsorship_ok(profile, posting, eligibility=authorization):
         reasons.append("posting states it cannot sponsor and the profile needs sponsorship")
+    if not citizenship_ok(profile, posting, eligibility=authorization):
+        reasons.append(f"posting is restricted to {authorization.restriction()}")
     if not clearance_ok(posting):
         reasons.append("posting requires a security clearance")
     if not seniority_ok(posting, target_seniority):

@@ -198,6 +198,30 @@ class SharedHostRateLimiter:
         await self.sleeper(waited)
         return waited
 
+    async def wait_for(self, host: str) -> float:
+        """Seconds until `host` may be requested, reserving nothing.
+
+        Reads the marker instead of taking a slot, so it can be asked before
+        committing a worker to a task. It is deliberately *not* how the floor is
+        enforced: between this read and a request another worker may reserve the
+        slot, and only `acquire`'s single atomic statement is safe against that.
+        Using this in place of `acquire` would reintroduce exactly the
+        check-then-act race the reservation scheme exists to close.
+        """
+        async with self._sessions()() as session:
+            row = (
+                await session.execute(
+                    text("""
+                    SELECT next_allowed_at, clock_timestamp() AS observed_now
+                      FROM crawler_host_budgets WHERE host = :host
+                    """),
+                    {"host": host},
+                )
+            ).one_or_none()
+        if row is None:
+            return 0.0
+        return max(0.0, float((row.next_allowed_at - row.observed_now).total_seconds()))
+
     async def record(self, host: str) -> None:
         """Account for a request `acquire` did not reserve."""
         async with self._sessions()() as session:

@@ -10,6 +10,8 @@ import {
 import { ErrorPanel } from "@/components/error-panel";
 import { FilterBar } from "./filter-bar";
 import { AtsPanel } from "./ats-panel";
+import { DiscoveryStrip } from "./discovery-strip";
+import { EligibilityNote } from "@/components/eligibility-note";
 import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +66,13 @@ export default async function MatchesPage({
         </p>
       </header>
 
+      {/* Before the feed, because what the feed is *missing* is the question
+          an empty one raises — and a crawl part-way through thousands of
+          companies reads identically to a broken pipeline without it. */}
+      <Suspense fallback={null}>
+        <DiscoveryStrip />
+      </Suspense>
+
       <Suspense fallback={null}>
         <FilterBar resultCount={matches.length} />
       </Suspense>
@@ -73,7 +82,9 @@ export default async function MatchesPage({
           <p className="font-mono text-sm text-ink-faint">nothing scored yet</p>
           <p className="mx-auto mt-3 max-w-prose text-sm text-ink-soft">
             Scoring happens during a crawl. Run the worker and give it a cycle over the company
-            registry in <code className="font-mono text-xs">seeds/companies.yaml</code>.
+            registry in <code className="font-mono text-xs">seeds/companies.yaml</code>, or{" "}
+            <code className="font-mono text-xs">make crawl dispatch=1</code> for companies imported
+            from a spreadsheet. The counts above say which of those is still outstanding.
           </p>
         </div>
       ) : (
@@ -157,6 +168,8 @@ export default async function MatchesPage({
                 ) : null}
 
                 <AtsPanel postingId={match.posting_id} profileId={match.profile_id} />
+
+                <EligibilityNote eligibility={match.eligibility} />
 
                 {match.excluded_by.length > 0 ? (
                   <p className="mt-3 rounded-[var(--radius)] border border-stop/40 bg-stop-soft px-3 py-2 font-mono text-xs text-stop">

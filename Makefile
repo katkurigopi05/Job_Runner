@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching export-labels import-csv probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching export-labels import-csv inspect-csv registry-sync probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -147,7 +147,10 @@ GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py
   tests/test_crawl_store.py tests/test_crawl_runs.py tests/test_crawl_dispatch.py \
   tests/test_crawl_scheduler.py tests/test_shared_ratelimit.py \
   tests/test_incremental_matching.py tests/test_workday.py \
-  tests/test_migration_posting_dedupe.py
+  tests/test_migration_posting_dedupe.py \
+  tests/test_registry_sync.py tests/test_worker_host_blocking.py \
+  tests/test_matching_threshold.py tests/test_csv_to_match_e2e.py \
+  tests/test_eligibility.py tests/test_matches_api.py
 GATE6_TESTS := tests/test_inbox.py tests/test_inbox_duplicates.py
 
 gate-0: lint typecheck check-migrations
@@ -257,10 +260,21 @@ discover:
 # registry was polled only when someone inserted a row by hand — which is why
 # postings went stale with nothing looking broken.
 #
-#     make crawl              one cycle over the registry
-#     make crawl force=1      re-emit unchanged postings (rarely wanted)
+#     make crawl                        one cycle over the curated seed registry
+#     make crawl force=1                re-emit unchanged postings (rarely wanted)
+#     make crawl dispatch=1             sweep the companies *table* instead: one
+#                                       task per company, discovery for those
+#                                       with no verified board yet. This is the
+#                                       only path that reaches an imported CSV.
+#     make crawl dispatch=1 limit=20 once=1
+#                                       a bounded sweep that does not re-arm
+#                                       itself — what a pilot wants.
+#
+# The default is the seed-file cycle, unchanged. `dispatch=1` is opt-in because
+# it polls a candidate table that can hold thousands of rows, and a command
+# whose cost changes silently is worse than one more flag.
 crawl:
-	$(PY)/python -m scripts.crawl $(if $(force),--force,)
+	$(PY)/python -m scripts.crawl $(if $(force),--force,) $(if $(filter 1,$(dispatch)),--dispatch,) $(if $(limit),--limit $(limit),) $(if $(filter 1,$(once)),--once,)
 
 # make rescore — re-score every open posting against the profiles as they are
 # now. Crawling already re-scores, but returns early when the sweep emitted
@@ -303,9 +317,38 @@ export-labels:
 # Sort a CSV of companies + careers URLs into what we can crawl today. Offline,
 # so 3,000 rows take seconds. The bespoke remainder is written out as the work
 # queue for a generic extractor rather than counted and dropped.
+#
+# Three different writes, deliberately separate:
+#   make import-csv src=...              report only, touches nothing
+#   make import-csv src=... register=1   every row into the companies table,
+#                                        so discovery and dispatch can reach
+#                                        them. Idempotent; a board discovery
+#                                        has already verified is not downgraded.
+#   make import-csv src=... write=1      append the board-shaped rows to the
+#                                        curated YAML registry
+# `register` is the one that makes a sheet reachable by the crawler; `write` is
+# the one that edits a git-tracked file. See packages/crawler/registry.py on
+# which store owns which status.
 import-csv:
 	@test -n "$(src)" || (echo "set src=<companies.csv>" && exit 1)
-	$(PY)/python -m scripts.import_companies "$(src)" $(if $(out),--out $(out),) $(if $(filter 1,$(write)),--write,)
+	$(PY)/python -m scripts.import_companies "$(src)" $(if $(out),--out $(out),) $(if $(filter 1,$(register)),--register,) $(if $(filter 1,$(write)),--write,)
+
+# What a sheet actually contains, before importing it. Offline, read-only, and
+# reproducible: column roles, blank and duplicate rows, how each careers URL
+# classifies by structure, and what read_rows/triage will do with it. Run this
+# when a count in a report does not match what you expected — it recomputes
+# rather than restating.
+#   make inspect-csv src=companies.csv
+inspect-csv:
+	@test -n "$(src)" || (echo "set src=<companies.csv>" && exit 1)
+	$(PY)/python -m scripts.inspect_csv "$(src)"
+
+# Project the curated YAML registry into the companies table the dispatcher
+# reads. Idempotent, cannot reactivate a retired board, and will not overwrite
+# verification evidence newer than the seed file's own `checked` stamp.
+#   make registry-sync
+registry-sync:
+	$(PY)/python -m scripts.registry_sync $(if $(seeds),--seeds $(seeds),)
 
 # The other end of import-csv. Fetches each bespoke careers page once and asks
 # whether it publishes schema.org JobPosting data; only the pages that answer

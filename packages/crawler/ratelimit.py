@@ -153,6 +153,16 @@ class RateLimiter(Protocol):
         """The delay currently applied to `host`."""
         ...
 
+    async def wait_for(self, host: str) -> float:
+        """Seconds until `host` may be requested, reserving nothing.
+
+        A *peek*, for scheduling only. It must never be used in place of
+        `acquire`: between a peek and a request another worker can take the
+        slot, so the floor is enforced by `acquire`'s atomic reservation and
+        this only answers "is it worth claiming a worker for this right now".
+        """
+        ...
+
 
 class RateLimitTooLow(ValueError):
     """A configured delay below the floor. Refused, never clamped."""
@@ -255,6 +265,10 @@ class HostRateLimiter:
 
     def is_ready(self, host: str) -> bool:
         return self.time_until_ready(host) <= 0.0
+
+    async def wait_for(self, host: str) -> float:
+        """`time_until_ready`, under the async name the protocol requires."""
+        return self.time_until_ready(host)
 
     def _mark(self, host: str) -> None:
         """The state change behind `record`, with no `async` in front of it.

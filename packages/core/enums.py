@@ -179,3 +179,36 @@ class SeniorityLevel(StrEnum):
     MID = "mid"
     SENIOR = "senior"
     PRINCIPAL = "principal"
+
+
+class CitizenshipStatus(StrEnum):
+    """The owner's *current* authorization, as a fact a filter can act on.
+
+    Separate from `Profile.needs_sponsorship`, which is about the *future*: one
+    boolean was deciding both, and they are different questions. A permanent
+    resident needs no sponsorship and still fails "US citizens only"; a citizen
+    passes both; somebody on OPT may need sponsorship later and be authorized
+    now. Collapsing that into one flag is how a posting restricted to citizens
+    passed a filter that only knew about sponsorship.
+
+    **For filtering only.** §2.2 makes the answers typed onto an application
+    verbatim copies of `Profile.work_auth`, and that is unchanged — nothing
+    here is ever written into a form, because a structured guess at a legal
+    status is exactly what that rule forbids. This says which postings the owner
+    wants to see, which §1 calls the owner's input.
+
+    NULL is the shipped state and means *unstated*: the filter then flags an
+    explicit restriction rather than excluding on it, because excluding on a
+    field nobody filled in hides real jobs and inferring a status from a résumé
+    would be the §1 violation in the other direction.
+    """
+
+    US_CITIZEN = "us_citizen"
+    PERMANENT_RESIDENT = "permanent_resident"
+    #: Authorized to work now by some other means — OPT, TN, H-1B already held.
+    #: Deliberately one value: the distinctions between them change what
+    #: sponsorship is needed later, not whether a citizens-only posting
+    #: excludes the applicant, and this enum answers only the second question.
+    OTHER_AUTHORIZED = "other_authorized"
+    #: Not currently authorized in the United States.
+    NOT_AUTHORIZED = "not_authorized"
