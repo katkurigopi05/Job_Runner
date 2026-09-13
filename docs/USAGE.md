@@ -718,6 +718,31 @@ Request counts per host are in `crawler_host_budgets`; `make workers n=4`
 shares those counters rather than multiplying them, so raising the worker count
 shortens the wall clock without raising the rate any host sees.
 
+### Where the time actually went
+
+```bash
+make crawl-metrics
+make crawl-metrics n=30
+```
+
+Splits every host's cost into the two halves that want opposite responses:
+
+- **waiting on the rate limiter** — §2.6 being obeyed. Not a slowness, and
+  driving it down means breaking the rule. A cycle that is 98% wait has
+  nothing to tune; it finishes sooner by touching *more hosts in parallel*,
+  never by waiting less per host.
+- **in the request itself** — the only half where a speed-up exists.
+  Connection reuse, body size, and how many requests one company costs.
+
+Reads counters, fetches nothing, safe to run mid-crawl. It reports nothing
+until the first fetch after the counters were added: an existing host row has
+served requests nobody measured, and 0 there means uncounted rather than free.
+
+For scale, the floors alone: 181 boards at the 2s shared-API floor is about
+6 minutes serialised on one vendor and 1.5 across four; a company's own site
+is 60s, so discovery costs about 2 minutes per company — overlapping, since
+those are all distinct hosts.
+
 ## 9. Development and verification commands
 
 | Command | Purpose |

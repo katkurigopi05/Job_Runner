@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching export-labels import-csv inspect-csv registry-sync probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching export-labels import-csv inspect-csv registry-sync crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -150,6 +150,7 @@ GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py
   tests/test_migration_posting_dedupe.py \
   tests/test_registry_sync.py tests/test_worker_host_blocking.py \
   tests/test_matching_threshold.py tests/test_csv_to_match_e2e.py \
+  tests/test_request_cost.py \
   tests/test_eligibility.py tests/test_matches_api.py \
   tests/test_feed_reads_as_encouraging.py
 GATE6_TESTS := tests/test_inbox.py tests/test_inbox_duplicates.py \
@@ -351,6 +352,14 @@ inspect-csv:
 #   make registry-sync
 registry-sync:
 	$(PY)/python -m scripts.registry_sync $(if $(seeds),--seeds $(seeds),)
+
+# Where the crawl's wall-clock went, per host: time inside the rate limiter
+# against time in the request. Those want opposite responses — the first is
+# §2.6 being obeyed and cannot be tuned, the second is the only half where a
+# speed-up exists. Reads counters, fetches nothing, safe to run mid-crawl.
+#   make crawl-metrics n=30
+crawl-metrics:
+	$(PY)/python -m scripts.crawl_metrics $(if $(n),-n $(n),)
 
 # The other end of import-csv. Fetches each bespoke careers page once and asks
 # whether it publishes schema.org JobPosting data; only the pages that answer

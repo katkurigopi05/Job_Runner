@@ -410,6 +410,20 @@ class CrawlerHostBudget(Base):
     #: site's own `Crawl-delay` asked for more. Shared so that a rule one
     #: worker read from robots.txt binds the others too.
     delay_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+
+    #: Cumulative cost of every request this host has served us, split into
+    #: the half we chose and the half we did not. See `crawler/meter.py`.
+    #:
+    #: On the same row as the reservation because the alternative is an
+    #: in-process counter, and `make workers n=4` is four processes — each
+    #: would report a quarter of the truth and none would say so.
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    #: Seconds spent inside the rate limiter. A rule being obeyed, not a
+    #: slowness: driving it down means breaking §2.6.
+    waited_seconds: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
+    #: Seconds spent in the request itself, both gates already passed. The
+    #: only half where a speed-up is actually available.
+    network_seconds: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
     updated_at: Mapped[datetime] = _created_at()
 
 

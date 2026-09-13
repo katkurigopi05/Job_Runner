@@ -8,6 +8,7 @@ forget to be polite; it has no way to reach the network that skips this.
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -16,6 +17,7 @@ from typing import Any
 import httpx
 import structlog
 
+from packages.crawler.meter import record_request
 from packages.crawler.ratelimit import (
     MIN_DELAY_SECONDS,
     HostRateLimiter,
@@ -89,6 +91,14 @@ class FetchResult:
     content_hash: str
     #: Seconds spent waiting on the rate limiter.
     waited: float = 0.0
+    #: Seconds spent in the request itself, once both gates were passed.
+    #:
+    #: The pair is the point. "The crawl is slow" has two quite different
+    #: causes — a floor we chose (§2.6) and a network we did not — and without
+    #: both numbers the only way to tell them apart is arithmetic over
+    #: constants, which is what someone had to do the last time it was asked.
+    #: Measured around the request, so it excludes the wait by construction.
+    network: float = 0.0
 
     @property
     def ok(self) -> bool:
@@ -291,10 +301,17 @@ class PoliteFetcher:
         # Both gates are behind us. Reusing the connection from here changes
         # how much setup is repeated, never how long anything waited.
         client = self._client_for_requests()
+        started = time.monotonic()
         if method.upper() == "GET":
             status, text, host = await self._walk(client, url, host)
         else:
             status, text = await self._send(client, method, url, host, json)
+        network = time.monotonic() - started
+
+        # Recorded against the host the request *ended* on: `_walk` follows
+        # redirects across machines, and a redirect's cost belongs to the host
+        # that served it, not to the one that pointed there.
+        await record_request(host, waited=waited, network=network)
 
         return FetchResult(
             url=url,
@@ -302,6 +319,7 @@ class PoliteFetcher:
             text=text,
             content_hash=content_hash(text),
             waited=waited,
+            network=network,
         )
 
     async def _send(
