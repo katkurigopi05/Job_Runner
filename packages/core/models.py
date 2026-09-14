@@ -1018,3 +1018,4 @@ from packages.core import models_jobs as _models_jobs  # noqa: E402, F401
 from packages.core import models_ops as _models_ops  # noqa: E402, F401
 from packages.core import models_ranking as _models_ranking  # noqa: E402, F401
 from packages.core import models_search as _models_search  # noqa: E402, F401
+from packages.core import models_tracking as _models_tracking  # noqa: E402, F401

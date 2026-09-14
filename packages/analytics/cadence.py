@@ -65,6 +65,8 @@ class SilentApplication:
     days_since: int
     #: True once a follow-up is unlikely to be worth sending.
     stale: bool
+    #: An open follow-up task already exists for it — the owner has it in hand.
+    has_follow_up_task: bool = False
 
     @property
     def due(self) -> bool:
@@ -155,6 +157,37 @@ async def silence(
                 stale=days >= stale_after_days,
             )
         )
+
+    if silent:
+        # Reuses the task list rather than a second notion of "being chased":
+        # an application with an open follow-up task is still silent, and the
+        # report says the owner already has it in hand.
+        from packages.core.models_tracking import ApplicationTask
+
+        tasked = {
+            str(application_id)
+            for application_id in (
+                await session.scalars(
+                    select(ApplicationTask.application_id).where(
+                        ApplicationTask.application_id.in_(
+                            [item.application_id for item in silent]
+                        ),
+                        ApplicationTask.kind == "follow_up",
+                        ApplicationTask.completed_at.is_(None),
+                    )
+                )
+            ).all()
+        }
+        silent = [
+            SilentApplication(
+                application_id=item.application_id,
+                url=item.url,
+                days_since=item.days_since,
+                stale=item.stale,
+                has_follow_up_task=item.application_id in tasked,
+            )
+            for item in silent
+        ]
 
     silent.sort(key=lambda item: item.days_since, reverse=True)
     return CadenceReport(silent=silent)

@@ -642,6 +642,57 @@ export interface PostingHistory {
   versions: PostingVersionEntry[];
 }
 
+export interface Contact {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  company: string | null;
+  role: string | null;
+  profile_url: string | null;
+  notes: string | null;
+  updated_at: string;
+}
+
+export interface LinkedContact {
+  relationship: "recruiter" | "hiring_manager" | "interviewer" | "referrer" | "other";
+  contact: Contact;
+}
+
+export interface ChecklistItem {
+  text: string;
+  done: boolean;
+}
+
+export type TaskKind = "interview" | "assessment" | "follow_up" | "prep" | "other";
+
+export interface ApplicationTask {
+  id: string;
+  application_id: string;
+  kind: TaskKind;
+  title: string;
+  due_at: string | null;
+  reminder_at: string | null;
+  reminded_at: string | null;
+  completed_at: string | null;
+  location: string | null;
+  notes: string | null;
+  checklist: ChecklistItem[];
+  /** `inbox` when created from a routed interview or assessment reply. */
+  source: "owner" | "inbox";
+  created_at: string;
+}
+
+export interface UpcomingTask extends ApplicationTask {
+  application_url: string;
+  overdue: boolean;
+}
+
+export interface Tracking {
+  contacts: LinkedContact[];
+  tasks: ApplicationTask[];
+}
+
 /** A saved feed search. Filters only — never read by anything that applies. */
 export interface SearchPreference {
   id: string;
@@ -1016,6 +1067,39 @@ export const api = {
   matchesFiltered: (query: URLSearchParams) =>
     request<Match[]>(`/matches?${query}`),
   calibration: () => request<Calibration>("/matches/calibration"),
+  tracking: (applicationId: string) =>
+    request<Tracking>(`/applications/${applicationId}/tracking`),
+  linkContact: (
+    applicationId: string,
+    body: { relationship: string; contact: Partial<Contact> & { name: string } },
+  ) =>
+    request<LinkedContact>(`/applications/${applicationId}/contacts`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  unlinkContact: (applicationId: string, contactId: string) =>
+    request<void>(`/applications/${applicationId}/contacts/${contactId}`, { method: "DELETE" }),
+  createTask: (
+    applicationId: string,
+    body: {
+      kind: TaskKind;
+      title: string;
+      due_at?: string | null;
+      reminder_at?: string | null;
+      location?: string | null;
+    },
+  ) =>
+    request<ApplicationTask>(`/applications/${applicationId}/tasks`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateTask: (
+    taskId: string,
+    patch: { checklist?: ChecklistItem[]; completed?: boolean },
+  ) =>
+    request<ApplicationTask>(`/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteTask: (taskId: string) => request<void>(`/tasks/${taskId}`, { method: "DELETE" }),
+  upcomingTasks: (days = 14) => request<UpcomingTask[]>(`/tasks?due_within_days=${days}`),
   decideWithReason: (matchId: string, decision: Decision, reason?: string, note?: string) =>
     request<{ id: string; decision: Decision | null; skip_reason: string | null }>(
       `/matches/${matchId}/decision`,

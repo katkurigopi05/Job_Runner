@@ -99,6 +99,7 @@ async def read_cadence(
                 url=item.url,
                 days_since=item.days_since,
                 stale=item.stale,
+                has_follow_up_task=item.has_follow_up_task,
             )
             for item in report.silent
         ],

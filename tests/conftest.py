@@ -81,6 +81,9 @@ TEST_DATABASE_URL = (
 
 #: Truncated between committing tests, children first is handled by CASCADE.
 _ALL_TABLES = (
+    "application_tasks",
+    "application_contacts",
+    "contacts",
     "application_events",
     "inbound_messages",
     "applications",

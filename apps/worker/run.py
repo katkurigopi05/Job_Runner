@@ -254,6 +254,7 @@ async def run_forever(
     log.info("worker_started", worker_id=wid, lease_seconds=lease_seconds)
     heartbeat = Heartbeat(wid, core_db.get_sessionmaker())
     await heartbeat.pulse(force=True)
+    last_reminder_tick = 0.0
 
     while not stop.is_set():
         try:
@@ -269,12 +270,40 @@ async def run_forever(
             # Throttled inside: an idle loop turns every second and writes
             # every HEARTBEAT_INTERVAL_S.
             await heartbeat.pulse()
+            last_reminder_tick = await _ring_reminders(last_reminder_tick)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=IDLE_SLEEP_SECONDS)
 
     # A goodbye, so the setup page can tell a clean stop from a crash.
     await heartbeat.pulse(force=True, stopped=True)
     log.info("worker_stopped", worker_id=wid)
+
+
+#: How often an idle worker checks for task reminders that are due.
+REMINDER_TICK_SECONDS = 60.0
+
+
+async def _ring_reminders(last_tick: float) -> float:
+    """Ring due task reminders at most once a minute. Never raises.
+
+    Local notifications through the owner's configured backends only — a
+    reminder tells the owner, it never contacts an employer. `ring_due` locks
+    with SKIP LOCKED and stamps before delivering, so a pool of workers rings
+    each reminder once.
+    """
+    import time
+
+    now = time.monotonic()
+    if last_tick and now - last_tick < REMINDER_TICK_SECONDS:
+        return last_tick
+    try:
+        from packages.tracking.reminders import ring_due
+
+        async with core_db.get_sessionmaker()() as session:
+            await ring_due(session)
+    except Exception as exc:  # noqa: BLE001 - reminders must not stop the worker
+        log.warning("reminder_tick_failed", error=type(exc).__name__)
+    return now
 
 
 async def run_pool(count: int, *, lease_seconds: int | None = None) -> None:

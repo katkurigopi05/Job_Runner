@@ -270,3 +270,42 @@ async def test_a_reply_to_the_applied_with_address_concludes_the_application(
     assert result.link_method == "alias", "an inferred link may not conclude anything"
     assert result.outcome_set == "interview"
     assert application.outcome == "interview"
+
+
+async def test_an_interview_reply_leaves_one_task_for_the_owner(db_session) -> None:
+    """The outcome moves, and the owner gets something to act on — once per thread."""
+    from sqlalchemy import select
+
+    from packages.core.models_tracking import ApplicationTask
+
+    candidate, profile, application = await _setup(
+        db_session, email_mode="managed", managed_alias=BASE
+    )
+    applied_with = build_answers(
+        [_email_question()],
+        candidate,
+        profile,
+        reply_to=apply_job._reply_to(candidate, application),
+    )["email"]
+
+    for _ in range(2):
+        await route_message(
+            db_session,
+            InboundEmail(
+                message_id=f"<{uuid.uuid4()}@mail>",
+                from_addr="recruiter@acme.com",
+                to_addr=applied_with,
+                subject="Interview invitation",
+                body="We would like to schedule a call with you next week.",
+                received_at=datetime.now(UTC),
+            ),
+        )
+
+    tasks = (
+        await db_session.scalars(
+            select(ApplicationTask).where(ApplicationTask.application_id == application.id)
+        )
+    ).all()
+    assert [(task.kind, task.source, task.due_at) for task in tasks] == [
+        ("interview", "inbox", None)
+    ]

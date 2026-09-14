@@ -842,6 +842,8 @@ class SilentOut(BaseModel):
     url: str
     days_since: int
     stale: bool
+    #: An open follow-up task exists for this application.
+    has_follow_up_task: bool = False
 
 
 class CadenceOut(BaseModel):
