@@ -102,6 +102,12 @@ export function FilterBar({
 
   const unknownSwitches = [
     value("min_salary") ? unknownSwitch("include_unknown_salary", "include postings that don't state pay") : null,
+    value("min_salary") && (value("salary_period") || "year") === "year"
+      ? unknownSwitch(
+          "salary_unstated_period_as_year",
+          "read salaries of 10,000+ with no stated period as annual",
+        )
+      : null,
     value("lacking_skills")
       ? unknownSwitch("include_unknown_skills", "include postings that name a skill without saying it's required")
       : null,

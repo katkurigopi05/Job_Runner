@@ -11,6 +11,7 @@ import uuid
 
 from fastapi import APIRouter
 from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
@@ -21,6 +22,12 @@ from packages.core.schemas import (
     PostingAtsOut,
     PostingOut,
     PostingSearchOut,
+)
+from packages.core.schemas_jobs import (
+    PostingHistoryOut,
+    PostingSourceOut,
+    PostingVersionOut,
+    VersionChangeOut,
 )
 from packages.matching.pick_resume import choose_base_resume
 from packages.tailor import ats as ats_scorer
@@ -87,6 +94,111 @@ async def get_posting(posting_id: uuid.UUID, session: SessionDep) -> Posting:
     if posting is None:
         raise ApiError(ErrorCode.NOT_FOUND, "posting not found")
     return posting
+
+
+@router.get("/{posting_id}/history", response_model=PostingHistoryOut)
+async def posting_history(posting_id: uuid.UUID, session: SessionDep) -> PostingHistoryOut:
+    """Every source listing this requisition, and what this listing said over time.
+
+    Sources carry their own decisions and applications, so grouping never hides
+    that one copy was already applied to or skipped.
+    """
+    posting = await session.get(Posting, posting_id)
+    if posting is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "posting not found")
+    return await _history(session, posting)
+
+
+@router.post("/{posting_id}/split", response_model=PostingHistoryOut)
+async def split_posting(posting_id: uuid.UUID, session: SessionDep) -> PostingHistoryOut:
+    """Take this listing out of its group, for good — the owner's correction of a merge."""
+    from packages.matching.canonical import split
+
+    posting = await session.get(Posting, posting_id)
+    if posting is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "posting not found")
+    await split(session, posting)
+    await session.commit()
+    return await _history(session, posting)
+
+
+async def _history(session: AsyncSession, posting: Posting) -> PostingHistoryOut:
+    from packages.core.models import Application, Match
+    from packages.core.models_jobs import CanonicalJob
+    from packages.matching.canonical import source_key
+    from packages.matching.versions import describe_pay, diff, history, snapshot
+
+    members = [posting]
+    evidence: dict[str, str] = {}
+    if posting.canonical_job_id is not None:
+        members = list(
+            (
+                await session.scalars(
+                    select(Posting)
+                    .where(Posting.canonical_job_id == posting.canonical_job_id)
+                    .order_by(Posting.first_seen_at)
+                )
+            ).all()
+        )
+        group = await session.get(CanonicalJob, posting.canonical_job_id)
+        evidence = {e["posting_id"]: e["reason"] for e in (group.evidence_json if group else [])}
+
+    ids = [member.id for member in members]
+    decisions: dict[uuid.UUID, list[str]] = {}
+    for match_posting, decision in (
+        await session.execute(
+            select(Match.posting_id, Match.decision).where(
+                Match.posting_id.in_(ids), Match.decision.is_not(None)
+            )
+        )
+    ).all():
+        decisions.setdefault(match_posting, []).append(decision)
+    statuses: dict[uuid.UUID, list[str]] = {}
+    for member in members:
+        rows = await session.scalars(
+            select(Application.status).where(
+                (Application.posting_id == member.id) | (Application.url == member.url)
+            )
+        )
+        statuses[member.id] = list(rows.all())
+
+    versions = await history(session, posting.id)
+    rendered = [
+        PostingVersionOut(
+            version=version.version,
+            captured_at=version.captured_at,
+            pay=describe_pay(snapshot(version)),
+            changes=[
+                VersionChangeOut(**change.as_dict())
+                for change in (
+                    diff(snapshot(versions[index - 1]), snapshot(version)) if index else []
+                )
+            ],
+        )
+        for index, version in enumerate(versions)
+    ]
+    return PostingHistoryOut(
+        posting_id=posting.id,
+        title=posting.title,
+        canonical_job_id=posting.canonical_job_id,
+        locked=posting.canonical_locked,
+        sources=[
+            PostingSourceOut(
+                posting_id=member.id,
+                url=member.url,
+                ats_type=member.ats_type,
+                source=source_key(member),
+                title=member.title,
+                location=member.location,
+                closed=member.closed_at is not None,
+                decisions=decisions.get(member.id, []),
+                application_statuses=statuses.get(member.id, []),
+                evidence=evidence.get(str(member.id)),
+            )
+            for member in members
+        ],
+        versions=rendered,
+    )
 
 
 @router.get("/{posting_id}/ats", response_model=PostingAtsOut)

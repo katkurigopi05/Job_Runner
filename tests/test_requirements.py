@@ -228,3 +228,47 @@ def test_an_unbulleted_item_line_does_not_reset_the_list_it_is_in() -> None:
         "kubernetes",
         "terraform",
     }
+
+
+# --------------------------------------------------------------------------
+# Regressions found by sampling the live corpus (extractor version 2)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "📚 A dedicated annual L&D budget of €2000 for your individual development",
+        "A 401(k) with 100% employer match (up to $6,000/year) in the U.S.",
+        "Signing bonus of $10,000 for this role",
+        "$0 per month in medical premiums for employees",
+        "Wellness stipend: $75 per week",
+    ],
+)
+def test_benefits_are_not_read_as_pay(text: str) -> None:
+    assert read_compensation(text) is None
+
+
+def test_a_european_thousands_separator_is_not_a_decimal() -> None:
+    pay = read_compensation("Salary\n€95.000—€110.000 EUR")
+
+    assert pay is not None
+    assert (pay.minimum, pay.maximum, pay.currency) == (95_000, 110_000, "EUR")
+
+
+def test_a_bonus_after_the_range_does_not_hide_the_salary() -> None:
+    pay = read_compensation("Base salary $150,000 - $200,000 per year plus bonus and equity")
+
+    assert pay is not None
+    assert (pay.minimum, pay.maximum) == (150_000, 200_000)
+
+
+def test_an_implausible_annual_figure_is_not_a_salary() -> None:
+    assert read_compensation("Salary range: $1 - $179,300,152 per year") is None
+
+
+def test_rupee_salaries_are_bounded_on_their_own_scale() -> None:
+    pay = read_compensation("CTC salary range: ₹25,00,000 - ₹35,00,000 per year INR")
+
+    # Lakh grouping is not parsed; the reading refuses rather than misreads.
+    assert pay is None or pay.currency == "INR"

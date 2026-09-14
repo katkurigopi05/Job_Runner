@@ -30,6 +30,7 @@ FILTER_KEYS = frozenset(
         "salary_currency",
         "salary_period",
         "include_unknown_salary",
+        "salary_unstated_period_as_year",
         "wanted_skills",
         "lacking_skills",
         "include_unknown_skills",

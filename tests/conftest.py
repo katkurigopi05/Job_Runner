@@ -110,6 +110,9 @@ _ALL_TABLES = (
     # No foreign keys, so nothing cascades to it.
     "worker_heartbeats",
     "search_preferences",
+    "posting_versions",
+    "canonical_jobs",
+    "ranking_preferences",
     "users",
 )
 

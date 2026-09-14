@@ -499,6 +499,16 @@ export interface Match {
   compensation: Compensation | null;
   /** Skills and education with the line each was read from. Null until extracted. */
   requirements: PostingRequirements | null;
+  /** Every listing of this requisition when grouped; empty when it stands alone. */
+  sources: MatchSource[];
+}
+
+export interface MatchSource {
+  posting_id: string;
+  url: string;
+  source: string;
+  closed: boolean;
+  decision: string | null;
 }
 
 export interface Compensation {
@@ -535,6 +545,42 @@ export interface PostingRequirements {
   education: EducationRequirement | null;
   /** What the posting did not state: compensation, pay_period, skills, education. */
   unknown: string[];
+}
+
+export interface VersionChange {
+  field: string;
+  before: string | string[] | null;
+  after: string | string[] | null;
+}
+
+export interface PostingVersionEntry {
+  version: number;
+  captured_at: string;
+  pay: string;
+  changes: VersionChange[];
+}
+
+/** One listing of a requisition. Grouping never hides a source. */
+export interface PostingSource {
+  posting_id: string;
+  url: string;
+  ats_type: string | null;
+  source: string;
+  title: string | null;
+  location: string | null;
+  closed: boolean;
+  decisions: string[];
+  application_statuses: string[];
+  evidence: string | null;
+}
+
+export interface PostingHistory {
+  posting_id: string;
+  title: string | null;
+  canonical_job_id: string | null;
+  locked: boolean;
+  sources: PostingSource[];
+  versions: PostingVersionEntry[];
 }
 
 /** A saved feed search. Filters only — never read by anything that applies. */
@@ -911,6 +957,9 @@ export const api = {
   matchesFiltered: (query: URLSearchParams) =>
     request<Match[]>(`/matches?${query}`),
   calibration: () => request<Calibration>("/matches/calibration"),
+  postingHistory: (id: string) => request<PostingHistory>(`/postings/${id}/history`),
+  splitPosting: (id: string) =>
+    request<PostingHistory>(`/postings/${id}/split`, { method: "POST" }),
   searchPreference: (name: string) =>
     request<SearchPreference>(`/search-preferences/${encodeURIComponent(name)}`),
   saveSearchPreference: (name: string, filters: Record<string, string>) =>

@@ -184,3 +184,12 @@ def test_the_search_describes_its_requirement_filters() -> None:
     assert "pay reaching 150,000 USD per year" in parts
     assert "does not require java" in parts
     assert "education at most bachelor, or unstated" in parts
+
+
+def test_an_unstated_period_is_read_as_annual_only_when_the_owner_opts_in() -> None:
+    posting = _posting("Salary range: $182,800 - $247,300 USD")
+
+    assert not _verdict(posting, min_salary=200_000).kept
+    assert _verdict(posting, min_salary=200_000, salary_unstated_period_as_year=True).kept
+    below = _verdict(posting, min_salary=300_000, salary_unstated_period_as_year=True)
+    assert "read as annual" in below.reasons[0]

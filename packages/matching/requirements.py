@@ -40,7 +40,13 @@ from packages.matching.experience import Demand, heading_kind, line_demand
 from packages.matching.skill_vocab import BY_KEY, find_skills
 
 #: Bump when extraction changes, so the backfill knows which rows to redo.
-EXTRACTOR_VERSION = 1
+EXTRACTOR_VERSION = 2
+#: Version history, because a bump re-reads every stored posting:
+#:   1 — first reading.
+#:   2 — found by sampling the live corpus: "€95.000" read as 95, benefit
+#:       budgets ("annual L&D budget of €2000", "401(k) match up to
+#:       $6,000/year") read as pay, and implausible figures ($0, $179M/year)
+#:       accepted.
 
 #: Evidence is a quote for a person to check, not a copy of the posting.
 MAX_QUOTE = 240
@@ -80,7 +86,10 @@ _SYMBOLS = {"$": "USD", "£": "GBP", "€": "EUR", "₹": "INR"}
 _CODES = ("USD", "CAD", "AUD", "NZD", "EUR", "GBP", "INR", "SGD", "CHF")
 _CODE_RE = re.compile(rf"\b({'|'.join(_CODES)})\b")
 
-_AMOUNT = r"(?P<{name}>\d{{1,3}}(?:,\d{{3}})+(?:\.\d+)?|\d+(?:\.\d+)?)\s?(?P<{name}k>[kK]\b)?"
+_AMOUNT = (
+    r"(?P<{name}>\d{{1,3}}(?:,\d{{3}})+(?:\.\d+)?|\d{{1,3}}(?:\.\d{{3}})+(?!\d)|\d+(?:\.\d+)?)"
+    r"\s?(?P<{name}k>[kK]\b)?"
+)
 _MONEY_RE = re.compile(
     r"(?P<sym>[$£€₹])\s?"
     + _AMOUNT.format(name="low")
@@ -103,12 +112,41 @@ _PERIOD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
 )
 
-#: A dollar figure that is not pay.
+#: A figure that is not pay: money the company raised or earns.
 _NOT_PAY = re.compile(
     r"\b(?:raised|funding|funded|valuation|revenue|series\s+[a-f]|investors?|arr|"
-    r"million|billion|stipend\s+for\s+equipment)\b|\d\s?[MB]\b|401\s?\(k\)",
+    r"million|billion)\b|\d\s?[MB]\b",
     re.I,
 )
+#: A benefit named just *before* a figure: "L&D budget of €2000", "401(k)
+#: match up to $6,000/year", "signing bonus of $10,000". Checked only before
+#: the figure, because "base $150k–$200k plus bonus and equity" is a salary
+#: that happens to mention a bonus after it.
+_BENEFIT_BEFORE = re.compile(
+    r"\b(?:budget|stipend|allowance|reimburse\w*|401\s?\(?k\)?|match(?:ing)?|bonus|"
+    r"relocation|wellness|learning|l&d|equipment|home\s+office|per\s+diem|referral|"
+    r"childcare|gym|premiums?|deductible|donation)\b",
+    re.I,
+)
+#: Wording that makes a *single* figure a salary rather than a price or a perk.
+_SALARY_WORDS = re.compile(
+    r"\b(?:salary|base\s+pay|compensation|wages?|pay\s+(?:rate|range)|hourly\s+rate|"
+    r"ote|starting\s+pay|earn(?:ing)?s?)\b",
+    re.I,
+)
+
+#: Inclusive bounds on the top of a range, per period. Outside them a figure is
+#: a misread — a benefit, a typo, a count — not a salary worth filtering on.
+_BOUNDS = {
+    "hour": (5, 2_000),
+    "day": (30, 10_000),
+    "week": (150, 50_000),
+    "month": (500, 1_000_000),
+    "year": (10_000, 5_000_000),
+    None: (1_000, 5_000_000),
+}
+#: Currencies whose figures run two orders of magnitude above the bounds.
+_SCALED = {"INR": 100}
 _PAY_CONTEXT = re.compile(
     r"\b(?:salary|compensation|pay|base|wage|rate|ote|earnings|range)\b", re.I
 )
@@ -134,8 +172,22 @@ class Compensation:
 
 
 def _number(raw: str, thousands: bool) -> float:
-    value = float(raw.replace(",", ""))
+    if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", raw):
+        # "95.000" — a European thousands separator, not a decimal. Pay is not
+        # written to three decimal places.
+        value = float(raw.replace(".", ""))
+    else:
+        value = float(raw.replace(",", ""))
     return value * 1000 if thousands else value
+
+
+def _plausible(low: float, high: float, period: str | None, currency: str | None) -> bool:
+    floor, ceiling = _BOUNDS[period]
+    scale = _SCALED.get(currency or "", 1)
+    if low <= 0 or not floor * scale <= high <= ceiling * scale:
+        return False
+    # "$10 - $200,000" is two unrelated numbers, not a range.
+    return low >= high / 10
 
 
 def _period_near(window: str) -> str | None:
@@ -155,8 +207,11 @@ def read_compensation(text: str | None) -> Compensation | None:
             continue
         for match in _MONEY_RE.finditer(line):
             around = line[max(0, match.start() - 60) : match.end() + 60]
-            if _NOT_PAY.search(line[match.start() : match.end() + 25]) or _NOT_PAY.search(
-                line[max(0, match.start() - 30) : match.start()]
+            before = line[max(0, match.start() - 40) : match.start()]
+            if (
+                _NOT_PAY.search(line[match.start() : match.end() + 25])
+                or _NOT_PAY.search(before)
+                or _BENEFIT_BEFORE.search(before)
             ):
                 continue
             low = _number(match.group("low"), bool(match.group("lowk")))
@@ -168,15 +223,17 @@ def read_compensation(text: str | None) -> Compensation | None:
             previous = lines[index - 1] if index > 0 else ""
             period = _period_near(around) or _period_near(previous)
             context = _PAY_CONTEXT.search(line) or _PAY_CONTEXT.search(previous)
-            # A lone figure with neither a period nor pay wording is too often
-            # a price, a stipend or a statistic to be read as a salary.
-            if not has_high and period is None and not context:
+            # A lone figure needs salary wording, not just a period: "$75 per
+            # week" is as often a wellness stipend as a wage.
+            if not has_high and not (_SALARY_WORDS.search(line) or _SALARY_WORDS.search(previous)):
                 continue
             if not context and period is None:
                 continue
             code = _CODE_RE.search(around)
             currency = code.group(1) if code else _SYMBOLS.get(match.group("sym"))
             low, high = min(low, high), max(low, high)
+            if not _plausible(low, high, period, currency):
+                continue
             return Compensation(
                 minimum=low, maximum=high, currency=currency, period=period, quote=_quote(line)
             )

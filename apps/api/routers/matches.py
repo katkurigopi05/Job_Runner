@@ -34,6 +34,7 @@ from packages.core.schemas import (
 from packages.matching.filters import eligibility_of, experience_of
 from packages.matching.locality import locality_of
 from packages.matching.locality import rank as locality_rank
+from packages.matching.personalize import SKIP_REASONS, Applied, adjust
 from packages.matching.requirements import EDUCATION_LEVELS, PERIODS
 from packages.matching.search import (
     SENIORITY_ORDER,
@@ -104,11 +105,15 @@ async def list_matches(
     salary_currency: str = Query(default="USD", min_length=3, max_length=3),
     salary_period: str = "year",
     include_unknown_salary: bool = False,
+    salary_unstated_period_as_year: bool = False,
     wanted_skills: str = "",
     lacking_skills: str = "",
     include_unknown_skills: bool = False,
     max_education: str | None = None,
     include_unknown_education: bool = False,
+    #: `base` orders by the similarity score; `personalized` by the base score
+    #: adjusted with the owner's explicit ranking preferences.
+    rank: str = "base",
 ) -> list[MatchOut]:
     """Scored postings, best first.
 
@@ -139,6 +144,7 @@ async def list_matches(
         salary_currency=salary_currency.upper(),
         salary_period=_one_of(salary_period, PERIODS, "salary_period"),
         include_unknown_salary=include_unknown_salary,
+        salary_unstated_period_as_year=salary_unstated_period_as_year,
         wanted_skills=_skill_keys(wanted_skills, "wanted_skills"),
         lacking_skills=_skill_keys(lacking_skills, "lacking_skills"),
         include_unknown_skills=include_unknown_skills,
@@ -220,6 +226,24 @@ async def list_matches(
     # query above. `description_embedding` is deferred and must stay untouched —
     # reading it here would emit a lazy load from a thread that has no session.
     kept = await run_in_threadpool(_filter)
+    if rank not in ("base", "personalized"):
+        raise ApiError(ErrorCode.INVALID_REQUEST, "rank must be base or personalized")
+    kept, sources = await _collapse_groups(
+        session,
+        kept,
+        profile_id=profile_id,
+        applied_urls=None if include_applied else applied_urls,
+        undecided_only=undecided_only,
+    )
+
+    personal = await _personalize(session, kept, profile_id)
+    if rank == "personalized" and personal:
+        kept.sort(
+            key=lambda row: (
+                locality_rank(locality_of(row[1].location)) if filters.us_only else 0,
+                -personal[row[0].id][0],
+            )
+        )
 
     page = kept[:limit]
     # Same reasoning as `kept` above: this reads every posting's description
@@ -279,9 +303,115 @@ async def list_matches(
                 experience=demanded.as_dict() if demanded.stated else None,
                 compensation=_compensation(posting),
                 requirements=posting.requirements_json,
+                sources=sources.get(posting.canonical_job_id, []),
+                personalized_score=personal[match.id][0] if personal else None,
+                adjustments=[item.as_dict() for item in personal[match.id][1]] if personal else [],
             )
         )
     return feed
+
+
+async def _personalize(
+    session: SessionDep, kept: list[tuple[Match, Posting]], profile_id: uuid.UUID | None
+) -> dict[uuid.UUID, tuple[float, list[Applied]]]:
+    """Personalized score per match, or empty when the owner has no preferences."""
+    from apps.api.routers.ranking import preferences_for
+    from packages.core.models import Company
+
+    preferences = await preferences_for(session, profile_id)
+    if not preferences or not kept:
+        return {}
+    company_ids = {posting.company_id for _, posting in kept if posting.company_id}
+    names = {
+        company_id: name
+        for company_id, name in (
+            await session.execute(
+                select(Company.id, Company.name).where(Company.id.in_(company_ids))
+            )
+        ).all()
+    }
+    return {
+        match.id: adjust(match.score, posting, names.get(posting.company_id), preferences)
+        for match, posting in kept
+    }
+
+
+async def _collapse_groups(
+    session: SessionDep,
+    kept: list[tuple[Match, Posting]],
+    *,
+    profile_id: uuid.UUID | None,
+    applied_urls: set[str] | None,
+    undecided_only: bool,
+) -> tuple[list[tuple[Match, Posting]], dict[uuid.UUID | None, list[dict[str, object]]]]:
+    """One card per requisition, carrying every source listing it.
+
+    The best-ranked copy is the card; the others are listed on it, each with
+    its own decision. Nothing is dropped from the database and no decision is
+    rewritten. Two things are read across the whole group rather than the
+    card alone, because they are facts about the requisition:
+
+    - **applied** — a group any copy of which was applied to is hidden when
+      applied postings are, or the same job would be offered again;
+    - **decided** — the undecided feed hides a group any copy of which was
+      already decided, or a skipped job would come back through its twin.
+    """
+    group_ids = {posting.canonical_job_id for _, posting in kept if posting.canonical_job_id}
+    if not group_ids:
+        return kept, {}
+
+    members = (
+        await session.execute(
+            select(
+                Posting.id,
+                Posting.url,
+                Posting.ats_type,
+                Posting.canonical_job_id,
+                Posting.closed_at,
+            )
+            .where(Posting.canonical_job_id.in_(group_ids))
+            .order_by(Posting.first_seen_at)
+        )
+    ).all()
+    decision_query = select(Match.posting_id, Match.decision).where(
+        Match.posting_id.in_([member.id for member in members]), Match.decision.is_not(None)
+    )
+    if profile_id is not None:
+        decision_query = decision_query.where(Match.profile_id == profile_id)
+    decisions = {
+        posting_id: decision
+        for posting_id, decision in (await session.execute(decision_query)).all()
+    }
+
+    from packages.matching.canonical import source_key
+
+    sources: dict[uuid.UUID | None, list[dict[str, object]]] = {}
+    for member in members:
+        sources.setdefault(member.canonical_job_id, []).append(
+            {
+                "posting_id": str(member.id),
+                "url": member.url,
+                "source": source_key(member),  # type: ignore[arg-type]
+                "closed": member.closed_at is not None,
+                "decision": decisions.get(member.id),
+            }
+        )
+
+    seen: set[uuid.UUID] = set()
+    collapsed: list[tuple[Match, Posting]] = []
+    for match, posting in kept:
+        group = posting.canonical_job_id
+        if group is not None:
+            if group in seen:
+                continue
+            seen.add(group)
+            listed = sources.get(group, [])
+            if applied_urls is not None and any(entry["url"] in applied_urls for entry in listed):
+                continue
+            if undecided_only and any(entry["decision"] for entry in listed):
+                continue
+        collapsed.append((match, posting))
+    return collapsed, sources
 
 
 def _one_of(value: str, allowed: tuple[str, ...], name: str) -> str:
@@ -372,8 +502,19 @@ async def decide(match_id: uuid.UUID, body: MatchDecision, session: SessionDep) 
     if body.decision not in DECISIONS:
         raise ApiError(ErrorCode.INVALID_REQUEST, f"decision must be one of {', '.join(DECISIONS)}")
 
+    if body.reason is not None:
+        if body.decision != "skipped":
+            raise ApiError(ErrorCode.INVALID_REQUEST, "a reason is recorded only for a skip")
+        if body.reason not in SKIP_REASONS:
+            raise ApiError(
+                ErrorCode.INVALID_REQUEST, f"reason must be one of {', '.join(SKIP_REASONS)}"
+            )
+
     match.decision = body.decision
     match.decided_at = datetime.now(UTC)
+    # A change of mind clears the reason for the old verdict.
+    match.skip_reason = body.reason if body.decision == "skipped" else None
+    match.decision_note = body.note
     await session.commit()
     await session.refresh(match)
     return match

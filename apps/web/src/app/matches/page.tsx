@@ -64,6 +64,7 @@ const FILTER_KEYS = [
   "salary_currency",
   "salary_period",
   "include_unknown_salary",
+  "salary_unstated_period_as_year",
   "wanted_skills",
   "lacking_skills",
   "include_unknown_skills",
@@ -363,6 +364,30 @@ export default async function MatchesPage({
                   requirements={match.requirements}
                 />
 
+                {match.sources.length > 1 ? (
+                  <p className="mt-3 text-xs text-ink-soft">
+                    Listed in {match.sources.length} places
+                    {match.sources.some(
+                      (source) => source.decision && source.posting_id !== match.posting_id,
+                    ) ? (
+                      <span className="text-attn">
+                        {" "}— already{" "}
+                        {match.sources
+                          .filter((source) => source.decision && source.posting_id !== match.posting_id)
+                          .map((source) => source.decision)
+                          .join(", ")}{" "}
+                        on another listing
+                      </span>
+                    ) : null}{" "}
+                    <Link
+                      href={`/postings/${match.posting_id}`}
+                      className="underline-offset-4 hover:text-ink hover:underline"
+                    >
+                      see sources
+                    </Link>
+                  </p>
+                ) : null}
+
                 {match.excluded_by.length > 0 ? (
                   <p className="aside aside-stop mt-4 text-xs text-stop">
                     Ruled out by {match.excluded_by.join(", ")} — a hard filter,
@@ -372,6 +397,12 @@ export default async function MatchesPage({
 
                 {/* Actions, set apart from the reasoning above them. */}
                 <div className="mt-6 flex flex-wrap items-center gap-5 border-t border-rule-soft pt-4">
+                  <Link
+                    href={`/postings/${match.posting_id}`}
+                    className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline"
+                  >
+                    History &amp; sources
+                  </Link>
                   <a
                     href={match.url}
                     target="jobrunner-form"

@@ -119,6 +119,10 @@ class SearchFilters:
     salary_currency: str = "USD"
     salary_period: str = "year"
     include_unknown_salary: bool = False
+    #: Opt-in: read a salary of 10,000+ with no stated period as annual. Off by
+    #: default — most US ranges omit "per year", and whether that is safe to
+    #: assume is the owner's call, named on the card when it decided anything.
+    salary_unstated_period_as_year: bool = False
     #: Vocabulary keys the posting must name, in any list.
     wanted_skills: tuple[str, ...] = ()
     #: Vocabulary keys the owner lacks. A posting *requiring* one is dropped.
@@ -150,7 +154,13 @@ class SearchFilters:
         if self.min_salary is not None:
             parts.append(
                 f"pay reaching {self.min_salary:,.0f} {self.salary_currency} per "
-                f"{self.salary_period}" + (", or unstated" if self.include_unknown_salary else "")
+                f"{self.salary_period}"
+                + (", or unstated" if self.include_unknown_salary else "")
+                + (
+                    ", unstated periods read as annual"
+                    if self.salary_unstated_period_as_year
+                    else ""
+                )
             )
         if self.wanted_skills:
             parts.append("names " + ", ".join(self.wanted_skills))
@@ -352,6 +362,10 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
 
 _NOT_EXTRACTED = "requirements not read yet (make extract-requirements)"
 
+#: Below this, an unstated-period figure is not read as annual even when the
+#: owner opted in: $45 is an hourly rate whatever the posting forgot to say.
+ANNUAL_ASSUMPTION_FLOOR = 10_000
+
 
 def _label(key: str) -> str:
     from packages.matching.skill_vocab import BY_KEY
@@ -374,6 +388,17 @@ def requirement_reasons(posting: Posting, filters: SearchFilters) -> list[str]:
                 f"pay is in {posting.salary_currency or 'an unstated currency'}, not "
                 f"{filters.salary_currency} (not converted)"
             )
+        elif (
+            posting.salary_period is None
+            and filters.salary_unstated_period_as_year
+            and filters.salary_period == "year"
+            and top >= ANNUAL_ASSUMPTION_FLOOR
+        ):
+            if top < filters.min_salary:
+                reasons.append(
+                    f"pay tops out at {top:,.0f} (period unstated, read as annual), "
+                    f"below {filters.min_salary:,.0f}"
+                )
         elif posting.salary_period != filters.salary_period:
             unknown = (
                 f"pay is per {posting.salary_period or 'unstated period'}, not per "

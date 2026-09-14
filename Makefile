@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching export-labels import-csv inspect-csv registry-sync extract-requirements crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching export-labels import-csv inspect-csv registry-sync extract-requirements canonicalize crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -354,6 +354,11 @@ inspect-csv:
 #   make registry-sync dry=1   # preview only
 # Read salary, skills and education out of postings stored before extraction
 # existed. Local, resumable, no network.   make extract-requirements limit=500
+# Group stored listings that are confidently one requisition across sources.
+#   make canonicalize dry=1   # preview
+canonicalize:
+	$(PY)/python -m scripts.canonicalize $(if $(dry),--dry-run,)
+
 extract-requirements:
 	$(PY)/python -m scripts.extract_requirements $(if $(limit),--limit $(limit),)
 
