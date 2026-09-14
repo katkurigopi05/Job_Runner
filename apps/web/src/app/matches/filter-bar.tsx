@@ -168,6 +168,14 @@ export function FilterBar({
           </select>
         </label>
 
+        <label className="flex flex-col gap-1">
+          <span className={LABEL}>order</span>
+          <select value={value("rank")} onChange={(event) => set("rank", event.target.value)} className={FIELD}>
+            <option value="">by fit (base score)</option>
+            <option value="personalized">with my adjustments</option>
+          </select>
+        </label>
+
         <span className="ml-auto font-mono text-xs tabular-nums text-ink-faint">{resultCount} shown</span>
       </div>
 

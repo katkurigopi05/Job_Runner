@@ -17,6 +17,7 @@ const NAV = [
   { href: "/matches", label: "Matches" },
   { href: "/swipe", label: "Rate" },
   { href: "/label", label: "Grade" },
+  { href: "/ranking", label: "Ranking" },
   { href: "/applications", label: "Pipeline" },
   { href: "/resumes", label: "Résumés" },
   { href: "/tracker", label: "Tracker" },

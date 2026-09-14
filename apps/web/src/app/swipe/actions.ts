@@ -25,9 +25,10 @@ export interface DecisionResult {
 export async function recordDecision(
   matchId: string,
   decision: Decision,
+  reason?: string,
 ): Promise<DecisionResult> {
   try {
-    await api.decide(matchId, decision);
+    await api.decideWithReason(matchId, decision, reason);
   } catch (error) {
     if (error instanceof ApiError) return { ok: false, message: error.message };
     throw error;

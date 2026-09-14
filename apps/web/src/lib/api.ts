@@ -501,7 +501,66 @@ export interface Match {
   requirements: PostingRequirements | null;
   /** Every listing of this requisition when grouped; empty when it stands alone. */
   sources: MatchSource[];
+  /** Base score adjusted by explicit ranking preferences; null when there are none. */
+  personalized_score: number | null;
+  adjustments: RankingAdjustment[];
 }
+
+export interface RankingAdjustment {
+  kind: string;
+  value: string;
+  weight: number;
+  why: string;
+}
+
+export type RankingKind = "company" | "skill" | "title_term" | "location_term" | "remote";
+
+export interface RankingPreference {
+  id: string;
+  scope: string;
+  kind: RankingKind;
+  value: string;
+  weight: number;
+  source: "explicit" | "suggestion";
+  note: string | null;
+  updated_at: string;
+}
+
+export interface RankingSuggestion {
+  kind: RankingKind;
+  value: string;
+  weight: number;
+  evidence: string;
+}
+
+export interface RankingEvaluation {
+  owner_labels: number;
+  streams: Record<string, number>;
+  held_out: number;
+  preferences: number;
+  status: "insufficient_labels" | "evaluated" | string;
+  message: string;
+  k: number;
+  learned_model: string;
+  base_ndcg: number | null;
+  base_interval: number[] | null;
+  personalized_ndcg: number | null;
+  personalized_interval: number[] | null;
+  promotable: boolean;
+  blockers: string[];
+}
+
+export const SKIP_REASONS = [
+  { value: "salary", label: "pay" },
+  { value: "location", label: "location" },
+  { value: "seniority", label: "level" },
+  { value: "skills", label: "skills" },
+  { value: "requirements", label: "requirements" },
+  { value: "company", label: "company" },
+  { value: "role", label: "kind of role" },
+  { value: "duplicate", label: "duplicate" },
+  { value: "other", label: "other" },
+] as const;
 
 export interface MatchSource {
   posting_id: string;
@@ -957,6 +1016,30 @@ export const api = {
   matchesFiltered: (query: URLSearchParams) =>
     request<Match[]>(`/matches?${query}`),
   calibration: () => request<Calibration>("/matches/calibration"),
+  decideWithReason: (matchId: string, decision: Decision, reason?: string, note?: string) =>
+    request<{ id: string; decision: Decision | null; skip_reason: string | null }>(
+      `/matches/${matchId}/decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision, reason: reason ?? null, note: note ?? null }),
+      },
+    ),
+  rankingPreferences: () => request<RankingPreference[]>("/ranking/preferences"),
+  saveRankingPreference: (body: {
+    kind: RankingKind;
+    value: string;
+    weight: number;
+    source?: "explicit" | "suggestion";
+    note?: string | null;
+  }) =>
+    request<RankingPreference>("/ranking/preferences", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteRankingPreference: (id: string) =>
+    request<void>(`/ranking/preferences/${id}`, { method: "DELETE" }),
+  rankingSuggestions: () => request<RankingSuggestion[]>("/ranking/suggestions"),
+  rankingEvaluation: () => request<RankingEvaluation>("/ranking/evaluation"),
   postingHistory: (id: string) => request<PostingHistory>(`/postings/${id}/history`),
   splitPosting: (id: string) =>
     request<PostingHistory>(`/postings/${id}/split`, { method: "POST" }),

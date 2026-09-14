@@ -19,7 +19,12 @@ from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.enums import ErrorCode
 from packages.core.models_ranking import RankingPreference
-from packages.core.schemas_ranking import RankingPreferenceIn, RankingPreferenceOut, SuggestionOut
+from packages.core.schemas_ranking import (
+    RankingEvaluationOut,
+    RankingPreferenceIn,
+    RankingPreferenceOut,
+    SuggestionOut,
+)
 from packages.matching.personalize import KINDS, suggest
 from packages.matching.skill_vocab import normalize_skill
 
@@ -133,3 +138,32 @@ async def suggestions(
     existing = await preferences_for(session, profile_id)
     found = await suggest(session, profile_id=profile_id, existing=existing)
     return [SuggestionOut(**item.as_dict()) for item in found]
+
+
+@router.get("/evaluation", response_model=RankingEvaluationOut)
+async def evaluation_report(
+    session: SessionDep,
+    profile_id: uuid.UUID | None = None,
+    k: int = Query(default=10, ge=1, le=50),
+) -> RankingEvaluationOut:
+    """Held-out NDCG for the base and personalized orders, or why it cannot be said.
+
+    Resolves the profile when there is exactly one, and refuses to guess when
+    there are several — the same rule `/labels/next` follows.
+    """
+    from packages.core.models import Profile
+    from packages.matching.evaluation import evaluate
+
+    if profile_id is None:
+        ids = list((await session.scalars(select(Profile.id))).all())
+        if len(ids) != 1:
+            raise ApiError(
+                ErrorCode.INVALID_REQUEST, f"pass profile_id; there are {len(ids)} profiles"
+            )
+        profile_id = ids[0]
+    elif await session.get(Profile, profile_id) is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "profile not found")
+
+    preferences = await preferences_for(session, profile_id)
+    report = await evaluate(session, profile_id, preferences, k=k)
+    return RankingEvaluationOut(**report.as_dict())

@@ -70,6 +70,7 @@ const FILTER_KEYS = [
   "include_unknown_skills",
   "max_education",
   "include_unknown_education",
+  "rank",
 ] as const;
 
 export default async function MatchesPage({
@@ -357,6 +358,30 @@ export default async function MatchesPage({
                       </span>
                     ) : null}
                   </p>
+                ) : null}
+
+                {match.personalized_score !== null ? (
+                  <div className="mt-3 text-xs text-ink-soft">
+                    <span className="font-mono text-ink">
+                      personalized {Math.round(match.personalized_score * 100)}
+                    </span>{" "}
+                    <span className="text-ink-faint">(base {Math.round(match.score * 100)})</span>
+                    {match.adjustments.length > 0 ? (
+                      <ul className="mt-1 space-y-0.5">
+                        {match.adjustments.map((item) => (
+                          <li key={`${item.kind}:${item.value}`}>
+                            <span className={item.weight >= 0 ? "text-go" : "text-stop"}>
+                              {item.weight >= 0 ? "+" : "−"}
+                              {Math.round(Math.abs(item.weight) * 100)}
+                            </span>{" "}
+                            {item.why}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span className="text-ink-faint"> — none of your adjustments apply</span>
+                    )}
+                  </div>
                 ) : null}
 
                 <RequirementsPanel

@@ -39,3 +39,27 @@ class SuggestionOut(BaseModel):
 
 
 __all__ = ["RankingPreferenceIn", "RankingPreferenceOut", "SuggestionOut"]
+
+
+class RankingEvaluationOut(BaseModel):
+    """Whether the personalized order ranks better on held-out owner grades.
+
+    `learned_model` is always a statement that there is none: personalization
+    here is explicit adjustments, and `promotable` is true only when the
+    held-out interval clears the base one on enough grades from enough streams.
+    """
+
+    owner_labels: int
+    streams: dict[str, int]
+    held_out: int
+    preferences: int
+    status: str
+    message: str
+    k: int
+    learned_model: str
+    base_ndcg: float | None
+    base_interval: list[float] | None
+    personalized_ndcg: float | None
+    personalized_interval: list[float] | None
+    promotable: bool
+    blockers: list[str]
