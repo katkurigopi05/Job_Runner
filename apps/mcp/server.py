@@ -10,11 +10,13 @@ Two things to know about the tool surface:
   profile has opted in above its match threshold. There is deliberately no
   "submit now" tool.
 - **Tool names describe what they actually do.** CLAUDE.md §4 lists a
-  `tailor_resume` tool, but tailoring — LLM rewriting behind the fabrication
-  guard — is Phase 3 and does not exist yet. What exists is assembly (source
-  résumé plus ranked GitHub projects), so the tool is called
-  `preview_resume`. Naming it `tailor_resume` would advertise a capability the
-  code does not have.
+  `tailor_resume` tool, and there is none. Tailoring — LLM rewriting behind
+  the fabrication guard — is built, but it runs inside the apply pipeline so
+  the guard has one caller. What the tools expose is reviewing it:
+  `inspect_application_resume`, `compare_tailoring`, `select_tailoring` and
+  `edit_application_resume` (guard-checked, because a model is typing).
+  `preview_resume` is assembly only — source résumé plus ranked GitHub
+  projects — and says so.
 """
 
 from __future__ import annotations
@@ -88,8 +90,10 @@ async def search_postings(
 ) -> dict[str, Any]:
     """Search postings Jobrunner has indexed.
 
-    Note the crawler that fills this index is Phase 5; on a current install
-    this returns nothing and says so. Apply to a URL directly in the meantime.
+    The index is filled by the crawler polling the company registry. An
+    empty result means nothing matched, or no crawl has run yet — `make crawl`
+    runs one, and the setup page reports when the last one finished. A URL
+    can always be applied to directly with `apply_to_url`.
     """
     params: dict[str, Any] = {"q": query, "limit": limit}
     if location:
@@ -437,8 +441,9 @@ async def preview_resume(resume_id: str, job_text: str = "", limit: int = 4) -> 
     picked, and exactly how each project link will read.
 
     This is assembly, not tailoring: the source résumé's text is reproduced
-    verbatim and only the Projects section is generated. LLM rewriting behind
-    the fabrication guard arrives in Phase 3.
+    verbatim and only the Projects section is generated. Tailoring itself runs
+    in the apply pipeline behind the fabrication guard; review its output with
+    `inspect_application_resume` or `compare_tailoring`.
     """
     return await _call(
         "POST",

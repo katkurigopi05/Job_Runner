@@ -85,24 +85,24 @@ Same as PARITY.md, plus one:
 
 | Spec | Capability | Status | Notes |
 |---|---|---|---|
-| §17, §24 | Recruiter score, before and after | **BUILD** | Nothing exists. `ats.py` measures machine parse, which is a different question → **P4** |
-| §52 | Four-level recruiter simulation | **BUILD** | Part of **P4** |
-| §25, §53 | Application readiness score and gate | **BUILD** | No composite readiness score, no READY gate → **P8** |
+| §17, §24 | Recruiter score, before and after | **HAVE** | `packages/tailor/recruiter.py` — deterministic, no model judge; shown on the `/review` card and tested in `tests/test_recruiter.py`. Corrected 2026-09-14: this row said nothing existed |
+| §52 | Four-level recruiter simulation | **HAVE** | The four passes in `recruiter.py`: ten-second scan, thirty-second qualification, hiring-manager and technical credibility |
+| §25, §53 | Application readiness score and gate | **HAVE** | `packages/tailor/readiness.py` — composite score, legible band, and a blocker list that makes an application unready regardless of score; on `/review`, tested in `tests/test_readiness.py` |
 | §27 | Adversarial verification agent | **BUILD** | The guard checks fabrication only. Nothing challenges seniority mismatch, keyword stuffing, contradictions, or inflated scores → **P13** |
-| §60–§62 | The three user-facing report formats | **PARTIAL** | `/review` shows résumé, diff, ATS score, cover letter. Missing the match breakdown, recruiter score, readiness, and risks → falls out of **P4** + **P8** |
+| §60–§62 | The three user-facing report formats | **PARTIAL** | `/review` shows résumé, diff, ATS score, recruiter levels, readiness and cover letter. Not produced as the spec's three fixed report formats |
 | §63 | Perspective switching between phases | **PARTIAL** | Separate modules exist; no orchestration runs them as distinct passes |
 
 ### Application flow (spec §31–§33, §42–§43, §49–§50)
 
 | Spec | Capability | Status | Notes |
 |---|---|---|---|
-| §31 | Full preview before submit | **PARTIAL** | `/review` covers most of it; missing the scores P4 and P8 add |
+| §31 | Full preview before submit | **HAVE** | `/review` shows the filled form, screenshot, résumé diff, ATS, recruiter and readiness scores before approval |
 | §32, §50 | Human approval before submit | **HAVE** | `AUTO_SUBMIT=false` default, state machine in `core/state.py`, tested |
 | §33 | Sensitive questions flagged, never invented | **HAVE** | `ats/screen.py` knock-outs and cautions; §2.2 verbatim copying |
 | §41 | `experiments`, `model_versions`, `training_examples`, `job_versions`, `recruiter_reviews` tables | **BUILD** | Experiment records are dataclasses written to stdout; nothing persists → **P14** |
 | §42 | API surface | **PARTIAL** | Most routes exist under different names. Missing `/jobs/{id}/analyze`, `/jobs/{id}/resume-comparison`, `/feedback` |
-| §43 | Dashboard sections | **PARTIAL** | 12 pages exist. No model-performance view → part of **P14** |
-| §49 | Test coverage across the listed areas | **HAVE** | 1036 tests |
+| §43 | Dashboard sections | **PARTIAL** | 13 main pages as of the 2026-09-14 audit. No model-performance view → part of **P14** |
+| §49 | Test coverage across the listed areas | **HAVE** | 2,632 passing tests at the 2026-09-14 audit — count it with `pytest --collect-only -q` rather than trusting this number |
 | §55–§56 | Code quality, observability | **PARTIAL** | structlog throughout; no metrics aggregation or crawler success-rate view |
 
 ---
@@ -195,7 +195,12 @@ result — report it and stop.
 
 ---
 
-### P4 — Recruiter simulation
+### P4 — Recruiter simulation — **built**
+
+> Corrected 2026-09-14. `packages/tailor/recruiter.py` implements the four levels
+> below deterministically, and `/review` shows them. The text that follows is
+> the original brief, kept for its reasoning.
+
 **Spec:** §17, §24, §52 · **Size:** M
 
 The largest missing evaluation axis. `ats.py` asks "can a machine parse
@@ -308,7 +313,12 @@ is therefore argued rather than observed in the wild.
 
 ---
 
-### P8 — Readiness score and tiers
+### P8 — Readiness score and tiers — **built**
+
+> Corrected 2026-09-14. `packages/tailor/readiness.py` composes the scores,
+> bands them, and blocks on missing answers regardless of score. The text
+> that follows is the original brief.
+
 **Spec:** §25, §44, §53, §62 · **Size:** S–M · **Needs:** P4
 
 The composite the spec puts in front of every approval, plus the quality
