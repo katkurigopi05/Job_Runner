@@ -70,13 +70,7 @@ const PROMPTS = [
   { icon: "📮", label: "Any replies?", text: "Have I had any replies, and what did they say?" },
 ];
 
-export function Assistant({
-  applicationId,
-  compact = false,
-}: {
-  applicationId?: string;
-  compact?: boolean;
-}) {
+export function Assistant({ applicationId }: { applicationId?: string }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
