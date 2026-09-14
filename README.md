@@ -40,6 +40,10 @@ the architecture teardown this project is modeled on.
 For a start-to-finish walkthrough, dashboard route reference, MCP command
 examples, and troubleshooting, see [`docs/USAGE.md`](./docs/USAGE.md).
 
+When something is not working, open **`/setup`** on the dashboard: it names each
+missing piece and the command that fixes it. Back up with `make backup` and
+prove the backup with `make backup-verify` (docs/USAGE.md §12).
+
 | Doc | What it covers |
 |---|---|
 | [`CLAUDE.md`](./CLAUDE.md) | build spec, the non-negotiable rules, and a record of what each gate does *not* prove |

@@ -660,6 +660,8 @@ make import-csv src=companies.csv register=1
 make import-csv src=companies.csv write=1
 
 # 4. Project that curated registry into the database too, if you keep one.
+#    Preview first: it reports rows created, repaired and retired, and writes nothing.
+make registry-sync dry=1
 make registry-sync
 
 # 5. Dispatch a cycle: discovery for companies without a board, fetching for
@@ -903,3 +905,110 @@ Finish that application manually. Captcha solving, browser-fingerprint spoofing,
 - The assistant is local unless you pick otherwise, per question. Picking a cloud model sends your applications and profile to it; recruiter mail stays behind unless you also tick the box.
 - OpenRouter's cloaked `stealth/*` routes do not disclose which upstream provider receives your data. The audit trail records the hop, not the destination.
 - Read the model's data policy before pointing a free route at your résumé. Free access is often paid for with your prompts.
+
+## 12. Setup, requirements, ranking, tracking and backups
+
+These flows were added on 2026-09-14. Each is local; none sends anything to an
+employer.
+
+### Setup and recovery — `/setup`
+
+One page for everything the installation needs: API and database, schema
+migrations, the queue worker (from its heartbeat), the vault key, the inbox,
+the company registry, crawler freshness, backups, and the local tools. Every
+problem carries the exact command or edit that fixes it, worst first. No
+secret value is ever shown.
+
+- **Worker** shows *alive*, *stale* (silent without a clean stop) or *stopped*.
+  A worker started before heartbeats existed must be restarted once to report.
+- **Company registry** offers *Preview repair* then *Apply repair*: the same
+  `sync_registry` as `make registry-sync`. Applying makes boards fetchable, so
+  the next crawl polls them.
+- `make doctor` reports the same vault, inbox and registry diagnostics in a
+  terminal.
+
+A vault key that is invalid is described by shape (length, quotes, an inline
+comment) and never echoed. If encrypted credentials exist, the fix says *not*
+to generate a new key. Nothing writes a key for you: `make vault-key` prints
+one to paste.
+
+### Pay, skills and education — Matches filters
+
+Postings carry salary range, currency and period, and required / preferred /
+unclassified skills and education, each with the line it was read from. The
+crawler reads new and edited postings; existing ones need one backfill:
+
+```bash
+make extract-requirements
+```
+
+Filters on Matches: *pay reaching* (compared only in the same currency and
+period — never converted), *skills I lack* (drops postings that require them),
+*must name*, and *my education*. **An unstated value never passes a filter.**
+Each filter has its own switch to include postings that do not say. *Read
+salaries of 10,000+ with no stated period as annual* is a separate, visible
+opt-in. *Save as default search* stores filters in `search_preferences`, never
+on the profile.
+
+### Copies and history — `/postings/{id}`
+
+The same requisition listed on two sources is grouped only on positive
+evidence (same company, different source, and a shared requisition id or the
+same title, location and near-identical text). The feed shows one card with
+every source and its own decision; *History & sources* shows each source and
+what the posting said over time. *Not the same job — split* separates a
+listing permanently.
+
+```bash
+make canonicalize dry=1   # preview grouping of stored postings
+make canonicalize
+```
+
+### Ranking — Rate, Matches, `/ranking`
+
+- **Rate:** after ←, pick a skip reason (keys 1–9) or none.
+- **`/ranking`:** add bounded adjustments (±0.30) for a skill, company, title
+  word, location word, or remote/on-site. Suggestions from repeated skip
+  reasons appear for you to accept; nothing is applied on its own.
+- **Matches → order: with my adjustments** orders by the personalized score.
+  The base score is unchanged and each card lists every adjustment that moved it.
+- **Is it better?** compares both orders on held-out grades from `/label`. With
+  fewer than 100 owner grades from two sampling streams it reports *not
+  validated* — there is no learned model.
+
+### Contacts and tasks — application page and Tracker
+
+On an application: record people (recruiter, hiring manager, interviewer) and
+add interview, assessment, follow-up or prep tasks with a due time, a reminder
+and a checklist. A routed interview or assessment reply creates one task
+automatically, without a date. Reminders ring through `NOTIFY_BACKENDS` on this
+machine. Download `.ics` files for your own calendar from the application page
+or the Tracker's *Next two weeks* panel. Follow-up tasks are reminders to write
+a message yourself.
+
+### Backup and verified restore
+
+```bash
+make backup                       # database + résumés, receipts, diagnostics
+make backup vault=1               # also vault ciphertext — never the key
+make backup-verify dir=backups/jobrunner-20260914T180000Z
+```
+
+A backup is a directory under `backups/` (gitignored): `database.dump`,
+`artifacts/`, and `manifest.json` with checksums, table row counts taken in the
+same snapshot as the dump, the schema revision, and what was excluded (browser
+profiles and logs by default). **Keep your `VAULT_KEY` separately**; without it,
+restored credentials are unreadable.
+
+`make backup-verify` restores into a throwaway `jobrunner_restore_*` database
+and a throwaway directory, checks the dump checksum, restore, row counts,
+schema revision and every artifact checksum, then removes both (`keep=1` to
+inspect). It refuses the live database name and any directory overlapping
+`storage/`, so verification cannot overwrite your installation. It needs the
+PostgreSQL 16 client tools or the running `jobrunner-postgres` container.
+
+To recover onto a fresh machine: `make up`, create an empty database, then
+`pg_restore --no-owner --dbname <database> database.dump`, copy
+`artifacts/*` into `storage/`, restore `VAULT_KEY` from where you kept it, and
+run `make doctor`.
+

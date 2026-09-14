@@ -66,7 +66,7 @@ async def _send(reminder: Reminder) -> list[str]:
                 delivered.append(backend)
             elif backend == "desktop":
                 shown = type("Shown", (), {"title": "Jobrunner reminder", "body": reminder.body})()
-                await asyncio.to_thread(_desktop, shown)  # type: ignore[arg-type]
+                await asyncio.to_thread(_desktop, shown)
                 delivered.append(backend)
             elif backend == "webhook":
                 url = get_settings().notify_webhook_url

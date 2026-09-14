@@ -281,6 +281,9 @@ class Settings(BaseSettings):
     embedding_backend: str = "lexical"
 
     storage_root: str = "./storage"
+    #: Where `make backup` writes. Outside storage_root so a backup never
+    #: contains itself, and gitignored like it.
+    backup_root: str = "./backups"
 
     #: Read-only token. Raises the API limit from 60/hour to 5000/hour and
     #: allows private repositories to be listed.

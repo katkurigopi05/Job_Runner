@@ -23,6 +23,7 @@ const GROUPS: { key: string; title: string; blurb: string }[] = [
     blurb: "Stored ATS logins and the mailbox replies arrive in.",
   },
   { key: "discovery", title: "Discovery", blurb: "Where new postings come from." },
+  { key: "data", title: "Your data", blurb: "Backups of the database and your documents." },
   { key: "tools", title: "Local tools", blurb: "Rendering, the guard, the browser, models." },
 ];
 

@@ -21,6 +21,7 @@ task-kind constants, and core must not import apps.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -336,6 +337,74 @@ async def _inbox_facts(session: AsyncSession) -> dict[str, str | int | float | b
     return {"messages_ingested": count}
 
 
+#: A backup older than this is reported as due.
+BACKUP_FRESH_DAYS = 7
+
+
+def backup_item(root: Path, now: datetime) -> SetupItemOut:
+    """The newest backup under `root`, whether it was verified, and how old it is."""
+    import json
+
+    from packages.backup.manifest import MANIFEST, VERIFICATION
+
+    manifests = sorted(root.glob(f"jobrunner-*/{MANIFEST}")) if root.is_dir() else []
+    steps = ["make backup", "make backup-verify dir=<the directory it prints>"]
+    if not manifests:
+        return SetupItemOut(
+            key="backups",
+            title="Backups",
+            group="data",
+            state="attention",
+            detail=(
+                "No backup exists. The database, résumés and receipts live only on this machine."
+            ),
+            steps=steps,
+        )
+    newest = manifests[-1].parent
+    age = _age(datetime.fromtimestamp(manifests[-1].stat().st_mtime, UTC), now)
+    verification = newest / VERIFICATION
+    verified = False
+    if verification.is_file():
+        try:
+            verified = bool(json.loads(verification.read_text()).get("ok"))
+        except (ValueError, OSError):
+            verified = False
+    facts: dict[str, str | int | float | bool | None] = {
+        "latest": newest.name,
+        "age": _ago(age),
+        "verified": verified,
+        "backups": len(manifests),
+    }
+    if not verified:
+        return SetupItemOut(
+            key="backups",
+            title="Backups",
+            group="data",
+            state="attention",
+            detail=f"The latest backup ({newest.name}) has not been verified by a restore.",
+            steps=[f"make backup-verify dir={newest}"],
+            facts=facts,
+        )
+    if age is not None and age > BACKUP_FRESH_DAYS * 86400:
+        return SetupItemOut(
+            key="backups",
+            title="Backups",
+            group="data",
+            state="attention",
+            detail=f"The latest verified backup is {_ago(age)}.",
+            steps=steps,
+            facts=facts,
+        )
+    return SetupItemOut(
+        key="backups",
+        title="Backups",
+        group="data",
+        state="ok",
+        detail=f"Latest backup {newest.name}, verified by restore, {_ago(age)}.",
+        facts=facts,
+    )
+
+
 async def build_status(session: AsyncSession, *, now: datetime | None = None) -> SetupStatusOut:
     current = now or datetime.now(UTC)
     report = await doctor.run()
@@ -371,6 +440,10 @@ async def build_status(session: AsyncSession, *, now: datetime | None = None) ->
     if database_ok:
         items.append(await registry_item(session))
         items.append(await crawler_item(session, current))
+
+    from packages.core.config import get_settings
+
+    items.append(backup_item(Path(get_settings().backup_root), current))
 
     shown = {"postgres", "migrations", "vault", "inbox", *_REPLACED}
     items.extend(_from_check(check) for name, check in checks.items() if name not in shown)
