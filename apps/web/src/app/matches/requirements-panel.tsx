@@ -47,21 +47,24 @@ function Evidence({ quote }: { quote: string | null }) {
 
 function PayLine({ pay }: { pay: Compensation | null }) {
   if (!pay) {
-    return <p className="text-sm text-ink-faint">Pay not stated</p>;
+    return <div className="text-sm text-ink-faint">Pay not stated</div>;
   }
   const range =
     pay.minimum === pay.maximum
       ? money(pay.minimum, pay.currency)
       : `${money(pay.minimum, pay.currency)} – ${money(pay.maximum, pay.currency)}`;
+  // A <div>, not a <p>: the evidence is a <details> block, which a <p> may
+  // not contain. The browser closes the <p> early, the DOM stops matching what
+  // React rendered, and the whole Matches page fails hydration (React #418).
   return (
-    <p className="text-sm text-ink">
+    <div className="text-sm text-ink">
       <span className="tabular-nums">{range}</span>
       {pay.currency && !["USD", "GBP", "EUR", "INR"].includes(pay.currency) ? ` ${pay.currency}` : ""}
       <span className="text-ink-soft">
         {pay.period ? ` per ${pay.period}` : " — period not stated"}
       </span>{" "}
       <Evidence quote={pay.quote} />
-    </p>
+    </div>
   );
 }
 
@@ -84,7 +87,7 @@ function Chips({ label, tone, skills }: { label: string; tone: string; skills: S
 }
 
 function EducationLine({ education }: { education: EducationRequirement | null }) {
-  if (!education) return <p className="text-sm text-ink-faint">Education not stated</p>;
+  if (!education) return <div className="text-sm text-ink-faint">Education not stated</div>;
   const what = EDUCATION[education.level];
   const verb =
     education.requirement === "required"
@@ -93,12 +96,12 @@ function EducationLine({ education }: { education: EducationRequirement | null }
         ? "Prefers"
         : "Mentions";
   return (
-    <p className="text-sm text-ink-soft">
+    <div className="text-sm text-ink-soft">
       {verb} a {what}
       {education.equivalent_experience ? " or equivalent experience" : ""}
       {education.requirement === "unclassified" ? " (not stated whether required)" : ""}{" "}
       <Evidence quote={education.quote} />
-    </p>
+    </div>
   );
 }
 
