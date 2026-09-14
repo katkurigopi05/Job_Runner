@@ -568,6 +568,26 @@ class CompanySeed(BaseModel):
     state: str | None = None
 
 
+class RetiredSeed(BaseModel):
+    """An entry under `retired:` — a board the owner stopped polling, and why.
+
+    `load_seed` never returns these, which is what keeps a dead board from
+    being polled. They are read separately, by the one caller that needs the
+    decision itself: `sync_registry`, so a database row created before the
+    board was retired stops presenting it as a company that needs a URL.
+    """
+
+    #: Optional because the file has carried nameless retired entries before;
+    #: a nameless one cannot be matched to a row and is reported, not guessed.
+    name: str | None = None
+    slug: str
+    ats: str = "greenhouse"
+    checked: str | None = None
+    state: str | None = None
+    api_status: int | None = None
+    rendered_status: int | None = None
+
+
 def default_seed_path() -> Path:
     """Where the registry lives. One definition, so writers and readers agree."""
     return Path(__file__).resolve().parents[2] / "seeds" / "companies.yaml"
@@ -623,3 +643,22 @@ def load_seed(path: str | None = None) -> list[CompanySeed]:
         )
 
     return [CompanySeed.model_validate(entry) for entry in entries]
+
+
+def load_retired(path: str | None = None) -> list[RetiredSeed]:
+    """Read the `retired:` section of the registry. Never polled; never returned by `load_seed`.
+
+    A missing file or a missing section is an empty list — a registry that has
+    never retired a board is normal. A section of the wrong shape raises, for
+    the reason `load_seed` gives: malformed must not read as empty.
+    """
+    location = Path(path) if path else default_seed_path()
+    if not location.is_file():
+        return []
+    raw = yaml.safe_load(location.read_text()) or {}
+    if not isinstance(raw, dict):
+        raise SeedFileError(f"{location} is not a mapping")
+    entries = raw.get("retired") or []
+    if not isinstance(entries, list):
+        raise SeedFileError(f"{location}: `retired:` must be a list, not {type(entries).__name__}")
+    return [RetiredSeed.model_validate(entry) for entry in entries]

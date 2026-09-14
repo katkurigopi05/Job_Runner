@@ -351,8 +351,9 @@ inspect-csv:
 # reads. Idempotent, cannot reactivate a retired board, and will not overwrite
 # verification evidence newer than the seed file's own `checked` stamp.
 #   make registry-sync
+#   make registry-sync dry=1   # preview only
 registry-sync:
-	$(PY)/python -m scripts.registry_sync $(if $(seeds),--seeds $(seeds),)
+	$(PY)/python -m scripts.registry_sync $(if $(seeds),--seeds $(seeds),) $(if $(dry),--dry-run,)
 
 # Where the crawl's wall-clock went, per host: time inside the rate limiter
 # against time in the request. Those want opposite responses — the first is
