@@ -20,7 +20,14 @@ from pydantic import BaseModel, Field
 from packages.llm.prompts import TAILOR_SYSTEM
 from packages.llm.provider import LLMProvider
 from packages.llm.router import temperature_for
-from packages.tailor.guard import _COMMON_WORDS, GuardReport, SourceCorpus, check, normalize
+from packages.tailor.guard import (
+    _COMMON_WORDS,
+    GuardReport,
+    SourceCorpus,
+    check,
+    normalize,
+    slash_members,
+)
 from packages.tailor.keywords import TermReport, analyze, borrowed_terms
 from packages.tailor.recombination import find as find_recombinations
 from packages.tailor.technologies import dropped as dropped_technologies
@@ -196,7 +203,9 @@ def is_substantive(original: str, candidate: str) -> bool:
 
 def _content_words(text: str) -> set[str]:
     """Meaning-bearing words, ignoring grammar."""
-    words = {normalize(w) for w in text.split()}
+    # A slash compound counts as its members, so `CI/CD` and `CI, CD` share
+    # their wording rather than reading as a wholesale replacement.
+    words = {normalize(m) for w in text.split() for m in (slash_members(w) or [w])}
     return {w for w in words if w and w not in _COMMON_WORDS}
 
 

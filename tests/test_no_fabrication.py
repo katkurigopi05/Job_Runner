@@ -895,3 +895,30 @@ def test_the_specific_thing_is_still_checked() -> None:
     assert not check("Deployed Redis servers.", corpus).ok
     assert not check("Cluster administration on AWS servers.", corpus).ok
     assert not check("Managed 500 servers.", corpus).ok
+
+
+@pytest.mark.parametrize("stack", ["Rust/Tauri/WebGPU", "Pillow/Tkinter", "CI/CD"])
+def test_slash_separated_technologies_can_be_written_individually(stack: str) -> None:
+    original = f"Built an application with {stack}."
+    candidate = f"Built an application with {', '.join(stack.split('/'))}."
+    corpus = SourceCorpus.from_resume(
+        ParsedResume(sections={"projects": [original]}, raw_lines=[original])
+    )
+
+    accepted, reason, _ = vet(original, candidate, corpus)
+
+    assert accepted, reason
+
+
+def test_splitting_technology_names_does_not_allow_cross_project_borrowing() -> None:
+    rust_project = "Built an application with Rust/Tauri/WebGPU."
+    python_project = "Built backend services in Python."
+    corpus = SourceCorpus.from_resume(
+        ParsedResume(
+            sections={"projects": [rust_project, python_project], "skills": ["Rust, Python"]},
+            raw_lines=[rust_project, python_project, "Rust, Python"],
+        )
+    )
+
+    assert not vet(python_project, "Built backend services in Python and Rust.", corpus)[0]
+    assert not vet(rust_project, "Built an application with Rust, Tauri, WebGPU and Go.", corpus)[0]

@@ -47,6 +47,7 @@ from packages.tailor.guard import (
     SourceCorpus,
     normalize,
     singular,
+    slash_members,
 )
 
 #: How far apart two tokens may stand *within one line or sentence* and still
@@ -96,28 +97,44 @@ class Recombination:
         )
 
 
-def _segments(text: str) -> list[list[str]]:
-    """Normalized tokens in order, grouped by line and sentence.
+def _segments(text: str) -> list[list[frozenset[str]]]:
+    """Normalized token positions in order, grouped by line and sentence.
 
     Segmented rather than flat because a résumé is a list of separate claims.
     Two words in different entries are not "near" each other in any sense that
     licenses putting them in one phrase, however few tokens happen to lie
     between them.
+
+    Each position holds every form the token is findable under. A slash
+    compound and its members share one position: `Rust/Tauri/WebGPU` names
+    three technologies that stood together, and laying the members out as
+    extra tokens would push the words around them outside the window — so
+    moving `(Pillow/Tkinter)` to the end of its own bullet read as a new pairing.
     """
-    segments: list[list[str]] = []
+    segments: list[list[frozenset[str]]] = []
     for chunk in _SEGMENT_RE.split(text):
-        tokens = [
-            normalized for token in _WORD_RE.findall(chunk) if (normalized := normalize(token))
+        positions = [
+            forms
+            for token in _WORD_RE.findall(chunk)
+            if (
+                forms := frozenset(
+                    normalized
+                    for form in (token, *slash_members(token))
+                    if (normalized := normalize(form))
+                )
+            )
         ]
-        if tokens:
-            segments.append(tokens)
+        if positions:
+            segments.append(positions)
     return segments
 
 
-def _co_occurs(segments: list[list[str]], first: str, second: str, *, window: int = WINDOW) -> bool:
-    for tokens in segments:
-        here = [index for index, token in enumerate(tokens) if token == first]
-        there = [index for index, token in enumerate(tokens) if token == second]
+def _co_occurs(
+    segments: list[list[frozenset[str]]], first: str, second: str, *, window: int = WINDOW
+) -> bool:
+    for positions in segments:
+        here = [index for index, forms in enumerate(positions) if first in forms]
+        there = [index for index, forms in enumerate(positions) if second in forms]
         if any(abs(a - b) <= window for a in here for b in there):
             return True
     return False

@@ -183,7 +183,9 @@ async def publish_tailored(
         # Written only on the miss that produced this row. Left NULL when the
         # caller had nothing safe to key on, which keeps it out of every future
         # lookup rather than making it reusable by accident.
-        tailored_key=tailored_key,
+        # A provider outage produced a reviewable fallback, not a completed
+        # tailoring. Leave it uncached so a later attempt can recover.
+        tailored_key=None if result.provider_failures else tailored_key,
         # Independent of the key above: `tailored_key` decides reuse and is a
         # digest, this answers "which job was this written for" and is
         # readable. A posting with no content hash is uncacheable but still

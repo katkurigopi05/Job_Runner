@@ -315,6 +315,20 @@ def stem(word: str) -> str:
     return w
 
 
+_SLASH_COMPOUND_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#]*(?:/[A-Za-z][A-Za-z0-9+#]*)+")
+
+
+def slash_members(token: str) -> list[str]:
+    """The technologies a slash compound names, or nothing if it is not one.
+
+    `Rust/Tauri/WebGPU` names three technologies, and a rewrite listing them
+    separately says the same thing. Hyphens (`non-destructive`), numeric
+    ratios (`24/7`) and URL paths are deliberately not split.
+    """
+    text = _strip(token)
+    return text.split("/") if _SLASH_COMPOUND_RE.fullmatch(text) else []
+
+
 def normalize(token: str) -> str:
     """Fold a token to the form the corpus is indexed under.
 
@@ -452,15 +466,18 @@ def _index(text: str) -> set[str]:
     """Every form a token in `text` should be findable under."""
     tokens: set[str] = set()
     for match in _TOKEN_RE.finditer(text):
-        normalized = normalize(match.group(0))
-        if not normalized:
-            continue
-        tokens.add(normalized)
-        tokens.add(singular(normalized))
-        # Index the digit form of a written number too, so a source saying
-        # "three" supports an output saying "3".
-        if normalized in _NUMBER_WORDS:
-            tokens.add(_NUMBER_WORDS[normalized])
+        raw = _strip(match.group(0))
+        # Keep the compound too, and index its members before computing
+        # attribution, so a shared Skills list cannot lend them to another
+        # project.
+        for form in (raw, *slash_members(raw)):
+            normalized = normalize(form)
+            if not normalized:
+                continue
+            tokens.add(normalized)
+            tokens.add(singular(normalized))
+            if normalized in _NUMBER_WORDS:
+                tokens.add(_NUMBER_WORDS[normalized])
 
     # Equivalent spellings of the same fact — "Postgres" also findable as
     # "PostgreSQL", "K8s" as "Kubernetes". Indexed here rather than checked at
