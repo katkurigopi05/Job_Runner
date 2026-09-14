@@ -435,7 +435,13 @@ def test_a_missing_alias_base_is_named_as_the_reason_replies_never_conclude(inbo
     assert "INBOX_ALIAS_BASE" in check.detail
 
 
-async def test_the_report_includes_the_registry_when_the_database_answers() -> None:
+async def test_the_report_includes_the_registry_when_the_database_answers(
+    committing_sessionmaker, monkeypatch
+) -> None:
+    """The registry is read through the test database, never the live one."""
+    from packages.core import db as core_db
+
+    monkeypatch.setattr(core_db, "get_sessionmaker", lambda: committing_sessionmaker)
     report = await run()
 
     names = {c.name for c in report.checks}

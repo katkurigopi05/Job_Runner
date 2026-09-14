@@ -16,6 +16,11 @@ contradiction refuses it:
   separate ids.
 - **Never when both state requisition ids and they differ.**
 - **Never when the owner split them** (`canonical_locked`).
+- **Never when a source lists the same title and location more than once.**
+  Two identical openings on a board and one copy elsewhere: which one the copy
+  belongs to cannot be told, so neither merges — attaching both would put two
+  real jobs behind one card. A shared requisition id is exempt, because it
+  names the opening.
 - **Same requisition id and same title** is a merge.
 - **Otherwise** the title and location must match and the descriptions must
   be near-identical (≥ 90% of distinct words shared, both long enough for
@@ -35,6 +40,7 @@ from urllib.parse import urlparse
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from packages.core.models import Posting
 from packages.core.models_jobs import CanonicalJob
@@ -87,6 +93,10 @@ class Verdict:
     same: bool
     reason: str
     confidence: float = 0.0
+    #: Decided by a requisition id both listings state, which names the opening
+    #: and so survives a source listing the same title twice. Never inferred
+    #: from `confidence`: identical text scores 1.0 and is not an id.
+    by_requisition: bool = False
 
 
 def same_requisition(a: Posting, b: Posting) -> Verdict:
@@ -103,7 +113,12 @@ def same_requisition(a: Posting, b: Posting) -> Verdict:
     if title_key(a.title) != title_key(b.title):
         return Verdict(False, "different titles")
     if req_a and req_a == req_b:
-        return Verdict(True, f"same requisition id {req_a} and title", 0.99)
+        return Verdict(
+            True,
+            f"same requisition id {req_a} and title",
+            REQUISITION_CONFIDENCE,
+            by_requisition=True,
+        )
     if _location_key(a.location) != _location_key(b.location):
         return Verdict(False, "different locations")
     if min(len(a.description_raw or ""), len(b.description_raw or "")) < MIN_TEXT_LENGTH:
@@ -149,7 +164,11 @@ async def assign(session: AsyncSession, posting_ids: list[uuid.UUID]) -> AssignR
             continue
         open_listings = (
             await session.scalars(
-                select(Posting).where(Posting.company_id == company_id, Posting.closed_at.is_(None))
+                select(Posting)
+                .where(Posting.company_id == company_id, Posting.closed_at.is_(None))
+                # Compared on text, never on vectors: 384 floats per listing,
+                # for every open listing at the company, on every crawl.
+                .options(defer(Posting.description_embedding))
             )
         ).all()
         by_key: dict[str, list[Posting]] = {}
@@ -167,6 +186,21 @@ async def assign(session: AsyncSession, posting_ids: list[uuid.UUID]) -> AssignR
     return report
 
 
+#: Confidence of a merge decided by a shared requisition id.
+REQUISITION_CONFIDENCE = 0.99
+
+
+def _rivals(copy: Posting, source: str, listings: list[Posting]) -> int:
+    """How many listings on `source` the `copy` would merge with."""
+    return sum(
+        1
+        for other in listings
+        if other.id != copy.id
+        and source_key(other) == source
+        and same_requisition(copy, other).same
+    )
+
+
 async def _attach(
     session: AsyncSession,
     posting: Posting,
@@ -178,6 +212,19 @@ async def _attach(
         (other, verdict)
         for other in listings
         if other.id != posting.id and (verdict := same_requisition(posting, other)).same
+    ]
+    # Text alone cannot pair a copy with one of several identical openings: if
+    # the copy matches two listings on this source, or this listing matches two
+    # on the copy's source, which one it belongs to is unknowable, so neither
+    # merges. A second, *different* opening on the same board does not count.
+    matches = [
+        (other, verdict)
+        for other, verdict in matches
+        if verdict.by_requisition
+        or (
+            _rivals(other, source_key(posting), listings) <= 1
+            and _rivals(posting, source_key(other), listings) <= 1
+        )
     ]
     if not matches:
         return

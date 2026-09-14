@@ -141,66 +141,73 @@ async def create_backup(
     destination = dest_root / f"jobrunner-{moment.strftime('%Y%m%dT%H%M%SZ')}"
     destination.mkdir(parents=True, exist_ok=False)
     os.chmod(destination, 0o700)
-
-    engine = create_async_engine(_async_url(database_url))
     try:
-        async with engine.connect() as connection:
-            # One snapshot for the counts and the dump, so a worker writing
-            # during the backup cannot make verification fail on a count the
-            # dump never contained.
-            await connection.execute(text("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"))
-            snapshot = (await connection.execute(text("SELECT pg_export_snapshot()"))).scalar_one()
-            counts = await _counts(connection)
-            revision = await _revision(connection)
-            dump = destination / DATABASE_FILE
-            await asyncio.to_thread(_run_dump, tools, database_url, snapshot, dump)
-            await connection.execute(text("COMMIT"))
-    finally:
-        await engine.dispose()
+        engine = create_async_engine(_async_url(database_url))
+        try:
+            async with engine.connect() as connection:
+                # One snapshot for the counts and the dump, so a worker writing
+                # during the backup cannot make verification fail on a count the
+                # dump never contained.
+                await connection.execute(text("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+                snapshot = (
+                    await connection.execute(text("SELECT pg_export_snapshot()"))
+                ).scalar_one()
+                counts = await _counts(connection)
+                revision = await _revision(connection)
+                dump = destination / DATABASE_FILE
+                await asyncio.to_thread(_run_dump, tools, database_url, snapshot, dump)
+                await connection.execute(text("COMMIT"))
+        finally:
+            await engine.dispose()
 
-    excluded = dict(EXCLUDED_BY_DEFAULT)
-    if include_browser_profiles:
-        excluded.pop("browser", None)
-    artifacts: list[FileEntry] = []
-    if storage_root.is_dir():
-        for child in sorted(storage_root.iterdir()):
-            if child.is_dir() and child.name not in excluded:
-                artifacts += _copy_tree(child, destination / ARTIFACTS_DIR, storage_root)
+        excluded = dict(EXCLUDED_BY_DEFAULT)
+        if include_browser_profiles:
+            excluded.pop("browser", None)
+        artifacts: list[FileEntry] = []
+        if storage_root.is_dir():
+            for child in sorted(storage_root.iterdir()):
+                if child.is_dir() and child.name not in excluded:
+                    artifacts += _copy_tree(child, destination / ARTIFACTS_DIR, storage_root)
 
-    vault: dict[str, object] = {
-        "included": include_vault_ciphertext,
-        "key_included": False,
-        "note": "The vault key is never written to a backup. Keep it separately; "
-        "without it, restored credentials are unreadable.",
-    }
-    if include_vault_ciphertext and vault_root.is_dir():
-        files = sorted(vault_root.glob("*.enc"))
-        entries = []
-        for path in files:
-            target = destination / VAULT_DIR / path.name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
-            entries.append({"path": path.name, "sha256": sha256_file(target)})
-        vault.update({"files": entries, "key_check": _vault_check(vault_key)})
+        vault: dict[str, object] = {
+            "included": include_vault_ciphertext,
+            "key_included": False,
+            "note": "The vault key is never written to a backup. Keep it separately; "
+            "without it, restored credentials are unreadable.",
+        }
+        if include_vault_ciphertext and vault_root.is_dir():
+            files = sorted(vault_root.glob("*.enc"))
+            entries = []
+            for path in files:
+                target = destination / VAULT_DIR / path.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+                entries.append({"path": path.name, "sha256": sha256_file(target)})
+            vault.update({"files": entries, "key_check": _vault_check(vault_key)})
 
-    manifest = Manifest(
-        created_at=moment.isoformat(),
-        app_revision=git_revision(),
-        alembic_revision=revision,
-        database={
-            "file": DATABASE_FILE,
-            "format": "pg_dump custom",
-            "sha256": sha256_file(dump),
-            "bytes": dump.stat().st_size,
-            "tables": counts,
-            "source_database": target_from_url(database_url).database,
-        },
-        artifacts=artifacts,
-        excluded=excluded,
-        vault=vault,
-    )
-    manifest.write(destination)
-    return destination, manifest
+        manifest = Manifest(
+            created_at=moment.isoformat(),
+            app_revision=git_revision(),
+            alembic_revision=revision,
+            database={
+                "file": DATABASE_FILE,
+                "format": "pg_dump custom",
+                "sha256": sha256_file(dump),
+                "bytes": dump.stat().st_size,
+                "tables": counts,
+                "source_database": target_from_url(database_url).database,
+            },
+            artifacts=artifacts,
+            excluded=excluded,
+            vault=vault,
+        )
+        manifest.write(destination)
+        return destination, manifest
+    except BaseException:
+        # A directory holding half a dump and no manifest looks like a backup
+        # to anyone browsing backups/. Nothing partial is left behind.
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
 
 
 __all__ = ["BackupError", "create_backup", "git_revision"]

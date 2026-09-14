@@ -195,3 +195,25 @@ def test_the_setup_page_asks_for_a_first_backup(tmp_path) -> None:
 
     assert item.state == "attention"
     assert item.steps[0] == "make backup"
+
+
+async def test_a_failed_dump_leaves_no_partial_backup_behind(tmp_path, db_session) -> None:
+    import shutil
+
+    from packages.backup.create import BackupError, create_backup
+    from packages.backup.tools import PgTools
+    from tests.conftest import TEST_DATABASE_URL
+
+    if shutil.which("docker") is None:
+        pytest.skip("needs the docker CLI to simulate a failing dump")
+
+    with pytest.raises(BackupError):
+        await create_backup(
+            database_url=TEST_DATABASE_URL,
+            storage_root=_storage(tmp_path),
+            vault_root=tmp_path / "vault",
+            dest_root=tmp_path / "backups",
+            tools=PgTools("docker", "jobrunner-no-such-container"),
+        )
+
+    assert list((tmp_path / "backups").iterdir()) == []

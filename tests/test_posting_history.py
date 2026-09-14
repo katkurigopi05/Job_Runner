@@ -223,3 +223,34 @@ async def test_grouping_touches_no_match_or_application_row(db_session) -> None:
         await db_session.scalar(select(func.count()).select_from(Application)),
     )
     assert before == after
+
+
+async def test_two_identical_openings_on_one_source_are_not_folded_into_one_copy(
+    db_session,
+) -> None:
+    """Two headcount on the board, one listing on the careers page.
+
+    Which board listing the careers page copies cannot be told, so neither is
+    merged. Attaching both would put two real openings behind one card.
+    """
+    board, careers = await _company_with_copies(db_session)
+    second = Posting(
+        company_id=board.company_id,
+        external_id="3",
+        ats_type="greenhouse",
+        url="https://boards.greenhouse.io/copies/jobs/3",
+        title="Backend Engineer",
+        location="Remote",
+        description_raw=BODY,
+    )
+    db_session.add(second)
+    await db_session.flush()
+
+    report = await assign(db_session, [board.id, careers.id, second.id])
+
+    assert (board.canonical_job_id, second.canonical_job_id, careers.canonical_job_id) == (
+        None,
+        None,
+        None,
+    )
+    assert report.groups_created == 0
