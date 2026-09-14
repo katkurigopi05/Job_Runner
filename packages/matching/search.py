@@ -106,6 +106,32 @@ class SearchFilters:
     #: postings land. See `Locality.UNPLACED`.
     allow_unknown_location: bool = True
 
+    # --- Structured requirements (matching/requirements.py) ----------------
+    #
+    # Every one of these refuses to treat an unknown as satisfied. A posting
+    # that does not state pay does not pass "at least $150k"; one that names
+    # Java without saying whether it is required does not pass "nothing that
+    # requires Java". Each has an `include_unknown_*` switch to widen it back
+    # out, and the card says which value was unknown.
+    #: Floor on the top of the posted range, in `salary_currency` per
+    #: `salary_period`. Never converted between currencies or periods.
+    min_salary: float | None = None
+    salary_currency: str = "USD"
+    salary_period: str = "year"
+    include_unknown_salary: bool = False
+    #: Opt-in: read a salary of 10,000+ with no stated period as annual. Off by
+    #: default — most US ranges omit "per year", and whether that is safe to
+    #: assume is the owner's call, named on the card when it decided anything.
+    salary_unstated_period_as_year: bool = False
+    #: Vocabulary keys the posting must name, in any list.
+    wanted_skills: tuple[str, ...] = ()
+    #: Vocabulary keys the owner lacks. A posting *requiring* one is dropped.
+    lacking_skills: tuple[str, ...] = ()
+    include_unknown_skills: bool = False
+    #: The highest education the owner holds, from `EDUCATION_LEVELS`.
+    max_education: str | None = None
+    include_unknown_education: bool = False
+
     #: Every reason a posting was dropped, for the feed to explain itself.
     def describe(self) -> list[str]:
         parts: list[str] = []
@@ -125,6 +151,30 @@ class SearchFilters:
             parts.append(f"seen in the last {self.posted_within_days} days")
         if self.include_closed:
             parts.append("including closed")
+        if self.min_salary is not None:
+            parts.append(
+                f"pay reaching {self.min_salary:,.0f} {self.salary_currency} per "
+                f"{self.salary_period}"
+                + (", or unstated" if self.include_unknown_salary else "")
+                + (
+                    ", unstated periods read as annual"
+                    if self.salary_unstated_period_as_year
+                    else ""
+                )
+            )
+        if self.wanted_skills:
+            parts.append("names " + ", ".join(self.wanted_skills))
+        if self.lacking_skills:
+            parts.append(
+                "does not require "
+                + ", ".join(self.lacking_skills)
+                + (", unclear mentions kept" if self.include_unknown_skills else "")
+            )
+        if self.max_education:
+            parts.append(
+                f"education at most {self.max_education.replace('_', ' ')}"
+                + (", or unstated" if self.include_unknown_education else "")
+            )
         if self.us_only:
             parts.append(
                 "United States only, California first"
@@ -306,4 +356,95 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
         if first_seen < cutoff:
             reasons.append(f"first seen more than {filters.posted_within_days} days ago")
 
+    reasons.extend(requirement_reasons(posting, filters))
     return FilterVerdict(kept=not reasons, reasons=reasons)
+
+
+_NOT_EXTRACTED = "requirements not read yet (make extract-requirements)"
+
+#: Below this, an unstated-period figure is not read as annual even when the
+#: owner opted in: $45 is an hourly rate whatever the posting forgot to say.
+ANNUAL_ASSUMPTION_FLOOR = 10_000
+
+
+def _label(key: str) -> str:
+    from packages.matching.skill_vocab import BY_KEY
+
+    return BY_KEY[key].label if key in BY_KEY else key
+
+
+def requirement_reasons(posting: Posting, filters: SearchFilters) -> list[str]:
+    """Why the structured-requirement filters drop a posting. Empty when kept."""
+    reasons: list[str] = []
+    reading = posting.requirements_json
+
+    if filters.min_salary is not None:
+        unknown = None
+        top = posting.salary_max if posting.salary_max is not None else posting.salary_min
+        if top is None:
+            unknown = "pay is not stated" if reading is not None else _NOT_EXTRACTED
+        elif posting.salary_currency != filters.salary_currency:
+            unknown = (
+                f"pay is in {posting.salary_currency or 'an unstated currency'}, not "
+                f"{filters.salary_currency} (not converted)"
+            )
+        elif (
+            posting.salary_period is None
+            and filters.salary_unstated_period_as_year
+            and filters.salary_period == "year"
+            and top >= ANNUAL_ASSUMPTION_FLOOR
+        ):
+            if top < filters.min_salary:
+                reasons.append(
+                    f"pay tops out at {top:,.0f} (period unstated, read as annual), "
+                    f"below {filters.min_salary:,.0f}"
+                )
+        elif posting.salary_period != filters.salary_period:
+            unknown = (
+                f"pay is per {posting.salary_period or 'unstated period'}, not per "
+                f"{filters.salary_period} (not converted)"
+            )
+        elif top < filters.min_salary:
+            reasons.append(f"pay tops out at {top:,.0f}, below {filters.min_salary:,.0f}")
+        if unknown and not filters.include_unknown_salary:
+            reasons.append(unknown)
+
+    if filters.wanted_skills or filters.lacking_skills:
+        if reading is None:
+            if not filters.include_unknown_skills:
+                reasons.append(_NOT_EXTRACTED)
+        else:
+            skills = reading.get("skills") or {}
+            bucket = {entry["skill"]: kind for kind, entries in skills.items() for entry in entries}
+            for key in filters.wanted_skills:
+                if key not in bucket:
+                    reasons.append(f"does not name {_label(key)}")
+            for key in filters.lacking_skills:
+                if bucket.get(key) == "required":
+                    reasons.append(f"requires {_label(key)}")
+                elif bucket.get(key) == "unclassified" and not filters.include_unknown_skills:
+                    reasons.append(f"names {_label(key)} without saying whether it is required")
+
+    if filters.max_education:
+        from packages.matching.requirements import EDUCATION_LEVELS
+
+        unknown = None
+        education = (reading or {}).get("education")
+        if reading is None:
+            unknown = _NOT_EXTRACTED
+        elif education is None:
+            unknown = "education is not stated"
+        elif EDUCATION_LEVELS.index(education["level"]) > EDUCATION_LEVELS.index(
+            filters.max_education
+        ):
+            level = education["level"].replace("_", " ")
+            if education["requirement"] == "required" and not education["equivalent_experience"]:
+                reasons.append(f"requires a {level} degree")
+            elif education["requirement"] == "required":
+                unknown = f"requires a {level} degree or equivalent experience"
+            elif education["requirement"] == "unclassified":
+                unknown = f"mentions a {level} degree without saying whether it is required"
+        if unknown and not filters.include_unknown_education:
+            reasons.append(unknown)
+
+    return reasons

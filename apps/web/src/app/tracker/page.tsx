@@ -1,10 +1,12 @@
 import Link from "next/link";
 import {
+  API_BASE,
   ApiError,
   api,
   type Application,
   type Classification,
   type InboundMessage,
+  type UpcomingTask,
 } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
 
@@ -118,11 +120,13 @@ export default async function TrackerPage() {
   let applications: Application[];
   let messages: InboundMessage[];
   let unrouted: InboundMessage[];
+  let upcoming: UpcomingTask[];
   try {
-    [applications, messages, unrouted] = await Promise.all([
+    [applications, messages, unrouted, upcoming] = await Promise.all([
       api.applications(),
       api.inbox(),
       api.unrouted(),
+      api.upcomingTasks(14),
     ]);
   } catch (error) {
     if (error instanceof ApiError) return <ErrorPanel error={error} />;
@@ -148,6 +152,49 @@ export default async function TrackerPage() {
           or silence.
         </p>
       </header>
+
+      {/* Deadlines first: an interview or assessment window closes while the
+          board below still looks calm. */}
+      <section aria-labelledby="upcoming" className="space-y-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-rule pb-3">
+          <h2 id="upcoming" className="font-display text-xl">
+            Next two weeks
+          </h2>
+          <a
+            href={`${API_BASE}/tasks.ics`}
+            className="font-mono text-xs text-ink-soft underline-offset-4 hover:underline"
+          >
+            all dated tasks (.ics)
+          </a>
+        </div>
+        {upcoming.length === 0 ? (
+          <p className="text-sm text-ink-faint">
+            No interviews, assessments or follow-ups due. Add them on an application.
+          </p>
+        ) : (
+          <ul className="divide-y divide-rule">
+            {upcoming.map((task) => (
+              <li key={task.id} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-3">
+                <span
+                  className={`font-mono text-xs tabular-nums ${task.overdue ? "text-stop" : "text-ink-soft"}`}
+                >
+                  {task.overdue ? "overdue · " : ""}
+                  {task.due_at ? new Date(task.due_at).toLocaleString() : ""}
+                </span>
+                <span className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+                  {task.kind.replace("_", " ")}
+                </span>
+                <Link
+                  href={`/applications/${task.application_id}`}
+                  className="min-w-0 flex-1 truncate text-sm underline-offset-4 hover:underline"
+                >
+                  {task.title}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {tracked.length === 0 ? (
         <p className="border border-dashed border-rule px-6 py-16 text-center text-sm text-ink-faint">

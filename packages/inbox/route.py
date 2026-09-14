@@ -256,6 +256,14 @@ async def route_message(
         application.outcome_at = email.received_at or datetime.now(UTC)
         routing.outcome_set = outcome.value
 
+    # An interview or assessment reply leaves the owner something to do with a
+    # deadline in it. One open task per kind; the date stays theirs to enter,
+    # because reading a deadline out of prose is a guess about a deadline.
+    if routing.outcome_set in ("interview", "assessment"):
+        from packages.tracking.tasks import ensure_task_for_outcome
+
+        await ensure_task_for_outcome(session, application, routing.outcome_set)
+
     await session.flush()
     log.info(
         "inbound_routed",

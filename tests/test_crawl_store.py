@@ -314,3 +314,64 @@ async def test_an_unchanged_posting_keeps_its_vector(db_session) -> None:
     kept = await _posting(db_session, "1")
     assert kept.description_embedding is not None
     assert list(kept.description_embedding) == original
+
+
+# --------------------------------------------------------------------------
+# Structured requirements are read at ingestion, and only for new text
+# --------------------------------------------------------------------------
+
+PAID_CONTENT = (
+    "<p>Requirements</p><ul><li>Python and PostgreSQL</li></ul>"
+    "<p>The annual base salary range is $140,000 - $180,000 USD.</p>"
+)
+
+
+async def test_a_new_posting_is_stored_with_pay_and_requirements(db_session, seed) -> None:
+    await crawl_company(
+        db_session, seed, _fetcher({"jobs": [_job(1, content=PAID_CONTENT)]}), force=True
+    )
+
+    posting = await _posting(db_session, "1")
+    assert (posting.salary_min, posting.salary_max) == (140_000, 180_000)
+    assert (posting.salary_currency, posting.salary_period) == ("USD", "year")
+    assert posting.requirements_version is not None
+    required = {e["skill"] for e in posting.requirements_json["skills"]["required"]}
+    assert required == {"python", "postgresql"}
+
+
+async def test_an_unchanged_posting_is_not_read_again(db_session, seed) -> None:
+    """A quiet board must cost no extraction; the stamp proves it was skipped."""
+    board = {"jobs": [_job(1, content=PAID_CONTENT)]}
+    await crawl_company(db_session, seed, _fetcher(board), force=True)
+    first = await _posting(db_session, "1")
+    stamped = first.requirements_extracted_at
+
+    await crawl_company(db_session, seed, _fetcher(board), force=True)
+    db_session.expire_all()
+
+    again = await _posting(db_session, "1")
+    assert again.requirements_extracted_at == stamped
+    assert again.salary_max == 180_000
+
+
+async def test_an_edited_posting_is_read_again(db_session, seed) -> None:
+    await crawl_company(
+        db_session, seed, _fetcher({"jobs": [_job(1, content=PAID_CONTENT)]}), force=True
+    )
+    raised = PAID_CONTENT.replace("$180,000", "$210,000")
+
+    await crawl_company(db_session, seed, _fetcher({"jobs": [_job(1, content=raised)]}), force=True)
+    db_session.expire_all()
+
+    assert (await _posting(db_session, "1")).salary_max == 210_000
+
+
+async def test_a_posting_that_states_nothing_stores_explicit_unknowns(db_session, seed) -> None:
+    await crawl_company(
+        db_session, seed, _fetcher({"jobs": [_job(1, content="<p>Join us.</p>")]}), force=True
+    )
+
+    posting = await _posting(db_session, "1")
+    assert posting.salary_max is None
+    assert posting.requirements_json["compensation"] is None
+    assert "compensation" in posting.requirements_json["unknown"]

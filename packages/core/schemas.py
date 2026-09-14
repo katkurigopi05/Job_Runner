@@ -719,6 +719,21 @@ class MatchOut(BaseModel):
     #: the absence of a requirement rather than an unanswered question, so it
     #: renders as nothing rather than as "unknown".
     experience: dict[str, Any] | None = None
+    #: Pay as the posting states it: range, currency, period and the quoted
+    #: line. None when it states no pay — rendered as "not stated", never as 0.
+    compensation: dict[str, Any] | None = None
+    #: Skills by required / preferred / unclassified, education, and the
+    #: `unknown` list, each with evidence. None until extracted.
+    requirements: dict[str, Any] | None = None
+    #: Every listing of this requisition when it is grouped with copies on
+    #: other sources — url, source, closed, and that listing's own decision.
+    #: Empty for a posting that stands alone.
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    #: The base score adjusted by the owner's explicit ranking preferences.
+    #: None when there are no preferences; `score` is always the base.
+    personalized_score: float | None = None
+    #: Each preference that moved it, with its weight and why it applied.
+    adjustments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PacketPosting(BaseModel):
@@ -827,6 +842,8 @@ class SilentOut(BaseModel):
     url: str
     days_since: int
     stale: bool
+    #: An open follow-up task exists for this application.
+    has_follow_up_task: bool = False
 
 
 class CadenceOut(BaseModel):
@@ -859,6 +876,9 @@ class MatchDecision(BaseModel):
     """Right or left. A verdict on the posting, never an instruction to apply."""
 
     decision: str
+    #: Why it was skipped, from `personalize.SKIP_REASONS`. Only with `skipped`.
+    reason: str | None = None
+    note: str | None = Field(default=None, max_length=500)
 
 
 class LabelCandidateOut(BaseModel):
@@ -966,6 +986,8 @@ class MatchDecisionOut(BaseModel):
     id: uuid.UUID
     decision: str | None = None
     decided_at: datetime | None = None
+    skip_reason: str | None = None
+    decision_note: str | None = None
 
 
 class MatchSummaryOut(BaseModel):

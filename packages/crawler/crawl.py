@@ -184,6 +184,39 @@ class StoreResult:
         return [*self.new, *self.updated]
 
 
+#: Columns `matching/requirements.py` fills, written only when the text changed.
+_REQUIREMENT_COLUMNS = (
+    "salary_min",
+    "salary_max",
+    "salary_currency",
+    "salary_period",
+    "requirements_json",
+    "requirements_version",
+    "requirements_extracted_at",
+)
+
+
+def _requirement_columns(
+    description: str | None, now: datetime, *, needed: bool
+) -> dict[str, object]:
+    """Structured pay, skills and education for one posting, or placeholders."""
+    if not needed:
+        return dict.fromkeys(_REQUIREMENT_COLUMNS)
+    from packages.matching.requirements import EXTRACTOR_VERSION, extract
+
+    reading = extract(description)
+    pay = reading.compensation
+    return {
+        "salary_min": pay.minimum if pay else None,
+        "salary_max": pay.maximum if pay else None,
+        "salary_currency": pay.currency if pay else None,
+        "salary_period": pay.period if pay else None,
+        "requirements_json": reading.as_json(),
+        "requirements_version": EXTRACTOR_VERSION,
+        "requirements_extracted_at": now,
+    }
+
+
 async def _store(
     session: AsyncSession,
     company: Company,
@@ -254,6 +287,15 @@ async def _store(
             "content_hash": item.content_hash,
             "first_seen_at": current,
             "last_seen_at": current,
+            # Read only for text this row has not been read from before. An
+            # unchanged posting's values here are placeholders the update set
+            # below discards, so a quiet board costs no extraction at all.
+            **_requirement_columns(
+                item.description_raw,
+                current,
+                needed=(previous := existing.get(item.external_id)) is None
+                or previous.content_hash != item.content_hash,
+            ),
         }
         for item in extracted
     ]
@@ -303,8 +345,28 @@ async def _store(
             "description_embedding": case((changed, None), else_=Posting.description_embedding),
             "embedding_model": case((changed, None), else_=Posting.embedding_model),
             "embedding_revision": case((changed, None), else_=Posting.embedding_revision),
+            # Same guard as the description they were read from: an edited
+            # posting is re-read, an unchanged one keeps what it had.
+            **{
+                column: case(
+                    (changed, getattr(statement.excluded, column)), else_=getattr(Posting, column)
+                )
+                for column in _REQUIREMENT_COLUMNS
+            },
         },
     )
+    # What the edited postings said *before* this upsert, for a baseline
+    # version. Read first because the statement below overwrites it.
+    baselines = await _unversioned_baselines(
+        session,
+        [
+            previous.id
+            for item in extracted
+            if (previous := existing.get(item.external_id)) is not None
+            and previous.content_hash != item.content_hash
+        ],
+    )
+
     # `first_seen_at` is absent from the update set on purpose: it is when we
     # noticed the posting, and a posting we notice again was not born again.
     await session.execute(statement)
@@ -320,19 +382,92 @@ async def _store(
 
     # New rows have no id until the insert lands, so they are read back rather
     # than guessed at.
+    new_ids: dict[str, uuid.UUID] = {}
     if len(existing) < len(extracted):
         inserted = await session.execute(
-            select(Posting.id).where(
+            select(Posting.id, Posting.external_id).where(
                 Posting.company_id == company.id,
                 Posting.external_id.in_(
                     [item.external_id for item in extracted if item.external_id not in existing]
                 ),
             )
         )
-        result.new = list(inserted.scalars().all())
+        new_ids = {external_id: posting_id for posting_id, external_id in inserted.all()}
+        result.new = list(new_ids.values())
+
+    await _record_versions(session, values, existing, new_ids, baselines, current)
+
+    from packages.matching.canonical import assign
+
+    await assign(session, [*result.new, *result.updated])
 
     await session.flush()
     return result
+
+
+async def _unversioned_baselines(
+    session: AsyncSession, posting_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple[dict[str, object], datetime]]:
+    """The stored state of edited postings that have no version yet.
+
+    A posting stored before versions existed has no record of what it said. The
+    first time it changes, its current row *is* that record, so it is kept as
+    version 1 before the edit becomes version 2 — otherwise the first change a
+    person would want to see is the one change with nothing to compare against.
+    """
+    if not posting_ids:
+        return {}
+    from packages.core.models_jobs import PostingVersion
+    from packages.matching.versions import SNAPSHOT_FIELDS
+
+    versioned = set(
+        (
+            await session.scalars(
+                select(PostingVersion.posting_id)
+                .where(PostingVersion.posting_id.in_(posting_ids))
+                .distinct()
+            )
+        ).all()
+    )
+    pending = [posting_id for posting_id in posting_ids if posting_id not in versioned]
+    if not pending:
+        return {}
+    columns = [getattr(Posting, name) for name in SNAPSHOT_FIELDS]
+    rows = await session.execute(
+        select(Posting.id, Posting.first_seen_at, *columns).where(Posting.id.in_(pending))
+    )
+    return {
+        row.id: ({name: getattr(row, name) for name in SNAPSHOT_FIELDS}, row.first_seen_at)
+        for row in rows
+    }
+
+
+async def _record_versions(
+    session: AsyncSession,
+    values: list[dict[str, object]],
+    existing: dict[str, Any],
+    new_ids: dict[str, uuid.UUID],
+    baselines: dict[uuid.UUID, tuple[dict[str, object], datetime]],
+    now: datetime,
+) -> None:
+    """One version for every new or edited posting; none for an unchanged one."""
+    from packages.matching.versions import record
+
+    captures: list[tuple[uuid.UUID, dict[str, object], datetime]] = []
+    for row in values:
+        external_id = str(row["external_id"])
+        previous = existing.get(external_id)
+        if previous is None:
+            if external_id in new_ids:
+                captures.append((new_ids[external_id], row, now))
+            continue
+        if previous.content_hash == row["content_hash"]:
+            continue
+        if previous.id in baselines:
+            state, seen = baselines[previous.id]
+            captures.append((previous.id, state, seen))
+        captures.append((previous.id, row, now))
+    await record(session, captures)
 
 
 async def _close_missing(

@@ -35,3 +35,6 @@ test-results/
 .vscode/
 .idea/
 *.log
+
+# Local backups: database dumps and résumé artifacts. PII, never committed or built.
+backups/

@@ -2808,3 +2808,41 @@ module docstring rather than implied — **no posting in it puts a years line
 under a nice-to-have heading**, so the PREFERRED path is exercised with real
 heading wording around a constructed placement, and the filter's refusal to
 exclude on it is argued rather than observed in the wild.
+
+---
+
+## 16. Additions of 2026-09-14, and what must not be undone
+
+Built against `docs/PROJECT_AUDIT_2026-09-14.md`. Each line is a property a
+later change could quietly break.
+
+- **Registry repair.** The 119 company rows predated `Company.slug`, so the
+  source-status migration backfilled all of them to `no_website` and the
+  dashboard asked for 119 URLs while 11,851 postings were open.
+  `sync_registry` now also reads `retired:` and marks those rows `failed`,
+  keeping earlier evidence under `previous`; `registry_health` diagnoses
+  drift read-only. Live preview on 2026-09-14: 74 created, 181 verified,
+  12 retired, Temporal and Runway moved boards. **Not applied** to the live
+  database — `/setup` offers it.
+- **Setup page never shows a secret.** `tests/test_setup_status.py` runs the
+  real vault and inbox checks with sentinel values and asserts neither appears.
+- **Unknown is never satisfied.** No pay, a figure with no period, a skill
+  outside a requirements heading, or no education: each fails its filter
+  unless its `include_unknown_*` switch is set. Extractor v2 exists because
+  sampling the live corpus found benefit budgets read as pay and `€95.000`
+  read as 95; 6,465 of 14,892 postings state pay after the fix.
+- **Search preferences are not profile answers.** `search_preferences` is its
+  own table and `FILTER_KEYS` refuses anything the feed does not read.
+- **Merging is conservative.** Never across companies, never within one
+  source, never with differing requisition ids, never after an owner split.
+  Grouping adds a link; no posting, match or application row changes.
+- **Base and personalized scores stay separate.** `Match.score` is never
+  rewritten; `personalized_score` is computed on read and every adjustment is
+  explained. `/ranking/evaluation` reports no learned model and refuses
+  promotion below 100 owner grades from two streams.
+- **Nothing contacts an employer.** Tasks are local, reminders use the owner's
+  own notification backends, and `.ics` files carry no contact details.
+- **Backups never contain the vault key**, exclude browser profiles by
+  default, and verification refuses the live database and any directory
+  overlapping `storage/`.
+

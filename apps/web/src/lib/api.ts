@@ -495,6 +495,211 @@ export interface Match {
    * requirement rather than an unanswered question, so it renders as nothing.
    */
   experience: PostingExperience | null;
+  /** Pay as the posting states it. Null means not stated — never zero. */
+  compensation: Compensation | null;
+  /** Skills and education with the line each was read from. Null until extracted. */
+  requirements: PostingRequirements | null;
+  /** Every listing of this requisition when grouped; empty when it stands alone. */
+  sources: MatchSource[];
+  /** Base score adjusted by explicit ranking preferences; null when there are none. */
+  personalized_score: number | null;
+  adjustments: RankingAdjustment[];
+}
+
+export interface RankingAdjustment {
+  kind: string;
+  value: string;
+  weight: number;
+  why: string;
+}
+
+export type RankingKind = "company" | "skill" | "title_term" | "location_term" | "remote";
+
+export interface RankingPreference {
+  id: string;
+  scope: string;
+  kind: RankingKind;
+  value: string;
+  weight: number;
+  source: "explicit" | "suggestion";
+  note: string | null;
+  updated_at: string;
+}
+
+export interface RankingSuggestion {
+  kind: RankingKind;
+  value: string;
+  weight: number;
+  evidence: string;
+}
+
+export interface RankingEvaluation {
+  owner_labels: number;
+  streams: Record<string, number>;
+  held_out: number;
+  preferences: number;
+  status: "insufficient_labels" | "evaluated" | string;
+  message: string;
+  k: number;
+  learned_model: string;
+  base_ndcg: number | null;
+  base_interval: number[] | null;
+  personalized_ndcg: number | null;
+  personalized_interval: number[] | null;
+  promotable: boolean;
+  blockers: string[];
+}
+
+export const SKIP_REASONS = [
+  { value: "salary", label: "pay" },
+  { value: "location", label: "location" },
+  { value: "seniority", label: "level" },
+  { value: "skills", label: "skills" },
+  { value: "requirements", label: "requirements" },
+  { value: "company", label: "company" },
+  { value: "role", label: "kind of role" },
+  { value: "duplicate", label: "duplicate" },
+  { value: "other", label: "other" },
+] as const;
+
+export interface MatchSource {
+  posting_id: string;
+  url: string;
+  source: string;
+  closed: boolean;
+  decision: string | null;
+}
+
+export interface Compensation {
+  minimum: number | null;
+  maximum: number | null;
+  currency: string | null;
+  /** Null when the posting did not say — not assumed to be annual. */
+  period: string | null;
+  quote: string | null;
+}
+
+export interface SkillEvidence {
+  skill: string;
+  label: string;
+  quote: string;
+}
+
+export interface EducationRequirement {
+  level: "high_school" | "associate" | "bachelor" | "master" | "phd";
+  requirement: "required" | "preferred" | "unclassified";
+  equivalent_experience: boolean;
+  quote: string;
+}
+
+export interface PostingRequirements {
+  version: number;
+  compensation: Compensation | null;
+  skills: {
+    required: SkillEvidence[];
+    preferred: SkillEvidence[];
+    /** Named, but under nothing that says whether it is asked for. */
+    unclassified: SkillEvidence[];
+  };
+  education: EducationRequirement | null;
+  /** What the posting did not state: compensation, pay_period, skills, education. */
+  unknown: string[];
+}
+
+export interface VersionChange {
+  field: string;
+  before: string | string[] | null;
+  after: string | string[] | null;
+}
+
+export interface PostingVersionEntry {
+  version: number;
+  captured_at: string;
+  pay: string;
+  changes: VersionChange[];
+}
+
+/** One listing of a requisition. Grouping never hides a source. */
+export interface PostingSource {
+  posting_id: string;
+  url: string;
+  ats_type: string | null;
+  source: string;
+  title: string | null;
+  location: string | null;
+  closed: boolean;
+  decisions: string[];
+  application_statuses: string[];
+  evidence: string | null;
+}
+
+export interface PostingHistory {
+  posting_id: string;
+  title: string | null;
+  canonical_job_id: string | null;
+  locked: boolean;
+  sources: PostingSource[];
+  versions: PostingVersionEntry[];
+}
+
+export interface Contact {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  company: string | null;
+  role: string | null;
+  profile_url: string | null;
+  notes: string | null;
+  updated_at: string;
+}
+
+export interface LinkedContact {
+  relationship: "recruiter" | "hiring_manager" | "interviewer" | "referrer" | "other";
+  contact: Contact;
+}
+
+export interface ChecklistItem {
+  text: string;
+  done: boolean;
+}
+
+export type TaskKind = "interview" | "assessment" | "follow_up" | "prep" | "other";
+
+export interface ApplicationTask {
+  id: string;
+  application_id: string;
+  kind: TaskKind;
+  title: string;
+  due_at: string | null;
+  reminder_at: string | null;
+  reminded_at: string | null;
+  completed_at: string | null;
+  location: string | null;
+  notes: string | null;
+  checklist: ChecklistItem[];
+  /** `inbox` when created from a routed interview or assessment reply. */
+  source: "owner" | "inbox";
+  created_at: string;
+}
+
+export interface UpcomingTask extends ApplicationTask {
+  application_url: string;
+  overdue: boolean;
+}
+
+export interface Tracking {
+  contacts: LinkedContact[];
+  tasks: ApplicationTask[];
+}
+
+/** A saved feed search. Filters only — never read by anything that applies. */
+export interface SearchPreference {
+  id: string;
+  scope: string;
+  name: string;
+  filters: Record<string, string>;
+  updated_at: string;
 }
 
 /** One years requirement and the line it was read from. */
@@ -722,6 +927,39 @@ export interface Health {
   database: "ok" | "down";
 }
 
+export type SetupState = "ok" | "attention" | "blocked" | "unknown";
+
+/** One thing the installation needs, whether it has it, and how to get it. */
+export interface SetupItem {
+  key: string;
+  title: string;
+  group: "core" | "credentials" | "discovery" | "tools" | string;
+  state: SetupState;
+  detail: string;
+  /** Commands or edits, in the order to try them. */
+  steps: string[];
+  /** Non-secret facts behind the verdict. */
+  facts: Record<string, string | number | boolean | null>;
+  actions: string[];
+}
+
+export interface SetupStatus {
+  generated_at: string;
+  overall: SetupState;
+  items: SetupItem[];
+}
+
+export interface RegistrySyncResult {
+  dry_run: boolean;
+  summary: string;
+  created: number;
+  verified: number;
+  newer_in_db: number;
+  retired: number;
+  retired_newer_in_db: number;
+  moved_boards: string[];
+}
+
 /** Whether the crawler is working, waiting, or stuck waiting for a worker. */
 export interface CrawlStatus {
   running: boolean;
@@ -763,6 +1001,12 @@ export const api = {
   health: () => request<Health>("/health"),
   crawlStatus: () => request<CrawlStatus>("/crawl/status"),
   discoveryStatus: () => request<DiscoveryStatus>("/companies/status"),
+  setupStatus: () => request<SetupStatus>("/setup/status"),
+  registrySync: (dryRun: boolean) =>
+    request<RegistrySyncResult>("/setup/registry-sync", {
+      method: "POST",
+      body: JSON.stringify({ dry_run: dryRun }),
+    }),
 
   applications: () => request<Application[]>("/applications"),
   application: (id: string) => request<Application>(`/applications/${id}`),
@@ -823,6 +1067,73 @@ export const api = {
   matchesFiltered: (query: URLSearchParams) =>
     request<Match[]>(`/matches?${query}`),
   calibration: () => request<Calibration>("/matches/calibration"),
+  tracking: (applicationId: string) =>
+    request<Tracking>(`/applications/${applicationId}/tracking`),
+  linkContact: (
+    applicationId: string,
+    body: { relationship: string; contact: Partial<Contact> & { name: string } },
+  ) =>
+    request<LinkedContact>(`/applications/${applicationId}/contacts`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  unlinkContact: (applicationId: string, contactId: string) =>
+    request<void>(`/applications/${applicationId}/contacts/${contactId}`, { method: "DELETE" }),
+  createTask: (
+    applicationId: string,
+    body: {
+      kind: TaskKind;
+      title: string;
+      due_at?: string | null;
+      reminder_at?: string | null;
+      location?: string | null;
+    },
+  ) =>
+    request<ApplicationTask>(`/applications/${applicationId}/tasks`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateTask: (
+    taskId: string,
+    patch: { checklist?: ChecklistItem[]; completed?: boolean },
+  ) =>
+    request<ApplicationTask>(`/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteTask: (taskId: string) => request<void>(`/tasks/${taskId}`, { method: "DELETE" }),
+  upcomingTasks: (days = 14) => request<UpcomingTask[]>(`/tasks?due_within_days=${days}`),
+  decideWithReason: (matchId: string, decision: Decision, reason?: string, note?: string) =>
+    request<{ id: string; decision: Decision | null; skip_reason: string | null }>(
+      `/matches/${matchId}/decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision, reason: reason ?? null, note: note ?? null }),
+      },
+    ),
+  rankingPreferences: () => request<RankingPreference[]>("/ranking/preferences"),
+  saveRankingPreference: (body: {
+    kind: RankingKind;
+    value: string;
+    weight: number;
+    source?: "explicit" | "suggestion";
+    note?: string | null;
+  }) =>
+    request<RankingPreference>("/ranking/preferences", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteRankingPreference: (id: string) =>
+    request<void>(`/ranking/preferences/${id}`, { method: "DELETE" }),
+  rankingSuggestions: () => request<RankingSuggestion[]>("/ranking/suggestions"),
+  rankingEvaluation: () => request<RankingEvaluation>("/ranking/evaluation"),
+  postingHistory: (id: string) => request<PostingHistory>(`/postings/${id}/history`),
+  splitPosting: (id: string) =>
+    request<PostingHistory>(`/postings/${id}/split`, { method: "POST" }),
+  searchPreference: (name: string) =>
+    request<SearchPreference>(`/search-preferences/${encodeURIComponent(name)}`),
+  saveSearchPreference: (name: string, filters: Record<string, string>) =>
+    request<SearchPreference>(`/search-preferences/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify({ filters }),
+    }),
   /**
    * `profileId` is optional because the route is: `/labels/next` picks the
    * only profile when there is one, and refuses to guess when there are

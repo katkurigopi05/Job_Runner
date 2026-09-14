@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -309,42 +310,157 @@ async def check_playwright_browser() -> Check:
     return Check("playwright", Health.OK, "Chromium present")
 
 
-def check_vault_key() -> Check:
-    """Whether the vault key exists and is a valid Fernet key.
+#: A Fernet key is 32 bytes, URL-safe base64 encoded: always 44 characters.
+FERNET_KEY_LENGTH = 44
 
-    Never reports the key. "Present and parseable" is the whole answer.
+#: Cap on how many stored credentials a check tries to decrypt. Enough to
+#: tell "wrong key" from "one corrupt file" without reading a large vault.
+_DECRYPT_SAMPLE = 50
+
+
+def vault_key_problems(raw: str) -> list[str]:
+    """What is wrong with a VAULT_KEY's *shape*, without repeating any of it.
+
+    The live defect was a 91-character value. "Not a valid Fernet key" is
+    true and useless: the likely causes — a pasted comment, quotes, two keys
+    run together — each have a different fix, and none of them can be
+    diagnosed from the message. Every string returned here describes the
+    value; none contains a character of it.
+    """
+    problems: list[str] = []
+    if raw != raw.strip():
+        problems.append("has leading or trailing whitespace")
+    value = raw.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        problems.append("is wrapped in quotes — .env values are read literally")
+        value = value[1:-1]
+    if "#" in value:
+        problems.append(
+            "contains '#' — an inline comment on the VAULT_KEY line is read as part of it"
+        )
+    if any(ch.isspace() for ch in value):
+        problems.append("contains whitespace")
+    if len(value) != FERNET_KEY_LENGTH:
+        problems.append(f"is {len(value)} characters; a Fernet key is exactly {FERNET_KEY_LENGTH}")
+    if re.search(r"[^A-Za-z0-9_\-=]", value.replace("#", "").replace(" ", "")):
+        problems.append("contains characters outside URL-safe base64")
+    return problems
+
+
+def stored_credentials(root: str | Path | None = None) -> list[Path]:
+    """Encrypted credential files in the vault root.
+
+    Their existence is what makes a key precious: with none stored, a new key
+    loses nothing; with any, it strands them.
+    """
+    location = Path(root or get_settings().vault_root)
+    if not location.is_dir():
+        return []
+    return sorted(location.glob("*.enc"))
+
+
+def _env_key_lines(env_file: Path) -> int:
+    if not env_file.is_file():
+        return 0
+    pattern = re.compile(r"^\s*(?:export\s+)?VAULT_KEY\s*=")
+    return sum(1 for line in env_file.read_text().splitlines() if pattern.match(line))
+
+
+def _replacement_advice(stored: int) -> str:
+    """The one decision that cannot be undone, stated before anyone makes it."""
+    if stored:
+        return (
+            f"do NOT generate a new key: {stored} stored credential(s) in the vault were "
+            "encrypted with the original, and no other key can read them. Restore the original "
+            "VAULT_KEY from wherever you kept it (password manager, backup of .env)."
+        )
+    return (
+        "no credentials are stored yet, so a new key loses nothing: run `make vault-key` and "
+        "put its output on the existing VAULT_KEY= line in .env — one line, no quotes, no comment"
+    )
+
+
+def check_vault_key(*, env_file: Path | None = None) -> Check:
+    """Whether the vault key exists, parses, and reads what is stored under it.
+
+    Never reports the key, or any part of it. Nothing here writes a key either:
+    replacing one strands every credential encrypted under the old one, and
+    whether that loses anything is a fact about the vault this check can read
+    and the owner must decide on.
     """
     settings = get_settings()
     raw = settings.vault_key or os.environ.get("VAULT_KEY")
+    stored = stored_credentials(settings.vault_root)
+    lines = _env_key_lines(env_file or Path(".env"))
+    duplicate = (
+        f" .env has {lines} VAULT_KEY lines; only one is read — delete the others."
+        if lines > 1
+        else ""
+    )
+
     if not raw:
         return Check(
             "vault",
             Health.FAIL,
-            "VAULT_KEY is not set — stored ATS credentials cannot be read",
-            fix=(
-                "python -c 'from packages.core.vault import generate_key; print(generate_key())' "
-                ">> .env"
-            ),
+            "VAULT_KEY is not set — ATS credentials cannot be stored or read" + duplicate,
+            fix=_replacement_advice(len(stored)),
             required=False,
         )
     try:
-        from cryptography.fernet import Fernet
+        from cryptography.fernet import Fernet, InvalidToken
 
-        Fernet(raw.encode())
+        fernet = Fernet(raw.encode())
     except Exception:  # noqa: BLE001 - the exception text can echo the key
+        shape = vault_key_problems(raw)
+        detail = "VAULT_KEY is set but is not a valid Fernet key"
+        if shape:
+            detail += ": it " + "; it ".join(shape)
         return Check(
             "vault",
             Health.FAIL,
-            "VAULT_KEY is set but is not a valid Fernet key",
-            fix="regenerate it; any credential stored under the old key is unreadable",
+            detail + "." + duplicate,
+            fix=_replacement_advice(len(stored)),
             required=False,
         )
-    return Check("vault", Health.OK, "key present and parseable")
+
+    unreadable = 0
+    sample = stored[:_DECRYPT_SAMPLE]
+    for path in sample:
+        try:
+            fernet.decrypt(path.read_bytes())
+        except (InvalidToken, OSError):
+            unreadable += 1
+    if sample and unreadable == len(sample):
+        return Check(
+            "vault",
+            Health.FAIL,
+            f"VAULT_KEY is valid but decrypts none of {len(sample)} stored credential(s) — "
+            "it is not the key they were written with." + duplicate,
+            fix="restore the original VAULT_KEY; do not delete the stored files, and do not "
+            "generate a new key",
+            required=False,
+        )
+    if unreadable:
+        return Check(
+            "vault",
+            Health.FAIL,
+            f"{unreadable} of {len(sample)} stored credential(s) cannot be decrypted "
+            "(corrupt, or written under another key)." + duplicate,
+            fix="re-enter those ATS credentials; the rest are readable",
+            required=False,
+        )
+    detail = "key present and parseable"
+    if stored:
+        detail += f"; reads {len(sample)} stored credential(s)"
+    return Check("vault", Health.OK, detail + duplicate)
 
 
 #: The three settings an IMAP poll cannot run without. The port has a default
 #: that is right for every provider worth naming, so it is not one of them.
 _IMAP_REQUIRED = ("IMAP_HOST", "IMAP_USERNAME", "IMAP_PASSWORD")
+
+#: Gmail over IMAP takes a 16-character app password, never the account's.
+_GMAIL_APP_PASSWORD_LENGTH = 16
 
 
 def check_inbox() -> Check:
@@ -359,8 +475,9 @@ def check_inbox() -> Check:
     check that dials an unreachable host hangs the thing it was meant to
     protect. So this answers "is it configured", and says only that.
 
-    Never reports the password. §2.7 has no exception for diagnostic output,
-    which is pasted into chat windows more readily than anything else here.
+    Never reports the password, or its length when it is wrong. §2.7 has no
+    exception for diagnostic output, which is pasted into chat windows more
+    readily than anything else here.
     """
     settings = get_settings()
     values = {
@@ -369,13 +486,18 @@ def check_inbox() -> Check:
         "IMAP_PASSWORD": settings.imap_password,
     }
     missing = [name for name in _IMAP_REQUIRED if not values[name]]
+    gmail_steps = (
+        " For Gmail: enable 2-Step Verification, create an app password at "
+        "https://myaccount.google.com/apppasswords, and use IMAP_HOST=imap.gmail.com."
+    )
 
     if len(missing) == len(_IMAP_REQUIRED):
         return Check(
             "inbox",
             Health.FAIL,
             "no mailbox configured — recruiter replies are not ingested",
-            fix="set IMAP_HOST, IMAP_USERNAME and IMAP_PASSWORD in .env",
+            fix="set IMAP_HOST, IMAP_USERNAME and IMAP_PASSWORD in .env, then restart the "
+            "worker." + gmail_steps,
             required=False,
         )
 
@@ -385,15 +507,85 @@ def check_inbox() -> Check:
             "inbox",
             Health.FAIL,
             f"partly configured — {', '.join(missing)} not set",
-            fix=f"set {', '.join(missing)} in .env",
+            fix=f"set {', '.join(missing)} in .env, then restart the worker.",
             required=False,
         )
 
-    return Check(
-        "inbox",
-        Health.OK,
-        f"configured for {settings.imap_username} at {settings.imap_host}:{settings.imap_port}",
-    )
+    if not 0 < settings.imap_port < 65536:
+        return Check(
+            "inbox",
+            Health.FAIL,
+            "IMAP_PORT is not a valid port",
+            fix="set IMAP_PORT=993 (IMAP over TLS) unless your provider says otherwise",
+            required=False,
+        )
+
+    host = (settings.imap_host or "").lower()
+    password = (settings.imap_password or "").replace(" ", "")
+    if "gmail" in host and len(password) != _GMAIL_APP_PASSWORD_LENGTH:
+        return Check(
+            "inbox",
+            Health.FAIL,
+            "IMAP_PASSWORD does not look like a Gmail app password — Gmail refuses the account "
+            "password over IMAP",
+            fix="create an app password at https://myaccount.google.com/apppasswords and put "
+            "it in IMAP_PASSWORD (spaces are ignored)",
+            required=False,
+        )
+
+    detail = f"configured for {settings.imap_username} at {settings.imap_host}:{settings.imap_port}"
+    if not settings.inbox_alias_base:
+        return Check(
+            "inbox",
+            Health.FAIL,
+            detail + "; INBOX_ALIAS_BASE is not set, so replies can attach to applications "
+            "but never conclude one",
+            fix="set INBOX_ALIAS_BASE to the mailbox address (e.g. you@gmail.com) and set the "
+            "candidate's email mode to managed",
+            required=False,
+        )
+    return Check("inbox", Health.OK, detail)
+
+
+async def check_registry() -> Check:
+    """Whether the `companies` table agrees with `seeds/companies.yaml`.
+
+    Reads both and writes neither — `registry_health` says why the repair
+    stays a deliberate act. Optional: a registry out of step stops the crawl
+    finding boards, not the apply loop.
+    """
+    from packages.core.db import get_sessionmaker
+    from packages.crawler.extract import SeedFileError, load_retired, load_seed
+    from packages.crawler.registry_health import SYNC_FIX, RegistryHealth, diagnose_registry
+
+    try:
+        seeds = load_seed()
+        retired = load_retired()
+    except SeedFileError as exc:
+        return Check(
+            "registry",
+            Health.FAIL,
+            f"seeds/companies.yaml cannot be read: {exc}",
+            fix="fix the file; `git diff seeds/companies.yaml` shows what changed",
+            required=False,
+        )
+
+    async def _diagnose() -> RegistryHealth:
+        async with get_sessionmaker()() as session:
+            return await diagnose_registry(session, seeds, retired)
+
+    try:
+        health = await asyncio.wait_for(_diagnose(), timeout=CHECK_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 - a diagnostic reports, never raises
+        return Check(
+            "registry",
+            Health.SKIPPED,
+            f"could not compare the registry with the database ({type(exc).__name__})",
+            required=False,
+        )
+    if health.ok:
+        return Check("registry", Health.OK, health.summary())
+    return Check("registry", Health.FAIL, health.summary(), fix=SYNC_FIX, required=False)
 
 
 def check_storage() -> Check:
@@ -497,6 +689,7 @@ async def run(*, include_optional: bool = True) -> Report:
     # Only meaningful if the database answered at all.
     if checks[-1].ok:
         checks.append(await check_migrations())
+        checks.append(await check_registry())
     else:
         checks.append(Check("migrations", Health.SKIPPED, "not checked — no database connection"))
 

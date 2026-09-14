@@ -12,6 +12,7 @@ import { FilterBar } from "./filter-bar";
 import { AtsPanel } from "./ats-panel";
 import { DiscoveryStrip } from "./discovery-strip";
 import { EligibilityNote } from "@/components/eligibility-note";
+import { RequirementsPanel } from "./requirements-panel";
 import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +60,17 @@ const FILTER_KEYS = [
   "min_seniority",
   "max_seniority",
   "posted_within_days",
+  "min_salary",
+  "salary_currency",
+  "salary_period",
+  "include_unknown_salary",
+  "salary_unstated_period_as_year",
+  "wanted_skills",
+  "lacking_skills",
+  "include_unknown_skills",
+  "max_education",
+  "include_unknown_education",
+  "rank",
 ] as const;
 
 export default async function MatchesPage({
@@ -67,18 +79,33 @@ export default async function MatchesPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  let matches: Match[];
+  let matches: Match[] = [];
   let profiles: Profile[];
+  let savedFilters: Record<string, string> | null = null;
+  // A filter the API refuses — a skill not in the vocabulary, say — is shown
+  // beside the filter bar rather than replacing the page, so it can be fixed
+  // where it was typed.
+  let filterError: string | null = null;
   try {
     const query = new URLSearchParams({ include_applied: "false" });
     for (const key of FILTER_KEYS) {
       const value = params[key];
       if (typeof value === "string" && value) query.set(key, value);
     }
-    [matches, profiles] = await Promise.all([
-      api.matchesFiltered(query),
+    const [feed, profileList, saved] = await Promise.all([
+      api.matchesFiltered(query).catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === "invalid_request") {
+          filterError = error.message;
+          return [] as Match[];
+        }
+        throw error;
+      }),
       api.profiles(),
+      api.searchPreference("default").catch(() => null),
     ]);
+    matches = feed;
+    profiles = profileList;
+    savedFilters = saved?.filters ?? null;
   } catch (error) {
     if (error instanceof ApiError) return <ErrorPanel error={error} />;
     throw error;
@@ -108,8 +135,14 @@ export default async function MatchesPage({
       </Suspense>
 
       <Suspense fallback={null}>
-        <FilterBar resultCount={matches.length} />
+        <FilterBar resultCount={matches.length} savedFilters={savedFilters} />
       </Suspense>
+
+      {filterError ? (
+        <p role="alert" className="rounded-[var(--radius)] border border-stop/40 bg-stop-soft px-4 py-3 text-sm text-stop">
+          {filterError}
+        </p>
+      ) : null}
 
       {matches.length === 0 ? (
         <div className="rounded-[var(--radius-lg)] border border-dashed border-rule px-6 py-16 text-center">
@@ -327,6 +360,59 @@ export default async function MatchesPage({
                   </p>
                 ) : null}
 
+                {match.personalized_score !== null ? (
+                  <div className="mt-3 text-xs text-ink-soft">
+                    <span className="font-mono text-ink">
+                      personalized {Math.round(match.personalized_score * 100)}
+                    </span>{" "}
+                    <span className="text-ink-faint">(base {Math.round(match.score * 100)})</span>
+                    {match.adjustments.length > 0 ? (
+                      <ul className="mt-1 space-y-0.5">
+                        {match.adjustments.map((item) => (
+                          <li key={`${item.kind}:${item.value}`}>
+                            <span className={item.weight >= 0 ? "text-go" : "text-stop"}>
+                              {item.weight >= 0 ? "+" : "−"}
+                              {Math.round(Math.abs(item.weight) * 100)}
+                            </span>{" "}
+                            {item.why}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span className="text-ink-faint"> — none of your adjustments apply</span>
+                    )}
+                  </div>
+                ) : null}
+
+                <RequirementsPanel
+                  compensation={match.compensation}
+                  requirements={match.requirements}
+                />
+
+                {match.sources.length > 1 ? (
+                  <p className="mt-3 text-xs text-ink-soft">
+                    Listed in {match.sources.length} places
+                    {match.sources.some(
+                      (source) => source.decision && source.posting_id !== match.posting_id,
+                    ) ? (
+                      <span className="text-attn">
+                        {" "}— already{" "}
+                        {match.sources
+                          .filter((source) => source.decision && source.posting_id !== match.posting_id)
+                          .map((source) => source.decision)
+                          .join(", ")}{" "}
+                        on another listing
+                      </span>
+                    ) : null}{" "}
+                    <Link
+                      href={`/postings/${match.posting_id}`}
+                      className="underline-offset-4 hover:text-ink hover:underline"
+                    >
+                      see sources
+                    </Link>
+                  </p>
+                ) : null}
+
                 {match.excluded_by.length > 0 ? (
                   <p className="aside aside-stop mt-4 text-xs text-stop">
                     Ruled out by {match.excluded_by.join(", ")} — a hard filter,
@@ -336,6 +422,12 @@ export default async function MatchesPage({
 
                 {/* Actions, set apart from the reasoning above them. */}
                 <div className="mt-6 flex flex-wrap items-center gap-5 border-t border-rule-soft pt-4">
+                  <Link
+                    href={`/postings/${match.posting_id}`}
+                    className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline"
+                  >
+                    History &amp; sources
+                  </Link>
                   <a
                     href={match.url}
                     target="jobrunner-form"

@@ -81,6 +81,9 @@ TEST_DATABASE_URL = (
 
 #: Truncated between committing tests, children first is handled by CASCADE.
 _ALL_TABLES = (
+    "application_tasks",
+    "application_contacts",
+    "contacts",
     "application_events",
     "inbound_messages",
     "applications",
@@ -107,6 +110,12 @@ _ALL_TABLES = (
     "crawler_request_budgets",
     "corpus_stats",
     "companies",
+    # No foreign keys, so nothing cascades to it.
+    "worker_heartbeats",
+    "search_preferences",
+    "posting_versions",
+    "canonical_jobs",
+    "ranking_preferences",
     "users",
 )
 

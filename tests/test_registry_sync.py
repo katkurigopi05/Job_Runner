@@ -20,8 +20,14 @@ from sqlalchemy import func, select
 from packages.core.enums import SourceStatus
 from packages.core.models import Company, CompanyCrawlState
 from packages.crawler.company_csv import Classified, Row, TriageReport
-from packages.crawler.extract import CompanySeed
-from packages.crawler.registry import register_candidates, status_for, sync_registry
+from packages.crawler.extract import CompanySeed, RetiredSeed
+from packages.crawler.registry import (
+    RETIRED_METHOD,
+    register_candidates,
+    status_for,
+    sync_registry,
+)
+from packages.crawler.registry_health import diagnose_registry
 
 
 def _row(name: str, *, website: str = "", career: str = "", url: str = "", row: int = 1) -> Row:
@@ -316,3 +322,208 @@ async def test_a_retired_board_cannot_be_resurrected(db_session) -> None:
     stored = await db_session.scalar(select(Company).where(Company.name == seed.name))
     assert stored is not None and stored.slug == seed.slug
     assert stored.slug not in retired
+
+
+# --------------------------------------------------------------------------
+# Retired boards, evidence history, and the diagnosis
+# --------------------------------------------------------------------------
+#
+# The live defect: 119 rows created by the inline crawl before `slug` existed,
+# all backfilled to `no_website`. 107 matched a live registry entry and 14 a
+# retired one, and the dashboard asked for a URL for every one of them.
+
+
+def _legacy_row(name: str, *, ats: str = "greenhouse") -> Company:
+    """A row exactly as the inline crawl left it and the migration backfilled it."""
+    return Company(
+        name=name,
+        ats_type=ats,
+        slug=None,
+        last_polled_at=datetime(2026, 8, 28, tzinfo=UTC),
+        source_status=SourceStatus.NO_WEBSITE.value,
+        source_evidence={"method": "backfill_no_url"},
+    )
+
+
+def _retired(name: str | None, slug: str = "gone", ats: str = "greenhouse") -> RetiredSeed:
+    return RetiredSeed(
+        name=name, slug=slug, ats=ats, checked="2026-09-07", state="missing", api_status=404
+    )
+
+
+async def test_a_legacy_row_is_repaired_and_keeps_what_it_said_before(db_session) -> None:
+    db_session.add(_legacy_row("Acme"))
+    await db_session.flush()
+
+    outcome = await sync_registry(
+        db_session, [CompanySeed(name="Acme", slug="acmeco", checked="2026-09-07")]
+    )
+
+    assert outcome.verified == 1
+    acme = await db_session.scalar(select(Company).where(Company.name == "Acme"))
+    assert acme.source_status == SourceStatus.VERIFIED.value
+    assert acme.slug == "acmeco"
+    assert acme.source_evidence["previous"] == {
+        "source_status": "no_website",
+        "source_evidence": {"method": "backfill_no_url"},
+    }
+
+
+async def test_a_retired_board_row_is_marked_not_left_asking_for_a_url(db_session) -> None:
+    db_session.add(_legacy_row("Gone Inc"))
+    await db_session.flush()
+
+    outcome = await sync_registry(db_session, [], retired=[_retired("Gone Inc", slug="goneinc")])
+
+    assert outcome.retired == 1
+    gone = await db_session.scalar(select(Company).where(Company.name == "Gone Inc"))
+    assert gone.source_status == SourceStatus.FAILED.value
+    assert gone.slug is None, "the condemned board cannot be named to the dispatcher"
+    assert gone.source_evidence["method"] == RETIRED_METHOD
+    assert gone.source_evidence["slug"] == "goneinc"
+    assert gone.source_evidence["api_status"] == 404
+    assert gone.source_evidence["previous"]["source_status"] == "no_website"
+
+
+async def test_marking_retired_boards_is_idempotent(db_session) -> None:
+    db_session.add(_legacy_row("Gone Inc"))
+    await db_session.flush()
+    retired = [_retired("Gone Inc")]
+
+    await sync_registry(db_session, [], retired=retired)
+    second = await sync_registry(db_session, [], retired=retired)
+
+    assert second.retired == 0
+    gone = await db_session.scalar(select(Company).where(Company.name == "Gone Inc"))
+    assert "previous" not in gone.source_evidence["previous"].get("source_evidence", {}), (
+        "a second run must not nest the history inside itself"
+    )
+
+
+async def test_a_retirement_never_demotes_newer_verification(db_session) -> None:
+    """Discovery found a board after the sweep condemned the old one."""
+    db_session.add(
+        Company(
+            name="Moved Inc",
+            ats_type="ashby",
+            slug="moved",
+            source_status=SourceStatus.VERIFIED.value,
+            source_verified_at=datetime(2026, 9, 10, tzinfo=UTC),
+            source_evidence={"method": "discovery_from_url"},
+        )
+    )
+    await db_session.flush()
+
+    outcome = await sync_registry(db_session, [], retired=[_retired("Moved Inc")])
+
+    assert (outcome.retired, outcome.retired_newer_in_db) == (0, 1)
+    moved = await db_session.scalar(select(Company).where(Company.name == "Moved Inc"))
+    assert moved.source_status == SourceStatus.VERIFIED.value
+    assert moved.slug == "moved"
+
+
+async def test_a_name_retired_on_one_board_and_live_on_another_stays_live(db_session) -> None:
+    """Temporal and Runway: retired on Greenhouse, re-added on Ashby."""
+    db_session.add(_legacy_row("Temporal", ats="greenhouse"))
+    await db_session.flush()
+
+    outcome = await sync_registry(
+        db_session,
+        [CompanySeed(name="Temporal", slug="temporal", ats="ashby", checked="2026-09-12")],
+        retired=[_retired("Temporal", slug="temporaltechnologies")],
+    )
+
+    assert outcome.moved_boards == ["Temporal"]
+    assert outcome.retired == 0
+    row = await db_session.scalar(select(Company).where(Company.name == "Temporal"))
+    assert row.source_status == SourceStatus.VERIFIED.value
+    assert (row.ats_type, row.slug) == ("ashby", "temporal")
+    assert row.source_evidence["retired_board"]["slug"] == "temporaltechnologies"
+
+
+async def test_a_retired_entry_with_no_row_creates_nothing(db_session) -> None:
+    await sync_registry(db_session, [], retired=[_retired("Never Crawled")])
+
+    assert await db_session.scalar(select(func.count()).select_from(Company)) == 0
+
+
+async def test_the_diagnosis_names_every_disagreement_and_changes_nothing(db_session) -> None:
+    db_session.add_all([_legacy_row("Acme"), _legacy_row("Gone Inc")])
+    await db_session.flush()
+    seeds = [
+        CompanySeed(name="Acme", slug="acmeco", checked="2026-09-07"),
+        CompanySeed(name="Beta", slug="betaco", checked="2026-09-07"),
+    ]
+    retired = [_retired("Gone Inc"), _retired(None, slug="nameless")]
+
+    health = await diagnose_registry(db_session, seeds, retired)
+
+    codes = {problem.code: problem for problem in health.problems}
+    assert codes["registry_rows_missing"].examples == ("Beta",)
+    assert codes["registry_rows_stale"].examples == ("Acme",)
+    assert codes["retired_board_unmarked"].examples == ("Gone Inc",)
+    assert codes["retired_entry_nameless"].examples == ("nameless",)
+    assert "make registry-sync" in codes["registry_rows_stale"].fix
+    assert (health.rows, health.fetchable) == (2, 0)
+    acme = await db_session.scalar(select(Company).where(Company.name == "Acme"))
+    assert acme.source_status == SourceStatus.NO_WEBSITE.value, "diagnosis is read-only"
+
+
+async def test_after_a_sync_the_diagnosis_is_clean(db_session) -> None:
+    db_session.add_all([_legacy_row("Acme"), _legacy_row("Gone Inc")])
+    await db_session.flush()
+    seeds = [CompanySeed(name="Acme", slug="acmeco", checked="2026-09-07")]
+    retired = [_retired("Gone Inc")]
+
+    await sync_registry(db_session, seeds, retired=retired)
+    health = await diagnose_registry(db_session, seeds, retired)
+
+    assert health.ok, health.summary()
+    assert health.fetchable == 1
+
+
+def test_the_retired_section_is_read_by_its_own_loader(tmp_path) -> None:
+    from packages.crawler.extract import load_retired, load_seed
+
+    path = tmp_path / "companies.yaml"
+    path.write_text(
+        "companies:\n- name: Live\n  slug: live\nretired:\n"
+        "- name: Dead\n  slug: dead\n  api_status: 404\n"
+    )
+
+    assert [seed.name for seed in load_seed(str(path))] == ["Live"]
+    assert [(r.name, r.api_status) for r in load_retired(str(path))] == [("Dead", 404)]
+
+
+def test_a_malformed_retired_section_raises_rather_than_reading_empty(tmp_path) -> None:
+    import pytest
+
+    from packages.crawler.extract import SeedFileError, load_retired
+
+    path = tmp_path / "companies.yaml"
+    path.write_text("companies: []\nretired: {name: Dead}\n")
+
+    with pytest.raises(SeedFileError):
+        load_retired(str(path))
+
+
+async def test_the_dry_run_computes_the_real_change_and_writes_nothing(
+    committing_sessionmaker, monkeypatch, tmp_path
+) -> None:
+    """Same code path as the write, rolled back — so the preview cannot lie."""
+    from packages.core import db as core_db
+    from scripts import registry_sync
+
+    monkeypatch.setattr(core_db, "get_sessionmaker", lambda: committing_sessionmaker)
+    path = tmp_path / "companies.yaml"
+    path.write_text("companies:\n- name: DryRun Co\n  slug: dryrun\n  checked: '2026-09-07'\n")
+
+    message = await registry_sync.run(str(path), dry_run=True)
+
+    assert message.startswith("DRY RUN")
+    assert "1 created" in message
+    async with committing_sessionmaker() as session:
+        count = await session.scalar(
+            select(func.count()).select_from(Company).where(Company.name == "DryRun Co")
+        )
+    assert count == 0

@@ -29,6 +29,7 @@ from apps.worker.inbox_job import INBOX_TASK_KIND, handle_inbox
 from packages.core import db as core_db
 from packages.core.config import get_settings
 from packages.core.enums import FailureReason
+from packages.core.heartbeat import Heartbeat
 from packages.core.models import Application, QueueTask
 from packages.core.queue import (
     DEFAULT_LEASE_SECONDS,
@@ -62,6 +63,7 @@ async def run_once(
     *,
     worker_id: str,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    heartbeat: Heartbeat | None = None,
 ) -> bool:
     """Claim and run at most one task. Returns True if one was processed."""
     async with core_db.get_sessionmaker()() as session:
@@ -79,12 +81,18 @@ async def run_once(
         # that would leave the task retryable forever with attempts stuck at
         # zero.
         await session.commit()
+        if heartbeat is not None:
+            # Forced: "which task is the worker on" is the question the setup
+            # page is asked while a long browser run is in progress.
+            await heartbeat.pulse(force=True, task_kind=claimed.task.kind, task_id=claimed.task.id)
 
         # A browser run can outlast the lease. Without renewal the task would
         # be reclaimed mid-flight and a second worker would start driving the
         # same form — the one way this design could double-submit.
         async with _keep_lease_alive(claimed.task.id, worker_id, lease_seconds):
             await _process(session, claimed)
+        if heartbeat is not None:
+            await heartbeat.pulse(completed=True)
         return True
 
 
@@ -244,19 +252,58 @@ async def run_forever(
             loop.add_signal_handler(sig, stop.set)
 
     log.info("worker_started", worker_id=wid, lease_seconds=lease_seconds)
+    heartbeat = Heartbeat(wid, core_db.get_sessionmaker())
+    await heartbeat.pulse(force=True)
+    last_reminder_tick = 0.0
 
     while not stop.is_set():
         try:
-            did_work = await run_once(worker_id=wid, lease_seconds=lease_seconds)
+            did_work = await run_once(
+                worker_id=wid, lease_seconds=lease_seconds, heartbeat=heartbeat
+            )
         except Exception as exc:  # noqa: BLE001 - a bad claim must not kill the loop
             log.error("claim_failed", error=type(exc).__name__)
+            await heartbeat.pulse(error_kind=type(exc).__name__)
             did_work = False
 
         if not did_work:
+            # Throttled inside: an idle loop turns every second and writes
+            # every HEARTBEAT_INTERVAL_S.
+            await heartbeat.pulse()
+            last_reminder_tick = await _ring_reminders(last_reminder_tick)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=IDLE_SLEEP_SECONDS)
 
+    # A goodbye, so the setup page can tell a clean stop from a crash.
+    await heartbeat.pulse(force=True, stopped=True)
     log.info("worker_stopped", worker_id=wid)
+
+
+#: How often an idle worker checks for task reminders that are due.
+REMINDER_TICK_SECONDS = 60.0
+
+
+async def _ring_reminders(last_tick: float) -> float:
+    """Ring due task reminders at most once a minute. Never raises.
+
+    Local notifications through the owner's configured backends only — a
+    reminder tells the owner, it never contacts an employer. `ring_due` locks
+    with SKIP LOCKED and stamps before delivering, so a pool of workers rings
+    each reminder once.
+    """
+    import time
+
+    now = time.monotonic()
+    if last_tick and now - last_tick < REMINDER_TICK_SECONDS:
+        return last_tick
+    try:
+        from packages.tracking.reminders import ring_due
+
+        async with core_db.get_sessionmaker()() as session:
+            await ring_due(session)
+    except Exception as exc:  # noqa: BLE001 - reminders must not stop the worker
+        log.warning("reminder_tick_failed", error=type(exc).__name__)
+    return now
 
 
 async def run_pool(count: int, *, lease_seconds: int | None = None) -> None:

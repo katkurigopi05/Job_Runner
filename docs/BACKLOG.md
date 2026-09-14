@@ -39,12 +39,12 @@ Same as PARITY.md, plus one:
 | §5 | Generic fallback crawler | **PARTIAL** | `crawler/jsonld.py` reads schema.org `JobPosting` off a bespoke page; `make probe-bespoke` promotes the pages that publish it. No sitemap path yet, and a page publishing nothing stays unreadable |
 | §5 | robots.txt, rate limits | **HAVE** | `crawler/robots.py`, `ratelimit.py` |
 | §5 | CAPTCHA bypass | **REFUSED** | CLAUDE.md §2.5, hard scope boundary |
-| §6 | Common job schema | **PARTIAL** | `Posting` holds 13 columns against the spec's ~40 fields. Experience is now *read* rather than stored (`matching/experience.py`, with the MANDATORY/PREFERRED split §13 asks for); still no salary column, no required/preferred **skills** split, no parsed education → **P7** |
+| §6 | Common job schema | **PARTIAL** | Salary range, currency and period are columns, and `requirements_json` holds required / preferred / unclassified skills and education with evidence quotes (`matching/requirements.py`, 2026-09-14). Experience is read by `matching/experience.py`. Still short of the spec's ~40 fields: no work-authorization or sponsorship columns, no multi-category taxonomy → **P7**, **P11** |
 | §7 | Relevance beyond the title | **HAVE** | `matching/score.py` weights body 0.65, `roles.py` aliases titles |
 | §8 | Multi-category job taxonomy | **PARTIAL** | `roles.py` maps a title to exactly one canonical role; the spec wants a job in several → **P11** |
 | §9 | Internship / early-career detection | **PARTIAL** | `filters.py::detect_seniority` reads intern/junior/new-grad markers from the title, and `matching/experience.py` now parses the minimum-experience text a cosine cannot refuse. Not a first-class entity → **P7** |
-| §39 | Canonical job entity, cross-board dedupe | **BUILD** | `content_hash` is per-posting change detection and `legitimacy.py` is ghost-job scoring — neither merges the same job seen on two boards → **P6** |
-| §40 | Lifecycle: reposted, salary changed, requirements changed | **PARTIAL** | `first_seen_at`/`closed_at` exist; no `job_versions`, so a changed posting overwrites its own history → **P6** |
+| §39 | Canonical job entity, cross-board dedupe | **HAVE** | `canonical_jobs` + `matching/canonical.py` (2026-09-14): merges only on positive evidence across *different* sources; the feed shows one card listing every source. On the live corpus every posting comes from one ATS board, so no group exists yet |
+| §40 | Lifecycle: reposted, salary changed, requirements changed | **HAVE** | `posting_versions` records new and edited postings (baseline on first change); `/postings/{id}` shows pay, skill, education, title and location changes |
 
 ### Matching and ML (spec §1–§4, §12, §16, §35, §38, §44, §46–§48, §57)
 
@@ -59,7 +59,7 @@ Same as PARITY.md, plus one:
 | §16 | Full initial-fit breakdown | **PARTIAL** | `matching/rubric.py` gives named dimensions 1–5; the spec's percentage-per-dimension format is not produced |
 | §35 | Explainable ranking | **HAVE** | `rubric.py` plus `reasons_json` on every Match |
 | §36 | Capture user feedback | **HAVE** | `Match.decision` via `/swipe` |
-| §36, §38 | **Feed feedback into ranking** | **BUILD** | Nothing reads `decision` to rank. It drives batch tailoring and a calibration display only → **P3** |
+| §36, §38 | **Feed feedback into ranking** | **PARTIAL** | Skip reasons, explicit bounded preferences with a separate personalized score, suggestions from skips, and held-out evaluation (`matching/personalize.py`, `evaluation.py`, 2026-09-14). No learned model: zero owner labels → **P3**, needs **P1** |
 | §37 | Outcome labels | **PARTIAL** | `Outcome` enum and inbox routing populate them; no model consumes them → **P9**, needs P1 |
 | §44 | Ranking tiers with labels | **BUILD** | Scores are raw floats end to end; no tier band → **P8** (small) |
 | §48 | Selection on latency and explainability, not accuracy | **HAVE** | `benchmark.py` records ms/item and refuses to name a winner on noise |
@@ -85,24 +85,24 @@ Same as PARITY.md, plus one:
 
 | Spec | Capability | Status | Notes |
 |---|---|---|---|
-| §17, §24 | Recruiter score, before and after | **BUILD** | Nothing exists. `ats.py` measures machine parse, which is a different question → **P4** |
-| §52 | Four-level recruiter simulation | **BUILD** | Part of **P4** |
-| §25, §53 | Application readiness score and gate | **BUILD** | No composite readiness score, no READY gate → **P8** |
+| §17, §24 | Recruiter score, before and after | **HAVE** | `packages/tailor/recruiter.py` — deterministic, no model judge; shown on the `/review` card and tested in `tests/test_recruiter.py`. Corrected 2026-09-14: this row said nothing existed |
+| §52 | Four-level recruiter simulation | **HAVE** | The four passes in `recruiter.py`: ten-second scan, thirty-second qualification, hiring-manager and technical credibility |
+| §25, §53 | Application readiness score and gate | **HAVE** | `packages/tailor/readiness.py` — composite score, legible band, and a blocker list that makes an application unready regardless of score; on `/review`, tested in `tests/test_readiness.py` |
 | §27 | Adversarial verification agent | **BUILD** | The guard checks fabrication only. Nothing challenges seniority mismatch, keyword stuffing, contradictions, or inflated scores → **P13** |
-| §60–§62 | The three user-facing report formats | **PARTIAL** | `/review` shows résumé, diff, ATS score, cover letter. Missing the match breakdown, recruiter score, readiness, and risks → falls out of **P4** + **P8** |
+| §60–§62 | The three user-facing report formats | **PARTIAL** | `/review` shows résumé, diff, ATS score, recruiter levels, readiness and cover letter. Not produced as the spec's three fixed report formats |
 | §63 | Perspective switching between phases | **PARTIAL** | Separate modules exist; no orchestration runs them as distinct passes |
 
 ### Application flow (spec §31–§33, §42–§43, §49–§50)
 
 | Spec | Capability | Status | Notes |
 |---|---|---|---|
-| §31 | Full preview before submit | **PARTIAL** | `/review` covers most of it; missing the scores P4 and P8 add |
+| §31 | Full preview before submit | **HAVE** | `/review` shows the filled form, screenshot, résumé diff, ATS, recruiter and readiness scores before approval |
 | §32, §50 | Human approval before submit | **HAVE** | `AUTO_SUBMIT=false` default, state machine in `core/state.py`, tested |
 | §33 | Sensitive questions flagged, never invented | **HAVE** | `ats/screen.py` knock-outs and cautions; §2.2 verbatim copying |
 | §41 | `experiments`, `model_versions`, `training_examples`, `job_versions`, `recruiter_reviews` tables | **BUILD** | Experiment records are dataclasses written to stdout; nothing persists → **P14** |
 | §42 | API surface | **PARTIAL** | Most routes exist under different names. Missing `/jobs/{id}/analyze`, `/jobs/{id}/resume-comparison`, `/feedback` |
-| §43 | Dashboard sections | **PARTIAL** | 12 pages exist. No model-performance view → part of **P14** |
-| §49 | Test coverage across the listed areas | **HAVE** | 1036 tests |
+| §43 | Dashboard sections | **PARTIAL** | 13 main pages as of the 2026-09-14 audit. No model-performance view → part of **P14** |
+| §49 | Test coverage across the listed areas | **HAVE** | 2,632 passing tests at the 2026-09-14 audit — count it with `pytest --collect-only -q` rather than trusting this number |
 | §55–§56 | Code quality, observability | **PARTIAL** | structlog throughout; no metrics aggregation or crawler success-rate view |
 
 ---
@@ -174,6 +174,13 @@ pipeline has a parsed page and no row.
 ---
 
 ### P3 — Feedback into the ranking
+
+> 2026-09-14: the explicit half is built — skip reasons, bounded ranking
+> preferences producing a personalized score beside the base one, suggestions
+> from skips, and `GET /ranking/evaluation`, which compares both orders on
+> held-out owner grades with bootstrap intervals. It reports insufficient data
+> until P1 produces labels. The learned half below is still unbuilt.
+
 **Spec:** §36, §38 · **Size:** M · **Needs:** P1 for validation
 
 `Match.decision` has been captured since `/swipe` shipped and **nothing ranks
@@ -195,7 +202,12 @@ result — report it and stop.
 
 ---
 
-### P4 — Recruiter simulation
+### P4 — Recruiter simulation — **built**
+
+> Corrected 2026-09-14. `packages/tailor/recruiter.py` implements the four levels
+> below deterministically, and `/review` shows them. The text that follows is
+> the original brief, kept for its reasoning.
+
 **Spec:** §17, §24, §52 · **Size:** M
 
 The largest missing evaluation axis. `ats.py` asks "can a machine parse
@@ -242,7 +254,12 @@ and no INFERENCE is ever rendered as a résumé fact.
 
 ---
 
-### P6 — Canonical jobs and version history
+### P6 — Canonical jobs and version history — **built**
+
+> 2026-09-14: `canonical_jobs`, `posting_versions`, `make canonicalize`, the
+> grouped feed card and `/postings/{id}`. Merging is conservative by design;
+> see the `matching/canonical.py` docstring. The brief below is the original.
+
 **Spec:** §39, §40 · **Size:** M
 
 The same job on Greenhouse and an aggregator is two rows. `content_hash`
@@ -262,6 +279,11 @@ salary change is visible as a diff.
 ---
 
 ### P7 — Full job normalization
+
+> 2026-09-14: salary and the skills/education split are built and filterable,
+> with unknowns never counted as satisfying a filter. Work-authorization text
+> columns remain.
+
 **Spec:** §6, §9, §13 · **Size:** M
 
 `Posting` holds roughly a third of the spec's schema. Missing: salary range,
@@ -308,7 +330,12 @@ is therefore argued rather than observed in the wild.
 
 ---
 
-### P8 — Readiness score and tiers
+### P8 — Readiness score and tiers — **built**
+
+> Corrected 2026-09-14. `packages/tailor/readiness.py` composes the scores,
+> bands them, and blocks on missing answers regardless of score. The text
+> that follows is the original brief.
+
 **Spec:** §25, §44, §53, §62 · **Size:** S–M · **Needs:** P4
 
 The composite the spec puts in front of every approval, plus the quality

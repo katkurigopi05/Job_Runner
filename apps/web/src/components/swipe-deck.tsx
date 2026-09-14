@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { type Decision, type Match } from "@/lib/api";
+import { SKIP_REASONS, type Decision, type Match } from "@/lib/api";
 import { recordDecision } from "@/app/swipe/actions";
 import { EligibilityNote } from "@/components/eligibility-note";
 
@@ -24,18 +24,22 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
   const [pending, setPending] = useState<Decision | null>(null);
   const [decided, setDecided] = useState({ interested: 0, skipped: 0 });
   const [error, setError] = useState<string | null>(null);
+  // A skip asks why, once, and never insists: a reason feeds the suggestions
+  // on /ranking, and an unexplained skip is still a skip.
+  const [choosingReason, setChoosingReason] = useState(false);
 
   const current = queue[0];
 
   const decide = useCallback(
-    async (decision: Decision) => {
+    async (decision: Decision, reason?: string) => {
       if (!current || pending) return;
+      setChoosingReason(false);
       setPending(decision);
       setError(null);
       try {
         // A Server Action, not a browser fetch: the API refuses non-loopback
         // callers, so the request has to originate on the Next server.
-        const result = await recordDecision(current.id, decision);
+        const result = await recordDecision(current.id, decision, reason);
         if (!result.ok) {
           setError(result.message);
           return;
@@ -56,12 +60,19 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      if (choosingReason) {
+        const index = Number(event.key) - 1;
+        if (index >= 0 && index < SKIP_REASONS.length) void decide("skipped", SKIP_REASONS[index].value);
+        if (event.key === "Enter" || event.key === "0") void decide("skipped");
+        if (event.key === "Escape") setChoosingReason(false);
+        return;
+      }
       if (event.key === "ArrowRight") void decide("interested");
-      if (event.key === "ArrowLeft") void decide("skipped");
+      if (event.key === "ArrowLeft") setChoosingReason(true);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [decide]);
+  }, [decide, choosingReason]);
 
   if (!current) {
     return (
@@ -158,7 +169,7 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
       <div className="flex items-center gap-4">
         <button
           type="button"
-          onClick={() => void decide("skipped")}
+          onClick={() => setChoosingReason(true)}
           disabled={pending !== null}
           className="flex-1 rounded-[var(--radius)] border border-rule px-6 py-4 font-mono text-sm text-ink-soft transition-colors hover:border-stop hover:text-stop disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stop"
         >
@@ -174,8 +185,38 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
         </button>
       </div>
 
+      {choosingReason ? (
+        <div
+          role="group"
+          aria-label="Why skip?"
+          className="rounded-[var(--radius)] border border-rule bg-paper-raised p-4"
+        >
+          <p className="font-mono text-xs uppercase tracking-widest text-ink-faint">why skip? (optional)</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {SKIP_REASONS.map((reason, index) => (
+              <button
+                key={reason.value}
+                type="button"
+                onClick={() => void decide("skipped", reason.value)}
+                className="rounded-full border border-rule px-3 py-1 text-xs text-ink-soft transition-colors hover:border-stop hover:text-stop"
+              >
+                <span className="mr-1 font-mono text-ink-faint">{index + 1}</span>
+                {reason.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => void decide("skipped")}
+              className="rounded-full border border-dashed border-rule px-3 py-1 text-xs text-ink-faint hover:text-ink"
+            >
+              no reason
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex justify-between font-mono text-xs text-ink-faint">
-        <span>← → to decide</span>
+        <span>{choosingReason ? "1–9 reason · enter none · esc back" : "← → to decide"}</span>
         <span>
           {decided.interested} kept · {decided.skipped} skipped · {queue.length} left
         </span>

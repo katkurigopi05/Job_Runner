@@ -1,6 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ApiError, api, type Application, type ApplicationEvent } from "@/lib/api";
+import {
+  API_BASE,
+  ApiError,
+  api,
+  type Application,
+  type ApplicationEvent,
+  type Tracking,
+} from "@/lib/api";
+import { TrackingPanel } from "./tracking-panel";
 import { FillRate, StatusPill } from "@/components/status";
 import { ErrorPanel } from "@/components/error-panel";
 
@@ -11,8 +19,13 @@ export default async function ApplicationPage({ params }: { params: Promise<{ id
 
   let application: Application;
   let events: ApplicationEvent[];
+  let tracking: Tracking;
   try {
-    [application, events] = await Promise.all([api.application(id), api.events(id)]);
+    [application, events, tracking] = await Promise.all([
+      api.application(id),
+      api.events(id),
+      api.tracking(id),
+    ]);
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 404) notFound();
@@ -51,6 +64,12 @@ export default async function ApplicationPage({ params }: { params: Promise<{ id
           </ul>
         </section>
       ) : null}
+
+      <TrackingPanel
+        applicationId={id}
+        tracking={tracking}
+        calendarUrl={`${API_BASE}/applications/${id}/tasks.ics`}
+      />
 
       {/* Append-only, and the reason an application's history is auditable at
           all. Newest last, so it reads as a story rather than a feed. */}

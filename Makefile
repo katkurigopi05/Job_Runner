@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching export-labels import-csv inspect-csv registry-sync crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching export-labels import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -351,8 +351,28 @@ inspect-csv:
 # reads. Idempotent, cannot reactivate a retired board, and will not overwrite
 # verification evidence newer than the seed file's own `checked` stamp.
 #   make registry-sync
+#   make registry-sync dry=1   # preview only
+# Read salary, skills and education out of postings stored before extraction
+# existed. Local, resumable, no network.   make extract-requirements limit=500
+# Back up the database and local artifacts; verify by restoring somewhere isolated.
+#   make backup [vault=1] [browser=1]      make backup-verify dir=backups/jobrunner-... [keep=1]
+backup:
+	$(PY)/python -m scripts.backup create $(if $(dest),--dest $(dest),) $(if $(vault),--include-vault-ciphertext,) $(if $(browser),--include-browser-profiles,)
+
+backup-verify:
+	@test -n "$(dir)" || (echo "set dir=<backup directory>" && exit 1)
+	$(PY)/python -m scripts.backup verify "$(dir)" $(if $(keep),--keep,)
+
+# Group stored listings that are confidently one requisition across sources.
+#   make canonicalize dry=1   # preview
+canonicalize:
+	$(PY)/python -m scripts.canonicalize $(if $(dry),--dry-run,)
+
+extract-requirements:
+	$(PY)/python -m scripts.extract_requirements $(if $(limit),--limit $(limit),)
+
 registry-sync:
-	$(PY)/python -m scripts.registry_sync $(if $(seeds),--seeds $(seeds),)
+	$(PY)/python -m scripts.registry_sync $(if $(seeds),--seeds $(seeds),) $(if $(dry),--dry-run,)
 
 # Where the crawl's wall-clock went, per host: time inside the rate limiter
 # against time in the request. Those want opposite responses — the first is
