@@ -54,7 +54,7 @@ export function AssistantDock({ applicationId }: { applicationId?: string }) {
         </button>
       </div>
       <div className="min-h-0 flex-1 p-3">
-        <Assistant applicationId={applicationId} compact />
+        <Assistant applicationId={applicationId} />
       </div>
     </aside>
   );

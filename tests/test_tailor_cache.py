@@ -166,3 +166,40 @@ async def test_the_cache_does_not_reach_across_candidates(db_session) -> None:
     await db_session.flush()
 
     assert await find_cached(db_session, candidate_id=mine.id, key="shared") is None
+
+
+async def test_provider_failure_draft_is_not_cached_as_completed(db_session) -> None:
+    from packages.core.storage import get_storage
+    from packages.tailor.parse import ParsedResume
+    from packages.tailor.publish import publish_tailored
+    from packages.tailor.rewrite import BulletRewrite, TailorResult
+
+    candidate, _ = await _owner(db_session)
+    source = "Built backend services in Python."
+    result = TailorResult(
+        bullets=[
+            BulletRewrite(
+                original=source,
+                tailored=source,
+                rejected_reason="provider error: TimeoutError",
+                provider_failed=True,
+            )
+        ],
+        provider_failures=1,
+    )
+    published = await publish_tailored(
+        db_session,
+        candidate_id=candidate.id,
+        parsed=ParsedResume(sections={"experience": [source]}, raw_lines=[source]),
+        result=result,
+        tailored_key="retry-after-provider-recovery",
+    )
+
+    assert published is not None
+    assert get_storage().path_for(published.storage_ref).is_file()
+    assert (
+        await find_cached(
+            db_session, candidate_id=candidate.id, key="retry-after-provider-recovery"
+        )
+        is None
+    )

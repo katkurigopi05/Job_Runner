@@ -52,6 +52,11 @@ from packages.llm.prompts import TAILOR_SYSTEM
 #: different component lists cannot flatten to the same string.
 _SEP = "\x1f"
 
+# Earlier output may contain provider failures cached as completed work, or
+# false refusals of slash-separated technologies. Keep those files available
+# for review, but require a fresh successful pass before reusing them.
+TAILORING_REVISION = "recovery-v2"
+
 
 def tailoring_key(
     *,
@@ -85,6 +90,7 @@ def tailoring_key(
             str(source_resume_id),
             content_hash,
             TAILOR_SYSTEM.digest,
+            TAILORING_REVISION,
             provider,
             model or "",
             ",".join(project_ids),

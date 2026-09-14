@@ -217,6 +217,16 @@ async def run(
 
         result.calls_spent += len(bullets)
 
+        if rewrites.provider_failures:
+            result.failed += 1
+            result.per_posting.append(
+                (
+                    posting.title or str(posting.id),
+                    f"{rewrites.provider_failures} provider failures; left pending for retry",
+                )
+            )
+            continue
+
         # Every rewrite refused means the output is the source résumé. Storing
         # it would spend a row and a render to attach a document identical to
         # the one already on the profile, and would make the apply pipeline
@@ -232,6 +242,7 @@ async def run(
             parsed=parsed,
             result=rewrites,
             projects=relevant_projects,
+            posting_text=posting.description_raw or "",
             tailored_key=cache_key,
             posting_id=posting.id,
             answered_by=answered_by,

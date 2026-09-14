@@ -413,3 +413,41 @@ async def test_an_uncacheable_posting_is_still_named(db_session, monkeypatch) ->
 
     assert captured["tailored_key"] is None, "no content hash — not reusable"
     assert captured["posting_id"] == match.posting_id, "but still nameable"
+
+
+async def test_batch_pdf_prioritizes_skills_from_the_job_description(db_session) -> None:
+    from packages.llm.provider import StubProvider
+
+    profile = await _owner(db_session)
+    match = await _tailorable(db_session, profile)
+    base = await db_session.get(Resume, profile.base_resume_id)
+    base.parsed_json = {
+        **RESUME,
+        "sections": {**RESUME["sections"], "skills": ["Languages: JavaScript, Python"]},
+    }
+    await db_session.flush()
+
+    result = await batch.run(db_session, StubProvider(), profile_id=str(profile.id))
+
+    assert result.tailored == 1
+    published = await db_session.get(Resume, match.tailored_resume_id)
+    assert published.parsed_json["sections"]["skills"] == ["Languages: Python, JavaScript"]
+    assert base.parsed_json["sections"]["skills"] == ["Languages: JavaScript, Python"]
+
+
+async def test_partial_provider_failure_stays_pending_for_retry(db_session) -> None:
+    from packages.llm.provider import StubProvider
+
+    class FailingProvider(StubProvider):
+        async def complete(self, system, user, **kwargs):
+            raise TimeoutError("provider unavailable")
+
+    profile = await _owner(db_session)
+    match = await _tailorable(db_session, profile)
+
+    result = await batch.run(db_session, FailingProvider(), profile_id=str(profile.id))
+
+    assert result.failed == 1
+    assert result.tailored == 0
+    assert match.tailored_resume_id is None
+    assert [m.id for m, _ in await batch.pending(db_session, str(profile.id))] == [match.id]

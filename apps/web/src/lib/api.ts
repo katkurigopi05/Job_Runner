@@ -681,7 +681,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers: { "content-type": "application/json", ...init?.headers },
       cache: "no-store",
     });
-  } catch (cause) {
+  } catch {
     // The API not running is the single most likely failure on a local tool,
     // and "fetch failed" tells the owner nothing about how to fix it.
     throw new ApiError(
