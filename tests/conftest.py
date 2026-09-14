@@ -374,6 +374,39 @@ def _no_network_llm():
     get_settings.cache_clear()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _lexical_embedder():
+    """Tests score with the embedder CI has, not the one `.env` names.
+
+    `embedding_backend` is read from `.env` through Settings, so on a machine
+    where the owner set `EMBEDDING_BACKEND=sentence-transformers` the suite
+    loaded the real model while CI — which has no `.env` — ran lexically. Two
+    tests written against the lexical backend then failed only locally: one
+    asserts the `lexical@2` stamp, the other compares a float64 vector with its
+    float32 round trip through pgvector. A suite whose verdict depends on the
+    developer's `.env` is not testing the code.
+
+    Session-scoped for the reason `_no_network_llm` is. The cached embedder is
+    reset as well, since `get_embedder` keeps the first one it builds.
+    """
+    import os
+
+    from packages.core.config import get_settings
+    from packages.matching.embed import set_embedder
+
+    previous = os.environ.get("EMBEDDING_BACKEND")
+    os.environ["EMBEDDING_BACKEND"] = "lexical"
+    get_settings.cache_clear()
+    set_embedder(None)
+    yield
+    set_embedder(None)
+    if previous is None:
+        os.environ.pop("EMBEDDING_BACKEND", None)
+    else:
+        os.environ["EMBEDDING_BACKEND"] = previous
+    get_settings.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def _tmp_audit_trail(tmp_path, monkeypatch):
     """The LLM audit trail lives in its own directory per test.
