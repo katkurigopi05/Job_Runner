@@ -376,6 +376,24 @@ class Posting(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # --- Structured requirements, read at ingestion by matching/requirements.py
+    #
+    # NULL means the posting did not state it. Never zero and never assumed:
+    # the search filters exclude on these, and a guessed value silently hides
+    # a job. The line each value was read from lives in `requirements_json`.
+    salary_min: Mapped[float | None] = mapped_column(Float)
+    salary_max: Mapped[float | None] = mapped_column(Float)
+    salary_currency: Mapped[str | None] = mapped_column(String(3))
+    #: `hour`, `day`, `week`, `month` or `year`; NULL when the posting did not say.
+    salary_period: Mapped[str | None] = mapped_column(String(10))
+    #: Skills by required / preferred / unclassified, education, and the list
+    #: of what the posting did not state — each with its evidence quote.
+    requirements_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    #: `requirements.EXTRACTOR_VERSION` that produced the columns above. NULL
+    #: until extracted, which is how the backfill finds work.
+    requirements_version: Mapped[int | None] = mapped_column(Integer)
+    requirements_extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     # No vector index. At ~50 companies the corpus is 500–5k postings, where an
     # exact scan is both faster and more accurate than approximate search, and
     # an ivfflat index built on an empty table cannot cluster at all. Add one
@@ -398,6 +416,15 @@ class Posting(Base):
         # the older fixtures hold such rows. Every row the crawler writes has
         # one — `ExtractedPosting.external_id` is a required `str`.
         UniqueConstraint("company_id", "external_id", name="uq_postings_company_external_id"),
+        CheckConstraint(
+            "salary_period IS NULL OR salary_period IN ('hour', 'day', 'week', 'month', 'year')",
+            name="ck_postings_salary_period",
+        ),
+        CheckConstraint(
+            "salary_min IS NULL OR salary_max IS NULL OR salary_min <= salary_max",
+            name="ck_postings_salary_order",
+        ),
+        Index("ix_postings_requirements_version", "requirements_version"),
     )
 
 
@@ -970,3 +997,4 @@ class QueueTask(Base):
 # Tables defined in feature modules register on this same metadata. Imported
 # last, because those modules import `Base` from here.
 from packages.core import models_ops as _models_ops  # noqa: E402, F401
+from packages.core import models_search as _models_search  # noqa: E402, F401

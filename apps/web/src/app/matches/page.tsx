@@ -12,6 +12,7 @@ import { FilterBar } from "./filter-bar";
 import { AtsPanel } from "./ats-panel";
 import { DiscoveryStrip } from "./discovery-strip";
 import { EligibilityNote } from "@/components/eligibility-note";
+import { RequirementsPanel } from "./requirements-panel";
 import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +60,15 @@ const FILTER_KEYS = [
   "min_seniority",
   "max_seniority",
   "posted_within_days",
+  "min_salary",
+  "salary_currency",
+  "salary_period",
+  "include_unknown_salary",
+  "wanted_skills",
+  "lacking_skills",
+  "include_unknown_skills",
+  "max_education",
+  "include_unknown_education",
 ] as const;
 
 export default async function MatchesPage({
@@ -67,18 +77,33 @@ export default async function MatchesPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  let matches: Match[];
+  let matches: Match[] = [];
   let profiles: Profile[];
+  let savedFilters: Record<string, string> | null = null;
+  // A filter the API refuses — a skill not in the vocabulary, say — is shown
+  // beside the filter bar rather than replacing the page, so it can be fixed
+  // where it was typed.
+  let filterError: string | null = null;
   try {
     const query = new URLSearchParams({ include_applied: "false" });
     for (const key of FILTER_KEYS) {
       const value = params[key];
       if (typeof value === "string" && value) query.set(key, value);
     }
-    [matches, profiles] = await Promise.all([
-      api.matchesFiltered(query),
+    const [feed, profileList, saved] = await Promise.all([
+      api.matchesFiltered(query).catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === "invalid_request") {
+          filterError = error.message;
+          return [] as Match[];
+        }
+        throw error;
+      }),
       api.profiles(),
+      api.searchPreference("default").catch(() => null),
     ]);
+    matches = feed;
+    profiles = profileList;
+    savedFilters = saved?.filters ?? null;
   } catch (error) {
     if (error instanceof ApiError) return <ErrorPanel error={error} />;
     throw error;
@@ -108,8 +133,14 @@ export default async function MatchesPage({
       </Suspense>
 
       <Suspense fallback={null}>
-        <FilterBar resultCount={matches.length} />
+        <FilterBar resultCount={matches.length} savedFilters={savedFilters} />
       </Suspense>
+
+      {filterError ? (
+        <p role="alert" className="rounded-[var(--radius)] border border-stop/40 bg-stop-soft px-4 py-3 text-sm text-stop">
+          {filterError}
+        </p>
+      ) : null}
 
       {matches.length === 0 ? (
         <div className="rounded-[var(--radius-lg)] border border-dashed border-rule px-6 py-16 text-center">
@@ -326,6 +357,11 @@ export default async function MatchesPage({
                     ) : null}
                   </p>
                 ) : null}
+
+                <RequirementsPanel
+                  compensation={match.compensation}
+                  requirements={match.requirements}
+                />
 
                 {match.excluded_by.length > 0 ? (
                   <p className="aside aside-stop mt-4 text-xs text-stop">

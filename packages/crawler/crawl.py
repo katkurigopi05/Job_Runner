@@ -184,6 +184,39 @@ class StoreResult:
         return [*self.new, *self.updated]
 
 
+#: Columns `matching/requirements.py` fills, written only when the text changed.
+_REQUIREMENT_COLUMNS = (
+    "salary_min",
+    "salary_max",
+    "salary_currency",
+    "salary_period",
+    "requirements_json",
+    "requirements_version",
+    "requirements_extracted_at",
+)
+
+
+def _requirement_columns(
+    description: str | None, now: datetime, *, needed: bool
+) -> dict[str, object]:
+    """Structured pay, skills and education for one posting, or placeholders."""
+    if not needed:
+        return dict.fromkeys(_REQUIREMENT_COLUMNS)
+    from packages.matching.requirements import EXTRACTOR_VERSION, extract
+
+    reading = extract(description)
+    pay = reading.compensation
+    return {
+        "salary_min": pay.minimum if pay else None,
+        "salary_max": pay.maximum if pay else None,
+        "salary_currency": pay.currency if pay else None,
+        "salary_period": pay.period if pay else None,
+        "requirements_json": reading.as_json(),
+        "requirements_version": EXTRACTOR_VERSION,
+        "requirements_extracted_at": now,
+    }
+
+
 async def _store(
     session: AsyncSession,
     company: Company,
@@ -254,6 +287,15 @@ async def _store(
             "content_hash": item.content_hash,
             "first_seen_at": current,
             "last_seen_at": current,
+            # Read only for text this row has not been read from before. An
+            # unchanged posting's values here are placeholders the update set
+            # below discards, so a quiet board costs no extraction at all.
+            **_requirement_columns(
+                item.description_raw,
+                current,
+                needed=(previous := existing.get(item.external_id)) is None
+                or previous.content_hash != item.content_hash,
+            ),
         }
         for item in extracted
     ]
@@ -303,6 +345,14 @@ async def _store(
             "description_embedding": case((changed, None), else_=Posting.description_embedding),
             "embedding_model": case((changed, None), else_=Posting.embedding_model),
             "embedding_revision": case((changed, None), else_=Posting.embedding_revision),
+            # Same guard as the description they were read from: an edited
+            # posting is re-read, an unchanged one keeps what it had.
+            **{
+                column: case(
+                    (changed, getattr(statement.excluded, column)), else_=getattr(Posting, column)
+                )
+                for column in _REQUIREMENT_COLUMNS
+            },
         },
     )
     # `first_seen_at` is absent from the update set on purpose: it is when we

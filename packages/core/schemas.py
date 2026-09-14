@@ -719,6 +719,12 @@ class MatchOut(BaseModel):
     #: the absence of a requirement rather than an unanswered question, so it
     #: renders as nothing rather than as "unknown".
     experience: dict[str, Any] | None = None
+    #: Pay as the posting states it: range, currency, period and the quoted
+    #: line. None when it states no pay — rendered as "not stated", never as 0.
+    compensation: dict[str, Any] | None = None
+    #: Skills by required / preferred / unclassified, education, and the
+    #: `unknown` list, each with evidence. None until extracted.
+    requirements: dict[str, Any] | None = None
 
 
 class PacketPosting(BaseModel):

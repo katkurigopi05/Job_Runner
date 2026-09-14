@@ -34,11 +34,13 @@ from packages.core.schemas import (
 from packages.matching.filters import eligibility_of, experience_of
 from packages.matching.locality import locality_of
 from packages.matching.locality import rank as locality_rank
+from packages.matching.requirements import EDUCATION_LEVELS, PERIODS
 from packages.matching.search import (
     SENIORITY_ORDER,
     SearchFilters,
 )
 from packages.matching.search import matches as filter_matches
+from packages.matching.skill_vocab import normalize_skill
 
 router = APIRouter(prefix="/matches", tags=["matches"])
 
@@ -96,6 +98,17 @@ async def list_matches(
     remote_outside_california: bool | None = None,
     allow_unknown_location: bool = True,
     allow_unknown_seniority: bool = False,
+    # Structured requirements. Each refuses to treat an unknown as satisfied
+    # unless its include_unknown_* switch says otherwise.
+    min_salary: float | None = Query(default=None, ge=0),
+    salary_currency: str = Query(default="USD", min_length=3, max_length=3),
+    salary_period: str = "year",
+    include_unknown_salary: bool = False,
+    wanted_skills: str = "",
+    lacking_skills: str = "",
+    include_unknown_skills: bool = False,
+    max_education: str | None = None,
+    include_unknown_education: bool = False,
 ) -> list[MatchOut]:
     """Scored postings, best first.
 
@@ -122,6 +135,17 @@ async def list_matches(
         ),
         allow_unknown_location=allow_unknown_location,
         allow_unknown_seniority=allow_unknown_seniority,
+        min_salary=min_salary,
+        salary_currency=salary_currency.upper(),
+        salary_period=_one_of(salary_period, PERIODS, "salary_period"),
+        include_unknown_salary=include_unknown_salary,
+        wanted_skills=_skill_keys(wanted_skills, "wanted_skills"),
+        lacking_skills=_skill_keys(lacking_skills, "lacking_skills"),
+        include_unknown_skills=include_unknown_skills,
+        max_education=(
+            _one_of(max_education, EDUCATION_LEVELS, "max_education") if max_education else None
+        ),
+        include_unknown_education=include_unknown_education,
     )
 
     for level in (min_seniority, max_seniority):
@@ -253,9 +277,57 @@ async def list_matches(
                 # authorization line is not: a posting that does not mention
                 # years has not left a question open, it has no requirement.
                 experience=demanded.as_dict() if demanded.stated else None,
+                compensation=_compensation(posting),
+                requirements=posting.requirements_json,
             )
         )
     return feed
+
+
+def _one_of(value: str, allowed: tuple[str, ...], name: str) -> str:
+    if value not in allowed:
+        raise ApiError(
+            ErrorCode.INVALID_REQUEST,
+            f"unknown {name} {value!r}; expected one of {', '.join(allowed)}",
+        )
+    return value
+
+
+def _skill_keys(raw: str, name: str) -> tuple[str, ...]:
+    """Typed skills to vocabulary keys. An unrecognized one is refused, not dropped.
+
+    Dropping it would make "does not require Fortran" filter on nothing while
+    the screen said it was filtering, which is worse than an error.
+    """
+    keys: list[str] = []
+    unknown: list[str] = []
+    for term in (part.strip() for part in raw.split(",")):
+        if not term:
+            continue
+        key = normalize_skill(term)
+        if key is None:
+            unknown.append(term)
+        elif key not in keys:
+            keys.append(key)
+    if unknown:
+        raise ApiError(
+            ErrorCode.INVALID_REQUEST,
+            f"{name}: not in the skill vocabulary: {', '.join(unknown)}",
+        )
+    return tuple(keys)
+
+
+def _compensation(posting: Posting) -> dict[str, object] | None:
+    if posting.salary_min is None and posting.salary_max is None:
+        return None
+    stored = (posting.requirements_json or {}).get("compensation") or {}
+    return {
+        "minimum": posting.salary_min,
+        "maximum": posting.salary_max,
+        "currency": posting.salary_currency,
+        "period": posting.salary_period,
+        "quote": stored.get("quote"),
+    }
 
 
 @router.get("/summary", response_model=MatchSummaryOut)

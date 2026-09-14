@@ -22,6 +22,7 @@ from apps.api.routers import (
     profiles,
     projects,
     resumes,
+    search_preferences,
     setup,
 )
 from packages.core.config import get_settings
@@ -52,6 +53,7 @@ app.include_router(labels.router)
 app.include_router(analytics.router)
 app.include_router(audit.router)
 app.include_router(setup.router)
+app.include_router(search_preferences.router)
 
 
 @app.get("/health", tags=["meta"])

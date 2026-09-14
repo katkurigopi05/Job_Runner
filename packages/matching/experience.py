@@ -336,9 +336,26 @@ def read_posting(text: str | None) -> PostingExperience:
     return PostingExperience(demands=tuple(demands))
 
 
+def heading_kind(line: str) -> Demand | None:
+    """Public form of the heading classifier, for readers of other requirements.
+
+    `requirements.py` reads skills and education under the same headings this
+    module reads years under. Two copies of "is this the nice-to-have list"
+    would disagree on the next heading someone adds to one of them.
+    """
+    return _heading_kind(line)
+
+
+def line_demand(line: str, heading: Demand) -> Demand:
+    """Public form of `_demand_of`: the line's own wording, then its heading."""
+    return _demand_of(line, heading)
+
+
 __all__ = [
     "Demand",
     "PostingExperience",
     "YearsDemand",
+    "heading_kind",
+    "line_demand",
     "read_posting",
 ]

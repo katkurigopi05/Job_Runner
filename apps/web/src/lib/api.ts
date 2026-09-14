@@ -495,6 +495,55 @@ export interface Match {
    * requirement rather than an unanswered question, so it renders as nothing.
    */
   experience: PostingExperience | null;
+  /** Pay as the posting states it. Null means not stated — never zero. */
+  compensation: Compensation | null;
+  /** Skills and education with the line each was read from. Null until extracted. */
+  requirements: PostingRequirements | null;
+}
+
+export interface Compensation {
+  minimum: number | null;
+  maximum: number | null;
+  currency: string | null;
+  /** Null when the posting did not say — not assumed to be annual. */
+  period: string | null;
+  quote: string | null;
+}
+
+export interface SkillEvidence {
+  skill: string;
+  label: string;
+  quote: string;
+}
+
+export interface EducationRequirement {
+  level: "high_school" | "associate" | "bachelor" | "master" | "phd";
+  requirement: "required" | "preferred" | "unclassified";
+  equivalent_experience: boolean;
+  quote: string;
+}
+
+export interface PostingRequirements {
+  version: number;
+  compensation: Compensation | null;
+  skills: {
+    required: SkillEvidence[];
+    preferred: SkillEvidence[];
+    /** Named, but under nothing that says whether it is asked for. */
+    unclassified: SkillEvidence[];
+  };
+  education: EducationRequirement | null;
+  /** What the posting did not state: compensation, pay_period, skills, education. */
+  unknown: string[];
+}
+
+/** A saved feed search. Filters only — never read by anything that applies. */
+export interface SearchPreference {
+  id: string;
+  scope: string;
+  name: string;
+  filters: Record<string, string>;
+  updated_at: string;
 }
 
 /** One years requirement and the line it was read from. */
@@ -862,6 +911,13 @@ export const api = {
   matchesFiltered: (query: URLSearchParams) =>
     request<Match[]>(`/matches?${query}`),
   calibration: () => request<Calibration>("/matches/calibration"),
+  searchPreference: (name: string) =>
+    request<SearchPreference>(`/search-preferences/${encodeURIComponent(name)}`),
+  saveSearchPreference: (name: string, filters: Record<string, string>) =>
+    request<SearchPreference>(`/search-preferences/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify({ filters }),
+    }),
   /**
    * `profileId` is optional because the route is: `/labels/next` picks the
    * only profile when there is one, and refuses to guess when there are
