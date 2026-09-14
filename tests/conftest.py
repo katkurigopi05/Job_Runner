@@ -107,6 +107,8 @@ _ALL_TABLES = (
     "crawler_request_budgets",
     "corpus_stats",
     "companies",
+    # No foreign keys, so nothing cascades to it.
+    "worker_heartbeats",
     "users",
 )
 

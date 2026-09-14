@@ -320,13 +320,21 @@ async def test_handler_error_retries_then_fails_the_application(
     assert polled.json()["failure_reason"] == "site_error"
 
 
-async def test_configured_worker_id_is_used(monkeypatch) -> None:
-    """WORKER_ID must reach the loop — the hostname is only a fallback."""
+async def test_configured_worker_id_is_used(monkeypatch, committing_sessionmaker) -> None:
+    """WORKER_ID must reach the loop — the hostname is only a fallback.
+
+    The loop now also writes heartbeats, so the sessionmaker is pointed at the
+    test database: unpatched, those beats would land in the live one.
+    """
+    from packages.core import db as core_db
+    from packages.core.models_ops import WorkerHeartbeat
+
     monkeypatch.setenv("WORKER_ID", "configured-worker")
+    monkeypatch.setattr(core_db, "get_sessionmaker", lambda: committing_sessionmaker)
     get_settings.cache_clear()
     seen: list[str] = []
 
-    async def _capture(*, worker_id: str, lease_seconds: int) -> bool:
+    async def _capture(*, worker_id: str, lease_seconds: int, heartbeat=None) -> bool:
         seen.append(worker_id)
         return False
 
@@ -341,6 +349,9 @@ async def test_configured_worker_id_is_used(monkeypatch) -> None:
 
     get_settings.cache_clear()
     assert seen and seen[0] == "configured-worker"
+    async with committing_sessionmaker() as session:
+        beat = await session.get(WorkerHeartbeat, "configured-worker")
+    assert beat is not None, "the heartbeat carries the configured id too"
 
 
 async def test_profile_must_opt_in_before_auto_submit(

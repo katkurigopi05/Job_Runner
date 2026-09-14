@@ -965,3 +965,8 @@ class QueueTask(Base):
         # this it is a sequential scan of every running task.
         Index("ix_queue_tasks_status_lease", "status", "lease_expires_at"),
     )
+
+
+# Tables defined in feature modules register on this same metadata. Imported
+# last, because those modules import `Base` from here.
+from packages.core import models_ops as _models_ops  # noqa: E402, F401

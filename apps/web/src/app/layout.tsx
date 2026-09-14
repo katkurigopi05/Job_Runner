@@ -22,6 +22,7 @@ const NAV = [
   { href: "/tracker", label: "Tracker" },
   { href: "/chat", label: "Assistant" },
   { href: "/profile", label: "Profile" },
+  { href: "/setup", label: "Setup" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -33,7 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/" className="font-display text-xl tracking-tight">
               jobrunner
             </Link>
-            {/* `flex-wrap` because it did not: eleven items in a nowrap row
+            {/* `flex-wrap` because it did not: eleven items (now twelve) in a nowrap row
                 overflowed a 390px screen and put seven pages out of reach on
                 the phone this dashboard is meant to be read from. */}
             <nav

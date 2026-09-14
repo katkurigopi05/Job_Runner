@@ -722,6 +722,39 @@ export interface Health {
   database: "ok" | "down";
 }
 
+export type SetupState = "ok" | "attention" | "blocked" | "unknown";
+
+/** One thing the installation needs, whether it has it, and how to get it. */
+export interface SetupItem {
+  key: string;
+  title: string;
+  group: "core" | "credentials" | "discovery" | "tools" | string;
+  state: SetupState;
+  detail: string;
+  /** Commands or edits, in the order to try them. */
+  steps: string[];
+  /** Non-secret facts behind the verdict. */
+  facts: Record<string, string | number | boolean | null>;
+  actions: string[];
+}
+
+export interface SetupStatus {
+  generated_at: string;
+  overall: SetupState;
+  items: SetupItem[];
+}
+
+export interface RegistrySyncResult {
+  dry_run: boolean;
+  summary: string;
+  created: number;
+  verified: number;
+  newer_in_db: number;
+  retired: number;
+  retired_newer_in_db: number;
+  moved_boards: string[];
+}
+
 /** Whether the crawler is working, waiting, or stuck waiting for a worker. */
 export interface CrawlStatus {
   running: boolean;
@@ -763,6 +796,12 @@ export const api = {
   health: () => request<Health>("/health"),
   crawlStatus: () => request<CrawlStatus>("/crawl/status"),
   discoveryStatus: () => request<DiscoveryStatus>("/companies/status"),
+  setupStatus: () => request<SetupStatus>("/setup/status"),
+  registrySync: (dryRun: boolean) =>
+    request<RegistrySyncResult>("/setup/registry-sync", {
+      method: "POST",
+      body: JSON.stringify({ dry_run: dryRun }),
+    }),
 
   applications: () => request<Application[]>("/applications"),
   application: (id: string) => request<Application>(`/applications/${id}`),
