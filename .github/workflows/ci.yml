@@ -166,6 +166,41 @@ jobs:
       - name: gate-6 (inbox tracker)
         run: make gate-6-only
 
+  # The dashboard had no CI at all: `npm run lint` shipped without a config
+  # and exited 2 for as long as nobody ran it, while every Python gate stayed
+  # green. Lint, types and a production build are the three ways a Next app
+  # breaks that a Python suite cannot see.
+  frontend:
+    name: dashboard (lint, types, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      # `npm ci`, not `npm install`: it fails when package.json and the
+      # lockfile disagree, which is the drift a developer box hides.
+      - name: Install dashboard dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+
   image:
     name: docker image builds and runs
     runs-on: ubuntu-latest
