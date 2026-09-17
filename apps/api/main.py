@@ -15,6 +15,7 @@ from apps.api.routers import (
     companies,
     crawl,
     detect,
+    events,
     inbox,
     labels,
     matches,
@@ -58,6 +59,7 @@ app.include_router(setup.router)
 app.include_router(search_preferences.router)
 app.include_router(ranking.router)
 app.include_router(tracking.router)
+app.include_router(events.router)
 
 
 @app.get("/health", tags=["meta"])
