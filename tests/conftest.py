@@ -161,7 +161,7 @@ _CONCURRENT_RUN = (
 
 @pytest_asyncio.fixture(scope="session")
 async def engine():
-    eng = create_async_engine(TEST_DATABASE_URL)
+    eng = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
     # Held open for the whole session: closing it is what releases the lock.
     claim = None
     try:
