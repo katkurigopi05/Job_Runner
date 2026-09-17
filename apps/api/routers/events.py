@@ -68,6 +68,17 @@ SSE_HEADERS = {
 }
 
 
+async def _read_counts() -> dict[str, int]:
+    """The current counts, on a session of its own.
+
+    Split out so the whole checkout-query-return cycle is one awaitable the
+    caller can shield. A `shield` around only the query would still leave the
+    connection's return exposed, which is the part that breaks.
+    """
+    async with core_db.get_sessionmaker()() as session:
+        return await current_counts(session)
+
+
 async def _frames(request: Request) -> AsyncIterator[str]:
     """One connected dashboard's view of the stream.
 
@@ -79,8 +90,26 @@ async def _frames(request: Request) -> AsyncIterator[str]:
     queue = stream.subscribe()
     try:
         try:
-            async with core_db.get_sessionmaker()() as session:
-                counts = await current_counts(session)
+            # Shielded, and this is not caution for its own sake.
+            #
+            # Starlette's `BaseHTTPMiddleware` cancels the downstream task when
+            # the client disconnects, and a browser disconnects from a stream
+            # whenever a tab closes or a page navigates — routinely, and at a
+            # moment nobody chooses. Unshielded, that cancel can land *inside*
+            # the session's teardown: SQLAlchemy is part-way through returning
+            # the connection to the pool, `do_terminate` is interrupted, and
+            # the next thing to check that connection out gets
+            # `InterfaceError: connection is closed` — a failure that names
+            # neither this route nor the client that left.
+            #
+            # It is not theoretical. It took CI down on the commit that added
+            # this stream: a truncate in an unrelated fixture, two tests after
+            # a test whose only crime was closing the response as soon as it
+            # had read the headers. `asyncio.shield` lets the read and the
+            # connection's return finish even when the caller has gone; the
+            # frame it produces is simply never delivered, which is correct —
+            # nobody is listening.
+            counts = await asyncio.shield(_read_counts())
             yield sse_frame("ready", {"counts": counts})
         except Exception as exc:  # noqa: BLE001 - a live stream still beats none
             # The database being down is what /health is for. Say the stream is

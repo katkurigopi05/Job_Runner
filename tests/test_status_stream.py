@@ -101,15 +101,25 @@ def _fast_poll(monkeypatch):
     monkeypatch.setattr(status_stream, "OVERLAP_S", 2.0)
 
 
-@pytest.fixture(autouse=True)
-def _broker_is_left_clean():
+@pytest_asyncio.fixture(autouse=True)
+async def _broker_is_left_clean() -> AsyncIterator[None]:
     """No subscriber and no watcher may outlive a test.
 
     The broker is a module-level singleton, so a leaked watcher would poll
-    through every later test in the process and the leak would show up as
-    something unrelated failing.
+    through every later test in the process — and the failure would surface as
+    something unrelated breaking. That is not hypothetical: the first version
+    of `unsubscribe` cancelled the watcher, which can land inside a poll's
+    query and invalidate the connection it had checked out. CI failed two
+    tests later, in a fixture, with `InterfaceError: connection is closed`.
+
+    The stop is cooperative now, so the watcher finishes its poll before
+    exiting and this waits for it rather than asserting instantly.
     """
     yield
+    for _ in range(200):
+        if not stream.watching:
+            break
+        await asyncio.sleep(0.01)
     assert stream.subscriber_count == 0, "a connection was not cleaned up"
     assert not stream.watching, "the watcher outlived the last subscriber"
 
@@ -372,6 +382,49 @@ def test_the_stream_is_only_ever_woken_after_a_commit() -> None:
         assert previous == "await session.commit()", (
             f"_announce() on line {index + 1} follows {previous!r}, not a commit"
         )
+
+
+async def test_the_last_unsubscribe_lets_a_poll_finish(monkeypatch) -> None:
+    """The watcher is asked to stop, never cancelled mid-query.
+
+    `task.cancel()` was the first version. It can arrive between sending a
+    query and reading its result, which tears the session down and invalidates
+    the pooled connection — and the thing that inherits it is whatever checks
+    one out next. On this PR that was a fixture two tests later, reporting
+    `InterfaceError: connection is closed` about code with no connection to
+    this module.
+
+    Uses its own broker rather than the module singleton: this is about the
+    mechanism, and borrowing the shared one would make the test's own cleanup
+    part of what it is measuring.
+    """
+    started = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def _slow_tick(self, since, seen):
+        started.set()
+        await asyncio.sleep(0.2)
+        finished.set()
+        return since
+
+    async def _no_history(self, since):
+        return set()
+
+    monkeypatch.setattr(status_stream.StatusStream, "_tick", _slow_tick)
+    monkeypatch.setattr(status_stream.StatusStream, "_ids_before", _no_history)
+
+    broker = status_stream.StatusStream()
+    queue = broker.subscribe()
+    await asyncio.wait_for(started.wait(), timeout=FRAME_TIMEOUT_S)
+
+    broker.unsubscribe(queue)  # while the poll is in flight
+    await asyncio.wait_for(finished.wait(), timeout=FRAME_TIMEOUT_S)
+
+    for _ in range(200):
+        if not broker.watching:
+            break
+        await asyncio.sleep(0.01)
+    assert not broker.watching, "the watcher should stop once the last client leaves"
 
 
 def test_waking_the_stream_carries_no_payload() -> None:

@@ -181,6 +181,7 @@ class StatusStream:
         self._subscribers: set[asyncio.Queue[StatusChange]] = set()
         self._watcher: asyncio.Task[None] | None = None
         self._wake = asyncio.Event()
+        self._stopping = False
 
     @property
     def subscriber_count(self) -> int:
@@ -194,14 +195,33 @@ class StatusStream:
         queue: asyncio.Queue[StatusChange] = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
         self._subscribers.add(queue)
         if self._watcher is None or self._watcher.done():
+            self._stopping = False
             self._watcher = asyncio.create_task(self._watch())
         return queue
 
     def unsubscribe(self, queue: asyncio.Queue[StatusChange]) -> None:
+        """Drop one client, and ask the watcher to stop if it was the last.
+
+        **Asked, not cancelled.** `task.cancel()` was the first version and it
+        can land inside the poll's query: the session is torn down mid-flight,
+        the connection is invalidated, and the next thing to check one out of
+        the pool inherits the mess. That is not theoretical — it took CI down
+        on this PR, in a fixture two tests later, with an
+        `InterfaceError: connection is closed` that named nothing to do with
+        this module.
+
+        Cooperative stop costs nothing in wall-clock terms: the wake event is
+        set, so the watcher returns from its sleep immediately, sees the flag
+        and exits at the top of the loop. Nothing is ever interrupted between
+        sending a query and reading its result.
+
+        The task reference is kept until it actually finishes, so `watching`
+        reports the truth rather than an intention.
+        """
         self._subscribers.discard(queue)
         if not self._subscribers and self._watcher is not None:
-            self._watcher.cancel()
-            self._watcher = None
+            self._stopping = True
+            self._wake.set()
 
     def wake(self) -> None:
         """Look now rather than at the next tick.
@@ -237,13 +257,15 @@ class StatusStream:
         # replay all of them on connect.
         seen.update(await self._ids_before(since))
 
-        while True:
+        while not self._stopping:
             try:
                 since = await self._tick(since, seen)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - the watcher must survive
                 log.warning("status_stream_poll_failed", error=type(exc).__name__)
+            if self._stopping:
+                break
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=POLL_INTERVAL_S)
             except TimeoutError:

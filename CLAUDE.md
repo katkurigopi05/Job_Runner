@@ -2956,6 +2956,41 @@ process — and a header nobody checks is exactly how this went missing.
 The live proof, in a real browser with no reload: DOM `running 2, queued 2`, a
 transition written by a *separate process*, DOM `running 3, queued 1`.
 
+**A client disconnect can poison a pooled database connection**, and the
+failure surfaces nowhere near the cause. Found by CI on this very PR, which is
+the only reason it was found at all.
+
+Starlette's `BaseHTTPMiddleware` — which `LocalhostOnlyMiddleware` is — cancels
+the downstream task when the client goes away, and a browser goes away from a
+stream whenever a tab closes or a page navigates. Unshielded, that cancel can
+land *inside* the session's teardown: SQLAlchemy is part-way through returning
+the connection to the pool, `do_terminate` is interrupted, and the next thing
+to check that connection out gets `InterfaceError: connection is closed`.
+
+What CI actually reported was a `TRUNCATE` failing in an unrelated fixture, two
+tests after the one that caused it — a test whose only crime was closing the
+response as soon as it had read the headers. Nothing in that traceback named
+this route, the stream, or the client that left.
+
+Two changes, and both are the same lesson:
+
+- **The initial counts read is shielded** (`asyncio.shield(_read_counts())`),
+  so the checkout, the query and the connection's return all complete even
+  when the caller has gone. The frame is then delivered to nobody, which is
+  correct — nobody is listening. Shielding only the *query* would leave the
+  return exposed, which is the part that actually breaks.
+- **The watcher is asked to stop, never cancelled.** `unsubscribe` used
+  `task.cancel()`, which can arrive between sending a query and reading its
+  result. It sets a flag and the wake event instead; the watcher exits at the
+  top of its loop, having finished whatever poll was in flight. It costs
+  nothing — the event is already set, so there is no sleep to wait out.
+
+The local suite was green on both gate-0 runs before this and red in CI,
+because the test that triggers it is the one added last. Worth remembering as
+a shape rather than an incident: **a streaming endpoint runs on a task the
+client can cancel, so anything it does to shared state has to be able to finish
+without it.**
+
 **`ASGITransport` cannot test this.** httpx builds the response only after the
 ASGI app returns (`_transports/asgi.py` collects `http.response.body` into a
 list), so the `client` fixture every other API test uses hangs at `__aenter__`
