@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
+from apps.api.status_stream import stream
 from packages.core.completeness import missing_requirements
 from packages.core.enums import ApplicationStatus, ErrorCode, FailureReason
 from packages.core.models import (
@@ -47,6 +48,22 @@ from packages.core.storage import get_storage
 router = APIRouter(prefix="/applications", tags=["applications"])
 
 APPLY_TASK_KIND = "apply"
+
+
+def _announce() -> None:
+    """Tell any connected dashboard to look now rather than at the next tick.
+
+    Called **after** the commit, never before, and for the same reason
+    `packages/core/notify.py` is: a stream told about a status change inside
+    the transaction announces one that may still roll back. §15 records the
+    doorbell learning this the hard way.
+
+    It carries no payload. The watcher reads the committed event row itself,
+    so this is latency and nothing else — delete every call and the dashboard
+    is a second slower, not wrong. That is why it is safe to call from a
+    handler that must not fail: there is nothing here to get wrong.
+    """
+    stream.wake()
 
 
 @router.post("", response_model=ApplicationOut, status_code=status.HTTP_201_CREATED)
@@ -105,6 +122,7 @@ async def create_application(body: ApplicationCreate, session: SessionDep) -> Ap
     await enqueue(session, APPLY_TASK_KIND, {"application_id": str(application.id)})
 
     await session.commit()
+    _announce()
     await session.refresh(application)
     return application
 
@@ -204,6 +222,7 @@ async def review_application(
         )
 
     await session.commit()
+    _announce()
     await session.refresh(application)
     return application
 
@@ -549,6 +568,7 @@ async def submit_otp(
     await enqueue(session, APPLY_TASK_KIND, {"application_id": str(application.id)})
 
     await session.commit()
+    _announce()
     await session.refresh(application)
     return application
 
@@ -715,6 +735,7 @@ async def mark_submitted(
     # The reason it could not be automated is history now, not current state.
     application.failure_reason = None
     await session.commit()
+    _announce()
     await session.refresh(application)
     return application
 

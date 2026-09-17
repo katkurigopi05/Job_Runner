@@ -2846,3 +2846,157 @@ later change could quietly break.
   default, and verification refuses the live database and any directory
   overlapping `storage/`.
 
+
+---
+
+## 17. Live status updates, and the process boundary they had to cross
+
+`GET /events/applications` (`apps/api/routers/events.py`) streams application
+status changes to the dashboard, which was `force-dynamic` and therefore only
+as current as the last reload. The mechanics are in
+`apps/api/status_stream.py`; the rest of this section is the part a later
+change could quietly break.
+
+**The events come from the log, not from the code that changes a status**, and
+that is the whole design rather than an implementation detail. `transition()`
+has three callers:
+
+```text
+apps/api/routers/applications.py   this process — approve, reject, OTP, manual submit
+apps/worker/apply_job.py           the worker process
+packages/inbox/route.py            the worker process
+```
+
+`make api` and `make worker` are separate processes. An in-process publisher —
+the obvious build, and the one that demos perfectly — carries the owner's own
+clicks and **nothing the machine does**: no parking at `needs_review`, no
+failed run, no OTP request. Those are the events the dashboard exists to show,
+and they are all written by the other process.
+
+So the watcher tails `application_events`, which `transition()` writes in the
+same transaction as the status change (§6), plus the `created` row the API
+writes beside a new application. Three consequences worth keeping:
+
+- The worker needs no change and cannot forget to publish.
+- The stream cannot disagree with the database. A publish that happened beside
+  a transaction that rolled back is not a state this can reach.
+- There is one publication path, so an API-originated change cannot arrive
+  twice.
+
+`_announce()` in the applications router is **latency, not delivery**: it wakes
+the watcher so a click does not wait for the next tick, and the watcher still
+reads the committed row itself. Deleting every call to it costs a second and
+loses nothing. It is called *after* the commit for the reason §15 records the
+doorbell learning — announcing inside the transaction announces a change that
+may still roll back — and `test_the_stream_is_only_ever_woken_after_a_commit`
+reads the source to hold that ordering, because no runtime assertion can see
+the difference on a transaction that happens to commit.
+
+**Postgres `LISTEN/NOTIFY` is the obvious upgrade and was not taken.** It is
+not an external service and would cut the latency to nothing, but it needs a
+dedicated raw connection and a reconnect loop for a single local reader. A
+one-second tick on one user's dashboard is not a problem anyone has. Redis and
+Kafka are refused outright (§11).
+
+Four properties that are easy to undo:
+
+- **Every event carries the whole counts map.** The client assigns a snapshot
+  rather than applying a delta, so a missed frame costs one update's staleness
+  instead of permanent drift that nothing on the page could detect.
+- **Every status is present in that map, including the zeroes.** A key that
+  appears only when non-zero is exactly how `/tracker` dropped five of seven
+  columns (§15).
+- **Nothing polls while nobody is looking.** The watcher starts on the first
+  subscriber and is cancelled by the last unsubscribe, so this feature costs
+  an owner who never opens the dashboard nothing at all.
+- **The stream is never the source of truth.** If it never connects, or drops
+  and cannot return, the page shows the server render — what it did before any
+  of this existed. The fallback is the old behaviour, not a degraded mode.
+
+**The cursor is deliberately sloppy, and has to be.** `ApplicationEvent.at` is
+`func.now()`, the *transaction* clock — the same fact §15 records breaking a
+notification test. Events in one transaction share a timestamp, and a long
+transaction commits after a short one that started later, so a strict
+high-water mark would step over rows for ever. The watcher re-reads a small
+overlap window each tick and discards ids it has already sent, which fails
+toward a duplicate rather than a dropped transition. A duplicate changes
+nothing on screen; a dropped one is a dashboard that is quietly wrong.
+
+**Two things were only findable by loading the page**, and both had a green
+suite behind them.
+
+*A server component cannot hand a function to a client component.* The first
+draft passed the pipeline's pill renderer and the headline's markup as render
+props, which is ordinary React and fails in Next with "Functions cannot be
+passed directly to Client Components" — a 500 on the whole route. `tsc` was
+clean and the linter was happy. The components render their own markup now,
+importing `StatusPill` directly.
+
+*And the dashboard proxy compressed the stream.* This is the one worth
+remembering, because the endpoint was provably correct the whole time. Next's
+dev proxy re-encodes proxied responses and a compressor buffers, so the browser
+connected, fired `open`, and then sat there receiving nothing — the page showed
+"Updating live" beside counts that never moved. Measured through the dashboard
+against the same endpoint, varying only the header every browser sends:
+
+```text
+curl -N                                          -> 124 bytes, the ready frame
+curl -N -H 'Accept-Encoding: gzip, deflate, br'  ->  10 bytes, a gzip header
+the same, direct to FastAPI (no proxy)           -> 124 bytes
+```
+
+`Cache-Control: no-transform` is the fix — the standards-compliant way to tell
+an intermediary not to re-encode a body (RFC 9111 §5.2.2.6). It lives on the
+response rather than in `next.config.ts` because it is a property of this body,
+not of the dashboard: turning compression off globally would slow every other
+page to rescue one route. `test_the_response_refuses_to_be_compressed` asserts
+the header, since the behaviour belongs to a proxy that is not in the test
+process — and a header nobody checks is exactly how this went missing.
+
+The live proof, in a real browser with no reload: DOM `running 2, queued 2`, a
+transition written by a *separate process*, DOM `running 3, queued 1`.
+
+**A client disconnect can poison a pooled database connection**, and the
+failure surfaces nowhere near the cause. Found by CI on this very PR, which is
+the only reason it was found at all.
+
+Starlette's `BaseHTTPMiddleware` — which `LocalhostOnlyMiddleware` is — cancels
+the downstream task when the client goes away, and a browser goes away from a
+stream whenever a tab closes or a page navigates. Unshielded, that cancel can
+land *inside* the session's teardown: SQLAlchemy is part-way through returning
+the connection to the pool, `do_terminate` is interrupted, and the next thing
+to check that connection out gets `InterfaceError: connection is closed`.
+
+What CI actually reported was a `TRUNCATE` failing in an unrelated fixture, two
+tests after the one that caused it — a test whose only crime was closing the
+response as soon as it had read the headers. Nothing in that traceback named
+this route, the stream, or the client that left.
+
+Two changes, and both are the same lesson:
+
+- **The initial counts read is shielded** (`asyncio.shield(_read_counts())`),
+  so the checkout, the query and the connection's return all complete even
+  when the caller has gone. The frame is then delivered to nobody, which is
+  correct — nobody is listening. Shielding only the *query* would leave the
+  return exposed, which is the part that actually breaks.
+- **The watcher is asked to stop, never cancelled.** `unsubscribe` used
+  `task.cancel()`, which can arrive between sending a query and reading its
+  result. It sets a flag and the wake event instead; the watcher exits at the
+  top of its loop, having finished whatever poll was in flight. It costs
+  nothing — the event is already set, so there is no sleep to wait out.
+
+The local suite was green on both gate-0 runs before this and red in CI,
+because the test that triggers it is the one added last. Worth remembering as
+a shape rather than an incident: **a streaming endpoint runs on a task the
+client can cancel, so anything it does to shared state has to be able to finish
+without it.**
+
+**`ASGITransport` cannot test this.** httpx builds the response only after the
+ASGI app returns (`_transports/asgi.py` collects `http.response.body` into a
+list), so the `client` fixture every other API test uses hangs at `__aenter__`
+on an endpoint that never returns — before a single assertion runs.
+`tests/test_status_stream.py` runs uvicorn on an ephemeral port inside the
+test's own event loop instead: same process, so the patched sessionmaker still
+applies, and real sockets, so incremental delivery and client disconnect are
+the real thing. Disconnect is what stops the watcher, so mocking it would have
+left the one property nobody would notice failing untested.
