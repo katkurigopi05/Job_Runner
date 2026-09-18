@@ -3000,3 +3000,73 @@ test's own event loop instead: same process, so the patched sessionmaker still
 applies, and real sockets, so incremental delivery and client disconnect are
 the real thing. Disconnect is what stops the watcher, so mocking it would have
 left the one property nobody would notice failing untested.
+
+---
+
+## 18. The feed could not be asked the one question that decides eligibility
+
+`eligibility.py` has read sponsorship and citizenship out of a posting since it
+replaced the single regex that was answering three questions (§15). The verdict
+reached the match card and stopped there. `FILTER_KEYS` had 22 entries covering
+location, seniority, pay, skills, education and freshness, and **none for work
+authorization** — so the owner could read "states it does not sponsor" one card
+at a time across a feed drawn from 14,892 postings, and could not ask the feed
+for it.
+
+This is the same defect §15 records twice for `citizenship_status` and
+`target_seniority` — a column, a schema, a filter and tests with no control, so
+it could never fire on real data — arriving through the other door. Here the
+reading fires on every card and there was nothing to act on it with.
+
+`sponsorship=available` and `exclude_citizenship_restricted` are the filters.
+Five things are load-bearing:
+
+- **An unknown is never a pass** (§16). `UNSTATED` is a posting that said
+  nothing and `AMBIGUOUS` is one that said something unresolvable. Neither is
+  an offer, and treating either as one would invent the fact `eligibility.py`
+  exists to refuse to invent — one layer above the module that refuses it.
+- **`include_unknown_sponsorship` is how the question is usually asked.** An
+  explicit offer is rare, so `available` alone hides most of the corpus. With
+  the switch the filter drops only a stated refusal, which is what someone who
+  needs sponsorship actually wants day to day. Both halves are one key plus
+  one switch rather than two vocabularies, because that is the idiom every
+  other unknown-averse filter in `search.py` already uses.
+- **Citizenship gets its own switch, not a sponsorship value.** A permanent
+  resident needs no sponsorship and still fails "US citizens only", and no
+  employer generosity fixes it. Collapsing them would rebuild the one-regex
+  problem at the filter layer. It has no `include_unknown_*` twin on purpose:
+  it excludes on a restriction the posting stated outright, so silence already
+  keeps the posting and there is no unknown for a switch to widen.
+- **The verdict is read only when asked for.** `authorization_reasons` returns
+  before touching the posting when neither filter is set, because reading it
+  scans the whole description and the dashboard's default request asks for
+  neither — the cost the keyword filter is already guarded against, which
+  §15 records falling from 2.5s to milliseconds.
+- **It is a feed filter, not the scoring gate.** `filters.sponsorship_ok`
+  already drops refusals when `Profile.needs_sponsorship` says the owner needs
+  it, and that decides whether a `Match` row exists. This is the owner asking a
+  question of the feed today. §1 keeps those separate and so does this.
+
+`sponsorship` is a vocabulary rather than a boolean for the reason
+`target_seniority` is a `SeniorityLevel`: a typo that reads as "no preference"
+leaves the feed looking filtered with nothing to explain it. `sponsorship=yes`
+is a 400 naming the accepted values.
+
+**Three lists have to agree for a filter to work at all** — the bar writes a
+key, `matches/page.tsx` forwards it, the API accepts it — and
+`test_every_control_the_filter_bar_renders_reaches_the_api` holds all three.
+Measured while adding this: no control was being dropped, so the test pins a
+property that was true rather than fixing one that was broken. Five backend
+keys (`us_only`, `remote_outside_california`, `allow_unknown_location`,
+`allow_unknown_seniority`, `include_closed`) have no control and are reachable
+only through a saved search or the API — deliberate, and the reason the test
+asserts the bar's keys are a subset rather than asserting the lists are equal.
+
+Where the idea came from is worth recording, because it was not a gap anyone
+here had noticed. A friend of the owner's posted a four-agent LangGraph
+architecture for a job assistant, and its worked example was *"Find Python jobs
+in California that match my resume and explicitly offer sponsorship."* Three of
+its four agents are things this repo does without a model, and its verification
+agent answers a question `rubric.py` does not have — nothing here generates a
+match explanation, so there is nothing to verify. What the post was worth was
+the sentence: it asked the feed something the feed could not be asked.

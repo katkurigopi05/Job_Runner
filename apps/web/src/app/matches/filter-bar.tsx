@@ -114,6 +114,12 @@ export function FilterBar({
     value("max_education")
       ? unknownSwitch("include_unknown_education", "include postings that don't state education")
       : null,
+    value("sponsorship")
+      ? unknownSwitch(
+          "include_unknown_sponsorship",
+          "include postings that don't state sponsorship — leaves only explicit refusals dropped",
+        )
+      : null,
   ].filter(Boolean);
 
   return (
@@ -180,7 +186,7 @@ export function FilterBar({
       </div>
 
       <fieldset className="mt-4 border-t border-rule-soft pt-4">
-        <legend className="sr-only">Pay, skills and education</legend>
+        <legend className="sr-only">Pay, skills, education and work authorization</legend>
         <div className="flex flex-wrap items-end gap-4">
           <div className="flex flex-col gap-1">
             <span className={LABEL}>pay reaching</span>
@@ -249,7 +255,31 @@ export function FilterBar({
               ))}
             </select>
           </label>
+
+          <label className="flex flex-col gap-1">
+            <span className={LABEL}>sponsorship</span>
+            <select
+              value={value("sponsorship")}
+              onChange={(event) => set("sponsorship", event.target.value)}
+              className={FIELD}
+            >
+              <option value="">don&apos;t filter</option>
+              <option value="available">employer states it sponsors</option>
+            </select>
+          </label>
         </div>
+
+        <label className="mt-3 inline-flex items-center gap-2 text-xs text-ink-soft">
+          <input
+            type="checkbox"
+            checked={value("exclude_citizenship_restricted") === "true"}
+            onChange={(event) =>
+              set("exclude_citizenship_restricted", event.target.checked ? "true" : "")
+            }
+            className="h-3.5 w-3.5 accent-[var(--color-attn)]"
+          />
+          hide roles restricted to citizens or permanent residents
+        </label>
 
         {unknownSwitches.length > 0 ? (
           <div className="mt-3 flex flex-col gap-1.5">
