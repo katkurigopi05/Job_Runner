@@ -624,6 +624,21 @@ class ChatRequest(BaseModel):
     share_mail: bool = False
 
 
+class ChatSource(BaseModel):
+    """A posting retrieved for a question, and whether the answer cited it."""
+
+    #: The label the model was told to cite: "P1", "P2" …
+    label: str
+    posting_id: uuid.UUID
+    title: str
+    company: str | None = None
+    location: str | None = None
+    url: str
+    #: Read out of the reply, not reported by the model. A source the answer
+    #: never mentions was context, not evidence.
+    cited: bool = False
+
+
 class ChatReply(BaseModel):
     """Response from the chat assistant."""
 
@@ -645,6 +660,14 @@ class ChatReply(BaseModel):
     #: what happened rather than what was asked: the local model always sees it
     #: regardless of the request field.
     shared_mail: bool = True
+    #: The postings retrieved for this question, in the order the model saw
+    #: them. Empty when the question was refused before any context was built.
+    sources: list[ChatSource] = Field(default_factory=list)
+    #: Open postings the search covered, and the ones it could not — no vector
+    #: yet, or one from a model this process cannot encode into. "Nothing
+    #: found" means less when the second number is large.
+    postings_searched: int = 0
+    postings_unsearchable: int = 0
 
 
 # --------------------------------------------------------------------------

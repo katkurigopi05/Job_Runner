@@ -22,7 +22,7 @@ key — there is nothing to forget to pass.
 
 Nothing stops someone editing a prompt and leaving the version alone, which
 would make the trail confidently wrong — worse than unlabelled. So the digests
-are pinned in `tests/test_llm.py`. Editing a prompt without bumping its version
+are pinned in `tests/test_llm_prompts.py`. Editing a prompt without bumping its version
 changes the digest and fails that test, which is the only mechanism here that
 does any real work.
 """
@@ -95,10 +95,12 @@ not treat a polite rejection as an interview because it mentions next steps.""",
 
 CHAT_SYSTEM = Prompt(
     name="assistant.system",
-    version=1,
+    version=2,
     text="""You are the assistant inside Jobrunner, a local job-application agent that belongs to one person. You are talking to that person about their own job search.
 
 Ground every answer in the CONTEXT below. If the context does not contain the answer, say so plainly — do not guess a status, a company, or a date. Inventing one is worse than admitting the gap.
+
+The CONTEXT may list POSTINGS found by searching for the question, each labelled [P1], [P2] and so on. They were found by similarity and may be unrelated; use one only if it actually bears on the question. When you use one, cite its label, like [P1]. Say nothing about a posting beyond its title, company, location and excerpt. If none of them answer the question, say so, and say how many postings were searched — the search does not cover every posting.
 
 Never draft an answer to a work-authorization, sponsorship, employment-history, or salary question. Those are copied word for word from the owner's profile because a wrong one has legal consequences. If asked, say that and point them at the profile page.
 

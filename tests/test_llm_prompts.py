@@ -24,7 +24,7 @@ PINNED = [
         1,
         "2fdebc22e4494764980b48065467286f1386ec34650a2ef6a10aa493d0be1ab0",
     ),
-    ("assistant.system", 1, "8495f35bf42b55024f681088d1f8fcc2b85ad6e56819cb68d1da1aaf12f2b63d"),
+    ("assistant.system", 2, "2e6adad8436954a5c95e252dabf664e0679b4937dfe3429eba1dda8c3b2eaba1"),
     (
         "tailor.cover_letter.system",
         1,

@@ -945,6 +945,74 @@ servers, running the tagged model — so the trail records where the résumé we
 rather than only that it left. Both UI pickers say so at the moment of
 choosing, and both say the quiet part: the address is localhost either way.
 
+### Retrieval: answering questions about the postings themselves
+
+The context above was fixed — counts, profiles, one application, three
+replies — so "which open roles use Kafka?" had nothing to be answered from.
+`packages/matching/retrieve.py` finds the postings a question is about and
+the chat route puts them in the context as `[P1]`…`[P5]`, with an excerpt,
+the company, and the owner's application status if there is one. The model
+is told to cite them; the reply's `sources` marks which it did, read out of
+the text rather than taken on the model's word, and the dashboard lists only
+the cited ones.
+
+Four things are load-bearing, and the first two were each found by running
+it against the owner's database rather than by reading it:
+
+- **It only searches when the question is about postings** — a job word, or
+  a registry company named in full. The first version always searched, and
+  "what needs me?" came back with five HelloFresh customer-care roles from
+  Manila. Corpus rarity cannot make this call: "me", "waiting" and "replies"
+  are rare in job postings precisely because postings do not talk that way.
+  A question that is not searched says so in the context
+  (`POSTINGS: not searched`), for the same reason withheld mail does.
+- **Keywords decide relevance; embeddings only decide order.** A pure
+  vector search for the Kafka question returned one posting mentioning Kafka
+  and four sharing "open" and "roles". Now a posting must contain one of the
+  question's distinguishing terms — IDF-weighted, word-bounded so "rust" is
+  not "trust" — and vectors re-order those matches by RRF. The keyword scan
+  reads every open posting, including the 6,833 of 19,018 the matching pass
+  had not embedded yet, which no vector search can see; in the fusion such a
+  posting takes the middle vector rank rather than none, or the best keyword
+  match could drop out of the top five for lacking an embedding.
+
+  Framing words are never search terms, and rarity cannot be trusted to
+  remove them: "me" is in 1.9% of postings, and "Show me forward deployed
+  engineer jobs." came back as five Pleo postings saying "Show me the
+  benefits!". So the question's framing ("which open roles") and the asker
+  ("show me", "find", "I'm looking for") are listed explicitly.
+
+  Vectors answer alone only when the question has *no* distinguishing term —
+  "any data engineering roles?", where both words are in most postings. Never
+  when the terms matched nothing: bge-small's similarity is almost never zero,
+  so "roles using Zig?" would otherwise get the five nearest postings whether
+  or not any says Zig.
+- **One vector search per embedding space, never across.** The owner's
+  database held 10,185 bge-small vectors and 2,000 `lexical-idf@2` ones side
+  by side. The question is encoded once per space, each space is searched
+  only against its own rows, and a space nothing can encode into — a retired
+  model, idf weights from a superseded revision — is counted as unsearchable
+  rather than approximated.
+- **Coverage is part of the answer.** "None found" over every open posting
+  and over a vector-reachable sixth of them are different answers, so the
+  context states how many were searched and the model is told to repeat it.
+
+**§2.8 is unchanged.** The question is embedded locally, and nothing in
+retrieval calls a provider. What it adds to the context is employers' public
+posting text plus the owner's own application statuses, which go wherever
+the rest of the context goes under the per-question provider choice above.
+Recruiter mail gating is untouched.
+
+Measured live on 2026-09-30, llama3.1 answered the Kafka question citing five
+postings that all mention Kafka. A search costs 0.1–0.9s against 19,018
+postings; the first call in a process also loads bge-small, about 4s, in a
+worker thread so the event loop is not held. The keyword scan is two passes —
+one combined regex, then per-term scoring over a materialised CTE of the
+matches — because one regex per term over every row took 3.1s for eight
+terms against 0.8s this way. There is no vector index on
+`description_embedding`, so the vector half is an exact scan — if an ivfflat
+index is added, the per-space filter makes it approximate.
+
 ## 15. What the gates do and do not prove
 
 Every gate in §9 passes. Two of them pass against fixtures rather than the real

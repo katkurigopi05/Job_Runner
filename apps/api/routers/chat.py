@@ -29,6 +29,14 @@ enforces for form filling, applied to the conversation.
 **It is grounded, not freehand.** The model is given the actual counts and the
 actual application, and told to say when it does not know. An assistant that
 invents an application status is worse than no assistant.
+
+**Questions about postings are answered from retrieved postings.** A question
+that asks about jobs or names a company is searched against the open postings
+on this machine (`packages/matching/retrieve.py`), and the matches go into the
+context with labels the model cites. The reply reports which were cited, read
+out of the text rather than taken on the model's word, and how much of the
+corpus the search covered — "no Kafka roles" over a sixth of the postings is
+not the same answer as over all of them.
 """
 
 from __future__ import annotations
@@ -44,11 +52,12 @@ from apps.api.errors import ApiError
 from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
 from packages.core.models import Application, InboundMessage, Profile
-from packages.core.schemas import ChatReply, ChatRequest
+from packages.core.schemas import ChatReply, ChatRequest, ChatSource
 from packages.llm import router as llm_router
 from packages.llm.audit import is_local
 from packages.llm.prompts import CHAT_SYSTEM
 from packages.llm.provider import LLMError
+from packages.matching.retrieve import Retrieval, retrieve
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -152,6 +161,48 @@ async def _context(
             lines.append("  recent replies: withheld — not shared with a remote model")
 
     return "\n".join(lines)
+
+
+def _postings_section(found: Retrieval) -> str:
+    """The retrieved postings, labelled for citation, with the search's reach.
+
+    Coverage comes first and is stated even when nothing was found, because
+    the model is told to say how much was searched — it cannot say a number it
+    was never given.
+
+    A question that is not about postings says so rather than omitting the
+    section, for the reason the withheld mail does: an absent section reads as
+    "no postings matched", which is a different answer.
+    """
+    if not found.attempted:
+        return "POSTINGS: not searched — the question does not ask about jobs or a company"
+    total = found.searched + found.unsearchable
+    lines = [f"POSTINGS: searched {found.searched} of {total} open postings"]
+    if found.unsearchable:
+        lines[0] += f" ({found.unsearchable} are not searchable yet)"
+    if not found.passages:
+        lines.append("  none shared anything with this question")
+    for passage in found.passages:
+        where = " — ".join(part for part in (passage.company, passage.location) if part)
+        lines.append(f"  [{passage.label}] {passage.title}" + (f" — {where}" if where else ""))
+        if passage.application_status:
+            lines.append(f"       you applied: {passage.application_status}")
+        lines.append(f"       excerpt: {passage.excerpt}")
+    return "\n".join(lines)
+
+
+_BRACKETED = re.compile(r"\[([^\]]*)\]")
+_LABEL = re.compile(r"\bP(\d+)\b")
+
+
+def cited_labels(reply: str) -> set[str]:
+    """Labels the reply cites, in any of the shapes a model writes them.
+
+    "[P1]", "[P1][P3]" and "[P1, P3]" all occur. Only bracketed text counts:
+    a bare "P1" can be a salary band or a priority, and reporting it as a
+    citation would mark a source as evidence the answer never used.
+    """
+    return {f"P{number}" for group in _BRACKETED.findall(reply) for number in _LABEL.findall(group)}
 
 
 #: Topics §2.2 keeps verbatim, as a person says them rather than as an ATS
@@ -309,7 +360,8 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     include_mail = selected == LOCAL_PROVIDER or body.share_mail
 
     context = await _context(session, body.application_id, include_mail=include_mail)
-    prompt = f"CONTEXT:\n{context}\n\nQUESTION:\n{question}"
+    found = await retrieve(session, question)
+    prompt = f"CONTEXT:\n{context}\n{_postings_section(found)}\n\nQUESTION:\n{question}"
 
     try:
         provider = llm_router.build_provider(selected)
@@ -359,6 +411,7 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
             "ask again, or switch to the local one.",
         ) from exc
 
+    cited = cited_labels(answer)
     return ChatReply(
         reply=answer,
         provider=selected,
@@ -370,4 +423,18 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
         # Computed, never assumed from the provider name: `is_local` is what
         # knows that an Ollama-served `:cloud` model is not local.
         local=is_local(selected, model),
+        sources=[
+            ChatSource(
+                label=passage.label,
+                posting_id=passage.posting_id,
+                title=passage.title,
+                company=passage.company,
+                location=passage.location,
+                url=passage.url,
+                cited=passage.label in cited,
+            )
+            for passage in found.passages
+        ],
+        postings_searched=found.searched,
+        postings_unsearchable=found.unsearchable,
     )
