@@ -3144,10 +3144,40 @@ and deliberately loose: RRF is worth running on signals that mostly agree,
 since the wins come from the minority they order differently. What the
 threshold catches is a signal fused with itself.
 
-Finishing it needs the owner's machine — `BAAI/bge-small-en-v1.5` downloads
-from `huggingface.co`, which this environment denies at CONNECT with a 403,
-the same wall the live gates hit. `make bench-matching ARGS="--tag adjacent
---k 5 --real-embedder"`, and read `rho` before reading the NDCG.
+This paragraph used to end "finishing it needs the owner's machine", because
+bge-small downloads from `huggingface.co` and the cloud session was denied at
+CONNECT. It was finished there on **2026-09-30**:
+
+```text
+--tag adjacent --k 5 --real-embedder         rho(dense, lexical) = +0.573
+production   0.405      hybrid_rrf   0.358      bm25_only   0.452
+```
+
+**At +0.573 the row is a measurement, and fusion lost.** The fused ranking
+came in below both of its inputs. It carries the same two false positives as
+`production` (`adj-junior-backend`, `adj-eng-manager`), and BM25 alone had kept
+the manager out. Every row except the control is still inside every other
+row's interval on twelve fixture labels, so the claim is only that fusion did
+not help here. It stays a benchmark variant. Full table in
+`docs/ML_EVALUATION.md`.
+
+Two corrections came out of the run, and both are the kind that stay invisible
+until the real embedder is loaded:
+
+- **The 0.577 in §15 is the lexical fallback's number.** `bench_matching`
+  uses `LexicalEmbedder` unless `--real-embedder` is passed, whatever is
+  installed. So "sentence-transformers is absent here", above, was only half
+  the reason the first run was lexical: the default would have been lexical on
+  any machine. On bge-small, which the owner's `.env` runs, `production` is
+  0.405 on the adjacent slice.
+- **The degenerate check had one remedy for two causes.** With bge-small
+  loaded, agreement on the Gate 5 slice is +0.875, because off-domain
+  negatives rank last under any scorer. The printed advice was still "install
+  the `embeddings` extra", which was already installed. `hybrid.agreement_note`
+  separates them. The lexical fallback is told to install the extra. A real
+  embedder is told the slice cannot discriminate and pointed at
+  `--tag adjacent`. "A signal fused with itself" was only one of the two
+  things the threshold catches.
 
 **No cross-encoder reranker, deliberately.** `ms-marco-MiniLM-L-12-v2` is free
 and local and jointly encodes (query, passage) — the comparison a cosine is

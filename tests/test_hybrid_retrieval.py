@@ -21,6 +21,7 @@ from packages.matching.hybrid import (
     RRF_K,
     Ranking,
     agreement,
+    agreement_note,
     fuse,
 )
 
@@ -142,6 +143,28 @@ def test_signals_that_disagree_are_not_flagged() -> None:
     reverse = Ranking.of("b", [("x", 0.1), ("y", 0.5), ("z", 0.9)])
     assert agreement(forward, reverse) == -1.0
     assert agreement(forward, reverse) < DEGENERATE_AGREEMENT
+
+
+def test_a_real_embedder_is_not_told_to_install_itself() -> None:
+    """High agreement has two causes, and the remedies point opposite ways.
+
+    Measured with bge-small loaded: the Gate 5 slice agrees at +0.875 because
+    off-domain negatives rank last under any scorer. The first version of
+    this message told that reader to install the `embeddings` extra, which
+    was already installed, so they went to fix the wrong thing.
+    """
+    lexical = agreement_note(0.916, lexical_embedder=True)
+    real = agreement_note(0.875, lexical_embedder=False)
+
+    assert lexical is not None and "embeddings" in lexical
+    assert real is not None and "embeddings" not in real
+    assert "--tag adjacent" in real
+
+
+def test_a_real_fusion_carries_no_warning() -> None:
+    """The adjacent slice with bge-small, +0.573: a measurement, read as one."""
+    assert agreement_note(0.573, lexical_embedder=False) is None
+    assert agreement_note(DEGENERATE_AGREEMENT - 0.001, lexical_embedder=True) is None
 
 
 def test_an_undefined_correlation_is_zero_rather_than_an_error() -> None:

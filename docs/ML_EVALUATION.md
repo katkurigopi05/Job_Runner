@@ -85,6 +85,14 @@ NDCG@5 drops to **0.577**, and the constant control is statistically tied with
 everything. This is where the matcher's real weakness lives, and it was
 invisible before there were hard negatives to expose it.
 
+**That 0.577 is the lexical fallback's number, not the shipped embedder's.**
+`bench_matching` scores with `LexicalEmbedder` unless `--real-embedder` is
+passed. The `embedder:` line under the header says so, and the figure above was
+quoted without it. The owner's `.env` runs bge-small, and with bge-small the
+same twelve give `production` **0.405**. The weakness is the same one, and it
+is larger on the embedder the feed actually uses. The run is in the hybrid
+section below.
+
 **The seniority filter is off by default and costs precision.** `filters.seniority_ok`
 returns `True` whenever `target_seniority` is unset. The consequence is
 measurable: `Junior Backend Engineer` — a perfect technology match at the wrong
@@ -252,6 +260,61 @@ above it is still the degenerate case and the NDCG means nothing.
 fixture-grade labels. The verdict block already refuses, for both reasons it
 always gives, and a win here would move the question to the labeling loop
 rather than to the scorer.
+
+### Finished on the owner's machine, 2026-09-30
+
+bge-small cached, `EMBEDDING_BACKEND=sentence-transformers`, same labeled set
+(`f29a1c8be0ec5700`). The numbers reproduce exactly across runs:
+
+```text
+--tag adjacent --k 5 --real-embedder
+variant                   ndcg@5            95% CI     P@k     MAP     ROC
+jaccard                    0.599       [0.17,0.96]   0.800   0.701   0.578
+production+seniority       0.597       [0.28,1.00]   0.800   0.876   0.812
+bm25_only                  0.452       [0.13,0.91]   0.800   0.685   0.500
+body_only                  0.436       [0.08,1.00]   0.600   0.645   0.469
+production                 0.405       [0.10,0.95]   0.600   0.684   0.562
+hybrid_rrf                 0.358       [0.06,0.85]   0.600   0.654   0.516
+title_only                 0.263       [0.00,0.87]   0.400   0.724   0.438
+constant                   0.062       [0.00,0.45]   0.200   0.490   0.500
+
+hybrid_rrf: dense/lexical rank agreement rho=+0.573
+```
+
+**This time the row is a measurement, and fusion lost.** At +0.573 the two
+signals order the adjacent roles differently, which is the precondition RRF
+needs, and the fused ranking still came in below both of its inputs. The
+mechanism shows in the top five. The fusion carries the same two false
+positives as `production`: `adj-junior-backend` and `adj-eng-manager`. BM25
+alone kept the manager out, and fusion let it back in.
+
+What it does not say: every row except the control sits inside every other
+row's interval, and the verdict block still names no candidate for both of its
+usual reasons. The whole claim is that fusion did not help on twelve
+fixture-grade labels. Hybrid retrieval stays a benchmark variant and
+`Match.score` is unchanged.
+
+Three things this run found that the first one could not:
+
+- **The recorded 0.577 was the lexical fallback**, as noted under the adjacent
+  roles above. On bge-small, `production` is 0.405 on the adjacent slice
+  (lexical 0.577) and 0.992 at NDCG@10 on Gate 5 (lexical 1.000). The hashed
+  bag of words beating bge-small here fits the pattern CLAUDE.md §15 keeps
+  recording. These fixtures were written beside keyword-matching code, so they
+  reward keyword overlap. That is not evidence that bge-small is the worse
+  embedder, and nothing here separates the two.
+- **The degenerate check fired with the real embedder loaded, and its advice
+  was wrong.** With bge-small, agreement is **+0.875** on the Gate 5 slice and
+  +0.911 on all 32, because pastry chefs rank last under any scorer. The
+  message then told the reader to install the `embeddings` extra, which was
+  already installed. `hybrid.agreement_note` now tells the two causes apart.
+  The lexical fallback is told to install the extra. A real embedder is told
+  that the slice cannot discriminate and pointed at `--tag adjacent`.
+- **Arming seniority is the one change ahead under both embedders**: 0.597
+  against 0.405 on bge-small, and 0.774 against 0.577 on lexical. It drops
+  `adj-junior-backend` from the top five, which is the P@10 finding above seen
+  from a harder slice. The lead is still inside the interval. It points at the
+  `target_seniority` default decision rather than at the scorer.
 
 ### The reranker is deliberately not built
 

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from packages.matching.benchmark import DEFAULT_K, default_variants, run_variant, summarize
 from packages.matching.embed import LexicalEmbedder, get_embedder
-from packages.matching.hybrid import DEGENERATE_AGREEMENT
+from packages.matching.hybrid import agreement_note
 from packages.matching.labels import load_labeled_set
 
 DEFAULT_SET = Path("seeds/labeled_matches.yaml")
@@ -88,19 +88,15 @@ def main(argv: list[str] | None = None) -> int:
     # lost is read as a verdict on fusion, and it is only that when the two
     # signals were actually different. See `hybrid.agreement`.
     for record in verdict.records:
-        measured = record.hyperparameters.get("rank_agreement") or []
-        if not measured:
+        measured = record.hyperparameters.get("rank_agreement")
+        if not isinstance(measured, list) or not measured:
             continue
         rho = sum(measured) / len(measured)
         print()
         print(f"{record.variant}: dense/lexical rank agreement rho={rho:+.3f}")
-        if rho >= DEGENERATE_AGREEMENT:
-            print(
-                "  NOT A FUSION RESULT. The two sides are ranking on the same\n"
-                "  information, so this row says nothing about hybrid retrieval.\n"
-                f"  Embedder is {type(embedder).__name__}; install the "
-                "`embeddings` extra and re-run."
-            )
+        note = agreement_note(rho, lexical_embedder=isinstance(embedder, LexicalEmbedder))
+        if note:
+            print(f"  {note}")
 
     print()
     print(f"leader             : {verdict.best}")

@@ -4,8 +4,9 @@
 weak, and it is not the obvious place. On the twenty Gate 5 postings the
 shipped scorer and a five-line token-overlap baseline both reach a perfect
 NDCG@10, because the negatives there are pastry chefs and truck drivers. The
-twelve *adjacent* roles are where it falls over: NDCG@5 of 0.577, with the
-constant control statistically tied against everything.
+twelve *adjacent* roles are where it falls over: NDCG@5 of 0.577 on the
+lexical fallback and 0.405 on bge-small, with the constant control
+statistically tied against everything.
 
 A tie with a control that returns 0.5 for every posting means the scorer is
 contributing nothing on exactly the comparisons that decide a real feed.
@@ -191,8 +192,9 @@ class BM25:
 #: Above this Spearman correlation between two rankings, fusing them is not
 #: an experiment. The value is deliberately loose — RRF is worth running on
 #: signals that mostly agree, since the wins come from the minority of
-#: documents they order differently. What it catches is the degenerate case
-#: below, where the two sides are reading the same information.
+#: documents they order differently. It fires for two different reasons, and
+#: `agreement_note` tells them apart: the two sides reading the same
+#: information, or a corpus so easy that any two scorers order it alike.
 DEGENERATE_AGREEMENT = 0.85
 
 
@@ -212,6 +214,10 @@ def agreement(left: Ranking, right: Ranking) -> float:
     corpus", which is a conclusion about retrieval drawn from an experiment
     that never had two signals in it.
 
+    With the real embedder the same twelve measure **+0.573**, so there the
+    fusion row is a measurement. It still lost (0.358 against production's
+    0.405); see `docs/ML_EVALUATION.md`.
+
     Returns 0.0 when the correlation is undefined — fewer than two shared
     keys, or one side ranking everything identically.
     """
@@ -228,6 +234,34 @@ def agreement(left: Ranking, right: Ranking) -> float:
     if spread_a == 0.0 or spread_b == 0.0:
         return 0.0
     return numerator / math.sqrt(spread_a * spread_b)
+
+
+def agreement_note(rho: float, *, lexical_embedder: bool) -> str | None:
+    """What a reader must be told before trusting a fusion row, or None.
+
+    A high agreement has two causes and they need opposite remedies. With the
+    lexical fallback, the "dense" side is a hashed bag of words and the fix is
+    the real embedder. With the real embedder already loaded, the corpus is
+    the cause: measured with bge-small, the Gate 5 slice agrees at +0.875
+    because pastry chefs and truck drivers rank last under any scorer, while
+    the adjacent slice agrees at +0.573. Telling that reader to install a
+    package they already have sends them to fix the wrong thing.
+    """
+    if rho < DEGENERATE_AGREEMENT:
+        return None
+    if lexical_embedder:
+        return (
+            "NOT A FUSION RESULT. The dense side is LexicalEmbedder, a hashed\n"
+            "  bag of words, so both sides read the same information and this\n"
+            "  row says nothing about hybrid retrieval. Install the `embeddings`\n"
+            "  extra and re-run with --real-embedder."
+        )
+    return (
+        "NOT A FUSION RESULT. Both signals are real and agree anyway: this set\n"
+        "  is separated by negatives any scorer ranks last, so the row says\n"
+        "  nothing about the close comparisons fusion exists for. Re-run on a\n"
+        "  slice that discriminates, e.g. --tag adjacent."
+    )
 
 
 def fuse(rankings: Sequence[Ranking], *, k: int = RRF_K) -> dict[str, float]:
@@ -254,5 +288,6 @@ __all__ = [
     "RRF_K",
     "Ranking",
     "agreement",
+    "agreement_note",
     "fuse",
 ]
