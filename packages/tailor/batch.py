@@ -44,6 +44,7 @@ from packages.core.models import Match, Posting, Profile, Project, Resume
 from packages.github.select import select_projects
 from packages.llm import quota
 from packages.llm.provider import LLMProvider
+from packages.matching.pick_resume import choose_base_resume
 from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
 from packages.tailor.evidence import matched_job_terms
@@ -132,14 +133,24 @@ async def run(
 
     for match, posting in work:
         profile = await session.get(Profile, match.profile_id)
-        if profile is None or profile.base_resume_id is None:
+        if profile is None:
             result.failed += 1
             continue
 
-        resume = await session.get(Resume, profile.base_resume_id)
+        haystack = f"{posting.title or ''}\n{posting.description_raw or ''}"
+        choice = await choose_base_resume(session, profile, haystack)
+        source_resume_id = choice.resume_id if choice is not None else profile.base_resume_id
+        if source_resume_id is None:
+            result.failed += 1
+            continue
+
+        resume = await session.get(Resume, source_resume_id)
         if resume is None or not resume.parsed_json:
             result.failed += 1
             continue
+
+        if choice is not None:
+            match.reasons_json = {**(match.reasons_json or {}), "base_resume": choice.as_dict()}
 
         parsed = ParsedResume.model_validate(resume.parsed_json)
         _, bullets = tailorable_bullets(parsed)

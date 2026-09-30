@@ -451,3 +451,142 @@ async def test_partial_provider_failure_stays_pending_for_retry(db_session) -> N
     assert result.tailored == 0
     assert match.tailored_resume_id is None
     assert [m.id for m, _ in await batch.pending(db_session, str(profile.id))] == [match.id]
+
+
+async def test_each_posting_tailors_and_caches_its_selected_role_resume(
+    db_session, monkeypatch
+) -> None:
+    """A standing ML choice must not supply data or backend tailoring."""
+    from packages.llm.provider import StubProvider
+    from packages.tailor.guard import SourceCorpus
+    from packages.tailor.parse import ParsedResume
+    from packages.tailor.rewrite import BulletRewrite, TailorResult
+
+    profile = await _owner(db_session)
+    default_id = profile.base_resume_id
+    default = await db_session.get(Resume, default_id)
+    default.parsed_json = {
+        **RESUME,
+        "sections": {"experience": ["Trained PyTorch models on GPU clusters."]},
+        "raw_lines": ["Machine Learning Engineer", "Trained PyTorch models on GPU clusters."],
+    }
+    cases = []
+    for version, title, bullet in [
+        (2, "Data Engineer", "Built Snowflake pipelines with Airflow and dbt."),
+        (3, "Backend Engineer", "Built Django services with PostgreSQL and Redis."),
+    ]:
+        source = Resume(
+            candidate_id=profile.candidate_id,
+            version=version,
+            storage_ref=f"r/{uuid.uuid4().hex}.txt",
+            parsed_json={
+                **RESUME,
+                "sections": {"experience": [bullet]},
+                "raw_lines": [title, bullet],
+            },
+        )
+        db_session.add(source)
+        match = await _match(db_session, profile, decision="interested", score=version / 10)
+        match.reasons_json = {"rubric": {"overall": 0.8}}
+        posting = await db_session.get(Posting, match.posting_id)
+        posting.title = title
+        posting.description_raw = bullet
+        posting.content_hash = f"role-{version}"
+        cases.append((match, posting, source, bullet))
+    await db_session.flush()
+
+    selected_texts = []
+    rewritten = []
+    published = {}
+    choose = batch.choose_base_resume
+
+    async def select_resume(session, owner, text):
+        selected_texts.append(text)
+        return await choose(session, owner, text)
+
+    async def fake_tailor(provider, bullets, description, corpus):
+        source = next(
+            source for _, posting, source, _ in cases if posting.description_raw == description
+        )
+        assert bullets == source.parsed_json["sections"]["experience"]
+        assert corpus == SourceCorpus.from_resume(ParsedResume.model_validate(source.parsed_json))
+        rewritten.append(description)
+        return TailorResult(bullets=[BulletRewrite(original=b, tailored=b) for b in bullets])
+
+    async def fake_publish(session, **kwargs):
+        published[kwargs["posting_id"]] = kwargs
+        resume = Resume(
+            candidate_id=kwargs["candidate_id"],
+            version=100 + len(published),
+            storage_ref=f"r/{uuid.uuid4().hex}.pdf",
+            parsed_json=kwargs["parsed"].model_dump(),
+            tailored_key=kwargs["tailored_key"],
+            tailored_for_posting_id=kwargs["posting_id"],
+        )
+        session.add(resume)
+        await session.flush()
+        return resume
+
+    monkeypatch.setattr(batch, "choose_base_resume", select_resume)
+    monkeypatch.setattr(batch, "tailor_bullets", fake_tailor)
+    monkeypatch.setattr(batch, "publish_tailored", fake_publish)
+    monkeypatch.setattr(batch.quota, "remaining", lambda provider: None)
+    result = await batch.run(db_session, StubProvider(), profile_id=str(profile.id))
+
+    assert result.tailored == 2
+    assert result.failed == 0
+    assert len(rewritten) == 2
+    assert set(selected_texts) == {f"{p.title}\n{p.description_raw}" for _, p, _, _ in cases}
+    tailored_ids = []
+    for match, posting, source, bullet in cases:
+        assert published[posting.id]["parsed"].sections["experience"] == [bullet]
+        assert published[posting.id]["tailored_key"] == batch.tailoring_key(
+            source_resume_id=source.id,
+            content_hash=posting.content_hash,
+            projects=[],
+            provider="stub",
+            model=None,
+        )
+        await db_session.refresh(match)
+        assert match.reasons_json["base_resume"]["resume_id"] == str(source.id)
+        assert len(match.reasons_json["base_resume"]["considered"]) == 3
+        assert match.reasons_json["rubric"] == {"overall": 0.8}
+        tailored_ids.append(match.tailored_resume_id)
+        match.tailored_resume_id = None
+    await db_session.flush()
+
+    again = await batch.run(db_session, StubProvider(), profile_id=str(profile.id))
+
+    assert again.reused == 2
+    assert again.calls_spent == 0
+    assert len(rewritten) == 2
+    assert [match.tailored_resume_id for match, _, _, _ in cases] == tailored_ids
+    await db_session.refresh(profile)
+    assert profile.base_resume_id == default_id
+
+
+async def test_no_usable_selection_keeps_the_default_resume(db_session, monkeypatch) -> None:
+    """Legacy parsed sections can still be tailored when raw text is absent."""
+    from packages.llm.provider import StubProvider
+
+    profile = await _owner(db_session)
+    default = await db_session.get(Resume, profile.base_resume_id)
+    default.parsed_json = {**RESUME, "raw_lines": []}
+    match = await _tailorable(db_session, profile)
+    match.reasons_json = {"rubric": {"overall": 0.8}}
+    captured = {}
+
+    async def fake_publish(session, **kwargs):
+        captured.update(kwargs)
+        return default
+
+    monkeypatch.setattr(batch, "publish_tailored", fake_publish)
+    monkeypatch.setattr(batch.quota, "remaining", lambda provider: None)
+
+    result = await batch.run(db_session, StubProvider(), profile_id=str(profile.id))
+
+    assert result.tailored == 1
+    assert captured["parsed"].sections == RESUME["sections"]
+    assert match.tailored_resume_id == default.id
+    assert match.reasons_json == {"rubric": {"overall": 0.8}}
+    assert profile.base_resume_id == default.id

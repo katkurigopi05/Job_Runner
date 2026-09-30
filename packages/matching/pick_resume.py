@@ -227,6 +227,11 @@ async def choose_base_resume(
         standing = next((r for _, r in scored if r.id == profile.base_resume_id), None)
         if standing is not None:
             standing_score = next(s for s, r in scored if r.id == standing.id)
+        else:
+            standing_score = float("-inf")
+        # With a library of adjacent role variants the top two often tie.
+        # That does not make an unrelated, distant default a contender.
+        if standing is not None and best_score - standing_score < MIN_MARGIN:
             return ResumeChoice(
                 resume_id=standing.id,
                 version=standing.version,

@@ -50,6 +50,7 @@ from packages.llm.router import (
     is_comparable_cloud,
 )
 from packages.matching.embed import get_embedder
+from packages.matching.pick_resume import choose_base_resume
 from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
 from packages.tailor.diff import summarize
@@ -287,14 +288,17 @@ async def compare_tailorings(
                 f"{comparable_clouds() or ['— none configured —']}, or name none "
                 "to use whatever real tailoring would."
             )
-    if profile.base_resume_id is None:
-        raise CannotCompare("this profile has no base résumé to tailor")
-
     posting_text = posting.description_raw or ""
     if not posting_text.strip():
         raise CannotCompare("this posting has no description to tailor against")
 
-    resume = await session.get(Resume, profile.base_resume_id)
+    choice = await choose_base_resume(
+        session, profile, f"{posting.title or ''}\n{posting_text}"
+    )
+    source_id = choice.resume_id if choice is not None else profile.base_resume_id
+    if source_id is None:
+        raise CannotCompare("this profile has no base résumé to tailor")
+    resume = await session.get(Resume, source_id)
     if resume is None or not resume.parsed_json:
         raise CannotCompare("the base résumé has not been parsed")
 
