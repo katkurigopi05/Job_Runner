@@ -192,3 +192,90 @@ In rough order of how much each would buy:
 Until (1), treat everything in this document as a regression signal: it will
 tell you when a change made the matcher worse, and it will not tell you that
 the matcher is good.
+
+---
+
+## Hybrid retrieval, and the experiment this machine could not finish
+
+`packages/matching/hybrid.py` adds Reciprocal Rank Fusion of the dense cosine
+with BM25, as two benchmark variants (`hybrid_rrf`, `bm25_only`). It exists
+because this document already names where the matcher is weak and the weakness
+has the shape a lexical signal is supposed to fix: on the twelve adjacent
+roles NDCG@5 is 0.577 with the constant control statistically tied against
+everything, and adjacent roles differ from each other in a handful of tokens
+that an embedding is *designed* to collapse.
+
+**The result, run here on 2026-09-30:**
+
+```text
+variant                   ndcg@5            95% CI     P@k     MAP     ROC
+production+seniority       0.774       [0.47,1.00]   1.000   0.959   0.906
+jaccard                    0.599       [0.17,0.96]   0.800   0.701   0.578
+production                 0.577       [0.16,1.00]   0.800   0.739   0.656
+hybrid_rrf                 0.452       [0.15,0.94]   0.800   0.718   0.594
+bm25_only                  0.452       [0.13,0.91]   0.800   0.685   0.500
+constant                   0.062       [0.00,0.45]   0.200   0.490   0.500
+
+hybrid_rrf: dense/lexical rank agreement rho=+0.916
+```
+
+**That row is not a verdict on hybrid retrieval, and the last line is why.**
+RRF combines signals that fail differently. `sentence-transformers` is not
+installed here, so `embed.get_embedder` falls back to `LexicalEmbedder` — a
+hashed bag of words — and the "dense" side of the fusion was reading the same
+information as BM25. Spearman **+0.916**. The experiment had one signal in it.
+
+Two things follow, and the second is the reason this section exists at all:
+
+- `hybrid_rrf` scoring level with `bm25_only` to three decimals is the
+  ablation doing its job. It was put there to detect exactly this.
+- **A number that cannot be interpreted is more dangerous than no number.**
+  Reported without the correlation, 0.452 reads as "hybrid retrieval was tried
+  and lost", which would close the question on the strength of a run that
+  never tested it. `hybrid.agreement` is computed on every fusion pass,
+  recorded in the experiment record so it survives into `--json`, and printed
+  under the table with the refusal spelled out.
+
+**Finishing it needs the owner's machine.** `BAAI/bge-small-en-v1.5` downloads
+from `huggingface.co`, which this environment's network policy denies at
+CONNECT with a 403 — the same wall `make validate-seeds` and the live gates
+hit. On a machine with the `embeddings` extra installed and the model cached:
+
+```bash
+make bench-matching ARGS="--tag adjacent --k 5 --real-embedder"
+```
+
+Read `rho` first. Below ~0.85 the fusion row is a real measurement; at 0.9 and
+above it is still the degenerate case and the NDCG means nothing.
+
+**What would still be true if it wins.** Nothing promotes on twelve
+fixture-grade labels. The verdict block already refuses, for both reasons it
+always gives, and a win here would move the question to the labeling loop
+rather than to the scorer.
+
+### The reranker is deliberately not built
+
+The natural third stage is a cross-encoder — `cross-encoder/ms-marco-MiniLM-L-12-v2`
+is free, local, CPU-runnable, and jointly encodes (query, passage) rather than
+comparing two independent vectors, which is precisely the comparison a cosine
+is worst at. It is not here because it needs `torch`, nothing in this
+environment can download the weights, and an unmeasured ranking stage is the
+shape this repo keeps finding as a defect: a column, a filter and tests with
+no way to fire. It is recorded as a candidate with its cost attached rather
+than shipped dark.
+
+### Why BM25 is in the tree rather than a dependency
+
+`rank_bm25` is MIT and §3 would permit it. Two reasons not to:
+
+- It would tokenize differently. `hybrid.BM25` scores through
+  `embed.tokenize`, the same function the dense side uses, so a fusion
+  experiment measures fusion rather than two tokenizers disagreeing about
+  `node.js`.
+- **It is what a production path would run.** The obvious lexical source is
+  Postgres full-text search, which this repo already has a server for — but
+  `ts_rank_cd` is a different ranking function from the one measured here, so
+  a benchmark won on BM25 would not transfer to a feed served by FTS.
+  `apps/api/routers/matches.py` already filters in Python rather than SQL, for
+  the same reason it always has: the fields are read out of text. Same code
+  both sides, or the number means nothing.

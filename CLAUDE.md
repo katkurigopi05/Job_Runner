@@ -3070,3 +3070,106 @@ its four agents are things this repo does without a model, and its verification
 agent answers a question `rubric.py` does not have — nothing here generates a
 match explanation, so there is nothing to verify. What the post was worth was
 the sentence: it asked the feed something the feed could not be asked.
+
+---
+
+## 19. Hybrid retrieval, and a number that could not be read
+
+`packages/matching/hybrid.py` fuses the dense cosine with BM25 by Reciprocal
+Rank Fusion, as two benchmark variants. `docs/ML_EVALUATION.md` carries the
+run and the reasoning; this section is the part a later change could break.
+
+It came from surveying the owner's other repositories. `Attorney.AI` — their
+own citation-first legal RAG — does hybrid retrieval over pgvector plus
+Postgres FTS with RRF at `k=60`, and `dp800-sql-embeddings-vector-search` does
+the same thing in T-SQL at the same constant. The technique arrived already
+known, which is the only reason it was worth trying before the labeling loop.
+
+**It targets a weakness this file already recorded.** §15: on the twelve
+adjacent roles NDCG@5 is 0.577 and the constant control is statistically tied
+against everything. A tie with a control returning 0.5 for every posting means
+the scorer contributes nothing on the comparisons that decide a real feed. And
+adjacent roles are where a dense vector is weakest by construction: a Python
+backend role and a Java one differ in a few tokens out of several hundred, the
+surrounding sentences are near-identical, and collapsing surface form is what
+the embedding is *for* — it is the property `roles.py` exploits to match
+"Member of Technical Staff" to "Software Engineer".
+
+**The repo already holds both signals and uses them as alternatives.**
+`embed.get_embedder` selects `SentenceTransformerEmbedder` *or* falls back to
+`LexicalEmbedder` inside a try/except. Fusion is what turns that into a both.
+
+Five things are load-bearing:
+
+- **It does not touch `Match.score`.** `rubric.py` argues that at length and
+  §15 repeats it: the cosine is what `tests/test_matching.py` validates and
+  what `Profile.min_match_score` compares against. This is a benchmark
+  variant, nothing more, and the feed is unchanged.
+- **RRF reads ranks, never scores.** A cosine in [0,1] — occupying a sliver
+  of it, since §15 records a real run peaking at 0.271 — and an unbounded
+  BM25 have no common scale, and weighting them means fitting a weight on the
+  same labels the result is reported against. That is `REFERENCE.md` §3.6's
+  self-evaluating referee. `Ranking` stores ranks and nothing else, so the
+  guarantee is structural rather than a rule someone has to remember.
+- **`k=60` is borrowed, not tuned.** From the original paper and from both of
+  the owner's own implementations. A constant taken from elsewhere is
+  evidence; one fitted to twelve labeled postings is an overfit wearing the
+  same digits.
+- **A document one side never returned is not ranked last.** A vector search
+  with a `TOP_N` returns a cutoff, not an ordering, and scoring the absent
+  document as worst lets that cutoff veto the other signal's first place.
+- **The fusion variants are absent without a corpus, not degraded.** There is
+  no such thing as the rank of one posting on its own, so `default_variants`
+  omits them when `items` is not supplied rather than scoring something else.
+
+### The result, and why the result is not the point
+
+```text
+production   0.577      hybrid_rrf   0.452      bm25_only   0.452
+                        rho(dense, lexical) = +0.916
+```
+
+The fusion lost, and **that row is not a verdict on hybrid retrieval.**
+`sentence-transformers` is absent here, so the "dense" side fell back to
+`LexicalEmbedder`, a hashed bag of words, and the fusion was BM25 against a
+differently-weighted view of BM25. `hybrid_rrf` landing level with
+`bm25_only` to three decimals is the ablation firing exactly as intended.
+
+**A number that cannot be interpreted is worse than no number**, because it
+closes a question it never opened. Reported bare, 0.452 reads as "tried it,
+it lost". So `hybrid.agreement` is computed on every fusion pass, recorded in
+the experiment record so it survives into `--json`, and printed under the
+table with the refusal spelled out in words. `DEGENERATE_AGREEMENT` is 0.85
+and deliberately loose: RRF is worth running on signals that mostly agree,
+since the wins come from the minority they order differently. What the
+threshold catches is a signal fused with itself.
+
+Finishing it needs the owner's machine — `BAAI/bge-small-en-v1.5` downloads
+from `huggingface.co`, which this environment denies at CONNECT with a 403,
+the same wall the live gates hit. `make bench-matching ARGS="--tag adjacent
+--k 5 --real-embedder"`, and read `rho` before reading the NDCG.
+
+**No cross-encoder reranker, deliberately.** `ms-marco-MiniLM-L-12-v2` is free
+and local and jointly encodes (query, passage) — the comparison a cosine is
+worst at. It needs `torch`, nothing here can fetch the weights, and an
+unmeasured ranking stage is the shape this file keeps recording as a defect.
+Recorded as a candidate with its cost attached rather than shipped dark.
+
+**BM25 is in the tree rather than a dependency**, for two reasons that are
+both about the measurement transferring. It scores through `embed.tokenize`,
+so the experiment measures fusion rather than two tokenizers disagreeing about
+`node.js`. And it is what a production path would run: Postgres FTS is the
+obvious source and `ts_rank_cd` is a different ranking function, so a
+benchmark won on BM25 would not transfer to a feed served by FTS.
+`apps/api/routers/matches.py` already filters in Python for the reason it
+always has — the fields are read out of text.
+
+One incidental find, from a test rather than from reading. The IDF carried a
+`max(0.0, ...)` clamp with a comment explaining which case it protected
+against. There is no such case: `n <= N` makes the quotient non-negative and
+Lucene's `+ 1.0` inside the log puts the argument at or above 1, so the
+result is always non-negative — checked exhaustively for every `(N, n)` to
+200, minimum 0.0025. The clamp is gone and the comment now names the term
+that actually provides the guarantee. A guard that cannot fire reads as
+protection against a risk that does not exist, which is the same failure as a
+test that cannot fail.
