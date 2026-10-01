@@ -1,7 +1,8 @@
-"""Export the current postings to a CSV — `make export-postings`.
+"""Export the current, recent postings to a CSV — `make export-postings`.
 
-One row per posting that has not expired, or per posting of any kind with
-`--include-expired` (`make export-postings all=1`):
+One row per posting that has not expired and was posted in the last 30 days.
+`--include-expired` (`all=1`) keeps expired ones; `--posted-within N`
+(`days=N`) changes the window, and 0 removes it:
 
     company_name, job_type, job_title, job_posting_url, posted_date,
     application_deadline, deadline_source, last_seen_on_board, closed_on,
@@ -57,7 +58,7 @@ from sqlalchemy import select
 
 from packages.core import db as core_db
 from packages.core.models import Company, Posting
-from packages.matching.roles import canonical
+from packages.matching.job_types import job_type
 
 DEFAULT_OUT = Path("storage/exports/postings_with_embeddings.csv")
 MODEL = "BAAI/bge-small-en-v1.5"
@@ -78,19 +79,8 @@ COLUMNS = (
     "description_embedding",
 )
 
-#: `roles.canonical` keys, as a person would write them. "AI Engineer" is one
-#: of the aliases of `machine_learning_engineer`.
-JOB_TYPES = {
-    "software_engineer": "Software Engineer",
-    "backend_engineer": "Backend Engineer",
-    "frontend_engineer": "Frontend Engineer",
-    "fullstack_engineer": "Full Stack Engineer",
-    "data_engineer": "Data Engineer",
-    "data_scientist": "Data Scientist",
-    "machine_learning_engineer": "AI / ML Engineer",
-    "data_analyst": "Data Analyst",
-    "devops_engineer": "DevOps / SRE",
-}
+#: How recent a posting must be, by default, to be exported.
+DEFAULT_POSTED_WITHIN_DAYS = 30
 
 # --- reading a deadline ---------------------------------------------------------
 
@@ -178,10 +168,6 @@ def expiry(closed: date | None, deadline: date | None, today: date) -> str:
     if deadline is not None:
         return "yes" if deadline < today else "no"
     return "unknown"
-
-
-def job_type(title: str | None) -> str:
-    return JOB_TYPES.get(canonical(title or "") or "", "Other")
 
 
 def vector_text(vector: list[float]) -> str:
@@ -358,6 +344,18 @@ def current(rows: list[Any], today: date) -> list[Any]:
     return kept
 
 
+def recent(rows: list[Any], today: date, days: int) -> list[Any]:
+    """The rows posted within `days` of `today`. `days` of 0 keeps every row.
+
+    A posting with no posted date is left out: an unknown age is not a recent
+    one, the same rule the feed's filters follow (CLAUDE.md §16).
+    """
+    if days <= 0:
+        return rows
+    cutoff = today - timedelta(days=days)
+    return [row for row in rows if (posted := _day(row[4])) is not None and posted >= cutoff]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
@@ -366,19 +364,32 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="keep postings removed from their board or past a stated deadline",
     )
+    parser.add_argument(
+        "--posted-within",
+        type=int,
+        default=DEFAULT_POSTED_WITHIN_DAYS,
+        metavar="DAYS",
+        help="only postings posted in the last DAYS days (0 for any age)",
+    )
     args = parser.parse_args(argv)
 
     today = date.today()
     rows = asyncio.run(_rows())
-    kept = rows if args.include_expired else current(rows, today)
+    live = rows if args.include_expired else current(rows, today)
+    kept = recent(live, today, args.posted_within)
     # Exactly the text `score.embed_postings` encodes, so bge rows match pgvector.
     texts = [f"{title or ''}\n{description or ''}" for _, title, _, description, *_ in kept]
     vectors = encode(texts, args.out.parent / ".embedding_cache.bin")
     tally = write(args.out, kept, vectors, today)
 
     print(f"wrote {len(kept)} postings to {args.out} ({args.out.stat().st_size / 1e6:.0f} MB)")
-    if len(kept) < len(rows):
-        print(f"left out {len(rows) - len(kept)} expired postings (--include-expired keeps them)")
+    if len(live) < len(rows):
+        print(f"left out {len(rows) - len(live)} expired postings (--include-expired keeps them)")
+    if len(kept) < len(live):
+        print(
+            f"left out {len(live) - len(kept)} postings older than {args.posted_within} days "
+            "(--posted-within 0 keeps them)"
+        )
     print(", ".join(f"{key} {count}" for key, count in sorted(tally.items())))
     return 0
 

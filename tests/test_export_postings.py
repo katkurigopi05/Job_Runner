@@ -24,6 +24,7 @@ from scripts.export_postings import (
     expiry,
     job_type,
     read_deadline,
+    recent,
     vector_text,
     write,
 )
@@ -103,13 +104,12 @@ def test_expiry(closed: date | None, deadline: date | None, expected: str) -> No
     assert expiry(closed, deadline, today=date(2026, 9, 30)) == expected
 
 
-def test_job_types_come_from_the_curated_title_table() -> None:
+def test_every_posting_gets_a_job_type_not_just_engineering() -> None:
+    """The first export used the matcher's nine engineering families, and 80%
+    of postings read "Other": every sales, product and research role."""
     assert job_type("AI Engineer") == "AI / ML Engineer"
-    assert (
-        job_type("Member of Technical Staff (Software Engineer, Data Platform)")
-        == "Software Engineer"
-    )
-    assert job_type("Account Executive") == "Other"
+    assert job_type("Account Executive") == "Account Executive"
+    assert job_type("AI Researcher") == "Research Scientist / Engineer"
     assert job_type(None) == "Other"
 
 
@@ -303,3 +303,25 @@ def test_expired_postings_are_left_out_unless_asked_for() -> None:
     kept = current([removed, past, ahead, listed], today=date(2026, 9, 30))
 
     assert [row[2] for row in kept] == ["u3", "u4"]
+
+
+def test_only_recent_postings_are_kept() -> None:
+    """ "Remove the postings opened more than a month ago."
+
+    The cutoff day itself is kept, and a posting with no date is not: an
+    unknown age is not a recent one.
+    """
+
+    def row(posted: datetime | None) -> tuple:
+        return ("Acme", "T", f"u-{posted}", "d", posted, None, None)
+
+    old, cutoff, fresh, undated = (
+        row(datetime(2026, 8, 29)),
+        row(datetime(2026, 8, 31)),
+        row(datetime(2026, 9, 29)),
+        row(None),
+    )
+    today = date(2026, 9, 30)
+
+    assert recent([old, cutoff, fresh, undated], today, days=30) == [cutoff, fresh]
+    assert recent([old, cutoff, fresh, undated], today, days=0) == [old, cutoff, fresh, undated]
