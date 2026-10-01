@@ -8,11 +8,12 @@ similarities quietly disagree with the database's. Neither raises.
 from __future__ import annotations
 
 import csv
+import random
+import struct
 import sys
 from datetime import date, datetime
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from scripts.export_postings import (
@@ -111,13 +112,21 @@ def test_job_types_come_from_the_curated_title_table() -> None:
     assert job_type(None) == "Other"
 
 
+def _float32(value: float) -> bytes:
+    return struct.pack("<f", value)
+
+
 def test_a_vector_round_trips_float32_exactly() -> None:
-    """The CSV and pgvector hold the same numbers, or similarities disagree."""
-    vector = np.random.default_rng(0).standard_normal(384).astype(np.float32)
-    text = vector_text(vector.tolist())
-    back = np.array(text[1:-1].split(","), dtype=np.float32)
+    """The CSV and pgvector hold the same numbers, or similarities disagree.
+
+    Compared as float32 bit patterns, which is what pgvector stores.
+    """
+    rng = random.Random(0)
+    vector = [struct.unpack("<f", _float32(rng.gauss(0, 1)))[0] for _ in range(384)]
+    text = vector_text(vector)
+    back = [float(value) for value in text[1:-1].split(",")]
     assert text.startswith("[") and text.endswith("]")
-    assert np.array_equal(back, vector)
+    assert [_float32(v) for v in back] == [_float32(v) for v in vector]
 
 
 def test_the_csv_has_every_column_and_one_row_per_posting(tmp_path: Path) -> None:
@@ -179,7 +188,7 @@ def test_only_new_or_changed_text_is_encoded(tmp_path: Path, monkeypatch) -> Non
             return [[float(len(t)), 1.0] for t in texts]
 
     monkeypatch.setattr(embed_module, "SentenceTransformerEmbedder", Fake)
-    cache = tmp_path / "cache.npz"
+    cache = tmp_path / "cache.bin"
 
     first = encode(["alpha", "beta"], cache)
     second = encode(["alpha", "beta changed", "alpha"], cache)
@@ -192,13 +201,17 @@ def test_only_new_or_changed_text_is_encoded(tmp_path: Path, monkeypatch) -> Non
 def test_the_script_imports_without_the_embeddings_extra() -> None:
     """CI installs no embeddings extra, so the model may only load when encoding.
 
+    numpy is blocked too: it arrives with that extra, not with the project, and
+    the first version of this test file imported it and failed CI collection.
+
     Blocking the packages makes any top-level import of them fail here, in a
     fresh interpreter where nothing has already imported them.
     """
     import subprocess
 
     blocked = (
-        "import sys; sys.modules['sentence_transformers'] = None; sys.modules['torch'] = None; "
+        "import sys; "
+        "sys.modules.update(dict.fromkeys(('sentence_transformers', 'torch', 'numpy'))); "
         "import scripts.export_postings"
     )
     subprocess.run([sys.executable, "-c", blocked], check=True, cwd=Path(__file__).parent.parent)
@@ -222,3 +235,30 @@ def test_dates_are_the_calendar_day_on_this_machine(monkeypatch) -> None:
     finally:
         monkeypatch.undo()
         time.tzset()
+
+
+def test_a_cache_that_does_not_add_up_is_re_encoded(tmp_path: Path, monkeypatch) -> None:
+    """A truncated cache would put a vector beside the wrong posting.
+
+    Re-encoding costs minutes; a wrong vector costs every similarity computed
+    from the file, silently.
+    """
+    import packages.matching.embed as embed_module
+
+    seen: list[str] = []
+
+    class Fake:
+        def __init__(self, model_name: str) -> None:
+            pass
+
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            seen.extend(texts)
+            return [[float(len(t)), 1.0] for t in texts]
+
+    monkeypatch.setattr(embed_module, "SentenceTransformerEmbedder", Fake)
+    cache = tmp_path / "cache.bin"
+    encode(["alpha", "beta"], cache)
+    cache.write_bytes(cache.read_bytes()[:-3])  # an interrupted write
+
+    assert encode(["alpha", "beta"], cache) == [[5.0, 1.0], [4.0, 1.0]]
+    assert seen == ["alpha", "beta", "alpha", "beta"], "both were encoded again"

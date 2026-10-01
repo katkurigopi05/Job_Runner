@@ -43,21 +43,20 @@ import asyncio
 import csv
 import hashlib
 import re
+import struct
 import sys
 import time
+from array import array
 from collections import Counter
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import select
 
 from packages.core import db as core_db
 from packages.core.models import Company, Posting
 from packages.matching.roles import canonical
-
-if TYPE_CHECKING:
-    import numpy as np
 
 DEFAULT_OUT = Path("storage/exports/postings_with_embeddings.csv")
 MODEL = "BAAI/bge-small-en-v1.5"
@@ -196,16 +195,58 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+#: The cache file: magic, dimension, count, then `count` hex digests, then
+#: `count * dimension` float32s. Standard library only — numpy arrives with the
+#: embeddings extra, not with the project, and CI installs no extras; the
+#: first version used it and failed collection there.
+_CACHE_MAGIC = b"JRE1"
+_CACHE_HEADER = struct.Struct("<4sII")
+_DIGEST_LEN = 64
+
+
+def _load_cache(cache: Path) -> dict[str, list[float]]:
+    """Cached vectors by text digest. Empty when the file is absent or does not add up.
+
+    Re-encoding costs minutes; trusting a truncated or mismatched file puts a
+    vector beside the wrong posting, so any doubt means re-encode.
+    """
+    try:
+        blob = cache.read_bytes()
+    except FileNotFoundError:
+        return {}
+    if len(blob) < _CACHE_HEADER.size:
+        return {}
+    magic, dim, count = _CACHE_HEADER.unpack_from(blob)
+    if magic != _CACHE_MAGIC or len(blob) != _CACHE_HEADER.size + count * (_DIGEST_LEN + 4 * dim):
+        return {}
+    start = _CACHE_HEADER.size
+    digests = blob[start : start + count * _DIGEST_LEN].decode("ascii")
+    floats = array("f")
+    floats.frombytes(blob[start + count * _DIGEST_LEN :])
+    return {
+        digests[i * _DIGEST_LEN : (i + 1) * _DIGEST_LEN]: floats[i * dim : (i + 1) * dim].tolist()
+        for i in range(count)
+    }
+
+
+def _save_cache(cache: Path, known: dict[str, list[float]]) -> None:
+    """Written to a temporary file and renamed, so an interrupted run leaves the old cache."""
+    dim = len(next(iter(known.values())))
+    floats = array("f")
+    for vector in known.values():
+        floats.extend(vector)
+    header = _CACHE_HEADER.pack(_CACHE_MAGIC, dim, len(known))
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    partial = cache.with_suffix(".partial")
+    partial.write_bytes(header + "".join(known).encode("ascii") + floats.tobytes())
+    partial.replace(cache)
+
+
 def encode(texts: list[str], cache: Path) -> list[list[float]]:
     """bge-small vectors for `texts`, reusing any cached for identical text."""
-    import numpy as np
-
     from packages.matching.embed import SentenceTransformerEmbedder
 
-    known: dict[str, np.ndarray] = {}
-    if cache.exists():
-        stored = np.load(cache)
-        known = dict(zip(stored["digests"].tolist(), stored["vectors"], strict=True))
+    known = _load_cache(cache)
 
     digests = [_digest(text) for text in texts]
     missing = sorted({d: t for d, t in zip(digests, texts, strict=True) if d not in known}.items())
@@ -227,13 +268,12 @@ def encode(texts: list[str], cache: Path) -> list[list[float]]:
             for (digest, _), vector in zip(
                 batch, embedder.encode([t for _, t in batch]), strict=True
             ):
-                known[digest] = np.asarray(vector, dtype=np.float32)
+                known[digest] = list(vector)
             done = i + len(batch)
             rate = done / (time.perf_counter() - started)
             print(f"  {done}/{len(missing)} ({rate:.0f}/s)", flush=True)
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(cache, digests=np.array(list(known)), vectors=np.stack(list(known.values())))
-    return [known[digest].tolist() for digest in digests]
+        _save_cache(cache, known)
+    return [known[digest] for digest in digests]
 
 
 # --- export -----------------------------------------------------------------------
@@ -309,7 +349,7 @@ def main(argv: list[str] | None = None) -> int:
     rows = asyncio.run(_rows())
     # Exactly the text `score.embed_postings` encodes, so bge rows match pgvector.
     texts = [f"{title or ''}\n{description or ''}" for _, title, _, description, *_ in rows]
-    vectors = encode(texts, args.out.parent / ".embedding_cache.npz")
+    vectors = encode(texts, args.out.parent / ".embedding_cache.bin")
     tally = write(args.out, rows, vectors, date.today())
 
     print(f"wrote {len(rows)} postings to {args.out} ({args.out.stat().st_size / 1e6:.0f} MB)")
