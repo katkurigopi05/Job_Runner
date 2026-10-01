@@ -260,6 +260,16 @@ model; it is not an offline review.
   `.github/workflows/ai-review.yml`. Confirm the committed GitHub version before
   adding another copy. A successful GitHub review run has not yet been verified.
 
+**Update, September 30, 2026.** Every GitHub review from September 21 failed
+within seconds, for two reasons unrelated to the PRs. First, the OCR launcher
+updates itself: its first run starts a background `npm i -g` of the newest
+release, which replaces the package while the review starts. The workflow now
+sets `OCR_NO_UPDATE=1`. Second, `deepseek/deepseek-v4-flash-0731:free` was
+withdrawn from OpenRouter, so the model is now
+`nvidia/nemotron-3-super-120b-a12b:free`. The review is also advisory now: if
+it cannot run, the check stays green and posts an "AI review did not run"
+warning instead of failing the PR.
+
 An API key was exposed during setup. Revoke that key in
 [OpenRouter settings](https://openrouter.ai/settings/keys) and use a replacement
 in both local OCR configuration and the GitHub secret. Never put keys in this
@@ -276,8 +286,12 @@ git --version
 node --version
 npm --version
 npm install -g @alibaba-group/open-code-review@1.12.6
+export OCR_NO_UPDATE=1   # without it, the first `ocr` run upgrades itself
 ocr version
 ```
+
+Add the `export` line to `~/.zshrc` to keep the pin across terminals. Without
+it, OCR quietly installs its newest release in the background.
 
 Configure OpenRouter as a custom provider:
 
@@ -285,7 +299,7 @@ Configure OpenRouter as a custom provider:
 ocr config set provider review-openrouter
 ocr config set custom_providers.review-openrouter.url https://openrouter.ai/api/v1
 ocr config set custom_providers.review-openrouter.protocol openai
-ocr config set custom_providers.review-openrouter.model deepseek/deepseek-v4-flash-0731:free
+ocr config set custom_providers.review-openrouter.model nvidia/nemotron-3-super-120b-a12b:free
 ```
 
 In **macOS zsh**, paste and run the following block together. When the prompt
@@ -327,50 +341,12 @@ In the GitHub repository, open **Settings → Secrets and variables → Actions 
 New repository secret**. Name it `OPENROUTER_API_KEY` and use the replacement
 OpenRouter key as its value.
 
-Save the following as `.github/workflows/ai-review.yml`, preserving indentation.
-Keep `${{ secrets.OPENROUTER_API_KEY }}` unchanged; GitHub resolves it at runtime.
-The YAML file must not include Markdown code fences.
-
-```yaml
-name: AI Code Review
-
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-
-permissions:
-  contents: read
-  pull-requests: write
-
-concurrency:
-  group: ai-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
-jobs:
-  review:
-    if: >-
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - name: Review pull request
-        uses: alibaba/open-code-review@7a571b78d3493b249f6ad14d835c6a79a0a67d2e # v1.12.6
-        with:
-          ocr_version: '1.12.6'
-          llm_url: https://openrouter.ai/api/v1
-          llm_auth_token: ${{ secrets.OPENROUTER_API_KEY }}
-          llm_model: deepseek/deepseek-v4-flash-0731:free
-          llm_use_anthropic: 'false'
-          llm_extra_body: '{}'
-          effort: low
-          review_concurrency: '1'
-          stream_progress: 'true'
-          sticky_summary: 'true'
-          incremental: 'true'
-```
+The workflow is committed at `.github/workflows/ai-review.yml`. That file is
+the only copy: this README used to carry one too, and it went stale as soon as
+the workflow changed. Its comments explain each setting. To change the model
+without a commit, set an `AI_REVIEW_MODEL` repository variable (**Settings →
+Secrets and variables → Actions → Variables**). The model must support tool
+calls.
 
 The action installs OCR, checks out the repository, reviews the PR diff, and
 posts a summary and inline findings. It uses GitHub's automatically supplied
@@ -404,10 +380,17 @@ the code sent for review on later runs.
   exhausted. A PR review can consume many requests.
 - **GitHub job skipped:** check whether the PR is a draft, comes from a fork,
   or was triggered by Dependabot.
+- **`Cannot find module '../scripts/platform'` or `'/usr/local/bin/ocr'`:** OCR
+  upgraded itself mid-run. Make sure `OCR_NO_UPDATE` is still set at job level
+  in the workflow.
+- **Green check with an "AI review did not run" warning:** the reviewer failed
+  and the PR was *not* reviewed. Read the job summary. A withdrawn model is
+  fixed by pointing `AI_REVIEW_MODEL` at a current free model that supports
+  tools ([list](https://openrouter.ai/models?max_price=0)).
 - **GitHub cannot post comments:** check the run error and repository or
   organization Actions policy; the workflow requests `pull-requests: write`.
 
-The `:free` model was working during setup, but hosted model availability,
+Free models are withdrawn without notice (the original one was), and hosted model availability,
 quotas, and pricing can change. Check [OpenRouter activity](https://openrouter.ai/activity)
 and [current limits](https://openrouter.ai/docs/api_reference/limits). GitHub
 Actions runner usage is separate from model API usage. AI findings supplement
