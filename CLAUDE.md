@@ -3315,3 +3315,115 @@ result is always non-negative — checked exhaustively for every `(N, n)` to
 that actually provides the guarantee. A guard that cannot fire reads as
 protection against a risk that does not exist, which is the same failure as a
 test that cannot fail.
+
+---
+
+## 20. The embedder was reading the sales pitch
+
+§15 records the ATS scorer being fixed for exactly this and the embedder
+keeping the defect one layer up. `bge-small-en-v1.5` has a 512-token window;
+`score.embed_postings` encoded `f"{title}\n{description_raw}"` as one vector,
+and the tokenizer silently dropped the rest — `encode()` returns a vector
+either way.
+
+Measured on the twelve real crawled postings in `tests/fixtures/golden`:
+
+| | |
+|---|---|
+| postings over the 512-token limit | **12 of 12** |
+| median length | 1,385 tokens |
+| median fraction embedded | **37%** |
+| **skill-bearing sentences embedded** | **15.1%** |
+| postings whose requirements section is entirely truncated away | **4 of 12** |
+
+The fourth row is the one that matters. Skills do not sit uniformly through a
+posting: they cluster in the requirements section, which comes after the
+company's pitch. So the 37% that survived was disproportionately the pitch —
+"`world`, `problems`, `believe` and the company's own name recur throughout"
+is §15's own description of the same text, written about the scorer. The feed
+has been ranking on company blurb, which is a candidate explanation for §19's
+finding that `production` scores 0.405 on adjacent roles and ties with a
+control that returns 0.5 for everything.
+
+`packages/matching/chunking.py` splits at 1536 characters with 25% overlap.
+On the same corpus that takes skill-sentence coverage from **15.1% to 100%**,
+at 4.6 chunks per posting.
+
+### Why 25%, with the number
+
+The thing overlap prevents is a semantic unit landing across a boundary,
+diluted in both neighbours and whole in neither. Measured as the fraction of
+multi-sentence skill-bearing blocks surviving intact in at least one chunk,
+varying what counts as a block:
+
+```text
+chunk 1536      0%      10%      15%      20%      25%
+ >100 chars  90.4%    91.5%    96.4%   100.0%   100.0%
+ >150 chars  79.2%    75.0%    91.7%   100.0%   100.0%
+ >200 chars  86.7%    69.2%    91.7%   100.0%   100.0%
+ >300 chars  55.6%    50.0%    66.7%   100.0%   100.0%
+```
+
+20% is the cheapest that reaches 100% at this size, and 25% ships anyway for
+two reasons. It also reaches 100% at 2048 where 20% does not, so the constant
+survives a change of chunk size rather than falling off a cliff. And **10% is
+repeatedly worse than no overlap at all** — 69.2% against 86.7% — which is not
+noise: a shorter step shifts every boundary, and a boundary inside a block
+destroys it whether or not the neighbours overlap. Overlap is not a dial where
+less is merely cheaper, so the margin is kept and
+`test_the_overlap_is_the_one_that_was_measured` holds it.
+
+### float16, and why the speed-up is bigger than the width
+
+`PostingChunk.embedding` is `halfvec(384)`, not `vector(384)`. Measured at
+chunk scale — 92,000 rows, which is what 19,018 postings become:
+
+| | float32 | float16 |
+|---|---|---|
+| storage | 135 MB | **68 MB** |
+| same top-10 ids | — | **100%** |
+| identical order | — | **40 of 40 queries** |
+| largest distance difference | — | 5.46e-05 |
+| median query | 172 ms | **27 ms** |
+
+6.27× is more than halving the width buys, and the reason is a property of the
+deployment rather than of the type: `shared_buffers` defaults to 128 MB, so
+the float32 column does not fit and the float16 one does. The figure was the
+same with the query order reversed, so it is not cache warming. On a server
+tuned with more memory it would shrink toward 2×. Nothing is lost either way —
+bge-small's values are far coarser than float16's precision, which is the same
+finding `dp800-sql-embeddings-vector-search` records for `VECTOR(1536,
+float16)`.
+
+### What is deliberately additive
+
+`postings.description_embedding` is **untouched**. It is what `score_posting`
+ranks the feed on and what `Profile.min_match_score` compares against, so
+replacing it would re-rank the feed as a side effect of a storage change —
+`rubric.py` argues that at length and §19 repeats it. Chunks are the second
+reading, for retrieval. Whether the feed should rank on them is a separate
+decision with a benchmark attached, and `docs/ML_EVALUATION.md` sets the bar.
+
+Three more properties a later change could break:
+
+- **Chunks are replaced, never merged.** A posting whose text changed has
+  boundaries that moved, so pairing old rows to new by ordinal attaches a
+  vector to text it was not made from — the mismatch `embedding_model` exists
+  to catch, invisible in the same way.
+- **The title rides on every chunk, and the offsets do not shift for it.** A
+  chunk is retrieved alone, so a requirements list that never names the role
+  matches worse than the same list under its heading. But `start_char` and
+  `end_char` stay relative to `description_raw`, or a caller showing context
+  around a chunk is handed a span shifted by the title's length.
+- **No vector index, and that is a refusal rather than an oversight.** §5
+  claims an ivfflat on `description_embedding` and **no migration has ever
+  created one** — the stale-documentation failure this file keeps catching in
+  itself. Adding an unverified second one here would repeat it. The ANN
+  decision is separate and needs measuring: pgvector filters *after* index
+  traversal, and a filtered ivfflat query measured returning **fewer than 5
+  rows on 28 of 30 queries**, so it needs a partial index per embedding space.
+
+**What none of this establishes is that retrieval got better.** That needs
+bge-small, which this environment's `huggingface.co` denial blocks, and graded
+queries the corpus does not have. What is measured is that the text now
+survives into a vector at all, which is the half that is knowable offline.

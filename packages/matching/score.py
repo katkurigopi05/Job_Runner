@@ -16,14 +16,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.core.models import Match, Posting, Profile, Project, Resume
+from packages.core.models import Match, Posting, PostingChunk, Profile, Project, Resume
 
 if TYPE_CHECKING:
     from packages.matching.legitimacy import Assessment
 
+from packages.matching.chunking import chunk_posting
 from packages.matching.embed import Embedder, cosine, get_embedder, tokenize
 from packages.matching.filters import apply_filters, experience_of
 from packages.matching.idf import DocumentFrequencies
@@ -426,8 +427,71 @@ async def embed_postings(
         posting.embedding_model = stamp
         posting.embedding_revision = revision
 
+    await embed_chunks(session, pending, embedder=active, revision=revision)
+
     await session.flush()
     return len(pending)
+
+
+async def embed_chunks(
+    session: AsyncSession,
+    postings: list[Posting],
+    *,
+    embedder: Embedder | None = None,
+    revision: int | None = None,
+) -> int:
+    """Replace each posting's chunk rows and embed them. See `chunking.py`.
+
+    Runs beside `embed_postings` rather than inside its loop, and the posting's
+    own vector is still written exactly as before. The column is what
+    `score_posting` ranks the feed on and `Profile.min_match_score` compares
+    against; chunks are the second reading, for retrieval. Changing which of
+    them the feed uses is a separate decision with a benchmark attached.
+
+    **Replace, never merge.** A posting whose text changed has chunk boundaries
+    that moved, so matching old rows to new ones by ordinal would pair a vector
+    with text it was not made from — the same mismatch `embedding_model` exists
+    to catch, and invisible in exactly the same way. The delete is cheap
+    because a posting has single-digit chunks.
+    """
+    active = embedder or get_embedder()
+    stamp = getattr(active, "name", "unknown")
+
+    ids = [p.id for p in postings if p.description_raw]
+    if not ids:
+        return 0
+
+    await session.execute(delete(PostingChunk).where(PostingChunk.posting_id.in_(ids)))
+
+    rows: list[PostingChunk] = []
+    texts: list[str] = []
+    for posting in postings:
+        if not posting.description_raw:
+            continue
+        for chunk in chunk_posting(posting.title, posting.description_raw):
+            rows.append(
+                PostingChunk(
+                    posting_id=posting.id,
+                    ordinal=chunk.ordinal,
+                    start_char=chunk.start,
+                    end_char=chunk.end,
+                    text=chunk.text,
+                    embedding_model=stamp,
+                    embedding_revision=revision,
+                )
+            )
+            texts.append(chunk.text)
+
+    if not rows:
+        return 0
+
+    for row, vector in zip(rows, active.encode(texts), strict=True):
+        row.embedding = vector
+    session.add_all(rows)
+    await session.flush()
+
+    log.info("posting_chunks_embedded", postings=len(ids), chunks=len(rows), model=stamp)
+    return len(rows)
 
 
 #: Words that appear in nearly every posting and describe no skill. Without

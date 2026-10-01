@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pgvector.sqlalchemy import Vector
+from pgvector.sqlalchemy import HALFVEC, Vector
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -438,6 +438,67 @@ class Posting(Base):
         ),
         Index("ix_postings_requirements_version", "requirements_version"),
         Index("ix_postings_canonical_job_id", "canonical_job_id"),
+    )
+
+
+class PostingChunk(Base):
+    """One embedded window of a posting. See `packages/matching/chunking.py`.
+
+    `Posting.description_embedding` stays where it is and keeps its meaning:
+    one vector for the posting, which is what `score.py` ranks the feed on and
+    what `tests/test_matching.py` validates. This table is the other reading —
+    the whole text rather than the first 512 tokens of it — and it is additive
+    on purpose. Replacing the column would re-rank the feed as a side effect
+    of a storage change, which `rubric.py` argues against at length.
+
+    **The vector is `halfvec`, not `vector`.** Measured at chunk scale, 92,000
+    rows of 384 dimensions, against the float32 equivalent:
+
+    | | float32 | float16 |
+    |---|---|---|
+    | storage | 135 MB | **68 MB** |
+    | same top-10 ids | — | **100%** |
+    | identical order | — | **40 of 40 queries** |
+    | largest distance difference | — | 5.46e-05 |
+    | median query | 172 ms | **27 ms** |
+
+    The speed-up is larger than halved width alone buys, and the reason is
+    worth recording because it is a property of the deployment rather than of
+    the type: `shared_buffers` defaults to 128 MB, so the float32 column does
+    not fit and the float16 one does. On a server tuned with more it would
+    shrink toward the 2x the width implies. Either way nothing is lost —
+    bge-small's values are far coarser than float16's precision, which is the
+    same finding `dp800-sql-embeddings-vector-search` records for
+    `VECTOR(1536, float16)`.
+    """
+
+    __tablename__ = "posting_chunks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    posting_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("postings.id", ondelete="CASCADE"), nullable=False
+    )
+    #: Position within the posting. Ordinal rather than offset so a chunk can
+    #: be named in a log or a citation without quoting the text back.
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Offsets into `Posting.description_raw`, so a caller can show the
+    #: surrounding context without this table holding a second copy of it.
+    start_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: The text as embedded, title prefix included. Stored because the chunker
+    #: may change: a vector whose text was produced by different rules is the
+    #: same mismatch `embedding_model` exists to catch one level up.
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(HALFVEC(EMBEDDING_DIM))
+    #: The same identity pair `Posting` carries, for the same reason — a cosine
+    #: across embedders is noise that reports itself as a number.
+    embedding_model: Mapped[str | None] = mapped_column(String(64))
+    embedding_revision: Mapped[int | None] = mapped_column(Integer)
+
+    __table_args__ = (
+        UniqueConstraint("posting_id", "ordinal", name="uq_posting_chunks_posting_ordinal"),
+        CheckConstraint("end_char > start_char", name="ck_posting_chunks_span"),
+        Index("ix_posting_chunks_posting_id", "posting_id"),
     )
 
 
