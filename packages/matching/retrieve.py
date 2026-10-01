@@ -29,7 +29,8 @@ decided by the words: a posting must contain one of the question's
 distinguishing terms, weighted by how rare the term is across the corpus
 (`idf.DocumentFrequencies`), matched on word boundaries so "rust" does not
 match "trust". This scan reads every open posting, including the third of the
-corpus the matching pass has not embedded yet, which no vector search can see.
+corpus with no usable vector — none yet, or one with no model stamp — which no
+vector search can see.
 
 Embeddings then re-order those matches, fused with the keyword order by
 Reciprocal Rank Fusion. They answer alone only when the question has no

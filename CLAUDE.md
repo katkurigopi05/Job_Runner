@@ -971,10 +971,13 @@ it against the owner's database rather than by reading it:
   and four sharing "open" and "roles". Now a posting must contain one of the
   question's distinguishing terms — IDF-weighted, word-bounded so "rust" is
   not "trust" — and vectors re-order those matches by RRF. The keyword scan
-  reads every open posting, including the 6,833 of 19,018 the matching pass
-  had not embedded yet, which no vector search can see; in the fusion such a
-  posting takes the middle vector rank rather than none, or the best keyword
-  match could drop out of the top five for lacking an embedding.
+  reads every open posting, including the 6,833 of 19,018 with no usable
+  vector, which no vector search can see; in the fusion such a posting takes
+  the middle vector rank rather than none, or the best keyword match could
+  drop out of the top five for lacking an embedding. (The commit that added
+  this called all 6,833 unembedded. 6,769 are; the other 64 carry a vector
+  with no `embedding_model` stamp, so no question can be encoded into their
+  space and they are skipped the same way.)
 
   Framing words are never search terms, and rarity cannot be trusted to
   remove them: "me" is in 1.9% of postings, and "Show me forward deployed
