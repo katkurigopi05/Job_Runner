@@ -31,7 +31,15 @@ jobs:
       OCR_NO_UPDATE: '1'
 
     steps:
+      # Advisory, so its failure must not turn a pull request red. It depends
+      # on a free model route OpenRouter can withdraw without notice and a
+      # daily free quota other projects share, and from 2026-09-21 it failed
+      # every PR for reasons that had nothing to do with the PR. The next step
+      # says so loudly instead, as a warning and in the job summary, so a
+      # reviewer that stopped working does not look like one that found nothing.
       - name: Review pull request
+        id: review
+        continue-on-error: true
         uses: alibaba/open-code-review@7a571b78d3493b249f6ad14d835c6a79a0a67d2e # v1.12.6
         with:
           ocr_version: '1.12.6'
@@ -50,3 +58,18 @@ jobs:
           stream_progress: 'true'
           sticky_summary: 'true'
           incremental: 'true'
+
+      - name: Report a review that did not run
+        if: steps.review.outcome == 'failure'
+        env:
+          MODEL: ${{ vars.AI_REVIEW_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free' }}
+        run: |
+          echo "::warning title=AI review did not run::The reviewer failed, so this PR has had no AI review. Common causes: the free model ($MODEL) was withdrawn, the OpenRouter daily quota is spent, or the tool broke. See the 'Review pull request' step log."
+          {
+            echo "### AI review did not run"
+            echo
+            echo "This PR has **not** been reviewed. The check is green because the reviewer is advisory, not because it found nothing."
+            echo
+            echo "- Model: \`$MODEL\`. Set the \`AI_REVIEW_MODEL\` repository variable to switch."
+            echo "- Details: the *Review pull request* step log, and the \`ocr-review-result-*\` artifact."
+          } >> "$GITHUB_STEP_SUMMARY"

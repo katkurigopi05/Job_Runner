@@ -41,7 +41,18 @@ env:
 
 jobs:
   gates:
-    name: gates (lint, types, migrations, tests)
+    # `locked` installs the exact versions in constraints.txt, so a release
+    # upstream cannot turn every pull request red overnight. SQLAlchemy 2.1.1
+    # did exactly that on 2026-09-28, failing main on a commit that had passed
+    # a week earlier. `latest` installs whatever is newest and runs only on
+    # the weekly schedule and on demand: it warns that the lock is due a
+    # refresh (`make lock`) by failing a scheduled run instead of a PR.
+    strategy:
+      fail-fast: false
+      matrix:
+        deps: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["locked","latest"]' || '["locked"]') }}
+    # The locked leg keeps the bare name, so the check a PR shows is unchanged.
+    name: gates (lint, types, migrations, tests)${{ matrix.deps == 'latest' && ' on latest dependencies' || '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -69,7 +80,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
 
       # scripts/init-db.sql runs from a compose volume mount, which service
       # containers have no equivalent of. Same statements, applied by hand.
@@ -95,10 +108,16 @@ jobs:
       # the same layout as a developer box also means CI exercises the paths
       # the Makefile documents rather than a parallel set of its own.
       - name: Install the project
+        env:
+          DEPS: ${{ matrix.deps }}
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -e ".[dev]"
+          if [ "$DEPS" = "latest" ]; then
+            .venv/bin/pip install -e ".[dev]"
+          else
+            .venv/bin/pip install -e ".[dev]" -c constraints.txt
+          fi
 
       # The POS tagger the fabrication guard reads noun phrases with. It is
       # data, not a package, so pip cannot carry it — and `packages/tailor/
