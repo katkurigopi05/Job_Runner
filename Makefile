@@ -51,8 +51,13 @@ check-migrations:
 
 check: lint typecheck test
 
+# --reload-exclude matches the copies .gitignore already ignores (`* [0-9].*`).
+# On a synced Desktop, iCloud writes `foo 2.py`, `foo 3.py` beside real files
+# mid-session; each one restarted the server, killing in-flight requests. A
+# chat sent to a remote model takes long enough to be cut off every time, and
+# the dashboard reported "Could not reach the API" with the API up.
 api:
-	$(PY)/uvicorn apps.api.main:app --reload --host 127.0.0.1 --port 8000
+	$(PY)/uvicorn apps.api.main:app --reload --reload-exclude '* [0-9].py' --host 127.0.0.1 --port 8000
 
 worker:
 	$(PY)/python -m apps.worker.run
@@ -322,13 +327,15 @@ bench-matching:
 export-labels:
 	$(PY)/python -m scripts.export_labels $(if $(p),--profile $(p),) $(if $(out),--out $(out),) $(if $(kind),--kind $(kind),)
 
-# make export-postings — the current postings to one CSV: company, job type,
-# title, URL, dates, a deadline read from the text, whether it has expired, the
-# description, and a bge-small embedding. Expired postings (removed from their
-# board, or past a stated deadline) are left out unless all=1.
+# make export-postings — current postings from the last 30 days to one CSV:
+# company, job type, title, URL, dates, a deadline read from the text, whether
+# it has expired, the description, and a bge-small embedding. Expired postings
+# (removed from their board, or past a stated deadline) are left out unless
+# all=1; days=N changes the 30-day window, and days=0 removes it.
 #
 #     make export-postings                      storage/exports/postings_with_embeddings.csv
-#     make export-postings all=1                expired postings too
+#     make export-postings days=7               only the last week
+#     make export-postings all=1 days=0         everything, expired and old included
 #     make export-postings out=somewhere.csv
 #
 # `expired` is only as current as the last crawl — `last_seen_on_board` says
@@ -337,7 +344,7 @@ export-labels:
 # changed. See scripts/export_postings.py for why the vectors are re-encoded
 # rather than copied out of pgvector.
 export-postings:
-	$(PY)/python -m scripts.export_postings $(if $(out),--out $(out),) $(if $(filter 1,$(all)),--include-expired,)
+	$(PY)/python -m scripts.export_postings $(if $(out),--out $(out),) $(if $(filter 1,$(all)),--include-expired,) $(if $(days),--posted-within $(days),)
 
 # Gate 6 asks for 30 hand-labeled *real* recruiter emails; inbound_messages is
 # 0 and the fixtures were written beside the patterns that read them. Export
