@@ -1,6 +1,6 @@
 .PHONY: install up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching export-labels import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -314,6 +314,21 @@ bench-matching:
 # feed-ordered label does and does not license.
 export-labels:
 	$(PY)/python -m scripts.export_labels $(if $(p),--profile $(p),) $(if $(out),--out $(out),) $(if $(kind),--kind $(kind),)
+
+# make export-postings — every posting, open and closed, to one CSV: company,
+# job type, title, URL, dates, a deadline read from the text, whether it has
+# expired, the description, and a bge-small embedding.
+#
+#     make export-postings                      storage/exports/postings_with_embeddings.csv
+#     make export-postings out=somewhere.csv
+#
+# `expired` is only as current as the last crawl — `last_seen_on_board` says
+# how old — so run `make crawl` first when that matters. Needs the embeddings
+# extra; the first run encodes ~80 postings a second, later runs only what
+# changed. See scripts/export_postings.py for why the vectors are re-encoded
+# rather than copied out of pgvector.
+export-postings:
+	$(PY)/python -m scripts.export_postings $(if $(out),--out $(out),)
 
 # Gate 6 asks for 30 hand-labeled *real* recruiter emails; inbound_messages is
 # 0 and the fixtures were written beside the patterns that read them. Export
