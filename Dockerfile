@@ -39,13 +39,13 @@ WORKDIR /app
 
 # Dependency metadata first: this layer is the expensive one, and it only
 # rebuilds when the dependencies actually change rather than on every edit.
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md constraints.txt ./
 # The editable install needs the packages to exist, so stub them for this layer
 # and let the real COPY below replace them.
 RUN mkdir -p packages apps \
     && touch packages/__init__.py apps/__init__.py \
     && python -m pip install --upgrade pip \
-    && pip install -e ".[dev]"
+    && pip install -e ".[dev]" -c constraints.txt
 
 # --with-deps pulls Chromium's shared libraries. Only chromium: the adapters
 # never touch firefox or webkit, and each extra browser is ~300MB.
@@ -64,7 +64,9 @@ RUN useradd --create-home --uid 1000 jobrunner
 COPY --chown=jobrunner:jobrunner . .
 
 # Reinstall now that the real sources are present, so entry points resolve.
-RUN pip install -e ".[dev]"
+# The same constraints, or this layer could quietly upgrade what the one above
+# pinned.
+RUN pip install -e ".[dev]" -c constraints.txt
 
 # Only the directories written to need to belong to the user, and only the
 # directories themselves — no -R. /app itself is included so pytest can create
