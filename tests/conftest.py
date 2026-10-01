@@ -416,6 +416,30 @@ def _lexical_embedder():
     get_settings.cache_clear()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _postings_of_any_age():
+    """Store postings of any age unless a test asks for a limit.
+
+    `posting_max_age_days` measures against the wall clock, and crawler
+    fixtures carry fixed dates ("2026-01-15"). Left at the shipped 30 days,
+    those tests would pass or fail by the day they ran, and three failed the
+    day the limit landed. Tests of the limit pass `max_age_days` explicitly.
+    """
+    import os
+
+    from packages.core.config import get_settings
+
+    previous = os.environ.get("POSTING_MAX_AGE_DAYS")
+    os.environ["POSTING_MAX_AGE_DAYS"] = "0"
+    get_settings.cache_clear()
+    yield
+    if previous is None:
+        os.environ.pop("POSTING_MAX_AGE_DAYS", None)
+    else:
+        os.environ["POSTING_MAX_AGE_DAYS"] = previous
+    get_settings.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def _tmp_audit_trail(tmp_path, monkeypatch):
     """The LLM audit trail lives in its own directory per test.
