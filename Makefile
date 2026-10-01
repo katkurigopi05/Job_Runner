@@ -322,11 +322,13 @@ bench-matching:
 export-labels:
 	$(PY)/python -m scripts.export_labels $(if $(p),--profile $(p),) $(if $(out),--out $(out),) $(if $(kind),--kind $(kind),)
 
-# make export-postings — every posting, open and closed, to one CSV: company,
-# job type, title, URL, dates, a deadline read from the text, whether it has
-# expired, the description, and a bge-small embedding.
+# make export-postings — the current postings to one CSV: company, job type,
+# title, URL, dates, a deadline read from the text, whether it has expired, the
+# description, and a bge-small embedding. Expired postings (removed from their
+# board, or past a stated deadline) are left out unless all=1.
 #
 #     make export-postings                      storage/exports/postings_with_embeddings.csv
+#     make export-postings all=1                expired postings too
 #     make export-postings out=somewhere.csv
 #
 # `expired` is only as current as the last crawl — `last_seen_on_board` says
@@ -335,7 +337,7 @@ export-labels:
 # changed. See scripts/export_postings.py for why the vectors are re-encoded
 # rather than copied out of pgvector.
 export-postings:
-	$(PY)/python -m scripts.export_postings $(if $(out),--out $(out),)
+	$(PY)/python -m scripts.export_postings $(if $(out),--out $(out),) $(if $(filter 1,$(all)),--include-expired,)
 
 # Gate 6 asks for 30 hand-labeled *real* recruiter emails; inbound_messages is
 # 0 and the fixtures were written beside the patterns that read them. Export

@@ -19,6 +19,7 @@ import pytest
 from scripts.export_postings import (
     COLUMNS,
     MODEL,
+    current,
     encode,
     expiry,
     job_type,
@@ -262,3 +263,43 @@ def test_a_cache_that_does_not_add_up_is_re_encoded(tmp_path: Path, monkeypatch)
 
     assert encode(["alpha", "beta"], cache) == [[5.0, 1.0], [4.0, 1.0]]
     assert seen == ["alpha", "beta", "alpha", "beta"], "both were encoded again"
+
+
+def test_expired_postings_are_left_out_unless_asked_for() -> None:
+    """Removed from the board, or past a stated deadline, is gone; unknown stays.
+
+    "Still listed at the last crawl" is the best evidence there is that a job
+    is open, so dropping the unknowns would empty the file of most real jobs.
+    """
+    removed = ("Acme", "A", "u1", "Coffee.", datetime(2026, 8, 1), None, datetime(2026, 9, 5))
+    past = (
+        "Acme",
+        "B",
+        "u2",
+        "Application Deadline: September 1, 2026",
+        datetime(2026, 8, 1),
+        datetime(2026, 9, 29),
+        None,
+    )
+    ahead = (
+        "Acme",
+        "C",
+        "u3",
+        "Application Deadline: December 16, 2026",
+        datetime(2026, 9, 1),
+        datetime(2026, 9, 29),
+        None,
+    )
+    listed = (
+        "Acme",
+        "D",
+        "u4",
+        "No deadline here.",
+        datetime(2026, 9, 1),
+        datetime(2026, 9, 29),
+        None,
+    )
+
+    kept = current([removed, past, ahead, listed], today=date(2026, 9, 30))
+
+    assert [row[2] for row in kept] == ["u3", "u4"]

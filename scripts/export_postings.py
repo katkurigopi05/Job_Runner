@@ -1,6 +1,7 @@
-"""Export every posting to a CSV — `make export-postings`.
+"""Export the current postings to a CSV — `make export-postings`.
 
-One row per posting, open and closed:
+One row per posting that has not expired, or per posting of any kind with
+`--include-expired` (`make export-postings all=1`):
 
     company_name, job_type, job_title, job_posting_url, posted_date,
     application_deadline, deadline_source, last_seen_on_board, closed_on,
@@ -341,18 +342,43 @@ def write(out: Path, rows: list[Any], vectors: list[list[float]], today: date) -
     return tally
 
 
+def current(rows: list[Any], today: date) -> list[Any]:
+    """The rows whose `expired` would not be "yes".
+
+    Filtered before encoding rather than while writing, so a posting that is
+    left out costs no model time either. "unknown" stays: still listed at the
+    last crawl is the best evidence there is that a job is open.
+    """
+    kept = []
+    for row in rows:
+        _, _, _, description, published, _, closed = row
+        deadline, _ = read_deadline(description or "", _day(published))
+        if expiry(_day(closed), deadline, today) != "yes":
+            kept.append(row)
+    return kept
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument(
+        "--include-expired",
+        action="store_true",
+        help="keep postings removed from their board or past a stated deadline",
+    )
     args = parser.parse_args(argv)
 
+    today = date.today()
     rows = asyncio.run(_rows())
+    kept = rows if args.include_expired else current(rows, today)
     # Exactly the text `score.embed_postings` encodes, so bge rows match pgvector.
-    texts = [f"{title or ''}\n{description or ''}" for _, title, _, description, *_ in rows]
+    texts = [f"{title or ''}\n{description or ''}" for _, title, _, description, *_ in kept]
     vectors = encode(texts, args.out.parent / ".embedding_cache.bin")
-    tally = write(args.out, rows, vectors, date.today())
+    tally = write(args.out, kept, vectors, today)
 
-    print(f"wrote {len(rows)} postings to {args.out} ({args.out.stat().st_size / 1e6:.0f} MB)")
+    print(f"wrote {len(kept)} postings to {args.out} ({args.out.stat().st_size / 1e6:.0f} MB)")
+    if len(kept) < len(rows):
+        print(f"left out {len(rows) - len(kept)} expired postings (--include-expired keeps them)")
     print(", ".join(f"{key} {count}" for key, count in sorted(tally.items())))
     return 0
 
