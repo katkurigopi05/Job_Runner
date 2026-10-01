@@ -16,7 +16,12 @@ dependencies = [
     # EmailStr, which imports email-validator lazily at first use.
     "pydantic[email]>=2.9",
     "pydantic-settings>=2.6",
-    "sqlalchemy[asyncio]>=2.0.36",
+    # Capped below 2.1. CI installs unpinned, 2.1.1 respelled `Select`'s type
+    # (`Select[UUID]`, not `Select[tuple[UUID]]`), and mypy failed the gate on
+    # main from 2026-09-28 with no code change. The suite passes under 2.1.1 —
+    # only three annotations break — so lifting this is a small change of its
+    # own, not something a weekly install should decide.
+    "sqlalchemy[asyncio]>=2.0.36,<2.1",
     "asyncpg>=0.30",
     "alembic>=1.14",
     "pgvector>=0.3.6",

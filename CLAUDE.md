@@ -764,6 +764,31 @@ demand. **A pull request that touches either should be checked by hand with
 `workflow_dispatch` before merging** — that is the cost of this trade, and it
 is on you to remember it.
 
+### Pinned dependencies
+
+CI, the image and `make install` install from `constraints.txt`, an exact lock
+of every base and dev dependency. Until 2026-09-30 they installed whatever was
+newest, and on 2026-09-28 that turned `main` red with no code change:
+SQLAlchemy 2.1.1 changed how `Select` is typed, mypy failed the gate, and every
+open pull request inherited the failure. A PR's checks should describe the PR,
+not the day it ran.
+
+Two things keep the lock from going stale unnoticed:
+
+- **The weekly and on-demand runs add a second gates leg** that installs the
+  newest versions. When it fails, an upstream release has broken something.
+  It fails a scheduled run, not somebody's pull request, and the lock still
+  holds `main` green. When it passes, `make lock` (needs `uv`) refreshes the
+  pins, and that PR's CI tests exactly what it pins.
+- **`tests/test_dependencies_are_locked.py`** fails when a dependency in
+  `pyproject.toml` has no pin, or a pin falls outside its range. Those are the
+  two ways the lock stops agreeing with what it locks without anything else
+  noticing.
+
+SQLAlchemy is also capped below 2.1 in `pyproject.toml`. The suite passes under
+2.1.1, so lifting the cap means fixing three annotations, as a change of its
+own.
+
 ### Why this exists
 
 Every dependency defect this project has had was invisible locally and only
