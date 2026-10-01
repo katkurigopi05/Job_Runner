@@ -1,11 +1,21 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 /* Styling cues borrowed from the photo-editor: an emoji-prefixed toolbar row,
    a grey working canvas the content sits on, and a left-aligned status line
    pinned to the bottom. That app leans on system defaults, so there is no
    palette to copy — these are the shapes, carried into this app's colours. */
+
+/** A posting retrieved for a question. `cited` is read out of the reply. */
+interface Source {
+  label: string;
+  posting_id: string;
+  title: string;
+  company: string | null;
+  cited: boolean;
+}
 
 interface Turn {
   role: "you" | "assistant";
@@ -16,6 +26,46 @@ interface Turn {
   local?: boolean;
   /** Whether recruiter mail was actually in that turn's context. */
   sharedMail?: boolean;
+  sources?: Source[];
+  /** Open postings the search covered, and the ones it could not reach. */
+  searched?: number;
+  unsearchable?: number;
+}
+
+/**
+ * The postings an answer cited, under the answer.
+ *
+ * Cited ones only: the search always returns its nearest few, and listing the
+ * ones the answer ignored would present context as evidence. The coverage line
+ * goes with them because "none of these" over a sixth of the corpus is a
+ * different claim from the same words over all of it.
+ */
+function CitedPostings({ turn }: { turn: Turn }) {
+  const cited = (turn.sources ?? []).filter((source) => source.cited);
+  if (cited.length === 0) return null;
+  const total = (turn.searched ?? 0) + (turn.unsearchable ?? 0);
+
+  return (
+    <div className="mt-1.5 max-w-[90%] space-y-0.5 text-left text-xs">
+      <ul className="space-y-0.5">
+        {cited.map((source) => (
+          <li key={source.label}>
+            <span className="font-mono text-ink-faint">{source.label}</span>{" "}
+            <Link
+              href={`/postings/${source.posting_id}`}
+              className="text-ink underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+            >
+              {source.title}
+            </Link>
+            {source.company ? <span className="text-ink-faint"> · {source.company}</span> : null}
+          </li>
+        ))}
+      </ul>
+      <p className="text-ink-faint">
+        from a search of {turn.searched ?? 0} of {total} open postings
+      </p>
+    </div>
+  );
 }
 
 /**
@@ -132,6 +182,9 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           model: body.model,
           local: body.local,
           sharedMail: body.shared_mail,
+          sources: body.sources,
+          searched: body.postings_searched,
+          unsearchable: body.postings_unsearchable,
         },
       ]);
       // `body.local` is computed server-side from the model, not inferred from
@@ -271,6 +324,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
               >
                 {turn.text}
               </div>
+              {turn.role === "assistant" ? <CitedPostings turn={turn} /> : null}
             </div>
           ))
         )}
@@ -292,7 +346,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           id="assistant-input"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="ask about your applications…"
+          placeholder="ask about your applications or open postings…"
           disabled={busy}
           className="min-w-0 flex-1 rounded border border-rule bg-paper px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
         />
