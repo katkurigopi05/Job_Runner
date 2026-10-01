@@ -57,6 +57,7 @@ from packages.llm import router as llm_router
 from packages.llm.audit import is_local
 from packages.llm.prompts import CHAT_SYSTEM
 from packages.llm.provider import LLMError
+from packages.matching.multihop import retrieve_multihop
 from packages.matching.retrieve import Retrieval, retrieve
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -360,7 +361,13 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     include_mail = selected == LOCAL_PROVIDER or body.share_mail
 
     context = await _context(session, body.application_id, include_mail=include_mail)
-    found = await retrieve(session, question)
+    # One pass unless asked. `retrieve_multihop` widens a thin search and
+    # returns the same shape, so the rest of this route cannot tell which ran
+    # — and neither can the provider, since a hop costs no model call.
+    if body.multihop:
+        found = (await retrieve_multihop(session, question)).as_retrieval()
+    else:
+        found = await retrieve(session, question)
     prompt = f"CONTEXT:\n{context}\n{_postings_section(found)}\n\nQUESTION:\n{question}"
 
     try:

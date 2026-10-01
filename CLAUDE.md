@@ -3427,3 +3427,97 @@ Three more properties a later change could break:
 bge-small, which this environment's `huggingface.co` denial blocks, and graded
 queries the corpus does not have. What is measured is that the text now
 survives into a vector at all, which is the half that is knowable offline.
+
+---
+
+## 21. LangGraph, for the one thing that is actually a graph
+
+The owner asked for it. This section records what it was given to do, what it
+was deliberately not given, and the argument that was made against it first —
+because the argument is still true of everything it was kept away from.
+
+**What it runs: multi-hop retrieval.** `packages/matching/multihop.py`. A
+thin first pass widens its query and searches again, up to `MAX_HOPS`. That is
+a cycle whose exit depends on what the last pass found, and it is the one
+shape `retrieve.py`'s straight line cannot express — `retrieve → fuse →
+context → model` has no branch and no loop in it.
+
+**What it does not run: anything with state worth keeping.** §6 makes
+`core/state.py::transition()` the single place an application's status
+changes, and §17's stream is correct only because the event log is the single
+publication path — "the stream cannot disagree with the database" is a
+property of there being one writer. A graph persisting its own checkpoint is a
+second store that can disagree with the first, which is §6's bug
+institutionalised rather than introduced by accident. So:
+
+- **`compile()` is called with no arguments.** No checkpointer.
+  `test_the_graph_persists_no_state_of_its_own` reads the **AST** for that,
+  not the source text, because this module's docstring explains at length why
+  there is no checkpointer and a grep reads the explanation as the violation
+  — the trap `scripts/import_companies.py`'s test already records.
+- **Nothing imports the apply pipeline.** `apps/worker/apply_job.py` is a
+  state machine with parks a human resumes, and it already has the thing a
+  graph framework is for.
+- Retrieval is a read. A dropped hop costs milliseconds and re-running it is
+  cheaper than storing it.
+
+### The routing is computed, never asked of a model
+
+The obvious build asks the model "are these results sufficient?" and branches
+on the answer. Refused, with a number: **§7's daily allowance is
+request-capped, not token-capped**, so a judge call per hop triples what one
+question costs. §14's "grounded, not freehand" points the same way — an agent
+choosing its own search terms is the assistant reasoning further from the
+material it was handed.
+
+So `assess` reads two integers and `broaden` drops the query's longest term.
+Both deterministic. **A hop costs no provider call at all**, the audit trail
+records exactly what it recorded for a one-pass question, and
+`test_a_hop_costs_no_provider_call` holds it by making the router explode.
+
+The longest-term rule is a crude proxy for rarest and a deliberate one: the
+term that makes a question fail to match is usually the specific one, and the
+alternative is a corpus-frequency lookup per hop that nothing has measured to
+be better.
+
+### Off by default, and what that protects
+
+`ChatRequest.multihop` defaults to `False`, so the shipped path is the single
+pass it has always been. A flag that changed an answer for someone who never
+set it would be a feature arriving by surprise in the one place §14 keeps
+deliberate. `HopResult.as_retrieval()` returns `retrieve.Retrieval`, so the
+route cannot tell which ran and neither can the provider.
+
+### The cost, stated rather than implied
+
+**41 transitive packages**, including `langsmith`, which posts traces to a
+third party when `LANGSMITH_TRACING` or `LANGCHAIN_TRACING_V2` is set. Both
+are unset, and `test_langsmith_tracing_is_not_enabled` holds it rather than
+trusting it: a trace carries the question, and a question carries the owner's
+applications (§2.8). The dependency goes through `constraints.txt` and
+`make lock`, which #106 made a gate.
+
+**The argument against is recorded because it still applies.** Every other
+LangGraph feature maps onto something this repo already has and audits —
+`transition()` for the state machine, `QueueTask.attempts`/`run_after` for
+retries, `SKIP LOCKED` for concurrency, `needs_review` for human-in-the-loop,
+§17's SSE for streaming. `docs/PARITY.md` declined Langflow on the same
+ground: "a visual graph over five tasks would be scaffolding around a 60-line
+router." That stays true of everything except the loop.
+
+### What the first run showed
+
+The graph loops and widens correctly — `'Kubernetes jobs' → 'jobs'`,
+`'backend engineer jobs' → 'backend jobs'`, stopping at `MAX_HOPS`. **It found
+nothing extra**, because the corpus it ran against had nothing extra to find.
+So the mechanism is proven and the benefit is not. Whether hop 2 improves an
+answer on the owner's 19,018 postings is unmeasured, and needs the same two
+things §19 and §20 are both waiting on: bge-small, and graded queries.
+
+One defect the tests caught, worth recording because the docstring already
+claimed otherwise. `assess` looped on a question that was never about postings
+at all: "what is the weather today" widened to "what is the today" and
+searched a second time. The module docstring said it stopped. It does now —
+`not_a_posting_question` — and a broader version of a question the corpus has
+no opinion on is still not a question about postings, just a shorter string
+costing another pass.

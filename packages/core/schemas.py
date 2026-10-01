@@ -622,6 +622,13 @@ class ChatRequest(BaseModel):
     #: the most sensitive thing in the context and the only part written by
     #: people who never chose a provider.
     share_mail: bool = False
+    #: Retry a thin search with a widened query, up to `multihop.MAX_HOPS`.
+    #:
+    #: Off by default, so the shipped path is the single pass it has always
+    #: been and this changes no answer nobody asked it to change. Costs no
+    #: extra provider call whatever it does — the routing is computed from
+    #: result counts, never asked of a model (`packages/matching/multihop.py`).
+    multihop: bool = False
 
 
 class ChatSource(BaseModel):
