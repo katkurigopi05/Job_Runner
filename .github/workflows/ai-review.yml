@@ -20,6 +20,15 @@ jobs:
       github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # The pin below only holds with this set. The `ocr` launcher updates
+      # itself: its first run (the action's own version check) starts a
+      # background `npm i -g` of the latest release, which replaces the package
+      # while the review step is starting. Every run since 1.12.8 was published
+      # on 2026-09-21 died with "Cannot find module '../scripts/platform'" or
+      # "Cannot find module '/usr/local/bin/ocr'", depending on how far npm had
+      # got. Job level, so the action's composite steps inherit it.
+      OCR_NO_UPDATE: '1'
 
     steps:
       - name: Review pull request
@@ -28,7 +37,12 @@ jobs:
           ocr_version: '1.12.6'
           llm_url: https://openrouter.ai/api/v1
           llm_auth_token: ${{ secrets.OPENROUTER_API_KEY }}
-          llm_model: deepseek/deepseek-v4-flash-0731:free
+          # Free routes are withdrawn without notice:
+          # deepseek/deepseek-v4-flash-0731:free was gone by 2026-09-30, and
+          # OpenRouter then listed no free DeepSeek model at all. The model must
+          # support tool calls, since each review unit runs as an agent. Set the
+          # AI_REVIEW_MODEL repository variable to switch without a commit.
+          llm_model: ${{ vars.AI_REVIEW_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free' }}
           llm_use_anthropic: 'false'
           llm_extra_body: '{}'
           effort: low
