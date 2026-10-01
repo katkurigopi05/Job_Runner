@@ -127,7 +127,7 @@ _RULES: tuple[tuple[str, str, str | None], ...] = (
     (
         "Hardware Engineer",
         r"hardware|electrical|mechanical|\basic\b|\bfpga\b|silicon|\brf\b|analog|\bpcb\b|manufacturing engineer|thermal|structural|propulsion|avionics|aerospace|optical|photonics|design verification|validation engineer|process engineer|materials engineer|battery|power (electronics|engineer)",
-        r"software|planner|buyer|sourcing|procurement|commodity",
+        r"software|planner|buyer|sourcing|procurement|commodity|technician",
     ),
     ("Systems Engineer", r"systems engineer", None),
     (

@@ -80,6 +80,7 @@ def test_a_specific_rule_wins_over_the_general_one(
         ("Software Engineer, Privacy Engineering", "Software Engineer"),  # not "Legal"
         ("Software Engineer, Hardware Health", "Software Engineer"),  # not "Hardware"
         ("Material Planner (Electrical)", "Strategy & Operations"),  # not "Hardware"
+        ("Electrical Harness Technician", "Technician / Operator"),  # not "Hardware"
         ("Account Associate - EMEA", "Account Manager"),  # not "Technician"
         ("Technical Commodity Manager - Robotics", "Manager (other)"),  # not "Robotics"
     ],
