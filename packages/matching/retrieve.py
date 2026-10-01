@@ -157,6 +157,20 @@ _QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 #: A posting has about fourteen, so this leaves room for `limit` distinct ones.
 _CHUNK_POOL = 200
 
+#: Words a company name may drop and still name it: "Mistral" for Mistral AI,
+#: "1X" for 1X Technologies.
+_COMPANY_SUFFIXES_TEXT = "ai labs lab technologies technology inc corp corporation ltd llc"
+_COMPANY_SUFFIXES = frozenset(_COMPANY_SUFFIXES_TEXT.split())
+
+#: How rare the rest of the name must be across postings for it to stand
+#: alone. "mistral" is in under 1% of postings; "together", the rest of
+#: Together AI, is in a large share, and "how do teams work together" must not
+#: filter the search to one company.
+_SHORT_NAME_MAX_SHARE = 0.02
+
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_HIRING_MANAGER = re.compile(r"\bhiring managers?\b")
+
 _RAW_WORD = re.compile(r"[a-z0-9+#.]+")
 _SENTENCE_START = re.compile(r"(?<=[.!?;])\s+")
 
@@ -205,6 +219,9 @@ class Retrieval:
     #: Open postings it could not: no vector, or a vector nothing here can
     #: encode a question into. "Nothing found" means less when this is large.
     unsearchable: int = 0
+    #: Registry companies the question named, so "nothing found" can say
+    #: "no open postings at Mistral AI" rather than leave the model to guess.
+    companies: tuple[str, ...] = ()
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -325,24 +342,112 @@ def _search_terms(
     return sorted(terms, key=frequencies.idf, reverse=True)[:MAX_TERMS]
 
 
-async def _named_companies(
-    session: AsyncSession, words: set[str]
-) -> tuple[list[uuid.UUID], set[str]]:
-    """Registry companies the question names, and the words that named them.
+def _company_aliases(name: str, frequencies: idf.DocumentFrequencies) -> list[set[str]]:
+    """The word sets that name a company, each enough on its own.
 
-    A company counts when every word of its name is in the question. The words
-    come back too, because a company's name is in every one of its postings
-    and so cannot pick out the paragraph of any one of them.
+    The full name; a bracketed alias as a name of its own ("Weights & Biases
+    (CoreWeave)" is also "CoreWeave", and "Weights & Biases" without it); and
+    either of those without a corporate suffix, when what remains is rare in
+    postings. Without corpus statistics nothing is shortened.
+    """
+    parts = [re.sub(r"\(.*?\)", " ", name), *re.findall(r"\((.*?)\)", name)]
+    aliases: list[set[str]] = []
+    for part in parts:
+        terms = set(tokenize(part))
+        if not terms:
+            continue
+        aliases.append(terms)
+        core = terms - _COMPANY_SUFFIXES
+        if (
+            core
+            and core != terms
+            and frequencies.usable
+            and all(frequencies.document_share(t) <= _SHORT_NAME_MAX_SHARE for t in core)
+        ):
+            aliases.append(core)
+    return aliases
+
+
+async def _named_companies(
+    session: AsyncSession, words: set[str], frequencies: idf.DocumentFrequencies
+) -> tuple[list[uuid.UUID], set[str], list[str]]:
+    """Registry companies the question names, the words that named them, and their names.
+
+    A company counts when every word of one of its aliases is in the question
+    (`_company_aliases`). Measured on the owner's questions: "jobs at Weights &
+    Biases" and "anything at Mistral?" found nothing while only the full
+    registry name counted. The words come back too, because a company's name
+    is in every one of its postings and so cannot pick out the paragraph of
+    any one of them.
     """
     rows = await session.execute(select(Company.id, Company.name))
     named: list[uuid.UUID] = []
     naming: set[str] = set()
+    names: list[str] = []
     for company_id, name in rows.all():
-        name_terms = set(tokenize(name or ""))
-        if name_terms and name_terms <= words:
+        if any(alias <= words for alias in _company_aliases(name or "", frequencies)):
             named.append(company_id)
-            naming |= name_terms
-    return named, naming
+            naming |= set(tokenize(name or ""))
+            names.append(name)
+    return named, naming, names
+
+
+async def _names_a_title(session: AsyncSession, subject: list[str]) -> bool:
+    """Every word of the question is in the title of some open posting.
+
+    How a bare job title is recognised: "Forward Deployed Engineer" names no
+    job word and no company, and was not searched at all. Requiring every word
+    in one title keeps the gate shut for "did the hiring manager reply?",
+    whose words share no title.
+    """
+    if not subject:
+        return False
+    return bool(
+        await session.scalar(
+            select(
+                exists().where(
+                    Posting.closed_at.is_(None),
+                    *(Posting.title.regexp_match(_term_pattern(t), flags="i") for t in subject),
+                )
+            )
+        )
+    )
+
+
+async def _titles_in_question(
+    session: AsyncSession, question: str, companies: list[uuid.UUID]
+) -> list[_Hit]:
+    """Open postings whose whole title, words only, is in the question.
+
+    Asked for by name, so they enter the pool whatever the keyword scores say.
+    "Director, IT Operations" needed this: "it" is a stopword, and dozens of
+    Director and Operations titles tied for the 30 keyword places ahead of
+    it. Two words at least, or a posting titled "Engineer" would claim every
+    question naming an engineer. Longest first, so the most specific wins.
+    """
+    asked = " " + " ".join(_NON_ALNUM.split(question.lower())).strip() + " "
+    title = func.trim(func.regexp_replace(func.lower(Posting.title), "[^a-z0-9]+", " ", "g"))
+    query = (
+        select(
+            Posting.id,
+            Posting.title,
+            Posting.location,
+            Posting.url,
+            Posting.description_raw,
+            Company.name,
+        )
+        .outerjoin(Company, Company.id == Posting.company_id)
+        .where(
+            Posting.closed_at.is_(None),
+            func.strpos(title, " ") > 0,
+            func.strpos(literal(asked), func.concat(" ", title, " ")) > 0,
+        )
+        .order_by(func.length(title).desc(), Posting.first_seen_at.desc(), Posting.id)
+        .limit(KEYWORD_POOL)
+    )
+    if companies:
+        query = query.where(Posting.company_id.in_(companies))
+    return [_Hit(*row) for row in (await session.execute(query)).all()]
 
 
 async def _keyword_hits(
@@ -373,10 +478,15 @@ async def _keyword_hits(
     # MATERIALIZED, or Postgres may inline the CTE and rebuild `doc` per term.
     matched = found.cte("matched").prefix_with("MATERIALIZED")
 
+    # A term in the title counts twice: "Forward Deployed Engineer - India"
+    # lost to a Director role that only mentioned those words, when the
+    # question was the title itself.
     score: ColumnElement[float] = literal(0.0, Float)
     for term in terms:
+        weight = frequencies.idf(term)
         hit = matched.c.doc.regexp_match(_term_pattern(term), flags="i")
-        score = score + case((hit, frequencies.idf(term)), else_=0.0)
+        in_title = Posting.title.regexp_match(_term_pattern(term), flags="i")
+        score = score + case((hit, weight), else_=0.0) + case((in_title, weight), else_=0.0)
 
     query = (
         select(
@@ -544,8 +654,14 @@ async def retrieve(
     # Trailing dots off, as `tokenize` does: "Show me remote jobs." ends in
     # "jobs.", and "I applied to Stripe." in "stripe.".
     words = {word.rstrip(".") for word in _RAW_WORD.findall(question.lower())}
-    companies, company_words = await _named_companies(session, words)
-    if not (words & _POSTING_WORDS or companies):
+    # "Hiring manager" is a person who replies, not a posting. Without this,
+    # "did the hiring manager reply?" counted as asking about jobs.
+    unframed = _HIRING_MANAGER.sub(" ", question.lower())
+    asks_about_jobs = bool({w.rstrip(".") for w in _RAW_WORD.findall(unframed)} & _POSTING_WORDS)
+    frequencies, active_revision = await idf.load_active(session)
+    companies, company_words, company_names = await _named_companies(session, words, frequencies)
+    subject_terms = [t for t in tokenize(question) if t not in _FRAMING_WORDS]
+    if not (asks_about_jobs or companies or await _names_a_title(session, subject_terms)):
         return Retrieval(attempted=False)
 
     open_total = (
@@ -554,7 +670,6 @@ async def retrieve(
         )
         or 0
     )
-    frequencies, active_revision = await idf.load_active(session)
     space_rows = (
         await session.execute(
             select(Posting.embedding_model, Posting.embedding_revision, func.count())
@@ -576,7 +691,7 @@ async def retrieve(
     # Encoded without its framing words, for the same reason they are not
     # searched for: a lexical vector of "which open roles" sits nearest to
     # whatever posting says "open roles", whatever it is about.
-    subject = " ".join(t for t in tokenize(question) if t not in _FRAMING_WORDS)
+    subject = " ".join(subject_terms)
     vectors = await asyncio.to_thread(_encode, encoders, subject)
 
     # Chunk vectors, where the corpus has them (`matching/chunks.py`): one
@@ -604,8 +719,11 @@ async def retrieve(
         # question asks, so "jobs at Stripe" still reads every Stripe posting.
         terms = _search_terms(question, frequencies, exclude=company_words) or terms
 
-    if terms:
-        keyword = await _keyword_hits(session, terms, frequencies, companies)
+    titled = await _titles_in_question(session, question, companies)
+    if terms or titled:
+        scanned = await _keyword_hits(session, terms, frequencies, companies) if terms else []
+        already = {hit.posting_id for hit in titled}
+        keyword = titled + [hit for hit in scanned if hit.posting_id not in already]
         among = [hit.posting_id for hit in keyword]
         by_space = [
             await _order_in_space(session, space, vector, among)
@@ -619,8 +737,13 @@ async def retrieve(
                 best = await _best_chunks(session, model, vector, among=among)
                 by_space.append([posting_id for posting_id, _, _ in best])
         fused = _fuse(among, by_space)
-        # Stable sort, so a tie keeps the keyword order.
-        chosen = sorted(keyword, key=lambda hit: -fused[hit.posting_id])[:limit]
+        # A posting asked for by its title goes first, longest title first.
+        # Then the fused order; the sort is stable, so a tie keeps the keyword
+        # order.
+        by_title = {hit.posting_id: len(hit.title or "") for hit in titled}
+        chosen = sorted(
+            keyword, key=lambda hit: (-by_title.get(hit.posting_id, 0), -fused[hit.posting_id])
+        )[:limit]
         searched, unsearchable = open_total, 0
     else:
         per_space: list[list[_Hit]] = []
@@ -667,7 +790,11 @@ async def retrieve(
         for index, hit in enumerate(chosen, start=1)
     )
     return Retrieval(
-        attempted=True, passages=passages, searched=searched, unsearchable=unsearchable
+        attempted=True,
+        passages=passages,
+        searched=searched,
+        unsearchable=unsearchable,
+        companies=tuple(sorted(company_names)),
     )
 
 

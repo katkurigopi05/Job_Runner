@@ -181,7 +181,11 @@ def _postings_section(found: Retrieval) -> str:
     if found.unsearchable:
         lines[0] += f" ({found.unsearchable} are not searchable yet)"
     if not found.passages:
-        lines.append("  none shared anything with this question")
+        lines.append(
+            f"  no open postings at {', '.join(found.companies)}"
+            if found.companies
+            else "  none shared anything with this question"
+        )
     for passage in found.passages:
         where = " — ".join(part for part in (passage.company, passage.location) if part)
         lines.append(f"  [{passage.label}] {passage.title}" + (f" — {where}" if where else ""))

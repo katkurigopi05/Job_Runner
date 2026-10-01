@@ -1064,6 +1064,26 @@ Four things are load-bearing:
 The matching pass after each crawl chunks up to 500 new postings;
 `make chunk-postings` clears a backlog.
 
+**Questions that name a company or a title** (2026-10-01). Measured on 18
+questions built from the owner's data, 10 found what they named. Now 17;
+the eighteenth names a company with nothing open, and the context says
+"no open postings at Mistral AI" rather than leaving the model to read
+silence as no match. Four rules:
+
+- **A bare title is a postings question** when every word of it is in some
+  open posting's title. That keeps "did the hiring manager reply?" out, as
+  does treating "hiring manager" as a person rather than the job word
+  "hiring".
+- **A company has aliases**: the bracketed name on its own ("CoreWeave"),
+  the name without it ("Weights & Biases"), and either without a suffix like
+  AI or Labs when what remains is in at most 2% of postings. "Mistral" names
+  Mistral AI; "together" does not name Together AI.
+- **A title match counts twice** in the keyword score.
+- **A posting whose whole title is in the question goes first**, longest
+  title first, two words at least, found by its own lookup so it never loses
+  its place in the 30-posting keyword pool. "Director, IT Operations" needed
+  it: "it" is a stopword and dozens of Director titles tied ahead.
+
 Measured live on 2026-09-30, llama3.1 answered the Kafka question citing five
 postings that all mention Kafka. A search costs 0.1–0.9s against 19,018
 postings; the first call in a process also loads bge-small, about 4s, in a
