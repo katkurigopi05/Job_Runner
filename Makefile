@@ -1,4 +1,4 @@
-.PHONY: install up down migrate revision test lint fmt typecheck check \
+.PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
         bench-matching export-labels import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
@@ -8,7 +8,14 @@ PY := .venv/bin
 install:
 	python3.12 -m venv .venv
 	$(PY)/pip install --upgrade pip
-	$(PY)/pip install -e ".[dev]"
+	$(PY)/pip install -e ".[dev]" -c constraints.txt
+
+# make lock — re-resolve constraints.txt, the exact versions CI, the image and
+# `make install` use. Run it when the weekly "latest dependencies" CI leg is
+# green, or to take a release on purpose; commit the result, and the PR's CI
+# then tests exactly what it pins. Needs uv (https://docs.astral.sh/uv/).
+lock:
+	uv pip compile pyproject.toml --extra dev --universal --python-version 3.12 --quiet -o constraints.txt
 
 up:
 	docker compose up -d

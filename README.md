@@ -237,6 +237,169 @@ This project is built in phases (skeleton → first ATS → tailoring → MCP �
 discovery → tracker), each gated by its own test suite. See `CLAUDE.md` §9 for
 the current phase and what's implemented so far.
 
+## AI code review with Open Code Review
+
+[Alibaba Open Code Review](https://github.com/alibaba/open-code-review) is an
+optional development tool for reviewing changes locally and posting findings
+on GitHub pull requests. It is separate from Job Runner's résumé-tailoring
+provider settings: configuring OCR does not change `LLM_PROVIDER` in `.env`.
+The OpenRouter setup below sends reviewed code and relevant context to a remote
+model; it is not an offline review.
+
+### Setup status — September 19, 2026
+
+- The OCR CLI was installed locally at version `1.12.6`.
+- A connection test succeeded with OpenRouter and
+  `deepseek/deepseek-v4-flash-0731:free`.
+- A local review in `Job_Runner` found 52 changed files, selected 20, and
+  excluded 32 using path/extension rules. That output confirms file selection,
+  not completion of the review.
+- The repository owner reported adding the `OPENROUTER_API_KEY` GitHub Actions
+  secret and saving the PR-review workflow.
+- At documentation update time, this local checkout did not contain
+  `.github/workflows/ai-review.yml`. Confirm the committed GitHub version before
+  adding another copy. A successful GitHub review run has not yet been verified.
+
+**Update, September 30, 2026.** Every GitHub review from September 21 failed
+within seconds, for two reasons unrelated to the PRs. First, the OCR launcher
+updates itself: its first run starts a background `npm i -g` of the newest
+release, which replaces the package while the review starts. The workflow now
+sets `OCR_NO_UPDATE=1`. Second, `deepseek/deepseek-v4-flash-0731:free` was
+withdrawn from OpenRouter, so the model is now
+`nvidia/nemotron-3-super-120b-a12b:free`. The review is also advisory now: if
+it cannot run, the check stays green and posts an "AI review did not run"
+warning instead of failing the PR.
+
+An API key was exposed during setup. Revoke that key in
+[OpenRouter settings](https://openrouter.ai/settings/keys) and use a replacement
+in both local OCR configuration and the GitHub secret. Never put keys in this
+README, workflow YAML, commits, screenshots, or chat messages.
+
+### Local setup
+
+Use an editor's integrated terminal or macOS Terminal, not a SQL query window.
+OCR requires Git 2.41 or newer; the npm installation method also needs Node.js
+and npm.
+
+```bash
+git --version
+node --version
+npm --version
+npm install -g @alibaba-group/open-code-review@1.12.6
+export OCR_NO_UPDATE=1   # without it, the first `ocr` run upgrades itself
+ocr version
+```
+
+Add the `export` line to `~/.zshrc` to keep the pin across terminals. Without
+it, OCR quietly installs its newest release in the background.
+
+Configure OpenRouter as a custom provider:
+
+```bash
+ocr config set provider review-openrouter
+ocr config set custom_providers.review-openrouter.url https://openrouter.ai/api/v1
+ocr config set custom_providers.review-openrouter.protocol openai
+ocr config set custom_providers.review-openrouter.model nvidia/nemotron-3-super-120b-a12b:free
+```
+
+In **macOS zsh**, paste and run the following block together. When the prompt
+appears, paste the replacement key once and press Enter. Input is hidden: no
+characters or dots appear. The block saves the key before clearing the temporary
+shell variable, then tests the connection.
+
+```zsh
+read -rs "ocrkey?Paste NEW OpenRouter key, then press Enter: " &&
+printf '\n' &&
+ocr config set custom_providers.review-openrouter.api_key "$ocrkey" &&
+unset ocrkey &&
+ocr llm test
+```
+
+The key is stored in OCR's user configuration, outside the repository. Local
+configuration does not automatically populate GitHub Actions secrets.
+
+From the repository root, review current changes:
+
+```bash
+ocr review --effort low
+```
+
+Or scan a specific existing file, replacing the example path:
+
+```bash
+ocr scan --path "path/to/file.py" --effort low
+```
+
+`low` uses one review round, but a review can still make multiple API calls.
+Messages saying files were filtered are not errors. Check the final review
+output for findings, failures, and skipped files. Local runs do not post to
+GitHub automatically.
+
+### GitHub pull-request reviews
+
+In the GitHub repository, open **Settings → Secrets and variables → Actions →
+New repository secret**. Name it `OPENROUTER_API_KEY` and use the replacement
+OpenRouter key as its value.
+
+The workflow is committed at `.github/workflows/ai-review.yml`. That file is
+the only copy: this README used to carry one too, and it went stale as soon as
+the workflow changed. Its comments explain each setting. To change the model
+without a commit, set an `AI_REVIEW_MODEL` repository variable (**Settings →
+Secrets and variables → Actions → Variables**). The model must support tool
+calls.
+
+The action installs OCR, checks out the repository, reviews the PR diff, and
+posts a summary and inline findings. It uses GitHub's automatically supplied
+token; no personal access token is needed. The action commit and CLI version
+are pinned separately for reproducibility.
+
+To verify the setup:
+
+1. Ensure the workflow is committed to the default branch (usually `main`).
+2. Create a branch in the same repository and commit one small code change.
+3. Open a non-draft PR against the default branch.
+4. Open **Actions → AI Code Review** and inspect the job log.
+5. Check the PR's conversation and changed files for review output.
+
+New commits on that PR trigger another review. This configuration skips drafts,
+fork PRs, and Dependabot PRs. Saving a secret or pushing directly to `main`
+does not trigger it. The workflow runs on GitHub even when your Mac is offline.
+`incremental` avoids overlapping inline comments; it does not by itself reduce
+the code sent for review on later runs.
+
+### Troubleshooting and usage limits
+
+- **`quote>` in Terminal:** an opening quote is unmatched. Press Ctrl+C and
+  rerun the complete command from a normal shell prompt.
+- **Key is `(not set)`:** the key was not captured or was cleared before saving.
+  Run the complete hidden-input block above; do not run `unset` separately first.
+- **Invalid workflow YAML:** preserve spaces and remove pasted Markdown fences,
+  HTML entities such as `&#x20;`, backslashes before underscores, and extra quotes.
+- **401:** check that the key is valid and saved in the environment being used.
+- **429:** inspect OpenRouter usage; free quota or upstream capacity may be
+  exhausted. A PR review can consume many requests.
+- **GitHub job skipped:** check whether the PR is a draft, comes from a fork,
+  or was triggered by Dependabot.
+- **`Cannot find module '../scripts/platform'` or `'/usr/local/bin/ocr'`:** OCR
+  upgraded itself mid-run. Make sure `OCR_NO_UPDATE` is still set at job level
+  in the workflow.
+- **Green check with an "AI review did not run" warning:** the reviewer failed
+  and the PR was *not* reviewed. Read the job summary. A withdrawn model is
+  fixed by pointing `AI_REVIEW_MODEL` at a current free model that supports
+  tools ([list](https://openrouter.ai/models?max_price=0)).
+- **GitHub cannot post comments:** check the run error and repository or
+  organization Actions policy; the workflow requests `pull-requests: write`.
+
+Free models are withdrawn without notice (the original one was), and hosted model availability,
+quotas, and pricing can change. Check [OpenRouter activity](https://openrouter.ai/activity)
+and [current limits](https://openrouter.ai/docs/api_reference/limits). GitHub
+Actions runner usage is separate from model API usage. AI findings supplement
+the project's tests and human review; they do not prove code is correct.
+
+References: [OCR configuration](https://github.com/alibaba/open-code-review/blob/main/pages/src/content/docs/en/configuration.md),
+[GitHub Actions integration](https://github.com/alibaba/open-code-review/tree/main/examples/github_actions),
+and [GitHub Actions secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
+
 ## License
 
 See [`LICENSE`](./LICENSE).
