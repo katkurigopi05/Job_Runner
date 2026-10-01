@@ -77,6 +77,7 @@ from packages.llm.audit import is_local
 from packages.llm.prompts import CHAT_SYSTEM
 from packages.llm.provider import LLMError, PromptTooLong
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
+from packages.matching.multihop import retrieve_multihop
 from packages.matching.retrieve import Passage, Retrieval, retrieve
 from packages.matching.roles import display_name
 
@@ -560,7 +561,13 @@ async def prepare(body: ChatRequest, session: AsyncSession) -> ChatReply | Ready
     include_mail = selected == LOCAL_PROVIDER or body.share_mail
 
     context = await _context(session, body.application_id, include_mail=include_mail)
-    found = await retrieve(session, question)
+    # One pass unless asked. `retrieve_multihop` widens a thin search and
+    # returns the same shape, so everything below cannot tell which ran — and
+    # neither can the provider, since a hop costs no model call.
+    if body.multihop:
+        found = (await retrieve_multihop(session, question)).as_retrieval()
+    else:
+        found = await retrieve(session, question)
     gaps = await target_gaps(session) if asks_about_gaps(question) else None
     posting_gaps = await _unmet_by_posting(session, found, gaps) if gaps else None
     sections = [context, _postings_section(found, posting_gaps)]

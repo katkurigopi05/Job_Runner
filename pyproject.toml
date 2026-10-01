@@ -25,6 +25,18 @@ dependencies = [
     "asyncpg>=0.30",
     "alembic>=1.14",
     "pgvector>=0.3.6",
+    # Multi-hop retrieval only — `packages/matching/multihop.py`. The apply
+    # pipeline keeps `packages/core/state.py`, which §6 makes the single place
+    # an application's status changes; a second state machine with its own
+    # checkpoint is the one thing this must not become, so the graph is
+    # compiled without a checkpointer and a test reads the AST to hold that.
+    #
+    # It brings ~40 transitive packages including `langsmith`, which posts
+    # traces to a third party when `LANGSMITH_TRACING` or `LANGCHAIN_TRACING_V2`
+    # is set. Both are unset and `test_langsmith_tracing_is_not_enabled` holds
+    # it: a trace carries the question, and a question carries the owner's
+    # applications (§2.8).
+    "langgraph>=1.2",
     "cryptography>=43.0",
     "structlog>=24.4",
     "httpx>=0.27",

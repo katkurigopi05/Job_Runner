@@ -660,6 +660,13 @@ class ChatRequest(BaseModel):
     #: The conversation so far, oldest first, so a question can refer back to
     #: an answer. Empty for a first question.
     history: list[ChatTurn] = Field(default_factory=list, max_length=MAX_HISTORY_SENT)
+    #: Retry a thin search with a widened query, up to `multihop.MAX_HOPS`.
+    #:
+    #: Off by default, so the shipped path is the single pass it has always
+    #: been and this changes no answer nobody asked it to change. Costs no
+    #: extra provider call whatever it does — the routing is computed from
+    #: result counts, never asked of a model (`packages/matching/multihop.py`).
+    multihop: bool = False
 
 
 class ChatSource(BaseModel):
