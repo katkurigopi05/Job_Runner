@@ -61,6 +61,8 @@ DEFAULT_BATCH = 2000
 class MatchingReport:
     embedded: int = 0
     scored: int = 0
+    #: Postings split into chunks and embedded for search (`chunks.py`).
+    chunked: int = 0
     #: Whether the corpus statistics were rebuilt, which invalidates every
     #: stored vector and makes this pass a full one.
     rebuilt: bool = False
@@ -69,7 +71,7 @@ class MatchingReport:
 
     def summary(self) -> str:
         scope = "full (corpus rebuilt)" if self.rebuilt else "incremental"
-        return f"{scope}: {self.embedded} embedded, {self.scored} scored"
+        return f"{scope}: {self.embedded} embedded, {self.scored} scored, {self.chunked} chunked"
 
 
 def _embedder_for(view: CorpusView) -> Embedder | None:
@@ -151,6 +153,14 @@ async def run_matching_pass(
         )
         report.per_profile[profile.label] = len(batch)
         report.scored += len(batch)
+
+    # Search reads chunks, scoring does not, so this runs last: a slow chunk
+    # pass never delays a score. Bounded separately, since a posting is about
+    # fourteen vectors here rather than one; `make chunk-postings` clears a
+    # backlog.
+    from packages.matching.chunks import chunk_postings
+
+    report.chunked = await chunk_postings(session)
 
     log.info("matching_pass", summary=report.summary(), revision=view.revision)
     return report
