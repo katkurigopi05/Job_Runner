@@ -85,6 +85,22 @@ NDCG@5 drops to **0.577**, and the constant control is statistically tied with
 everything. This is where the matcher's real weakness lives, and it was
 invisible before there were hard negatives to expose it.
 
+**That 0.577 is the plain lexical embedder's number, and neither benchmark run
+is the feed's.** `bench_matching` scores with `LexicalEmbedder` unless
+`--real-embedder` is passed. The `embedder:` line under the header says so, and
+the figure above was quoted without it. With bge-small the same twelve give
+`production` **0.405**. The run is in the hybrid section below.
+
+This paragraph first called bge-small "the embedder the feed actually uses",
+because the owner's `.env` names it. It is not. Once corpus statistics exist,
+as they have since 2026-09-18, `incremental.run_matching_pass` scores with
+`LexicalEmbedder(frequencies=…)`, the IDF-weighted `lexical-idf@2`, whatever
+`EMBEDDING_BACKEND` says. bge-small is reached only while the corpus is too
+small to weight. The benchmark runs neither that embedder nor those weights, so
+the feed's own number on these twelve is unmeasured. Of the two that were
+measured, plain lexical (0.577) is the closer relative: the same tokenizer and
+hashing, without the weights.
+
 **The seniority filter is off by default and costs precision.** `filters.seniority_ok`
 returns `True` whenever `target_seniority` is unset. The consequence is
 measurable: `Junior Backend Engineer` — a perfect technology match at the wrong
@@ -192,3 +208,145 @@ In rough order of how much each would buy:
 Until (1), treat everything in this document as a regression signal: it will
 tell you when a change made the matcher worse, and it will not tell you that
 the matcher is good.
+
+---
+
+## Hybrid retrieval, and the experiment this machine could not finish
+
+`packages/matching/hybrid.py` adds Reciprocal Rank Fusion of the dense cosine
+with BM25, as two benchmark variants (`hybrid_rrf`, `bm25_only`). It exists
+because this document already names where the matcher is weak and the weakness
+has the shape a lexical signal is supposed to fix: on the twelve adjacent
+roles NDCG@5 is 0.577 with the constant control statistically tied against
+everything, and adjacent roles differ from each other in a handful of tokens
+that an embedding is *designed* to collapse.
+
+**The result, run here on 2026-09-30:**
+
+```text
+variant                   ndcg@5            95% CI     P@k     MAP     ROC
+production+seniority       0.774       [0.47,1.00]   1.000   0.959   0.906
+jaccard                    0.599       [0.17,0.96]   0.800   0.701   0.578
+production                 0.577       [0.16,1.00]   0.800   0.739   0.656
+hybrid_rrf                 0.452       [0.15,0.94]   0.800   0.718   0.594
+bm25_only                  0.452       [0.13,0.91]   0.800   0.685   0.500
+constant                   0.062       [0.00,0.45]   0.200   0.490   0.500
+
+hybrid_rrf: dense/lexical rank agreement rho=+0.916
+```
+
+**That row is not a verdict on hybrid retrieval, and the last line is why.**
+RRF combines signals that fail differently. `sentence-transformers` is not
+installed here, so `embed.get_embedder` falls back to `LexicalEmbedder` — a
+hashed bag of words — and the "dense" side of the fusion was reading the same
+information as BM25. Spearman **+0.916**. The experiment had one signal in it.
+
+Two things follow, and the second is the reason this section exists at all:
+
+- `hybrid_rrf` scoring level with `bm25_only` to three decimals is the
+  ablation doing its job. It was put there to detect exactly this.
+- **A number that cannot be interpreted is more dangerous than no number.**
+  Reported without the correlation, 0.452 reads as "hybrid retrieval was tried
+  and lost", which would close the question on the strength of a run that
+  never tested it. `hybrid.agreement` is computed on every fusion pass,
+  recorded in the experiment record so it survives into `--json`, and printed
+  under the table with the refusal spelled out.
+
+**Finishing it needs the owner's machine.** `BAAI/bge-small-en-v1.5` downloads
+from `huggingface.co`, which this environment's network policy denies at
+CONNECT with a 403 — the same wall `make validate-seeds` and the live gates
+hit. On a machine with the `embeddings` extra installed and the model cached:
+
+```bash
+make bench-matching ARGS="--tag adjacent --k 5 --real-embedder"
+```
+
+Read `rho` first. Below ~0.85 the fusion row is a real measurement; at 0.9 and
+above it is still the degenerate case and the NDCG means nothing.
+
+**What would still be true if it wins.** Nothing promotes on twelve
+fixture-grade labels. The verdict block already refuses, for both reasons it
+always gives, and a win here would move the question to the labeling loop
+rather than to the scorer.
+
+### Finished on the owner's machine, 2026-09-30
+
+bge-small cached, `EMBEDDING_BACKEND=sentence-transformers`, same labeled set
+(`f29a1c8be0ec5700`). The numbers reproduce exactly across runs:
+
+```text
+--tag adjacent --k 5 --real-embedder
+variant                   ndcg@5            95% CI     P@k     MAP     ROC
+jaccard                    0.599       [0.17,0.96]   0.800   0.701   0.578
+production+seniority       0.597       [0.28,1.00]   0.800   0.876   0.812
+bm25_only                  0.452       [0.13,0.91]   0.800   0.685   0.500
+body_only                  0.436       [0.08,1.00]   0.600   0.645   0.469
+production                 0.405       [0.10,0.95]   0.600   0.684   0.562
+hybrid_rrf                 0.358       [0.06,0.85]   0.600   0.654   0.516
+title_only                 0.263       [0.00,0.87]   0.400   0.724   0.438
+constant                   0.062       [0.00,0.45]   0.200   0.490   0.500
+
+hybrid_rrf: dense/lexical rank agreement rho=+0.573
+```
+
+**This time the row is a measurement, and fusion lost.** At +0.573 the two
+signals order the adjacent roles differently, which is the precondition RRF
+needs, and the fused ranking still came in below both of its inputs. The
+mechanism shows in the top five. The fusion carries the same two false
+positives as `production`: `adj-junior-backend` and `adj-eng-manager`. BM25
+alone kept the manager out, and fusion let it back in.
+
+What it does not say: every row except the control sits inside every other
+row's interval, and the verdict block still names no candidate for both of its
+usual reasons. The whole claim is that fusion did not help on twelve
+fixture-grade labels. Hybrid retrieval stays a benchmark variant and
+`Match.score` is unchanged.
+
+Three things this run found that the first one could not:
+
+- **The recorded 0.577 was the lexical fallback**, as noted under the adjacent
+  roles above. On bge-small, `production` is 0.405 on the adjacent slice
+  (lexical 0.577) and 0.992 at NDCG@10 on Gate 5 (lexical 1.000). The hashed
+  bag of words beating bge-small here fits the pattern CLAUDE.md §15 keeps
+  recording. These fixtures were written beside keyword-matching code, so they
+  reward keyword overlap. That is not evidence that bge-small is the worse
+  embedder, and nothing here separates the two.
+- **The degenerate check fired with the real embedder loaded, and its advice
+  was wrong.** With bge-small, agreement is **+0.875** on the Gate 5 slice and
+  +0.911 on all 32, because pastry chefs rank last under any scorer. The
+  message then told the reader to install the `embeddings` extra, which was
+  already installed. `hybrid.agreement_note` now tells the two causes apart.
+  The lexical fallback is told to install the extra. A real embedder is told
+  that the slice cannot discriminate and pointed at `--tag adjacent`.
+- **Arming seniority is the one change ahead under both embedders**: 0.597
+  against 0.405 on bge-small, and 0.774 against 0.577 on lexical. It drops
+  `adj-junior-backend` from the top five, which is the P@10 finding above seen
+  from a harder slice. The lead is still inside the interval. It points at the
+  `target_seniority` default decision rather than at the scorer.
+
+### The reranker is deliberately not built
+
+The natural third stage is a cross-encoder — `cross-encoder/ms-marco-MiniLM-L-12-v2`
+is free, local, CPU-runnable, and jointly encodes (query, passage) rather than
+comparing two independent vectors, which is precisely the comparison a cosine
+is worst at. It is not here because it needs `torch`, nothing in this
+environment can download the weights, and an unmeasured ranking stage is the
+shape this repo keeps finding as a defect: a column, a filter and tests with
+no way to fire. It is recorded as a candidate with its cost attached rather
+than shipped dark.
+
+### Why BM25 is in the tree rather than a dependency
+
+`rank_bm25` is MIT and §3 would permit it. Two reasons not to:
+
+- It would tokenize differently. `hybrid.BM25` scores through
+  `embed.tokenize`, the same function the dense side uses, so a fusion
+  experiment measures fusion rather than two tokenizers disagreeing about
+  `node.js`.
+- **It is what a production path would run.** The obvious lexical source is
+  Postgres full-text search, which this repo already has a server for — but
+  `ts_rank_cd` is a different ranking function from the one measured here, so
+  a benchmark won on BM25 would not transfer to a feed served by FTS.
+  `apps/api/routers/matches.py` already filters in Python rather than SQL, for
+  the same reason it always has: the fields are read out of text. Same code
+  both sides, or the number means nothing.

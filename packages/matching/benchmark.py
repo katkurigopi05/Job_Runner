@@ -222,13 +222,22 @@ def _bench_profile() -> Profile:
     )
 
 
-def default_variants(embedder: Embedder | None = None) -> list[Variant]:
+def default_variants(
+    embedder: Embedder | None = None,
+    items: Sequence[LabeledPosting] | None = None,
+) -> list[Variant]:
     """The shipped scorer, its ablations, and two controls.
 
     The ablations are here because §4 asks for them and because the weights in
     `score.py` (0.35 title, 0.65 body) have never been tested against any
     other split. `title_only` and `body_only` are the two ends of that dial;
     if either matches the combination, the weighting is doing no work.
+
+    `items` adds the fusion variants. They are omitted rather than degraded
+    when it is absent, because RRF reads the rank a signal assigned within a
+    candidate set and there is no such thing as the rank of one posting on its
+    own. A caller that cannot supply the corpus gets the per-item variants and
+    an honestly shorter table.
     """
     active = embedder or LexicalEmbedder()
 
@@ -277,7 +286,97 @@ def default_variants(embedder: Embedder | None = None) -> list[Variant]:
     def constant(text: str, item: LabeledPosting) -> float:
         return 0.5
 
-    return [
+    # --- Fusion -----------------------------------------------------------
+    #
+    # Built once over the whole candidate set and then read per item, because
+    # `Variant.score` is a per-item signature and a rank is not a per-item
+    # fact. Computing it lazily on the first call would hide the corpus pass
+    # inside one item's latency and make `ms/item` a lie about where the time
+    # went, so it is done up front and the cost is spread evenly.
+    fusion: list[Variant] = []
+    if items:
+        from packages.matching.hybrid import (
+            BM25,
+            BM25_B,
+            BM25_K1,
+            RRF_K,
+            Ranking,
+            agreement,
+            fuse,
+        )
+
+        corpus = [(it.key, f"{it.title} {it.description}") for it in items]
+        bm25 = BM25(corpus)
+
+        def _rankings(text: str) -> tuple[Ranking, Ranking]:
+            dense = Ranking.of(
+                "dense",
+                [
+                    (it.key, cosine(profile_vector(text), active.encode([body])[0]))
+                    for it, (_, body) in zip(items, corpus, strict=True)
+                ],
+            )
+            return dense, Ranking.of("bm25", bm25.scores(text))
+
+        def _fused(text: str) -> dict[str, float]:
+            dense, lexical = _rankings(text)
+            # Recorded on the variant rather than only computed, because the
+            # fused metric is uninterpretable without it — see
+            # `hybrid.agreement`. A reader who sees this variant lose needs to
+            # know whether it lost as a fusion or was never one.
+            fusion_agreement.append(agreement(dense, lexical))
+            return fuse([dense, lexical], k=RRF_K)
+
+        fusion_agreement: list[float] = []
+
+        def _bm25_only(text: str) -> dict[str, float]:
+            return dict(bm25.scores(text))
+
+        # Memoized on the profile text: `run_variant` calls `score` once per
+        # item with the same query, so without this the corpus is re-ranked
+        # once per posting and the variant measures the cache miss.
+        _cache: dict[tuple[str, str], dict[str, float]] = {}
+
+        def _lookup(kind: str, text: str, item: LabeledPosting) -> float:
+            key = (kind, text)
+            if key not in _cache:
+                _cache[key] = _fused(text) if kind == "rrf" else _bm25_only(text)
+            return _cache[key].get(item.key, 0.0)
+
+        def hybrid_rrf(text: str, item: LabeledPosting) -> float:
+            return _lookup("rrf", text, item)
+
+        def bm25_only(text: str, item: LabeledPosting) -> float:
+            return _lookup("bm25", text, item)
+
+        fusion = [
+            Variant(
+                name="hybrid_rrf",
+                description="Reciprocal Rank Fusion of the dense cosine and BM25. "
+                "Reads ranks, not scores, so no weight is fitted to these labels.",
+                score=hybrid_rrf,
+                algorithm="rrf(dense cosine, bm25)",
+                embedding_model=type(active).__name__,
+                hyperparameters={
+                    "rrf_k": RRF_K,
+                    "bm25_k1": BM25_K1,
+                    "bm25_b": BM25_B,
+                    # Filled by the first scoring pass. A list because the
+                    # object is frozen by then; reading it later is the point.
+                    "rank_agreement": fusion_agreement,
+                },
+            ),
+            Variant(
+                name="bm25_only",
+                description="Ablation: the lexical half alone. If this matches the "
+                "fusion, the dense side is contributing nothing.",
+                score=bm25_only,
+                algorithm="bm25",
+                hyperparameters={"bm25_k1": BM25_K1, "bm25_b": BM25_B},
+            ),
+        ]
+
+    return fusion + [
         Variant(
             name="production",
             description="What the feed ships today: score.py's weighted title/body cosine.",

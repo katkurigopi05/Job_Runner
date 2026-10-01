@@ -3025,3 +3025,211 @@ test's own event loop instead: same process, so the patched sessionmaker still
 applies, and real sockets, so incremental delivery and client disconnect are
 the real thing. Disconnect is what stops the watcher, so mocking it would have
 left the one property nobody would notice failing untested.
+
+---
+
+## 18. The feed could not be asked the one question that decides eligibility
+
+`eligibility.py` has read sponsorship and citizenship out of a posting since it
+replaced the single regex that was answering three questions (§15). The verdict
+reached the match card and stopped there. `FILTER_KEYS` had 22 entries covering
+location, seniority, pay, skills, education and freshness, and **none for work
+authorization** — so the owner could read "states it does not sponsor" one card
+at a time across a feed drawn from 14,892 postings, and could not ask the feed
+for it.
+
+This is the same defect §15 records twice for `citizenship_status` and
+`target_seniority` — a column, a schema, a filter and tests with no control, so
+it could never fire on real data — arriving through the other door. Here the
+reading fires on every card and there was nothing to act on it with.
+
+`sponsorship=available` and `exclude_citizenship_restricted` are the filters.
+Five things are load-bearing:
+
+- **An unknown is never a pass** (§16). `UNSTATED` is a posting that said
+  nothing and `AMBIGUOUS` is one that said something unresolvable. Neither is
+  an offer, and treating either as one would invent the fact `eligibility.py`
+  exists to refuse to invent — one layer above the module that refuses it.
+- **`include_unknown_sponsorship` is how the question is usually asked.** An
+  explicit offer is rare, so `available` alone hides most of the corpus. With
+  the switch the filter drops only a stated refusal, which is what someone who
+  needs sponsorship actually wants day to day. Both halves are one key plus
+  one switch rather than two vocabularies, because that is the idiom every
+  other unknown-averse filter in `search.py` already uses.
+- **Citizenship gets its own switch, not a sponsorship value.** A permanent
+  resident needs no sponsorship and still fails "US citizens only", and no
+  employer generosity fixes it. Collapsing them would rebuild the one-regex
+  problem at the filter layer. It has no `include_unknown_*` twin on purpose:
+  it excludes on a restriction the posting stated outright, so silence already
+  keeps the posting and there is no unknown for a switch to widen.
+- **The verdict is read only when asked for.** `authorization_reasons` returns
+  before touching the posting when neither filter is set, because reading it
+  scans the whole description and the dashboard's default request asks for
+  neither — the cost the keyword filter is already guarded against, which
+  §15 records falling from 2.5s to milliseconds.
+- **It is a feed filter, not the scoring gate.** `filters.sponsorship_ok`
+  already drops refusals when `Profile.needs_sponsorship` says the owner needs
+  it, and that decides whether a `Match` row exists. This is the owner asking a
+  question of the feed today. §1 keeps those separate and so does this.
+
+`sponsorship` is a vocabulary rather than a boolean for the reason
+`target_seniority` is a `SeniorityLevel`: a typo that reads as "no preference"
+leaves the feed looking filtered with nothing to explain it. `sponsorship=yes`
+is a 400 naming the accepted values.
+
+**Three lists have to agree for a filter to work at all** — the bar writes a
+key, `matches/page.tsx` forwards it, the API accepts it — and
+`test_every_control_the_filter_bar_renders_reaches_the_api` holds all three.
+Measured while adding this: no control was being dropped, so the test pins a
+property that was true rather than fixing one that was broken. Five backend
+keys (`us_only`, `remote_outside_california`, `allow_unknown_location`,
+`allow_unknown_seniority`, `include_closed`) have no control and are reachable
+only through a saved search or the API — deliberate, and the reason the test
+asserts the bar's keys are a subset rather than asserting the lists are equal.
+
+Where the idea came from is worth recording, because it was not a gap anyone
+here had noticed. A friend of the owner's posted a four-agent LangGraph
+architecture for a job assistant, and its worked example was *"Find Python jobs
+in California that match my resume and explicitly offer sponsorship."* Three of
+its four agents are things this repo does without a model, and its verification
+agent answers a question `rubric.py` does not have — nothing here generates a
+match explanation, so there is nothing to verify. What the post was worth was
+the sentence: it asked the feed something the feed could not be asked.
+
+---
+
+## 19. Hybrid retrieval, and a number that could not be read
+
+`packages/matching/hybrid.py` fuses the dense cosine with BM25 by Reciprocal
+Rank Fusion, as two benchmark variants. `docs/ML_EVALUATION.md` carries the
+run and the reasoning; this section is the part a later change could break.
+
+It came from surveying the owner's other repositories. `Attorney.AI` — their
+own citation-first legal RAG — does hybrid retrieval over pgvector plus
+Postgres FTS with RRF at `k=60`, and `dp800-sql-embeddings-vector-search` does
+the same thing in T-SQL at the same constant. The technique arrived already
+known, which is the only reason it was worth trying before the labeling loop.
+
+**It targets a weakness this file already recorded.** §15: on the twelve
+adjacent roles NDCG@5 is 0.577 and the constant control is statistically tied
+against everything. A tie with a control returning 0.5 for every posting means
+the scorer contributes nothing on the comparisons that decide a real feed. And
+adjacent roles are where a dense vector is weakest by construction: a Python
+backend role and a Java one differ in a few tokens out of several hundred, the
+surrounding sentences are near-identical, and collapsing surface form is what
+the embedding is *for* — it is the property `roles.py` exploits to match
+"Member of Technical Staff" to "Software Engineer".
+
+**The repo already holds both signals and uses them as alternatives.**
+`embed.get_embedder` selects `SentenceTransformerEmbedder` *or* falls back to
+`LexicalEmbedder` inside a try/except. Fusion is what turns that into a both.
+
+Five things are load-bearing:
+
+- **It does not touch `Match.score`.** `rubric.py` argues that at length and
+  §15 repeats it: the cosine is what `tests/test_matching.py` validates and
+  what `Profile.min_match_score` compares against. This is a benchmark
+  variant, nothing more, and the feed is unchanged.
+- **RRF reads ranks, never scores.** A cosine in [0,1] — occupying a sliver
+  of it, since §15 records a real run peaking at 0.271 — and an unbounded
+  BM25 have no common scale, and weighting them means fitting a weight on the
+  same labels the result is reported against. That is `REFERENCE.md` §3.6's
+  self-evaluating referee. `Ranking` stores ranks and nothing else, so the
+  guarantee is structural rather than a rule someone has to remember.
+- **`k=60` is borrowed, not tuned.** From the original paper and from both of
+  the owner's own implementations. A constant taken from elsewhere is
+  evidence; one fitted to twelve labeled postings is an overfit wearing the
+  same digits.
+- **A document one side never returned is not ranked last.** A vector search
+  with a `TOP_N` returns a cutoff, not an ordering, and scoring the absent
+  document as worst lets that cutoff veto the other signal's first place.
+- **The fusion variants are absent without a corpus, not degraded.** There is
+  no such thing as the rank of one posting on its own, so `default_variants`
+  omits them when `items` is not supplied rather than scoring something else.
+
+### The result, and why the result is not the point
+
+```text
+production   0.577      hybrid_rrf   0.452      bm25_only   0.452
+                        rho(dense, lexical) = +0.916
+```
+
+The fusion lost, and **that row is not a verdict on hybrid retrieval.**
+`sentence-transformers` is absent here, so the "dense" side fell back to
+`LexicalEmbedder`, a hashed bag of words, and the fusion was BM25 against a
+differently-weighted view of BM25. `hybrid_rrf` landing level with
+`bm25_only` to three decimals is the ablation firing exactly as intended.
+
+**A number that cannot be interpreted is worse than no number**, because it
+closes a question it never opened. Reported bare, 0.452 reads as "tried it,
+it lost". So `hybrid.agreement` is computed on every fusion pass, recorded in
+the experiment record so it survives into `--json`, and printed under the
+table with the refusal spelled out in words. `DEGENERATE_AGREEMENT` is 0.85
+and deliberately loose: RRF is worth running on signals that mostly agree,
+since the wins come from the minority they order differently. What the
+threshold catches is a signal fused with itself.
+
+This paragraph used to end "finishing it needs the owner's machine", because
+bge-small downloads from `huggingface.co` and the cloud session was denied at
+CONNECT. It was finished there on **2026-09-30**:
+
+```text
+--tag adjacent --k 5 --real-embedder         rho(dense, lexical) = +0.573
+production   0.405      hybrid_rrf   0.358      bm25_only   0.452
+```
+
+**At +0.573 the row is a measurement, and fusion lost.** The fused ranking
+came in below both of its inputs. It carries the same two false positives as
+`production` (`adj-junior-backend`, `adj-eng-manager`), and BM25 alone had kept
+the manager out. Every row except the control is still inside every other
+row's interval on twelve fixture labels, so the claim is only that fusion did
+not help here. It stays a benchmark variant. Full table in
+`docs/ML_EVALUATION.md`.
+
+Two corrections came out of the run, and both are the kind that stay invisible
+until the real embedder is loaded:
+
+- **The 0.577 in §15 is the lexical fallback's number.** `bench_matching`
+  uses `LexicalEmbedder` unless `--real-embedder` is passed, whatever is
+  installed. So "sentence-transformers is absent here", above, was only half
+  the reason the first run was lexical: the default would have been lexical on
+  any machine. On bge-small `production` is 0.405 on the adjacent slice.
+
+  This bullet first called bge-small the embedder the owner's feed runs,
+  because `.env` names it. It is not: once corpus statistics exist, the
+  matching pass scores with `lexical-idf@2` whatever `EMBEDDING_BACKEND` says,
+  and the benchmark runs neither that embedder nor its weights. The feed's own
+  number on the adjacent slice is unmeasured; `docs/ML_EVALUATION.md` has it.
+- **The degenerate check had one remedy for two causes.** With bge-small
+  loaded, agreement on the Gate 5 slice is +0.875, because off-domain
+  negatives rank last under any scorer. The printed advice was still "install
+  the `embeddings` extra", which was already installed. `hybrid.agreement_note`
+  separates them. The lexical fallback is told to install the extra. A real
+  embedder is told the slice cannot discriminate and pointed at
+  `--tag adjacent`. "A signal fused with itself" was only one of the two
+  things the threshold catches.
+
+**No cross-encoder reranker, deliberately.** `ms-marco-MiniLM-L-12-v2` is free
+and local and jointly encodes (query, passage) — the comparison a cosine is
+worst at. It needs `torch`, nothing here can fetch the weights, and an
+unmeasured ranking stage is the shape this file keeps recording as a defect.
+Recorded as a candidate with its cost attached rather than shipped dark.
+
+**BM25 is in the tree rather than a dependency**, for two reasons that are
+both about the measurement transferring. It scores through `embed.tokenize`,
+so the experiment measures fusion rather than two tokenizers disagreeing about
+`node.js`. And it is what a production path would run: Postgres FTS is the
+obvious source and `ts_rank_cd` is a different ranking function, so a
+benchmark won on BM25 would not transfer to a feed served by FTS.
+`apps/api/routers/matches.py` already filters in Python for the reason it
+always has — the fields are read out of text.
+
+One incidental find, from a test rather than from reading. The IDF carried a
+`max(0.0, ...)` clamp with a comment explaining which case it protected
+against. There is no such case: `n <= N` makes the quotient non-negative and
+Lucene's `+ 1.0` inside the log puts the argument at or above 1, so the
+result is always non-negative — checked exhaustively for every `(N, n)` to
+200, minimum 0.0025. The clamp is gone and the comment now names the term
+that actually provides the guarantee. A guard that cannot fire reads as
+protection against a risk that does not exist, which is the same failure as a
+test that cannot fail.

@@ -160,7 +160,8 @@ GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py
   tests/test_request_cost.py tests/test_request_budget.py \
   tests/test_eligibility.py tests/test_matches_api.py \
   tests/test_feed_reads_as_encouraging.py \
-  tests/test_experience_requirements.py
+  tests/test_experience_requirements.py tests/test_sponsorship_filter.py \
+  tests/test_hybrid_retrieval.py
 GATE6_TESTS := tests/test_inbox.py tests/test_inbox_duplicates.py \
   tests/test_tracker_columns.py
 

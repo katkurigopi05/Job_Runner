@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from packages.core.models import Posting
+from packages.matching.eligibility import Sponsorship
 from packages.matching.locality import (
     Locality,
     is_domestic,
@@ -34,6 +35,12 @@ from packages.matching.roles import canonical
 #: Seniority ladder, low to high. Matching is by position so "senior or above"
 #: is expressible without enumerating every title an employer might invent.
 SENIORITY_ORDER = ("intern", "junior", "mid", "senior", "staff", "principal")
+
+#: What `SearchFilters.sponsorship` may ask for. One value today, and a
+#: vocabulary rather than a boolean so a typo is refused loudly instead of
+#: reading as "no preference" — the failure `target_seniority` was given a
+#: `SeniorityLevel` enum to avoid.
+SPONSORSHIP_FILTERS = ("available",)
 
 _SENIORITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # One rung, several names. An apprenticeship, a co-op and a traineeship
@@ -132,6 +139,29 @@ class SearchFilters:
     max_education: str | None = None
     include_unknown_education: bool = False
 
+    # --- Work authorization (matching/eligibility.py) ----------------------
+    #
+    # Read out of the posting text on demand rather than from a column, by the
+    # same `filters.eligibility_of` the card calls, so the line the owner reads
+    # and the rule that decided whether the card is there cannot drift apart.
+    #
+    # These are feed filters, not the scoring gate. `filters.sponsorship_ok`
+    # already drops postings that refuse sponsorship when the *profile* says
+    # the owner needs it; that decides whether a `Match` row is written at all.
+    # This is the owner asking a question of the feed today (§1), and the two
+    # are deliberately separate.
+    #: `"available"` keeps only postings stating sponsorship is available.
+    #: An explicit offer is rare, so the common way to use this is with
+    #: `include_unknown_sponsorship`, which keeps everything except a stated
+    #: refusal.
+    sponsorship: str | None = None
+    include_unknown_sponsorship: bool = False
+    #: Drop postings stating a citizenship or permanent-residency restriction.
+    #: Its own switch rather than a sponsorship value because it is its own
+    #: fact: a permanent resident needs no sponsorship and still fails "US
+    #: citizens only", and no employer generosity fixes it.
+    exclude_citizenship_restricted: bool = False
+
     #: Every reason a posting was dropped, for the feed to explain itself.
     def describe(self) -> list[str]:
         parts: list[str] = []
@@ -175,6 +205,13 @@ class SearchFilters:
                 f"education at most {self.max_education.replace('_', ' ')}"
                 + (", or unstated" if self.include_unknown_education else "")
             )
+        if self.sponsorship:
+            parts.append(
+                "states sponsorship is available"
+                + (", or does not say" if self.include_unknown_sponsorship else "")
+            )
+        if self.exclude_citizenship_restricted:
+            parts.append("not restricted to citizens or permanent residents")
         if self.us_only:
             parts.append(
                 "United States only, California first"
@@ -357,6 +394,7 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
             reasons.append(f"first seen more than {filters.posted_within_days} days ago")
 
     reasons.extend(requirement_reasons(posting, filters))
+    reasons.extend(authorization_reasons(posting, filters))
     return FilterVerdict(kept=not reasons, reasons=reasons)
 
 
@@ -446,5 +484,52 @@ def requirement_reasons(posting: Posting, filters: SearchFilters) -> list[str]:
                 unknown = f"mentions a {level} degree without saying whether it is required"
         if unknown and not filters.include_unknown_education:
             reasons.append(unknown)
+
+    return reasons
+
+
+def authorization_reasons(posting: Posting, filters: SearchFilters) -> list[str]:
+    """Why the work-authorization filters drop a posting. Empty when kept.
+
+    Returns immediately when neither filter is set, because reading the verdict
+    means scanning the whole description and the dashboard's default request
+    asks for neither. That is the same cost the keyword filter is guarded for.
+
+    **An unknown is never a pass** (§16). `UNSTATED` is a posting that said
+    nothing and `AMBIGUOUS` is one that said something unresolvable; neither is
+    an offer of sponsorship, and treating either as one would invent the single
+    fact `eligibility.py` exists to refuse to invent. `include_unknown_sponsorship`
+    is how the owner widens it back out, and with it set this filter drops only
+    an explicit refusal.
+    """
+    if not filters.sponsorship and not filters.exclude_citizenship_restricted:
+        return []
+
+    # Local, unlike `Sponsorship` above: `filters` imports `locality` and
+    # `experience`, and hoisting this would make the two modules a cycle the
+    # first time either grows an import of the other.
+    from packages.matching.filters import eligibility_of
+
+    reasons: list[str] = []
+    reading = eligibility_of(posting)
+
+    if filters.sponsorship == "available":
+        unknown = None
+        if reading.sponsorship is Sponsorship.UNAVAILABLE:
+            reasons.append("states it does not sponsor")
+        elif reading.sponsorship is Sponsorship.AMBIGUOUS:
+            unknown = "mentions sponsorship without resolving it"
+        elif reading.sponsorship is not Sponsorship.AVAILABLE:
+            unknown = "does not say whether it sponsors"
+        if unknown and not filters.include_unknown_sponsorship:
+            reasons.append(unknown)
+
+    if filters.exclude_citizenship_restricted and (restricted := reading.restriction()):
+        # No `include_unknown_*` twin: this one excludes on a restriction the
+        # posting stated outright, so there is no unknown for a switch to
+        # widen. Silence here already keeps the posting.
+        # Not lowercased: `restriction()` returns "US citizens only", and
+        # folding case there turns the country into the word "us".
+        reasons.append(f"restricted to {restricted}")
 
     return reasons

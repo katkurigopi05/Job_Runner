@@ -38,6 +38,7 @@ from packages.matching.personalize import SKIP_REASONS, Applied, adjust
 from packages.matching.requirements import EDUCATION_LEVELS, PERIODS
 from packages.matching.search import (
     SENIORITY_ORDER,
+    SPONSORSHIP_FILTERS,
     SearchFilters,
 )
 from packages.matching.search import matches as filter_matches
@@ -111,6 +112,13 @@ async def list_matches(
     include_unknown_skills: bool = False,
     max_education: str | None = None,
     include_unknown_education: bool = False,
+    # Work authorization. A feed filter, never a profile answer (§1): it
+    # narrows what the owner sees and is never typed onto an application.
+    #: `available` keeps only postings stating sponsorship is available. Pair
+    #: with `include_unknown_sponsorship` to drop only explicit refusals.
+    sponsorship: str | None = None,
+    include_unknown_sponsorship: bool = False,
+    exclude_citizenship_restricted: bool = False,
     #: `base` orders by the similarity score; `personalized` by the base score
     #: adjusted with the owner's explicit ranking preferences.
     rank: str = "base",
@@ -152,6 +160,11 @@ async def list_matches(
             _one_of(max_education, EDUCATION_LEVELS, "max_education") if max_education else None
         ),
         include_unknown_education=include_unknown_education,
+        sponsorship=(
+            _one_of(sponsorship, SPONSORSHIP_FILTERS, "sponsorship") if sponsorship else None
+        ),
+        include_unknown_sponsorship=include_unknown_sponsorship,
+        exclude_citizenship_restricted=exclude_citizenship_restricted,
     )
 
     for level in (min_seniority, max_seniority):

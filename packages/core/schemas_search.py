@@ -36,6 +36,9 @@ FILTER_KEYS = frozenset(
         "include_unknown_skills",
         "max_education",
         "include_unknown_education",
+        "sponsorship",
+        "include_unknown_sponsorship",
+        "exclude_citizenship_restricted",
         "rank",
     }
 )

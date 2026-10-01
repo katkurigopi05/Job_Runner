@@ -18,6 +18,7 @@ from pathlib import Path
 
 from packages.matching.benchmark import DEFAULT_K, default_variants, run_variant, summarize
 from packages.matching.embed import LexicalEmbedder, get_embedder
+from packages.matching.hybrid import agreement_note
 from packages.matching.labels import load_labeled_set
 
 DEFAULT_SET = Path("seeds/labeled_matches.yaml")
@@ -58,7 +59,8 @@ def main(argv: list[str] | None = None) -> int:
 
     embedder = get_embedder() if args.real_embedder else LexicalEmbedder()
     records = [
-        run_variant(v, dataset, items, k=args.k, split=split) for v in default_variants(embedder)
+        run_variant(v, dataset, items, k=args.k, split=split)
+        for v in default_variants(embedder, items)
     ]
     verdict = summarize(records, k=args.k)
 
@@ -81,6 +83,20 @@ def main(argv: list[str] | None = None) -> int:
             f"{m[f'precision@{args.k}']:>8.3f}{m['map']:>8.3f}"
             f"{m['roc_auc']:>8.3f}{record.latency_ms_per_item:>9.3f}"
         )
+
+    # Printed beside the table rather than in a footnote: a fusion row that
+    # lost is read as a verdict on fusion, and it is only that when the two
+    # signals were actually different. See `hybrid.agreement`.
+    for record in verdict.records:
+        measured = record.hyperparameters.get("rank_agreement")
+        if not isinstance(measured, list) or not measured:
+            continue
+        rho = sum(measured) / len(measured)
+        print()
+        print(f"{record.variant}: dense/lexical rank agreement rho={rho:+.3f}")
+        note = agreement_note(rho, lexical_embedder=isinstance(embedder, LexicalEmbedder))
+        if note:
+            print(f"  {note}")
 
     print()
     print(f"leader             : {verdict.best}")
