@@ -3168,8 +3168,13 @@ until the real embedder is loaded:
   uses `LexicalEmbedder` unless `--real-embedder` is passed, whatever is
   installed. So "sentence-transformers is absent here", above, was only half
   the reason the first run was lexical: the default would have been lexical on
-  any machine. On bge-small, which the owner's `.env` runs, `production` is
-  0.405 on the adjacent slice.
+  any machine. On bge-small `production` is 0.405 on the adjacent slice.
+
+  This bullet first called bge-small the embedder the owner's feed runs,
+  because `.env` names it. It is not: once corpus statistics exist, the
+  matching pass scores with `lexical-idf@2` whatever `EMBEDDING_BACKEND` says,
+  and the benchmark runs neither that embedder nor its weights. The feed's own
+  number on the adjacent slice is unmeasured; `docs/ML_EVALUATION.md` has it.
 - **The degenerate check had one remedy for two causes.** With bge-small
   loaded, agreement on the Gate 5 slice is +0.875, because off-domain
   negatives rank last under any scorer. The printed advice was still "install

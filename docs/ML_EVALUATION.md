@@ -85,13 +85,21 @@ NDCG@5 drops to **0.577**, and the constant control is statistically tied with
 everything. This is where the matcher's real weakness lives, and it was
 invisible before there were hard negatives to expose it.
 
-**That 0.577 is the lexical fallback's number, not the shipped embedder's.**
-`bench_matching` scores with `LexicalEmbedder` unless `--real-embedder` is
-passed. The `embedder:` line under the header says so, and the figure above was
-quoted without it. The owner's `.env` runs bge-small, and with bge-small the
-same twelve give `production` **0.405**. The weakness is the same one, and it
-is larger on the embedder the feed actually uses. The run is in the hybrid
-section below.
+**That 0.577 is the plain lexical embedder's number, and neither benchmark run
+is the feed's.** `bench_matching` scores with `LexicalEmbedder` unless
+`--real-embedder` is passed. The `embedder:` line under the header says so, and
+the figure above was quoted without it. With bge-small the same twelve give
+`production` **0.405**. The run is in the hybrid section below.
+
+This paragraph first called bge-small "the embedder the feed actually uses",
+because the owner's `.env` names it. It is not. Once corpus statistics exist,
+as they have since 2026-09-18, `incremental.run_matching_pass` scores with
+`LexicalEmbedder(frequencies=…)`, the IDF-weighted `lexical-idf@2`, whatever
+`EMBEDDING_BACKEND` says. bge-small is reached only while the corpus is too
+small to weight. The benchmark runs neither that embedder nor those weights, so
+the feed's own number on these twelve is unmeasured. Of the two that were
+measured, plain lexical (0.577) is the closer relative: the same tokenizer and
+hashing, without the weights.
 
 **The seniority filter is off by default and costs precision.** `filters.seniority_ok`
 returns `True` whenever `target_seniority` is unset. The consequence is
