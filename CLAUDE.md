@@ -2941,6 +2941,17 @@ later change could quietly break.
 - **Backups never contain the vault key**, exclude browser profiles by
   default, and verification refuses the live database and any directory
   overlapping `storage/`.
+- **Only the last month of postings is kept** (`POSTING_MAX_AGE_DAYS`, 30).
+  The crawler does not store an old posting *new* to the database; one
+  already held is still stamped as seen, because `_close_missing` closes
+  whatever a crawl did not stamp, and a still-listed posting would be closed.
+  `make prune-postings` deletes held postings that are closed or old, never
+  one the owner applied to, swiped on, tailored a résumé for, or graded:
+  `applications` and `resumes` point at postings `ON DELETE SET NULL`, and a
+  tailored résumé that loses its posting reads as a base résumé. An undated
+  posting is never deleted for its age. First run, 2026-09-30, after a
+  verified backup: 19,807 deleted, 7 kept for the owner, the postings table
+  226 MB to 39 MB, and chat search about 3x faster (940 to 329 ms).
 
 
 ---

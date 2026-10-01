@@ -17,7 +17,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -177,6 +177,9 @@ class StoreResult:
     #: before. Not `updated`: nothing about them changed, so there is nothing
     #: to re-embed — but they are open again and the feed has to say so.
     reopened: list[uuid.UUID] = field(default_factory=list)
+    #: Listed postings not stored because they are older than
+    #: `Settings.posting_max_age_days` and were not already held.
+    too_old: int = 0
 
     @property
     def changed(self) -> list[uuid.UUID]:
@@ -217,12 +220,18 @@ def _requirement_columns(
     }
 
 
+def _aware(value: datetime) -> datetime:
+    """`value` with a timezone. A naive one is read as UTC, as the extractors write."""
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
 async def _store(
     session: AsyncSession,
     company: Company,
     extracted: list[ExtractedPosting],
     *,
     now: datetime | None = None,
+    max_age_days: int | None = None,
 ) -> StoreResult:
     """Upsert a board's postings in one statement, returning what changed.
 
@@ -273,6 +282,34 @@ async def _store(
         )
     )
     existing = {row.external_id: row for row in rows if row.external_id}
+
+    # Too old to keep, unless already held (`Settings.posting_max_age_days`).
+    # Only a new row is filtered: one already held must still be stamped as
+    # seen below, or `_close_missing` would close a posting that is listed.
+    if max_age_days is None:
+        from packages.core.config import get_settings
+
+        max_age_days = get_settings().posting_max_age_days
+    if max_age_days > 0:
+        cutoff = current - timedelta(days=max_age_days)
+        kept = [
+            item
+            for item in extracted
+            if item.external_id in existing
+            or item.published_at is None
+            or _aware(item.published_at) >= cutoff
+        ]
+        result.too_old = len(extracted) - len(kept)
+        if result.too_old:
+            log.info(
+                "old_postings_not_stored",
+                company=company.name,
+                skipped=result.too_old,
+                max_age_days=max_age_days,
+            )
+        extracted = kept
+        if not extracted:
+            return result
 
     values = [
         {

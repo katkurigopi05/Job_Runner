@@ -248,6 +248,19 @@ class Settings(BaseSettings):
     #: lapses.
     crawler_budget_window_seconds: float = 3600.0
 
+    #: Postings older than this many days are not stored, and
+    #: `make prune-postings` deletes the ones already held. The owner's search
+    #: is for jobs posted in the last month; on 2026-09-30, 19,258 of 25,738
+    #: postings were older than that or closed, and the postings table was
+    #: 226 MB of a 275 MB database, every row of it scanned by search.
+    #:
+    #: Only a posting new to the database is skipped. One already held is still
+    #: updated, because `_close_missing` closes anything a crawl did not stamp
+    #: as seen, so leaving it out would close a posting that is still listed.
+    #: A posting with no date is kept: an unknown age is not evidence of an old
+    #: one. 0 keeps every age.
+    posting_max_age_days: int = 30
+
     crawler_tick_seconds: int = 300
     #: Companies enqueued per tick. The cap is the difference between a queue
     #: and one long cycle wearing a queue as a disguise.
