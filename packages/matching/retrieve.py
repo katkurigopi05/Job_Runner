@@ -76,6 +76,7 @@ import structlog
 from sqlalchemy import ColumnElement, Float, and_, case, exists, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.core.config import get_settings
 from packages.core.models import Application, Company, Posting
 from packages.core.models_chunks import PostingChunk
 from packages.matching import idf
@@ -86,6 +87,8 @@ from packages.matching.embed import (
     get_embedder,
     tokenize,
 )
+from packages.matching.locality import Locality, locality_of
+from packages.matching.search import area_exclusion
 
 log = structlog.get_logger(__name__)
 
@@ -103,6 +106,15 @@ EXCERPT_CHARS = 600
 #: embeddings have something to re-order; small enough that the re-ranking
 #: query stays a lookup by id.
 KEYWORD_POOL = 30
+
+#: Keyword matches read when the owner's search area applies, before the area
+#: cuts them back to `KEYWORD_POOL`. On the owner's database 11 of 25 answers
+#: were abroad, so filtering the 30 best would leave the re-ranking about half
+#: a pool, and a posting the area keeps could sit just below 30 foreign ones.
+_AREA_POOL = 4 * KEYWORD_POOL
+
+#: The same widening for the vector-only path, as a multiple of the answer.
+_AREA_WIDEN = 8
 
 #: Terms searched for per question. A question naming more than eight
 #: distinguishing things is rare; a pasted paragraph is not, and every term is
@@ -222,6 +234,14 @@ class Retrieval:
     #: Registry companies the question named, so "nothing found" can say
     #: "no open postings at Mistral AI" rather than leave the model to guess.
     companies: tuple[str, ...] = ()
+    #: The owner's search area in words, when it was applied.
+    area: str | None = None
+    #: The area is on, but the question named a place outside it.
+    area_waived: bool = False
+    #: Postings that matched the question and were left out for being outside
+    #: the area. "None at Faculty" and "none at Faculty where you search" are
+    #: different answers.
+    outside_area: int = 0
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -317,6 +337,35 @@ def _term_pattern(term: str) -> str:
     start = r"\m" if term[0].isalnum() else ""
     end = r"\M" if term[-1].isalnum() else ""
     return f"{start}{escaped}{end}"
+
+
+def _search_area(question: str) -> str | None:
+    """The owner's search area in words, or None when it does not apply.
+
+    The feed's standing preference (`SEARCH_US_ONLY`), and on by default for
+    the same reason. Waived when the question names a place outside it: "jobs
+    in London" is a question about London, and answering "none" to it would
+    be filtering out the thing asked for.
+    """
+    settings = get_settings()
+    if not settings.search_us_only or locality_of(question) is Locality.ELSEWHERE:
+        return None
+    if settings.search_remote_outside_california:
+        return "the United States, and outside California remote only"
+    return "the United States"
+
+
+def _outside_area(hit: _Hit) -> bool:
+    """The feed's own rule (`search.area_exclusion`), not a copy of it."""
+    return (
+        area_exclusion(
+            hit.location,
+            title=hit.title,
+            description=hit.description,
+            remote_outside_california=get_settings().search_remote_outside_california,
+        )
+        is not None
+    )
 
 
 def _search_terms(
@@ -455,6 +504,8 @@ async def _keyword_hits(
     terms: list[str],
     frequencies: idf.DocumentFrequencies,
     companies: list[uuid.UUID],
+    *,
+    pool: int = KEYWORD_POOL,
 ) -> list[_Hit]:
     """Open postings containing a question term, rarest matches first.
 
@@ -500,7 +551,7 @@ async def _keyword_hits(
         .join(matched, matched.c.posting_id == Posting.id)
         .outerjoin(Company, Company.id == Posting.company_id)
         .order_by(score.desc(), Posting.first_seen_at.desc(), Posting.id)
-        .limit(KEYWORD_POOL)
+        .limit(pool)
     )
     return [_Hit(*row) for row in (await session.execute(query)).all()]
 
@@ -719,11 +770,24 @@ async def retrieve(
         # question asks, so "jobs at Stripe" still reads every Stripe posting.
         terms = _search_terms(question, frequencies, exclude=company_words) or terms
 
+    area = _search_area(question)
+    outside = 0
     titled = await _titles_in_question(session, question, companies)
     if terms or titled:
-        scanned = await _keyword_hits(session, terms, frequencies, companies) if terms else []
+        pool = _AREA_POOL if area else KEYWORD_POOL
+        scanned = (
+            await _keyword_hits(session, terms, frequencies, companies, pool=pool) if terms else []
+        )
         already = {hit.posting_id for hit in titled}
-        keyword = titled + [hit for hit in scanned if hit.posting_id not in already]
+        scanned = [hit for hit in scanned if hit.posting_id not in already]
+        if area:
+            # Before the re-ranking, so a foreign posting never takes a place
+            # in the pool that an in-area one could have had.
+            kept_titled = [hit for hit in titled if not _outside_area(hit)]
+            kept_scanned = [hit for hit in scanned if not _outside_area(hit)]
+            outside = len(titled) + len(scanned) - len(kept_titled) - len(kept_scanned)
+            titled, scanned = kept_titled, kept_scanned[:KEYWORD_POOL]
+        keyword = titled + scanned
         among = [hit.posting_id for hit in keyword]
         by_space = [
             await _order_in_space(session, space, vector, among)
@@ -746,28 +810,36 @@ async def retrieve(
         )[:limit]
         searched, unsearchable = open_total, 0
     else:
+        width = limit * _AREA_WIDEN if area else limit
         per_space: list[list[_Hit]] = []
         for model, vector in chunk_vectors.items():
-            best = (await _best_chunks(session, model, vector, companies=companies))[:limit]
+            best = (await _best_chunks(session, model, vector, companies=companies))[:width]
             chunk_spans.update({posting_id: (start, length) for posting_id, start, length in best})
             found = await _hits_for(session, [posting_id for posting_id, _, _ in best])
             per_space.append(
                 [found[posting_id] for posting_id, _, _ in best if posting_id in found]
             )
         per_space += [
-            await _nearest(session, space, vector, limit, companies)
+            await _nearest(session, space, vector, width, companies)
             for space, vector in vectors.items()
         ]
         # Rank 1 of every space before rank 2 of any: distances from different
         # models share no scale, and ranks are all they have in common. A
         # posting in both a chunk space and a posting space is taken once.
-        chosen, taken = [], set()
-        for rank in range(limit):
+        ranked, taken = [], set()
+        for rank in range(width):
             for hits in per_space:
                 if rank < len(hits) and hits[rank].posting_id not in taken:
                     taken.add(hits[rank].posting_id)
-                    chosen.append(hits[rank])
-        chosen = chosen[:limit]
+                    ranked.append(hits[rank])
+        chosen = []
+        for hit in ranked:
+            if len(chosen) == limit:
+                break
+            if area and _outside_area(hit):
+                outside += 1
+                continue
+            chosen.append(hit)
         searched = await _reachable(session, list(chunk_vectors), list(vectors))
         unsearchable = max(0, open_total - searched)
 
@@ -795,6 +867,9 @@ async def retrieve(
         searched=searched,
         unsearchable=unsearchable,
         companies=tuple(sorted(company_names)),
+        area=area,
+        area_waived=area is None and get_settings().search_us_only,
+        outside_area=outside,
     )
 
 

@@ -302,6 +302,44 @@ def is_remote(posting: Posting) -> bool:
     )
 
 
+def area_exclusion(
+    location: str | None,
+    *,
+    title: str | None,
+    description: str | None,
+    remote_outside_california: bool,
+    allow_unknown_location: bool = True,
+) -> str | None:
+    """Why the owner's standing search area leaves a posting out, or None.
+
+    The `us_only` rule, on its own so the chat assistant applies the feed's
+    rule rather than a copy of it (`retrieve.py`). Two copies of a search area
+    drift, and the one that drifts is the one nobody is looking at: the chat
+    search ignored the area entirely, and 11 of 25 answers it gave were in
+    London, Tokyo, Singapore, Toronto and Stockholm.
+    """
+    where = locality_of(location)
+    if where is Locality.UNKNOWN:
+        return None if allow_unknown_location else "no location given"
+    if not is_domestic(where):
+        return f"location {location!r} is outside the United States"
+    if (
+        remote_outside_california
+        and not onsite_ok(where)
+        # A bare "United States" names no region and is no more evidence
+        # than silence; `Austin, TX` names a place the owner will not
+        # commute to. Only the second is on-site outside California.
+        and names_us_region(location)
+        and not reads_as_remote(title=title, location=location, description=description)
+    ):
+        # Domestic, but on-site somewhere the owner will not move to.
+        # Rides with `us_only` because it is the same standing preference
+        # read one level finer, and separating them would let the feed
+        # offer a Chicago desk it already knows is unreachable.
+        return f"location {location!r} is on-site outside California"
+    return None
+
+
 def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
     """Whether a posting is one the owner asked to see, and why not if not."""
     reasons: list[str] = []
@@ -341,27 +379,16 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
         if not any(_location_mentions(raw_location, wanted) for wanted in filters.locations):
             reasons.append("location does not match")
 
-    if filters.us_only:
-        where = locality_of(posting.location)
-        if where is Locality.UNKNOWN:
-            if not filters.allow_unknown_location:
-                reasons.append("no location given")
-        elif not is_domestic(where):
-            reasons.append(f"location {posting.location!r} is outside the United States")
-        elif (
-            filters.remote_outside_california
-            and not onsite_ok(where)
-            # A bare "United States" names no region and is no more evidence
-            # than silence; `Austin, TX` names a place the owner will not
-            # commute to. Only the second is on-site outside California.
-            and names_us_region(posting.location)
-            and not is_remote(posting)
-        ):
-            # Domestic, but on-site somewhere the owner will not move to.
-            # Rides with `us_only` because it is the same standing preference
-            # read one level finer, and separating them would let the feed
-            # offer a Chicago desk it already knows is unreachable.
-            reasons.append(f"location {posting.location!r} is on-site outside California")
+    if filters.us_only and (
+        reason := area_exclusion(
+            posting.location,
+            title=posting.title,
+            description=posting.description_raw,
+            remote_outside_california=filters.remote_outside_california,
+            allow_unknown_location=filters.allow_unknown_location,
+        )
+    ):
+        reasons.append(reason)
 
     if filters.remote is not None and is_remote(posting) is not filters.remote:
         reasons.append("remote only" if filters.remote else "on-site only")
