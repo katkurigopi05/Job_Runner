@@ -39,12 +39,15 @@ computed against its own sample.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.core.config import get_settings
 from packages.core.models import Match, Posting, Profile
+from packages.crawler.retention import prune
 from packages.matching.embed import Embedder, LexicalEmbedder, get_embedder
 from packages.matching.idf import CorpusView, refresh_corpus_stats
 from packages.matching.score import embed_postings, score_and_store
@@ -59,6 +62,8 @@ DEFAULT_BATCH = 2000
 
 @dataclass
 class MatchingReport:
+    #: Closed or out-of-window postings deleted before anything else ran.
+    pruned: int = 0
     embedded: int = 0
     scored: int = 0
     #: Postings split into chunks and embedded for search (`chunks.py`).
@@ -71,7 +76,10 @@ class MatchingReport:
 
     def summary(self) -> str:
         scope = "full (corpus rebuilt)" if self.rebuilt else "incremental"
-        return f"{scope}: {self.embedded} embedded, {self.scored} scored, {self.chunked} chunked"
+        return (
+            f"{scope}: {self.pruned} pruned, {self.embedded} embedded, "
+            f"{self.scored} scored, {self.chunked} chunked"
+        )
 
 
 def _embedder_for(view: CorpusView) -> Embedder | None:
@@ -122,12 +130,28 @@ async def postings_needing_scoring(
 async def run_matching_pass(
     session: AsyncSession, *, limit: int = DEFAULT_BATCH, full: bool = False
 ) -> MatchingReport:
-    """Embed and score whatever is outstanding. Does not commit."""
+    """Prune, then embed and score whatever is outstanding. Does not commit."""
+    # First, so nothing below embeds, scores or chunks a posting about to go,
+    # and the corpus statistics describe the postings that stay. The rules are
+    # `make prune-postings`' own (`retention.py`); only the VACUUM FULL is
+    # left to the command, since it locks the tables search reads.
+    settings = get_settings()
+    pruned = 0
+    if settings.posting_auto_prune:
+        pruned = (
+            await prune(
+                session,
+                max_age_days=settings.posting_max_age_days,
+                now=datetime.now(UTC),
+                apply=True,
+            )
+        ).deleted
+
     view = await refresh_corpus_stats(session)
     # A rebuild restamps the whole corpus, so the pass has to be a full one
     # whatever the caller asked for.
     full = full or view.rebuilt
-    report = MatchingReport(rebuilt=view.rebuilt, revision=view.revision)
+    report = MatchingReport(pruned=pruned, rebuilt=view.rebuilt, revision=view.revision)
 
     pending = await postings_needing_embedding(
         session, revision=view.revision, limit=limit, full=full

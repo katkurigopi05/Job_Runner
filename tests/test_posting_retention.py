@@ -15,10 +15,11 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from packages.core.config import get_settings
 from packages.core.models import (
+    EMBEDDING_DIM,
     Application,
     Candidate,
     Company,
@@ -29,11 +30,14 @@ from packages.core.models import (
     Resume,
     User,
 )
+from packages.core.models_chunks import PostingChunk
 from packages.crawler.crawl import crawl_company
 from packages.crawler.extract import CompanySeed
 from packages.crawler.fetch import PoliteFetcher
 from packages.crawler.ratelimit import HostRateLimiter
 from packages.crawler.retention import prune
+from packages.matching.incremental import run_matching_pass
+from scripts.prune_postings import COMPACTED
 
 NOW = datetime.now(UTC)
 
@@ -263,3 +267,75 @@ async def test_no_age_limit_still_deletes_closed_postings(db_session) -> None:
     names = await _names(db_session)
     assert "closed" not in names and "undated_closed" not in names
     assert "old" in names, "age is not a reason when the limit is off"
+
+
+# --- the matching pass prunes, so nothing waits for the command ----------------
+
+
+async def test_the_matching_pass_prunes_and_the_chunks_go_with_it(db_session, thirty_days) -> None:
+    """The limit alone only stops new old postings; held ones aged in place.
+
+    A day after the first prune, 222 postings and 3,132 of their chunk vectors
+    had aged out and were still searched, because nothing deleted them until
+    someone ran the command.
+    """
+    p = await _world(db_session)
+    db_session.add(
+        PostingChunk(
+            posting_id=p["old"].id,
+            ordinal=0,
+            start=0,
+            length=10,
+            embedding_model="bge",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+    await db_session.flush()
+
+    report = await run_matching_pass(db_session)
+
+    assert report.pruned == 4
+    assert await _names(db_session) == {
+        "fresh",
+        "undated",
+        "old_swiped_no",
+        "old_applied",
+        "old_tailored",
+        "old_graded",
+    }
+    assert await db_session.scalar(select(func.count()).select_from(PostingChunk)) == 0
+
+
+async def test_the_pass_leaves_postings_alone_when_auto_prune_is_off(
+    db_session, thirty_days, monkeypatch
+) -> None:
+    monkeypatch.setenv("POSTING_AUTO_PRUNE", "false")
+    get_settings.cache_clear()
+    await _world(db_session)
+
+    report = await run_matching_pass(db_session)
+
+    assert report.pruned == 0
+    assert len(await _names(db_session)) == 10
+
+
+async def test_the_command_compacts_every_table_a_prune_empties(db_session) -> None:
+    """It named three tables and missed `posting_chunks`, the largest.
+
+    A delete leaves the rows' space in the file. The command's VACUUM FULL is
+    what returns it, and only for the tables it names.
+    """
+    cascading = set(
+        (
+            await db_session.scalars(
+                text(
+                    "select conrelid::regclass::text from pg_constraint"
+                    " where confrelid = 'postings'::regclass"
+                    " and contype = 'f' and confdeltype = 'c'"
+                )
+            )
+        ).all()
+    )
+
+    assert "posting_chunks" in cascading
+    assert cascading <= set(COMPACTED)

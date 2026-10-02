@@ -20,16 +20,40 @@ from sqlalchemy import text
 
 from packages.core import db as core_db
 from packages.core.config import get_settings
+from packages.core.models import Base
 from packages.crawler.retention import prune
 
-#: The tables a prune shrinks: postings, and the two that cascade from it.
-COMPACTED = ("postings", "matches", "posting_versions")
+
+def _compacted() -> tuple[str, ...]:
+    """`postings`, and every table whose rows a posting delete takes with it.
+
+    Read from the models rather than listed. The list this replaced named
+    three tables and missed `posting_chunks`, added later and the largest of
+    them (87 MB to the postings table's 40), so a prune emptied its rows and
+    left its file the same size.
+    """
+    children = {
+        table.name
+        for table in Base.metadata.tables.values()
+        for key in table.foreign_keys
+        if key.column.table.name == "postings" and (key.ondelete or "").upper() == "CASCADE"
+    }
+    return ("postings", *sorted(children))
+
+
+COMPACTED = _compacted()
 
 
 async def _size() -> str:
+    tables = ", ".join(f"'{table}'" for table in COMPACTED)
     async with core_db.get_sessionmaker()() as session:
         return str(
-            await session.scalar(text("select pg_size_pretty(pg_total_relation_size('postings'))"))
+            await session.scalar(
+                text(
+                    "select pg_size_pretty(sum(pg_total_relation_size(t::regclass)))"
+                    f" from unnest(array[{tables}]) as t"
+                )
+            )
         )
 
 
@@ -62,7 +86,7 @@ async def run(max_age_days: int, apply: bool) -> int:
 
     await _compact()
     print(f"  deleted: {report.deleted}, leaving {report.remaining}")
-    print(f"postings table: {before} -> {await _size()}")
+    print(f"postings and the tables that cascade from it: {before} -> {await _size()}")
     return 0
 
 

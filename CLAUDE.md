@@ -3006,6 +3006,16 @@ later change could quietly break.
   verified backup: 19,807 deleted, 7 kept for the owner, the postings table
   226 MB to 39 MB, and chat search about 3x faster (940 to 329 ms).
 
+  **The prune now runs itself** (`POSTING_AUTO_PRUNE`, on), at the start of
+  every matching pass and by the same rules. The limit alone only stopped new
+  old postings arriving: the day after that first run, 222 held postings and
+  3,132 of their chunk vectors had aged out and were still searched. A
+  posting's vectors go with it — `description_embedding` is on the row and
+  `posting_chunks` cascades. The pass does not `VACUUM FULL`, which locks the
+  tables search reads; the command still does, and now for every table a
+  posting delete cascades into, read from the models. Its hand-written list
+  had missed `posting_chunks`, the largest of them.
+
 
 ---
 
