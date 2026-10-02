@@ -26,11 +26,9 @@ from packages.matching.eligibility import (
 from packages.matching.experience import PostingExperience
 from packages.matching.experience import read_posting as read_experience
 from packages.matching.locality import (
-    Locality,
+    area_exclusion,
     is_domestic,
     locality_of,
-    names_us_region,
-    onsite_ok,
     reads_as_remote,
 )
 
@@ -183,30 +181,20 @@ def location_matches(
     if not is_domestic(locality_of(profile.location)):
         return True
 
-    where = locality_of(posting.location)
-    if where is Locality.ELSEWHERE:
-        return False
-
     if remote_outside_california is None:
         remote_outside_california = get_settings().search_remote_outside_california
-    if not remote_outside_california:
-        return True
-
-    # UNKNOWN and UNPLACED reach here and are kept: neither is evidence about
-    # which part of the country this is, and guessing would hide real jobs.
-    if not is_domestic(where):
-        return True
-    if onsite_ok(where):
-        return True
-
-    # `UNITED_STATES` covers two different facts. `Austin, TX` names a place
-    # the owner will not commute to; a bare `United States` names no place at
-    # all and is no more evidence than silence. Only the first is on-site
-    # outside California.
-    if not names_us_region(posting.location):
-        return True
-
-    return is_remote(posting)
+    # The one statement of the area, which the feed and the chat search read
+    # too. This used to be its own copy, and it disagreed with the feed on 107
+    # postings: it kept an unrecognized place, the feed dropped it.
+    return (
+        area_exclusion(
+            posting.location,
+            title=posting.title,
+            description=posting.description_raw,
+            remote_outside_california=remote_outside_california,
+        )
+        is None
+    )
 
 
 def eligibility_of(posting: Posting) -> PostingEligibility:

@@ -1090,9 +1090,10 @@ read a posting's location only to print it: 11 of 25 answers to five
 ordinary questions were in London, Tokyo, Singapore, Toronto and Stockholm.
 Now 0 of 25. Three rules:
 
-- **The feed's rule, not a copy.** `search.area_exclusion` is the `us_only`
-  check moved into a function of its own; the feed and `retrieve` both call
-  it, so the two cannot drift. `SEARCH_US_ONLY=false` turns it off for both.
+- **The feed's rule, not a copy.** `locality.area_exclusion` (first written
+  in `search.py`) is the one statement of the area; the scoring gate, the
+  feed and `retrieve` all call it, so they cannot drift. `SEARCH_US_ONLY=false`
+  turns it off for the feed and the chat. See §15, *Three rules for one area*.
 - **Filtered before the pool is cut.** With the area on, the keyword scan
   reads 120 matches rather than 30 and the area cuts them back, so a foreign
   posting never takes a place in the re-ranking an in-area one could have
@@ -1566,8 +1567,10 @@ input, not a reading of their profile. It also answered the wrong question —
 "is this near where I live" rather than "did I ask to see this" — and made
 moving house silently rewrite the feed.
 
-`locality.reachable` is now the single statement of the area, and both the
-scoring gate (`filters.location_ok`) and the feed (`search.matches`) call it.
+`locality.reachable` was meant to be the single statement of the area, with
+the scoring gate (`filters.location_ok`) and the feed (`search.matches`) both
+calling it. ~~Neither did~~ — each kept its own copy and `reachable` had no
+caller. Corrected 2026-10-02: see *Three rules for one area* below.
 `Settings.search_remote_outside_california` supplies the standing preference
 and `?remote_outside_california=false` turns it off for one call, which is
 what relocating would want. It is a separate setting from `search_us_only`
@@ -1715,6 +1718,59 @@ This does not make the approach right. Hand-written lists are still the reason
 a city can be missing at all, and the honest fix is a real place-name dataset
 rather than a longer tuple. What changed is the size of the hole and whether
 a regression in it is visible.
+
+### Three rules for one area, and a list read as one place
+
+Found 2026-10-02 by running every open posting's location through the rules
+then live: 5,948 postings, 1,133 distinct strings. The paragraph above said
+`locality.reachable` was the single statement of the area. It had no caller.
+The scoring gate and the feed each kept a copy, and the chat search had none
+(§14), so three surfaces read the area three ways.
+
+**The copies disagreed on 107 postings.** The gate kept a place no rule
+recognized (`UNPLACED`), as this file says it should; the feed dropped it, as
+its own field note said. Thirteen of the 107 were "SF Office".
+
+**A list was read as one place.** `locality_of` classifies the whole field and
+its first decisive rule wins, so one `, ON` condemned "San Francisco, CA;
+Pittsburgh, PA; Toronto, ON; Dallas, TX" as foreign.
+
+**And the vocabularies had gaps** that only the real corpus shows:
+
+- accents: "Zürich" and "Malmö" never met `zurich` and `malmo`;
+- `\b` after a full stop needs a word character next, so "U.S. Remote" never
+  matched `_US_COUNTRY_RE`, and nor did "Remote-United-States";
+- a state code with no comma ("Remote - OR", "UT - Cottonwood Heights");
+- a foreign city beside its own country's code where that code is also a
+  state's: "Toronto, CA" was California and "Berlin, DE" was Delaware;
+- provinces by name, and placeholders like "N/A" read as places.
+
+The fix, in `locality.py`:
+
+- **`area_exclusion` is the only rule**, built on `reachable`, and the gate,
+  the feed and the chat search all call it.
+- **Each listed office is judged on its own** (`locations_in` splits on `;`,
+  `|`, and "or", but not `, OR`, which is Oregon). An office in the area keeps
+  the posting; otherwise an explicit signal (on-site in another state, or
+  abroad) excludes it; otherwise it is kept. A remote option listed beside
+  American offices is remote within the country ("Houston, TX or Remote").
+- **The vocabulary gaps are closed**, each with a real string as its test, and
+  the strings that must *not* move are tested beside them: "Dublin, CA",
+  "Paris, TX", "Vancouver, WA", "Portland, OR".
+
+Measured after: 0 disagreements, and `UNPLACED` from 107 postings to 22
+(regions that include the US, such as "North America", and three stragglers).
+The feed and the chat keep 92 more postings, American jobs they had been
+dropping, and drop 3 foreign ones they had kept. The scoring gate, which had
+kept every unrecognized place, keeps 20 more and drops 38: Malmö, Zürich,
+Frankfurt, "Toronto, CA" and the like, plus on-site Wichita and Chicago.
+
+**What keeps it right is `make audit-locations`**, not the vocabularies. They
+are hand-written and will have gaps again; a gap does not raise, it keeps a
+foreign job or drops a local one and the feed looks the same. The command is
+read-only and prints the unrecognized places and the strings most likely to be
+misread. Run it after a crawl that adds boards, and add what it finds to
+`locality.py` with its string in `tests/test_location_area.py`.
 
 ### Closing the gate gaps §15 had only described
 

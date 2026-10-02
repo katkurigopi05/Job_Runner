@@ -21,13 +21,11 @@ from datetime import UTC, datetime, timedelta
 from packages.core.models import Posting
 from packages.matching.eligibility import Sponsorship
 from packages.matching.locality import (
-    Locality,
+    area_exclusion,
     is_domestic,
     is_us_state,
     locality_of,
     location_aliases,
-    names_us_region,
-    onsite_ok,
     reads_as_remote,
 )
 from packages.matching.roles import canonical
@@ -107,10 +105,11 @@ class SearchFilters:
     #: Set False to see on-site roles nationwide, which is what someone willing
     #: to relocate would want.
     remote_outside_california: bool = True
-    #: A posting with no location at all is kept by default: silence is not
-    #: evidence of a foreign office, and dropping it loses real US jobs. An
-    #: unrecognized place *name* is dropped regardless — that is where foreign
-    #: postings land. See `Locality.UNPLACED`.
+    #: A posting with no location, or one no rule recognizes, is kept by
+    #: default: neither is evidence of a foreign office, and only an explicit
+    #: one excludes (`locality.area_exclusion`). This said an unrecognized
+    #: name was dropped regardless, which made the feed disagree with the
+    #: scoring gate on 107 postings, 13 of them "SF Office". False drops both.
     allow_unknown_location: bool = True
 
     # --- Structured requirements (matching/requirements.py) ----------------
@@ -300,44 +299,6 @@ def is_remote(posting: Posting) -> bool:
     return reads_as_remote(
         title=posting.title, location=posting.location, description=posting.description_raw
     )
-
-
-def area_exclusion(
-    location: str | None,
-    *,
-    title: str | None,
-    description: str | None,
-    remote_outside_california: bool,
-    allow_unknown_location: bool = True,
-) -> str | None:
-    """Why the owner's standing search area leaves a posting out, or None.
-
-    The `us_only` rule, on its own so the chat assistant applies the feed's
-    rule rather than a copy of it (`retrieve.py`). Two copies of a search area
-    drift, and the one that drifts is the one nobody is looking at: the chat
-    search ignored the area entirely, and 11 of 25 answers it gave were in
-    London, Tokyo, Singapore, Toronto and Stockholm.
-    """
-    where = locality_of(location)
-    if where is Locality.UNKNOWN:
-        return None if allow_unknown_location else "no location given"
-    if not is_domestic(where):
-        return f"location {location!r} is outside the United States"
-    if (
-        remote_outside_california
-        and not onsite_ok(where)
-        # A bare "United States" names no region and is no more evidence
-        # than silence; `Austin, TX` names a place the owner will not
-        # commute to. Only the second is on-site outside California.
-        and names_us_region(location)
-        and not reads_as_remote(title=title, location=location, description=description)
-    ):
-        # Domestic, but on-site somewhere the owner will not move to.
-        # Rides with `us_only` because it is the same standing preference
-        # read one level finer, and separating them would let the feed
-        # offer a Chicago desk it already knows is unreachable.
-        return f"location {location!r} is on-site outside California"
-    return None
 
 
 def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
