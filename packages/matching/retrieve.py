@@ -87,8 +87,7 @@ from packages.matching.embed import (
     get_embedder,
     tokenize,
 )
-from packages.matching.locality import Locality, locality_of
-from packages.matching.search import area_exclusion
+from packages.matching.locality import Locality, area_exclusion, locality_of
 
 log = structlog.get_logger(__name__)
 
@@ -356,7 +355,7 @@ def _search_area(question: str) -> str | None:
 
 
 def _outside_area(hit: _Hit) -> bool:
-    """The feed's own rule (`search.area_exclusion`), not a copy of it."""
+    """The one rule (`locality.area_exclusion`), not a copy of it."""
     return (
         area_exclusion(
             hit.location,

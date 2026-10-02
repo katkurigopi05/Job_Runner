@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching chunk-postings prune-postings export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching chunk-postings audit-locations prune-postings export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -384,6 +384,12 @@ inspect-csv:
 # The matching pass after each crawl does new postings; this clears a backlog.
 chunk-postings:
 	$(PY)/python -m scripts.chunk_postings
+
+# make audit-locations — how the search area reads every open posting's
+# location, read-only. Lists the places no rule recognized and the strings most
+# likely to be misread, so a gap in locality.py shows instead of hiding.
+audit-locations:
+	$(PY)/python -m scripts.audit_locations
 
 # make prune-postings — delete closed postings and ones posted more than
 # POSTING_MAX_AGE_DAYS (30) ago, keeping any you applied to, swiped on,

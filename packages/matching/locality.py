@@ -38,6 +38,7 @@ would be worse than saying so.
 from __future__ import annotations
 
 import re
+import unicodedata
 from enum import StrEnum
 
 
@@ -81,7 +82,11 @@ US_LOCALITIES = frozenset({Locality.BAY_AREA, Locality.CALIFORNIA, Locality.UNIT
 _WORKING_MODE_RE = re.compile(
     r"\b(?:remote|hybrid|on[- ]?site|onsite|in[- ]?office|in[- ]?person|"
     r"work from home|home[- ]?based|wfh|telecommute|virtual|distributed|"
-    r"flexible|anywhere|any location|multiple locations|various)\b",
+    r"flexible|anywhere|any location|multiple locations|various|"
+    # Not a working mode, but no more a place: a placeholder the board left
+    # in the field ("N/A", "LOCATION", "HQ"), or a role open everywhere
+    # ("Remote, Global"). Read as places they fell to `UNPLACED`.
+    r"global|worldwide|n/a|tbd|tba|location|headquarters?|hq|office)\b",
     re.I,
 )
 
@@ -160,6 +165,7 @@ def names_no_place(location: str | None) -> bool:
 
 _BAY_AREA_CITIES = (
     "san francisco",
+    "sf",
     "bay area",
     "silicon valley",
     "palo alto",
@@ -473,6 +479,9 @@ _NON_US_MARKERS = (
     r"uk",
     r"emea",
     r"apac",
+    # Asia-Pacific and Japan, as sales regions are named. One posting in the
+    # owner's corpus is located just "APJ".
+    r"apj",
     r"latam",
     r"cemea",
     # Added after a real crawl put "Sr. Manager, Finance Transformation —
@@ -518,6 +527,19 @@ _NON_US_MARKERS = (
     r"azerbaijan",
     r"kazakhstan",
     r"uzbekistan",
+    # Canadian provinces by name. Bare `Ontario` is also a Californian city,
+    # and an address says which: `Ontario, CA` carries a state code, and an
+    # explicit US signal outranks a name here. Read alone, the province is far
+    # the likelier, and as `UNPLACED` it was kept.
+    r"ontario",
+    r"british columbia",
+    r"alberta",
+    r"quebec",
+    r"nova scotia",
+    r"manitoba",
+    r"saskatchewan",
+    r"new brunswick",
+    r"newfoundland",
     # Continents and trading blocs, the same kind of marker as `emea` and
     # `apac` above. Two Synthesia roles located simply `Europe` sat in the
     # owner's top ten after the country list was extended, because a continent
@@ -569,7 +591,11 @@ _NON_US_CITIES_RE = re.compile(
     r"são paulo|sao paulo|rio de janeiro|mexico city|guadalajara|bogota|bogotá|"
     r"buenos aires|santiago|lagos|nairobi|cairo|cape town|johannesburg|"
     r"manila|jakarta|hanoi|bangkok|kuala lumpur|karachi|lahore|dhaka|colombo|"
-    r"minsk|kyiv|kiev|moscow|belgrade|zagreb|sofia|tallinn|riga|vilnius)\b",
+    r"minsk|kyiv|kiev|moscow|belgrade|zagreb|sofia|tallinn|riga|vilnius|"
+    r"frankfurt|heidelberg|cologne|koln|dusseldorf|stuttgart|leipzig|dresden|"
+    r"malmo|gothenburg|tampere|espoo|lviv|kharkiv|odesa|canberra|adelaide|"
+    r"reykjavik|reykjanesbaer|brussel|antwerp|ghent|basel|lausanne|"
+    r"cdmx\d*|monterrey|sao jose dos campos|one[- ]north)\b",
     re.I,
 )
 
@@ -777,7 +803,9 @@ _US_STATE_NAMES = (
 
 _US_STATE_NAME_RE = re.compile(r"\b(?:" + "|".join(_US_STATE_NAMES) + r")\b", re.I)
 
-_US_COUNTRY_RE = re.compile(r"\b(?:united states|usa|u\.s\.a\.|u\.s\.|us)\b", re.I)
+_US_COUNTRY_RE = re.compile(
+    r"(?<![a-z])(?:united[- ]states|usa|u\.s\.a\.?|u\.s\.?|us|usca)(?![a-z])", re.I
+)
 
 #: Boards very often write only the city — "Austin", "Seattle" — with no state
 #: and no country. Without these the commonest form of American location is
@@ -862,6 +890,8 @@ _US_CITIES = (
     "st louis",
     "saint louis",
     "omaha",
+    "wichita",
+    "richland",
     "des moines",
     "las vegas",
     "reno",
@@ -939,11 +969,69 @@ _US_CITIES = (
 
 _US_CITY_RE = re.compile(r"\b(?:" + "|".join(re.escape(c) for c in _US_CITIES) + r")\b", re.I)
 
+#: City codes boards use in a list ("SF, SEA, NYC, CHI"), matched uppercase on
+#: the original text. `SEA` and `AUS` are left out: Southeast Asia, Australia.
+_US_CITY_CODE_RE = re.compile(r"\b(?:CHI|NYC|ATL|BOS|DFW|PDX|PHX|DEN)\b")
+
 _CALIFORNIA_RE = re.compile(r"\bcalifornia\b", re.I)
 _CALIFORNIA_CODE_RE = re.compile(r"\bCA\b")
 
 _BAY_AREA_RE = re.compile(r"\b(?:" + "|".join(_BAY_AREA_CITIES) + r")\b", re.I)
 _CALIFORNIA_CITY_RE = re.compile(r"\b(?:" + "|".join(_CALIFORNIA_CITIES) + r")\b", re.I)
+
+
+#: A state code where a board puts one without the comma: `Remote - OR`,
+#: `Remote (AZ)`, `UT - Cottonwood Heights`. Uppercase and anchored to those
+#: shapes, because `OR` and `IN` are words. `CA` is left out: `Remote - CA` is
+#: as often Canada, and the comma rules already decide `CA`.
+_US_STATE_CODE_LOOSE_RE = re.compile(
+    r"(?:\b(?i:remote|hybrid|on-?site)\s*[-–—:(]\s*|^)("
+    + "|".join(code for code in _US_STATE_CODES if code != "CA")
+    + r")(?:\s*[-–—)]|\s*$)"
+)
+
+#: A foreign city beside its own ISO country code, where that code is also an
+#: American state's: `Toronto, CA`, `CA-Toronto`, `Berlin, DE`, `Tel Aviv, IL`,
+#: `Bangalore, IN`. Read the usual way the code wins and the posting lands in
+#: California, Delaware, Illinois or Indiana. Only these pairs, so `Dublin, CA`
+#: (a Bay Area city) and `Paris, TX` keep their American meaning.
+_COLLIDING_COUNTRY_CITIES = {
+    "CA": "toronto|vancouver|montreal|ottawa|calgary|edmonton|winnipeg|halifax|"
+    "waterloo|kitchener|mississauga|quebec city",
+    "DE": "berlin|munich|hamburg|frankfurt|cologne|koln|dusseldorf|stuttgart|"
+    "heidelberg|leipzig|dresden",
+    "IN": "bengaluru|bangalore|hyderabad|mumbai|pune|chennai|delhi|new delhi|"
+    "gurgaon|gurugram|noida",
+    "IL": "tel aviv|jerusalem|haifa|herzliya",
+    "CO": "bogota|medellin",
+    "AR": "buenos aires",
+}
+_COLLIDING_COUNTRY_RE = re.compile(
+    "|".join(
+        rf"(?i:\b(?:{cities})\b)\s*[,/\-–—]\s*{code}\b|\b{code}\s*[-–—]\s*(?i:(?:{cities})\b)"
+        for code, cities in _COLLIDING_COUNTRY_CITIES.items()
+    )
+)
+
+#: A foreign ISO alpha-3 code leading the field: `CRI - Remote` is Costa Rica.
+_FOREIGN_ALPHA3_RE = re.compile(
+    r"^(?:CAN|MEX|CRI|BRA|ARG|COL|CHL|PER|GBR|IRL|DEU|FRA|ESP|PRT|NLD|BEL|POL|"
+    r"SWE|NOR|DNK|FIN|CHE|AUT|ITA|IND|SGP|JPN|KOR|CHN|AUS|NZL|ISR|ARE|ZAF)\b"
+)
+
+#: "St. Louis" is "st louis" in the city list.
+_ABBREVIATION_RE = re.compile(r"\b(st|ft|mt)\.", re.I)
+
+
+def _fold(location: str) -> str:
+    """Accents off, so `Zürich` and `Malmö` meet `zurich` and `malmo`."""
+    decomposed = unicodedata.normalize("NFKD", location)
+    plain = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return _ABBREVIATION_RE.sub(r"\1", plain)
+
+
+def _us_state_codes(original: str) -> set[str]:
+    return set(_US_STATE_CODE_RE.findall(original)) | set(_US_STATE_CODE_LOOSE_RE.findall(original))
 
 
 def _is_california(text: str, original: str) -> bool:
@@ -956,7 +1044,7 @@ def locality_of(location: str | None) -> Locality:
     Rule order is the whole design; see the module docstring for why it is
     this order and not a more obvious one.
     """
-    original = (location or "").strip()
+    original = _fold((location or "").strip())
     # Silence, and its close cousin: text that names a working mode and no
     # place. Both are "no evidence about where", which is what `UNKNOWN`
     # means. Falling through would reach `UNPLACED` and read a bare "Remote"
@@ -973,15 +1061,17 @@ def locality_of(location: str | None) -> Locality:
     # province is the half that means something.
     if _NON_US_SUBDIVISION_RE.search(original):
         return Locality.ELSEWHERE
+    # The same for a city beside its own country's code when that code is also
+    # a state's, and for a country's alpha-3 code at the head of the field.
+    if _COLLIDING_COUNTRY_RE.search(original) or _FOREIGN_ALPHA3_RE.search(original):
+        return Locality.ELSEWHERE
 
     # A foreign *country name* can share a posting with an American one —
     # "Remote - US or Canada" is a job the owner can take — so that yields to
     # an explicit US signal. A bare "CA" is not one of those signals here:
     # inside a Canadian address it is the country, not the state.
     if _NON_US_RE.search(text) and not (
-        _US_STATE_CODE_RE.search(original)
-        or _CALIFORNIA_RE.search(text)
-        or _US_COUNTRY_RE.search(text)
+        _us_state_codes(original) or _CALIFORNIA_RE.search(text) or _US_COUNTRY_RE.search(text)
     ):
         return Locality.ELSEWHERE
 
@@ -989,7 +1079,7 @@ def locality_of(location: str | None) -> Locality:
     #    name is read. `Newark, NJ` and `Richmond, VA` both share a name with
     #    a Bay Area city, and the state is the half that means something —
     #    the same rule that keeps `Vancouver, WA` out of Canada.
-    codes = set(_US_STATE_CODE_RE.findall(original))
+    codes = _us_state_codes(original)
     if codes and "CA" not in codes:
         return Locality.UNITED_STATES
 
@@ -1001,10 +1091,11 @@ def locality_of(location: str | None) -> Locality:
 
     # 4. Anywhere else in the United States.
     if (
-        _US_STATE_CODE_RE.search(original)
+        codes
         or _US_STATE_NAME_RE.search(text)
         or _US_COUNTRY_RE.search(text)
         or _US_CITY_RE.search(text)
+        or _US_CITY_CODE_RE.search(original)
     ):
         return Locality.UNITED_STATES
 
@@ -1041,10 +1132,15 @@ def names_us_region(location: str | None) -> bool:
     """
     if not location:
         return False
+    # Read as `locality_of` reads it, or the two disagree: "St. Louis" and
+    # "UT - Cottonwood Heights" were American there and named no region here,
+    # so on-site roles in Missouri and Utah were kept as if remote.
+    location = _fold(location)
     return bool(
-        _US_STATE_CODE_RE.search(location)
+        _us_state_codes(location)
         or _US_STATE_NAME_RE.search(location)
         or _US_CITY_RE.search(location)
+        or _US_CITY_CODE_RE.search(location)
         or _BAY_AREA_RE.search(location)
         or _CALIFORNIA_CITY_RE.search(location)
         or _CALIFORNIA_RE.search(location)
@@ -1107,6 +1203,9 @@ def reachable(locality: Locality, *, remote: bool) -> bool:
 
     A posting whose city no rule recognizes should be ranked down, not hidden.
     Callers that would rather be strict have `allow_unknown_location`.
+
+    `area_exclusion` applies this to each office a posting lists. It is the
+    caller everything goes through; nothing should read the area another way.
     """
     if not is_domestic(locality):
         # UNKNOWN and UNPLACED included: neither is evidence about where this
@@ -1114,3 +1213,84 @@ def reachable(locality: Locality, *, remote: bool) -> bool:
         # that carries real evidence, and it is handled by the caller.
         return locality is not Locality.ELSEWHERE
     return remote or onsite_ok(locality)
+
+
+#: Where a board separates one office from the next. Not commas: `San Jose,
+#: CA` is one place. A capitalised `OR` after a comma is Oregon, not "or".
+_LOCATION_SEPARATOR_RE = re.compile(r"\s*(?:;|\||•|\n|(?<!,)\s+(?:or|OR)\s+)\s*")
+
+
+def locations_in(location: str | None) -> list[str]:
+    """The offices a location field lists, one per entry.
+
+    "San Francisco, CA; Pittsburgh, PA; Toronto, ON" is three places, and a
+    posting is open to the owner when any one of them is. Read as one string,
+    the Ontario code decided the whole thing and the San Francisco office was
+    dropped as foreign.
+    """
+    parts = [part.strip(" ,") for part in _LOCATION_SEPARATOR_RE.split(location or "")]
+    return [part for part in parts if part]
+
+
+def area_exclusion(
+    location: str | None,
+    *,
+    title: str | None,
+    description: str | None,
+    remote_outside_california: bool,
+    allow_unknown_location: bool = True,
+) -> str | None:
+    """Why the owner's search area leaves a posting out, or None to keep it.
+
+    The one statement of the area, used by the scoring gate
+    (`filters.location_matches`), the feed (`search.matches`) and the chat
+    search (`retrieve`). There were two, and they disagreed on 107 postings.
+
+    Each listed office is judged with `reachable`, and the posting is kept
+    when any office is in the area:
+
+    - **An office in the area keeps it**, whatever else is listed.
+    - **Otherwise an explicit signal excludes it**: on-site in another state,
+      or abroad.
+    - **Otherwise it is kept.** A place no rule recognizes (`UNPLACED`, such
+      as "Remote (North America)") is not evidence of being abroad, and
+      neither is a field that names no place. `allow_unknown_location=False`
+      is the strict reading, and drops both.
+    """
+    parts = locations_in(location)
+    # "Houston, TX or Remote": the remote option names no place of its own and
+    # sits beside American offices, so it is remote within the country they
+    # name. Beside only foreign ones ("Toronto or Remote") it gains nothing,
+    # because the offices it would attach to are not reachable anyway.
+    remote_option = any(
+        names_no_place(part) and reads_as_remote(title=None, location=part) for part in parts
+    )
+    onsite_elsewhere = abroad = unplaced = False
+    for part in parts:
+        where = locality_of(part)
+        if where is Locality.UNKNOWN:
+            continue
+        if where is Locality.UNPLACED:
+            unplaced = True
+            continue
+        # A bare "United States" names no region, so it is no more on-site
+        # somewhere than silence is; `Austin, TX` names one.
+        remote = (
+            not remote_outside_california
+            or not names_us_region(part)
+            or remote_option
+            or reads_as_remote(title=title, location=part, description=description)
+        )
+        if reachable(where, remote=remote):
+            return None
+        if where is Locality.ELSEWHERE:
+            abroad = True
+        else:
+            onsite_elsewhere = True
+    if onsite_elsewhere:
+        return f"location {location!r} is on-site outside California"
+    if abroad:
+        return f"location {location!r} is outside the United States"
+    if allow_unknown_location:
+        return None
+    return "location not recognized" if unplaced else "no location given"
