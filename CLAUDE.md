@@ -1031,6 +1031,59 @@ posting text plus the owner's own application statuses, which go wherever
 the rest of the context goes under the per-question provider choice above.
 Recruiter mail gating is untouched.
 
+**Chunks, not one vector per posting** (2026-10-01). A posting's single
+vector covers what bge-small reads, its first 512 tokens, and postings run to
+a median 5,874 characters with the requirements last. Of the 143 postings
+that mentioned RAG, the mention fell inside the embedded window in 27, and a
+semantic search for "RAG" found none of them in its top 50. The fix is the
+owner's own DP-800 recipe (`AI_GENERATE_CHUNKS`, fixed 500-character chunks
+overlapping by 25): `matching/chunks.py` splits each open posting,
+`posting_chunks` stores one `halfvec(384)` per chunk, and search ranks a
+posting by its best chunk. Measured before building, chunking took "RAG" from
+0/10 to 4/10 in the semantic top ten; float16 halved the vectors (124 to 62
+MB) at the same top-10 precision.
+
+Four things are load-bearing:
+
+- **Keywords still decide relevance.** Chunk ranks feed the same RRF, last,
+  so they override a posting's one-vector rank, never the keyword pool. The
+  DP-800 hybrid (top 15 from each side, unioned) put "Supervisor Sanitation"
+  second for "RAG": bge-small reads it as the cloth.
+- **Offsets, not text.** A chunk is `(start, length)` into the normalised
+  description, plus the `content_hash` it was cut from. A chunk whose hash no
+  longer matches its posting is ignored by search and replaced by the next
+  pass, never read at the wrong place.
+- **Only bge-small chunks.** Lexical chunk vectors would repeat what the
+  keyword scan reads, so with `EMBEDDING_BACKEND=lexical` the pass does
+  nothing and search behaves exactly as before. Chunk queries carry bge's
+  documented search prefix, which the measurement used.
+- **384 dimensions, not DP-800's 1536.** That is Gemini's embedding size;
+  using it here would send every posting chunk and every chat question to
+  Google, ending the property that retrieval runs on this machine.
+
+The matching pass after each crawl chunks up to 500 new postings;
+`make chunk-postings` clears a backlog.
+
+**Questions that name a company or a title** (2026-10-01). Measured on 18
+questions built from the owner's data, 10 found what they named. Now 17;
+the eighteenth names a company with nothing open, and the context says
+"no open postings at Mistral AI" rather than leaving the model to read
+silence as no match. Four rules:
+
+- **A bare title is a postings question** when every word of it is in some
+  open posting's title. That keeps "did the hiring manager reply?" out, as
+  does treating "hiring manager" as a person rather than the job word
+  "hiring".
+- **A company has aliases**: the bracketed name on its own ("CoreWeave"),
+  the name without it ("Weights & Biases"), and either without a suffix like
+  AI or Labs when what remains is in at most 2% of postings. "Mistral" names
+  Mistral AI; "together" does not name Together AI.
+- **A title match counts twice** in the keyword score.
+- **A posting whose whole title is in the question goes first**, longest
+  title first, two words at least, found by its own lookup so it never loses
+  its place in the 30-posting keyword pool. "Director, IT Operations" needed
+  it: "it" is a stopword and dozens of Director titles tied ahead.
+
 Measured live on 2026-09-30, llama3.1 answered the Kafka question citing five
 postings that all mention Kafka. A search costs 0.1–0.9s against 19,018
 postings; the first call in a process also loads bge-small, about 4s, in a
@@ -2952,6 +3005,16 @@ later change could quietly break.
   posting is never deleted for its age. First run, 2026-09-30, after a
   verified backup: 19,807 deleted, 7 kept for the owner, the postings table
   226 MB to 39 MB, and chat search about 3x faster (940 to 329 ms).
+
+  **The prune now runs itself** (`POSTING_AUTO_PRUNE`, on), at the start of
+  every matching pass and by the same rules. The limit alone only stopped new
+  old postings arriving: the day after that first run, 222 held postings and
+  3,132 of their chunk vectors had aged out and were still searched. A
+  posting's vectors go with it — `description_embedding` is on the row and
+  `posting_chunks` cascades. The pass does not `VACUUM FULL`, which locks the
+  tables search reads; the command still does, and now for every table a
+  posting delete cascades into, read from the models. Its hand-written list
+  had missed `posting_chunks`, the largest of them.
 
 
 ---

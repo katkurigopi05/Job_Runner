@@ -260,6 +260,12 @@ class Settings(BaseSettings):
     #: A posting with no date is kept: an unknown age is not evidence of an old
     #: one. 0 keeps every age.
     posting_max_age_days: int = 30
+    #: Prune at the start of every matching pass, by the same rules as
+    #: `make prune-postings`. The limit above only stops new old postings
+    #: arriving; without this, held ones age past it and stay searchable,
+    #: along with their chunk vectors, until someone runs the command. The
+    #: day after the first prune, 222 postings and 3,132 chunks had aged out.
+    posting_auto_prune: bool = True
 
     crawler_tick_seconds: int = 300
     #: Companies enqueued per tick. The cap is the difference between a queue

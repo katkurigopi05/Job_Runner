@@ -73,10 +73,11 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 import structlog
-from sqlalchemy import ColumnElement, Float, case, func, literal, select
+from sqlalchemy import ColumnElement, Float, and_, case, exists, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Application, Company, Posting
+from packages.core.models_chunks import PostingChunk
 from packages.matching import idf
 from packages.matching.embed import (
     Embedder,
@@ -147,6 +148,29 @@ want need interested something
 """
 _FRAMING_WORDS = _POSTING_WORDS | frozenset(_FRAMING_WORDS_TEXT.split())
 
+#: bge's documented instruction for a short query against longer passages.
+#: Used on chunk searches only, where it was measured: with it, "RAG" found 4
+#: of the top 10 chunked postings.
+_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
+#: Chunks read per chunk-level search before keeping the best per posting.
+#: A posting has about fourteen, so this leaves room for `limit` distinct ones.
+_CHUNK_POOL = 200
+
+#: Words a company name may drop and still name it: "Mistral" for Mistral AI,
+#: "1X" for 1X Technologies.
+_COMPANY_SUFFIXES_TEXT = "ai labs lab technologies technology inc corp corporation ltd llc"
+_COMPANY_SUFFIXES = frozenset(_COMPANY_SUFFIXES_TEXT.split())
+
+#: How rare the rest of the name must be across postings for it to stand
+#: alone. "mistral" is in under 1% of postings; "together", the rest of
+#: Together AI, is in a large share, and "how do teams work together" must not
+#: filter the search to one company.
+_SHORT_NAME_MAX_SHARE = 0.02
+
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_HIRING_MANAGER = re.compile(r"\bhiring managers?\b")
+
 _RAW_WORD = re.compile(r"[a-z0-9+#.]+")
 _SENTENCE_START = re.compile(r"(?<=[.!?;])\s+")
 
@@ -195,6 +219,9 @@ class Retrieval:
     #: Open postings it could not: no vector, or a vector nothing here can
     #: encode a question into. "Nothing found" means less when this is large.
     unsearchable: int = 0
+    #: Registry companies the question named, so "nothing found" can say
+    #: "no open postings at Mistral AI" rather than leave the model to guess.
+    companies: tuple[str, ...] = ()
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -262,6 +289,23 @@ def _encode(
     }
 
 
+def _encode_chunk_queries(
+    encoders: dict[tuple[str, int | None], Embedder], subject: str
+) -> dict[str, list[float]]:
+    """The subject's vector per chunk model, with bge's search prefix where it applies."""
+    if not subject:
+        return {}
+    out: dict[str, list[float]] = {}
+    for (model, _), encoder in encoders.items():
+        text = (
+            _QUERY_PREFIX + subject if isinstance(encoder, SentenceTransformerEmbedder) else subject
+        )
+        vector = encoder.encode([text])[0]
+        if any(vector):
+            out[model] = vector
+    return out
+
+
 def _term_pattern(term: str) -> str:
     """A Postgres regex matching `term` as a whole word.
 
@@ -298,24 +342,112 @@ def _search_terms(
     return sorted(terms, key=frequencies.idf, reverse=True)[:MAX_TERMS]
 
 
-async def _named_companies(
-    session: AsyncSession, words: set[str]
-) -> tuple[list[uuid.UUID], set[str]]:
-    """Registry companies the question names, and the words that named them.
+def _company_aliases(name: str, frequencies: idf.DocumentFrequencies) -> list[set[str]]:
+    """The word sets that name a company, each enough on its own.
 
-    A company counts when every word of its name is in the question. The words
-    come back too, because a company's name is in every one of its postings
-    and so cannot pick out the paragraph of any one of them.
+    The full name; a bracketed alias as a name of its own ("Weights & Biases
+    (CoreWeave)" is also "CoreWeave", and "Weights & Biases" without it); and
+    either of those without a corporate suffix, when what remains is rare in
+    postings. Without corpus statistics nothing is shortened.
+    """
+    parts = [re.sub(r"\(.*?\)", " ", name), *re.findall(r"\((.*?)\)", name)]
+    aliases: list[set[str]] = []
+    for part in parts:
+        terms = set(tokenize(part))
+        if not terms:
+            continue
+        aliases.append(terms)
+        core = terms - _COMPANY_SUFFIXES
+        if (
+            core
+            and core != terms
+            and frequencies.usable
+            and all(frequencies.document_share(t) <= _SHORT_NAME_MAX_SHARE for t in core)
+        ):
+            aliases.append(core)
+    return aliases
+
+
+async def _named_companies(
+    session: AsyncSession, words: set[str], frequencies: idf.DocumentFrequencies
+) -> tuple[list[uuid.UUID], set[str], list[str]]:
+    """Registry companies the question names, the words that named them, and their names.
+
+    A company counts when every word of one of its aliases is in the question
+    (`_company_aliases`). Measured on the owner's questions: "jobs at Weights &
+    Biases" and "anything at Mistral?" found nothing while only the full
+    registry name counted. The words come back too, because a company's name
+    is in every one of its postings and so cannot pick out the paragraph of
+    any one of them.
     """
     rows = await session.execute(select(Company.id, Company.name))
     named: list[uuid.UUID] = []
     naming: set[str] = set()
+    names: list[str] = []
     for company_id, name in rows.all():
-        name_terms = set(tokenize(name or ""))
-        if name_terms and name_terms <= words:
+        if any(alias <= words for alias in _company_aliases(name or "", frequencies)):
             named.append(company_id)
-            naming |= name_terms
-    return named, naming
+            naming |= set(tokenize(name or ""))
+            names.append(name)
+    return named, naming, names
+
+
+async def _names_a_title(session: AsyncSession, subject: list[str]) -> bool:
+    """Every word of the question is in the title of some open posting.
+
+    How a bare job title is recognised: "Forward Deployed Engineer" names no
+    job word and no company, and was not searched at all. Requiring every word
+    in one title keeps the gate shut for "did the hiring manager reply?",
+    whose words share no title.
+    """
+    if not subject:
+        return False
+    return bool(
+        await session.scalar(
+            select(
+                exists().where(
+                    Posting.closed_at.is_(None),
+                    *(Posting.title.regexp_match(_term_pattern(t), flags="i") for t in subject),
+                )
+            )
+        )
+    )
+
+
+async def _titles_in_question(
+    session: AsyncSession, question: str, companies: list[uuid.UUID]
+) -> list[_Hit]:
+    """Open postings whose whole title, words only, is in the question.
+
+    Asked for by name, so they enter the pool whatever the keyword scores say.
+    "Director, IT Operations" needed this: "it" is a stopword, and dozens of
+    Director and Operations titles tied for the 30 keyword places ahead of
+    it. Two words at least, or a posting titled "Engineer" would claim every
+    question naming an engineer. Longest first, so the most specific wins.
+    """
+    asked = " " + " ".join(_NON_ALNUM.split(question.lower())).strip() + " "
+    title = func.trim(func.regexp_replace(func.lower(Posting.title), "[^a-z0-9]+", " ", "g"))
+    query = (
+        select(
+            Posting.id,
+            Posting.title,
+            Posting.location,
+            Posting.url,
+            Posting.description_raw,
+            Company.name,
+        )
+        .outerjoin(Company, Company.id == Posting.company_id)
+        .where(
+            Posting.closed_at.is_(None),
+            func.strpos(title, " ") > 0,
+            func.strpos(literal(asked), func.concat(" ", title, " ")) > 0,
+        )
+        .order_by(func.length(title).desc(), Posting.first_seen_at.desc(), Posting.id)
+        .limit(KEYWORD_POOL)
+    )
+    if companies:
+        query = query.where(Posting.company_id.in_(companies))
+    return [_Hit(*row) for row in (await session.execute(query)).all()]
 
 
 async def _keyword_hits(
@@ -346,10 +478,15 @@ async def _keyword_hits(
     # MATERIALIZED, or Postgres may inline the CTE and rebuild `doc` per term.
     matched = found.cte("matched").prefix_with("MATERIALIZED")
 
+    # A term in the title counts twice: "Forward Deployed Engineer - India"
+    # lost to a Director role that only mentioned those words, when the
+    # question was the title itself.
     score: ColumnElement[float] = literal(0.0, Float)
     for term in terms:
+        weight = frequencies.idf(term)
         hit = matched.c.doc.regexp_match(_term_pattern(term), flags="i")
-        score = score + case((hit, frequencies.idf(term)), else_=0.0)
+        in_title = Posting.title.regexp_match(_term_pattern(term), flags="i")
+        score = score + case((hit, weight), else_=0.0) + case((in_title, weight), else_=0.0)
 
     query = (
         select(
@@ -421,6 +558,75 @@ async def _order_in_space(
     return list(rows.all())
 
 
+def _chunk_filter(model: str) -> list[ColumnElement[bool]]:
+    """Chunks of open postings, from one model, cut from the text the posting holds now."""
+    return [
+        Posting.closed_at.is_(None),
+        PostingChunk.embedding_model == model,
+        PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
+    ]
+
+
+async def _best_chunks(
+    session: AsyncSession,
+    model: str,
+    vector: list[float],
+    *,
+    among: list[uuid.UUID] | None = None,
+    companies: list[uuid.UUID] | None = None,
+    limit: int = _CHUNK_POOL,
+) -> list[tuple[uuid.UUID, int, int]]:
+    """Postings by their best chunk, nearest first: `(posting_id, start, length)`.
+
+    With `among`, only those postings are ranked: the keyword candidates.
+    Without it, the nearest chunks of the whole corpus, then the best per
+    posting, above a similarity of zero like `_nearest`.
+    """
+    distance = PostingChunk.embedding.cosine_distance(vector)
+    query = (
+        select(PostingChunk.posting_id, PostingChunk.start, PostingChunk.length, distance)
+        .join(Posting, Posting.id == PostingChunk.posting_id)
+        .where(*_chunk_filter(model))
+    )
+    if among is not None:
+        query = query.where(PostingChunk.posting_id.in_(among))
+    else:
+        query = query.where(distance < _NO_OVERLAP).order_by(distance).limit(limit)
+    if companies:
+        query = query.where(Posting.company_id.in_(companies))
+    best: dict[uuid.UUID, tuple[float, int, int]] = {}
+    for posting_id, start, length, dist in (await session.execute(query)).all():
+        if posting_id not in best or dist < best[posting_id][0]:
+            best[posting_id] = (dist, start, length)
+    ranked = sorted(best.items(), key=lambda item: (item[1][0], str(item[0])))
+    return [(posting_id, start, length) for posting_id, (_, start, length) in ranked]
+
+
+async def _hits_for(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, _Hit]:
+    rows = await session.execute(
+        select(
+            Posting.id,
+            Posting.title,
+            Posting.location,
+            Posting.url,
+            Posting.description_raw,
+            Company.name,
+        )
+        .outerjoin(Company, Company.id == Posting.company_id)
+        .where(Posting.id.in_(ids))
+    )
+    return {row[0]: _Hit(*row) for row in rows.all()}
+
+
+def _chunk_excerpt(description: str, start: int, length: int) -> str:
+    """The chunk that matched, marked where it was cut from a longer text."""
+    from packages.matching.chunks import normalize
+
+    body = normalize(description)
+    text = body[start : start + length]
+    return ("…" if start > 0 else "") + text + ("…" if start + length < len(body) else "")
+
+
 def _fuse(keyword: list[uuid.UUID], by_space: list[list[uuid.UUID]]) -> dict[uuid.UUID, float]:
     """Reciprocal Rank Fusion of the keyword order with each posting's vector order.
 
@@ -448,8 +654,14 @@ async def retrieve(
     # Trailing dots off, as `tokenize` does: "Show me remote jobs." ends in
     # "jobs.", and "I applied to Stripe." in "stripe.".
     words = {word.rstrip(".") for word in _RAW_WORD.findall(question.lower())}
-    companies, company_words = await _named_companies(session, words)
-    if not (words & _POSTING_WORDS or companies):
+    # "Hiring manager" is a person who replies, not a posting. Without this,
+    # "did the hiring manager reply?" counted as asking about jobs.
+    unframed = _HIRING_MANAGER.sub(" ", question.lower())
+    asks_about_jobs = bool({w.rstrip(".") for w in _RAW_WORD.findall(unframed)} & _POSTING_WORDS)
+    frequencies, active_revision = await idf.load_active(session)
+    companies, company_words, company_names = await _named_companies(session, words, frequencies)
+    subject_terms = [t for t in tokenize(question) if t not in _FRAMING_WORDS]
+    if not (asks_about_jobs or companies or await _names_a_title(session, subject_terms)):
         return Retrieval(attempted=False)
 
     open_total = (
@@ -458,7 +670,6 @@ async def retrieve(
         )
         or 0
     )
-    frequencies, active_revision = await idf.load_active(session)
     space_rows = (
         await session.execute(
             select(Posting.embedding_model, Posting.embedding_revision, func.count())
@@ -474,15 +685,31 @@ async def retrieve(
         )
     ).all()
     spaces = [(str(model), revision) for model, revision, _ in space_rows]
-    sizes = {(str(model), revision): int(count) for model, revision, count in space_rows}
     # Off the event loop: the first call loads bge-small, which takes seconds,
     # and every encode is CPU work. §10 wants nothing blocking a handler.
     encoders = await asyncio.to_thread(_encoders, spaces, frequencies, active_revision)
     # Encoded without its framing words, for the same reason they are not
     # searched for: a lexical vector of "which open roles" sits nearest to
     # whatever posting says "open roles", whatever it is about.
-    subject = " ".join(t for t in tokenize(question) if t not in _FRAMING_WORDS)
+    subject = " ".join(subject_terms)
     vectors = await asyncio.to_thread(_encode, encoders, subject)
+
+    # Chunk vectors, where the corpus has them (`matching/chunks.py`): one
+    # posting is about fourteen 500-character windows, so a skill named in the
+    # requirements is visible here and not to the posting's single vector.
+    chunk_models = (
+        await session.scalars(
+            select(PostingChunk.embedding_model)
+            .join(Posting, Posting.id == PostingChunk.posting_id)
+            .where(Posting.closed_at.is_(None))
+            .distinct()
+        )
+    ).all()
+    chunk_encoders = await asyncio.to_thread(
+        _encoders, [(str(model), None) for model in chunk_models], frequencies, active_revision
+    )
+    chunk_vectors = await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, subject)
+    chunk_spans: dict[uuid.UUID, tuple[int, int]] = {}
 
     terms = _search_terms(question, frequencies)
     if companies:
@@ -492,27 +719,56 @@ async def retrieve(
         # question asks, so "jobs at Stripe" still reads every Stripe posting.
         terms = _search_terms(question, frequencies, exclude=company_words) or terms
 
-    if terms:
-        keyword = await _keyword_hits(session, terms, frequencies, companies)
+    titled = await _titles_in_question(session, question, companies)
+    if terms or titled:
+        scanned = await _keyword_hits(session, terms, frequencies, companies) if terms else []
+        already = {hit.posting_id for hit in titled}
+        keyword = titled + [hit for hit in scanned if hit.posting_id not in already]
         among = [hit.posting_id for hit in keyword]
         by_space = [
             await _order_in_space(session, space, vector, among)
             for space, vector in vectors.items()
             if among
         ]
+        # Last, so that in `_fuse` a posting with chunks is ranked by its best
+        # chunk rather than by its one truncated vector.
+        for model, vector in chunk_vectors.items():
+            if among:
+                best = await _best_chunks(session, model, vector, among=among)
+                by_space.append([posting_id for posting_id, _, _ in best])
         fused = _fuse(among, by_space)
-        # Stable sort, so a tie keeps the keyword order.
-        chosen = sorted(keyword, key=lambda hit: -fused[hit.posting_id])[:limit]
+        # A posting asked for by its title goes first, longest title first.
+        # Then the fused order; the sort is stable, so a tie keeps the keyword
+        # order.
+        by_title = {hit.posting_id: len(hit.title or "") for hit in titled}
+        chosen = sorted(
+            keyword, key=lambda hit: (-by_title.get(hit.posting_id, 0), -fused[hit.posting_id])
+        )[:limit]
         searched, unsearchable = open_total, 0
     else:
-        per_space = [
+        per_space: list[list[_Hit]] = []
+        for model, vector in chunk_vectors.items():
+            best = (await _best_chunks(session, model, vector, companies=companies))[:limit]
+            chunk_spans.update({posting_id: (start, length) for posting_id, start, length in best})
+            found = await _hits_for(session, [posting_id for posting_id, _, _ in best])
+            per_space.append(
+                [found[posting_id] for posting_id, _, _ in best if posting_id in found]
+            )
+        per_space += [
             await _nearest(session, space, vector, limit, companies)
             for space, vector in vectors.items()
         ]
         # Rank 1 of every space before rank 2 of any: distances from different
-        # models share no scale, and ranks are all they have in common.
-        chosen = [hits[r] for r in range(limit) for hits in per_space if r < len(hits)][:limit]
-        searched = sum(sizes[space] for space in vectors)
+        # models share no scale, and ranks are all they have in common. A
+        # posting in both a chunk space and a posting space is taken once.
+        chosen, taken = [], set()
+        for rank in range(limit):
+            for hits in per_space:
+                if rank < len(hits) and hits[rank].posting_id not in taken:
+                    taken.add(hits[rank].posting_id)
+                    chosen.append(hits[rank])
+        chosen = chosen[:limit]
+        searched = await _reachable(session, list(chunk_vectors), list(vectors))
         unsearchable = max(0, open_total - searched)
 
     statuses = await _application_statuses(session, [hit.posting_id for hit in chosen])
@@ -524,13 +780,47 @@ async def retrieve(
             company=hit.company,
             location=hit.location,
             url=hit.url,
-            excerpt=excerpt(hit.description or "", question, ignore=company_words),
+            excerpt=(
+                _chunk_excerpt(hit.description or "", *chunk_spans[hit.posting_id])
+                if hit.posting_id in chunk_spans
+                else excerpt(hit.description or "", question, ignore=company_words)
+            ),
             application_status=statuses.get(hit.posting_id),
         )
         for index, hit in enumerate(chosen, start=1)
     )
     return Retrieval(
-        attempted=True, passages=passages, searched=searched, unsearchable=unsearchable
+        attempted=True,
+        passages=passages,
+        searched=searched,
+        unsearchable=unsearchable,
+        companies=tuple(sorted(company_names)),
+    )
+
+
+async def _reachable(
+    session: AsyncSession, chunk_models: list[str], spaces: list[tuple[str, int | None]]
+) -> int:
+    """Open postings a vector search could reach: chunked, or in a usable space."""
+    reach: list[ColumnElement[bool]] = []
+    if chunk_models:
+        reach.append(
+            exists().where(
+                PostingChunk.posting_id == Posting.id,
+                PostingChunk.embedding_model.in_(chunk_models),
+                PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
+            )
+        )
+    reach += [and_(*_space_filter(model, revision)) for model, revision in spaces]
+    if not reach:
+        return 0
+    return int(
+        await session.scalar(
+            select(func.count())
+            .select_from(Posting)
+            .where(Posting.closed_at.is_(None), or_(*reach))
+        )
+        or 0
     )
 
 
