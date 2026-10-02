@@ -1084,6 +1084,25 @@ silence as no match. Four rules:
   its place in the 30-posting keyword pool. "Director, IT Operations" needed
   it: "it" is a stopword and dozens of Director titles tied ahead.
 
+**The search area applies here too** (2026-10-02). The feed kept to the
+owner's area — its top 200 were all in the Bay Area — while the chat search
+read a posting's location only to print it: 11 of 25 answers to five
+ordinary questions were in London, Tokyo, Singapore, Toronto and Stockholm.
+Now 0 of 25. Three rules:
+
+- **The feed's rule, not a copy.** `search.area_exclusion` is the `us_only`
+  check moved into a function of its own; the feed and `retrieve` both call
+  it, so the two cannot drift. `SEARCH_US_ONLY=false` turns it off for both.
+- **Filtered before the pool is cut.** With the area on, the keyword scan
+  reads 120 matches rather than 30 and the area cuts them back, so a foreign
+  posting never takes a place in the re-ranking an in-area one could have
+  had. The vector-only path widens the same way.
+- **Waived when the question names a place outside it**, read by
+  `locality_of`: "jobs in London" is a question about London. And what the
+  area left out is stated in the context, so "jobs at Faculty" gets "no open
+  postings at Faculty in the search area; 20 left out" rather than reading
+  as a company that is not hiring.
+
 Measured live on 2026-09-30, llama3.1 answered the Kafka question citing five
 postings that all mention Kafka. A search costs 0.1–0.9s against 19,018
 postings; the first call in a process also loads bge-small, about 4s, in a

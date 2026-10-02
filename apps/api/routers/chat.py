@@ -180,11 +180,30 @@ def _postings_section(found: Retrieval) -> str:
     lines = [f"POSTINGS: searched {found.searched} of {total} open postings"]
     if found.unsearchable:
         lines[0] += f" ({found.unsearchable} are not searchable yet)"
-    if not found.passages:
+    # Stated whenever it applies, and what it left out with it: "nothing at
+    # Faculty" and "nothing at Faculty where you search" are different answers.
+    if found.area:
         lines.append(
-            f"  no open postings at {', '.join(found.companies)}"
+            f"  search area: {found.area}"
+            + (
+                f"; {found.outside_area} matching posting"
+                f"{'' if found.outside_area == 1 else 's'} outside it left out"
+                if found.outside_area
+                else ""
+            )
+        )
+    elif found.area_waived:
+        lines.append("  search area: not applied, the question names a place outside it")
+    if not found.passages:
+        within = " in the search area" if found.outside_area else ""
+        lines.append(
+            f"  no open postings at {', '.join(found.companies)}{within}"
             if found.companies
-            else "  none shared anything with this question"
+            else (
+                "  none in the search area"
+                if found.outside_area
+                else "  none shared anything with this question"
+            )
         )
     for passage in found.passages:
         where = " — ".join(part for part in (passage.company, passage.location) if part)
