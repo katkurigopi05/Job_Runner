@@ -479,6 +479,9 @@ _NON_US_MARKERS = (
     r"uk",
     r"emea",
     r"apac",
+    # Asia-Pacific and Japan, as sales regions are named. One posting in the
+    # owner's corpus is located just "APJ".
+    r"apj",
     r"latam",
     r"cemea",
     # Added after a real crawl put "Sr. Manager, Finance Transformation —
@@ -537,7 +540,6 @@ _NON_US_MARKERS = (
     r"saskatchewan",
     r"new brunswick",
     r"newfoundland",
-    r"apj",
     # Continents and trading blocs, the same kind of marker as `emea` and
     # `apac` above. Two Synthesia roles located simply `Europe` sat in the
     # owner's top ten after the country list was extended, because a continent

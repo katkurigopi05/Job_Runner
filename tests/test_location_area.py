@@ -70,6 +70,7 @@ DROP = [
     "Frankfurt",
     "CDMX3",
     "CRI - Remote",
+    "APJ",
     # Provinces.
     "Ontario - Remote",
     "British Columbia; Ontario",
