@@ -33,7 +33,7 @@ import structlog
 from pydantic import BaseModel
 
 from packages.llm.audit import CLOUD_MODEL_MARKERS, record
-from packages.llm.pacing import MAX_RETRIES, pacer_for, retry_after_seconds
+from packages.llm.pacing import MAX_RETRIES, pacer_for, reset_beyond_reach, retry_after_seconds
 
 log = structlog.get_logger(__name__)
 
@@ -709,9 +709,16 @@ class _OpenAICompatibleProvider:
                 except Exception as exc:
                     raise LLMError(f"{self.SERVICE} call failed: {_scrubbed(exc)}") from exc
 
-                if resp.status_code == 429 and attempt < MAX_RETRIES:
-                    await pacer.back_off(attempt, retry_after_seconds(resp.headers))
-                    continue
+                if resp.status_code == 429:
+                    if (reset := reset_beyond_reach(resp)) is not None:
+                        raise LLMError(
+                            f"{self.SERVICE}'s allowance is spent until "
+                            f"{reset:%Y-%m-%d %H:%M} UTC, later than any retry here waits, so "
+                            "nothing was retried. Wait for the reset, or pick another provider."
+                        )
+                    if attempt < MAX_RETRIES:
+                        await pacer.back_off(attempt, retry_after_seconds(resp.headers))
+                        continue
 
                 if resp.status_code == 404:
                     # The failure `.env.example` predicts, said out loud.

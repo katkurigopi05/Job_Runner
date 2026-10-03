@@ -14,11 +14,13 @@ bearer token into the log, and a pre-release model id that disappears.
 
 from __future__ import annotations
 
+import time
+
 import httpx
 import pytest
 from pydantic import BaseModel
 
-from packages.llm import router
+from packages.llm import pacing, router
 from packages.llm.provider import (
     REASONING_HEADROOM_TOKENS,
     LLMError,
@@ -416,3 +418,87 @@ def test_each_gateway_names_its_own_default_route() -> None:
     )
     for provider in (OpenRouterProvider, TokenRouterProvider):
         assert "DEFAULT_MODEL" in vars(provider), f"{provider.__name__} must name its own"
+
+
+def _daily_limit(reset_in_s: float) -> dict:
+    """The body OpenRouter refused with on 2026-10-03, shape verbatim.
+
+    The reset is only in the body, under `metadata.headers`, as epoch
+    milliseconds; the HTTP response carried no `Retry-After`.
+    """
+    return {
+        "error": {
+            "message": "Rate limit exceeded: free-models-per-day. "
+            "Add 10 credits to unlock 1000 free model requests per day",
+            "code": 429,
+            "metadata": {
+                "headers": {
+                    "X-RateLimit-Limit": "50",
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(int((time.time() + reset_in_s) * 1000)),
+                }
+            },
+        }
+    }
+
+
+def _counting_429s(monkeypatch, payload: dict) -> tuple[list[str], list[float]]:
+    posts: list[str] = []
+    slept: list[float] = []
+
+    async def mock_post(self, url, **kwargs):  # noqa: ANN001
+        posts.append(url)
+        return _response(payload, status=429)
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+    monkeypatch.setattr(pacing.asyncio, "sleep", fake_sleep)
+    return posts, slept
+
+
+@pytest.mark.asyncio
+async def test_a_spent_daily_allowance_fails_at_once_rather_than_retrying(monkeypatch) -> None:
+    """Measured: the chat route took 155 s to report a limit that reset 14 hours later.
+
+    With no `Retry-After` the pacer fell back to doubling waits, 20 + 40 + 80 s,
+    none of which could reach the reset. A retry that cannot outlast the limit
+    only delays the error, and the owner reads a 2½-minute hang as a crash.
+    """
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    posts, slept = _counting_429s(monkeypatch, _daily_limit(reset_in_s=14 * 3600))
+
+    with pytest.raises(LLMError, match="spent until") as raised:
+        await OpenRouterProvider().complete("sys", "usr")
+
+    assert len(posts) == 1, "nothing is retried"
+    assert not [s for s in slept if s >= 1], "nothing is waited out"
+    assert "UTC" in str(raised.value), "the owner is told when it comes back"
+
+
+@pytest.mark.asyncio
+async def test_a_limit_that_resets_soon_is_still_retried(monkeypatch) -> None:
+    """The per-minute limit is the case retrying exists for, and it stays."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    posts, _ = _counting_429s(monkeypatch, _daily_limit(reset_in_s=20))
+
+    with pytest.raises(LLMError):
+        await OpenRouterProvider().complete("sys", "usr")
+
+    assert len(posts) == pacing.MAX_RETRIES + 1
+
+
+def test_the_reset_is_read_from_the_body_or_the_headers() -> None:
+    later = time.time() + 3 * 3600
+
+    class FromHeaders:
+        status_code = 429
+        headers = {"x-ratelimit-reset": str(int(later))}
+
+        def json(self) -> dict:
+            return {}
+
+    assert pacing.reset_beyond_reach(FromHeaders()) is not None
+    assert pacing.reset_beyond_reach(_response(_daily_limit(3 * 3600), status=429)) is not None
+    assert pacing.reset_beyond_reach(_response({"error": {"code": 429}}, status=429)) is None

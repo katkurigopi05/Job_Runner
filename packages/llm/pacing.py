@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import structlog
 
@@ -123,6 +124,52 @@ def pacer_for(provider: str, *, interval_s: float | None = None) -> ProviderPace
     else:
         existing.interval_s = interval
     return existing
+
+
+def reset_beyond_reach(response: object, *, now: float | None = None) -> datetime | None:
+    """When a 429's allowance resets later than any retry here waits, that time.
+
+    OpenRouter's daily free-model limit refuses with no `Retry-After`, so the
+    doubling fallback waited 20 + 40 + 80 s — 155 s, measured — for a reset
+    14 hours away. Retrying cannot outlast a limit like that; it only delays
+    the error. The reset is in the body, `error.metadata.headers` (epoch
+    milliseconds), and some routes send it as an HTTP header too.
+
+    None when there is no reset to read, or it is within `MAX_WAIT_S`: that is
+    the per-minute case retrying exists for.
+    """
+    reset = _reset_epoch_s(response)
+    if reset is None:
+        return None
+    if reset - (time.time() if now is None else now) <= MAX_WAIT_S:
+        return None
+    return datetime.fromtimestamp(reset, UTC)
+
+
+def _reset_epoch_s(response: object) -> float | None:
+    candidates: list[object] = []
+    getter = getattr(getattr(response, "headers", None), "get", None)
+    if getter is not None:
+        candidates.append(getter("x-ratelimit-reset") or getter("X-RateLimit-Reset"))
+    try:
+        body = response.json()  # type: ignore[attr-defined]
+    except Exception:
+        body = None
+    if isinstance(body, dict):
+        error = body.get("error")
+        metadata = error.get("metadata") if isinstance(error, dict) else None
+        headers = metadata.get("headers") if isinstance(metadata, dict) else None
+        if isinstance(headers, dict):
+            candidates.append(headers.get("X-RateLimit-Reset") or headers.get("x-ratelimit-reset"))
+    for raw in candidates:
+        try:
+            value = float(str(raw).strip())
+        except ValueError:
+            continue
+        # Epoch milliseconds or seconds. A small number is a duration on some
+        # APIs; read as an epoch it lies in the past and is ignored above.
+        return value / 1000 if value > 1e11 else value
+    return None
 
 
 def retry_after_seconds(headers: object) -> float | None:
