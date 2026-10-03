@@ -876,7 +876,8 @@ shows the box only when a remote model is selected.
 
 It is separate from the provider choice because it is a different decision. The
 rest of the context is the owner's own material — their applications, their
-profile. Recruiter correspondence is *other people's writing about them*, sent
+profile, and, for a question about skill gaps, the skill names read from their
+résumés (never the résumé text; §20). Recruiter correspondence is *other people's writing about them*, sent
 privately, by people who never chose a provider. Consenting to send your own
 data somewhere is not the same as consenting to send theirs, so the two are not
 one switch.
@@ -3541,3 +3542,59 @@ Incident Responder). **Nothing was changed on the strength of this**: 16 and 8
 questions, one free model as writer and judge, and the "natural" questions
 nearly all named a company, which only the shipped path filters on. It is the
 evidence for a decision, not the decision.
+
+### The assistant reads the owner's résumés, as skills
+
+"What am I lagging on?" is now answered from a count. `matching/gaps.py` reads
+the skills on every **base** résumé with `skill_vocab` — the same vocabulary
+`requirements.py` reads postings with at ingestion — and counts the skills the
+owner's top 100 open matches require or prefer that no résumé lists. On the
+owner's database on 2026-10-03: Go required by 12 of 100, Kubernetes by 8,
+then Elasticsearch, GCP, Terraform, Azure, Kafka and Linux; Python (20), machine
+learning (13), LLMs (12) and SQL (10) already on the default résumé. 44 ms.
+
+Four rules carry the weight:
+
+- **Only demands count.** A skill named under no requirements heading is
+  `unclassified`, and `requirements.py` records that it is not a demand.
+- **One count per posting, at its strongest.** Required and preferred in one
+  posting is one required.
+- **Tailored résumés are not read, and skipped matches are not targets.** One
+  was bent toward a single posting; the other the owner already declined.
+- **Only skill names and counts reach the model.** The chat context can go to a
+  remote provider, and §2.8 permits one résumé upload, tailoring. A skill list
+  is the smallest thing that answers the question; a test asserts a distinctive
+  résumé sentence never appears in the prompt. The provider warnings in the
+  picker now say the skill list is sent.
+
+The section is added only to questions about gaps, skills or the résumé. The
+prompt (`assistant.system` v3) tells the model that a skill missing from the
+résumé is what the résumé does not show, not proof the owner lacks it, so it
+must not suggest adding one unless the owner says it is true — §2.1 applied to
+advice.
+
+One limit, seen live: for "What am I missing for Kafka jobs?" each retrieved
+posting carries what it asks for and what no résumé lists, and Nemotron
+answered from the overall table instead, citing none of them.
+
+### Words in the column and words not in it
+
+A confusion matrix over 300 words in 5 rounds: half sampled from in-area
+postings' own text (rare, mid and common), half dictionary words in no open
+posting. Top 5 of each mode, against the in-area postings containing the word:
+
+| | recall | specificity | precision@5 | recall, rare words |
+|---|---|---|---|---|
+| text | 1.00 | 1.00 | 1.00 | 1.00 |
+| semantic | 0.41 ± 0.08 | **0.00** | 0.19 ± 0.04 | 0.22 |
+| hybrid, shipped | 1.00 | 1.00 | 1.00 | 1.00 |
+| hybrid, RRF union | 1.00 | **0.00** | 0.62 ± 0.02 | 1.00 |
+
+The keyword modes score 1.00 partly by construction, since the truth here is
+the word's presence, which is what they match on. What the test does establish:
+the shipped search never invents results for a word in no posting, because §14
+does not let vectors answer when the terms matched nothing; semantic search
+cannot say "none" — all 150 absent words got five results — and finds a rare
+word one time in five. A union hybrid inherits that. So the paraphrase gain
+measured above can only be had where keywords matched something; pooling must
+never fill an empty keyword result.

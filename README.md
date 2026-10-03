@@ -80,6 +80,11 @@ changes what goes on an application.
   remote provider is used only when you pick one for that question, and
   recruiter mail stays withheld from it unless you tick the box. The search
   itself always runs locally.
+- **It can tell you what you are lagging on.** Ask "What am I lagging on?" —
+  there is a button for it — and it compares the skills on your base résumés
+  with what your top 100 open matches require or prefer, read with one skill
+  vocabulary on both sides, and answers with the counts. Only skill names and
+  counts reach the model, never your résumé text.
 - **It will not answer for your profile.** Asked what to put for work
   authorization, sponsorship, employment history or salary, it refuses in code
   and points at the profile.

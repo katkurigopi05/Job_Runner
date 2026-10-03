@@ -115,19 +115,19 @@ const PROVIDERS = [
   {
     value: "gemini",
     label: "gemini",
-    hint: "Sends your applications, profile and recruiter mail to Google.",
+    hint: "Sends your applications, profile, résumé skill list and recruiter mail to Google.",
     local: false,
   },
   {
     value: "anthropic",
     label: "anthropic",
-    hint: "Sends your applications, profile and recruiter mail to Anthropic.",
+    hint: "Sends your applications, profile, résumé skill list and recruiter mail to Anthropic.",
     local: false,
   },
   {
     value: "openrouter",
     label: "openrouter",
-    hint: "Sends your applications, profile and recruiter mail to OpenRouter, which forwards them to an upstream provider it does not name.",
+    hint: "Sends your applications, profile, résumé skill list and recruiter mail to OpenRouter, which forwards them to an upstream provider it does not name.",
     local: false,
   },
   {
@@ -137,7 +137,7 @@ const PROVIDERS = [
     // see the same URL the local model uses.
     value: "ollama_cloud",
     label: "ollama cloud",
-    hint: "Sends your applications, profile and recruiter mail to Ollama's servers — not this machine, despite the localhost address. Which model runs is whatever OLLAMA_CLOUD_MODEL names.",
+    hint: "Sends your applications, profile, résumé skill list and recruiter mail to Ollama's servers — not this machine, despite the localhost address. Which model runs is whatever OLLAMA_CLOUD_MODEL names.",
     local: false,
   },
 ] as const;
@@ -146,6 +146,11 @@ const PROMPTS = [
   { icon: "📋", label: "What needs me?", text: "Which applications are waiting on me right now?" },
   { icon: "📊", label: "How's it going?", text: "Summarize where my applications stand." },
   { icon: "📮", label: "Any replies?", text: "Have I had any replies, and what did they say?" },
+  {
+    icon: "🧭",
+    label: "What am I lagging on?",
+    text: "Compared with my résumés, which skills do my top matches ask for that I am missing?",
+  },
 ];
 
 export function Assistant({ applicationId }: { applicationId?: string }) {
