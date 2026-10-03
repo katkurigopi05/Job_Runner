@@ -14,6 +14,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -203,6 +204,44 @@ async def test_the_asker_is_not_searched_for(db_session) -> None:
     kafka = await _posting(db_session, company, *KAFKA)
 
     found = await retrieve(db_session, "Show me Kafka jobs.")
+
+    assert [p.posting_id for p in found.passages] == [kafka.id]
+
+
+#: One posting that uses every asking verb and is about none of them.
+_TALKATIVE = (
+    "Senior Software Engineer (Athena)",
+    "In interviews be sure to mention that bonfires are your jam. We say so, talk "
+    "about them, refer to them and ask about them, and every offsite will involve one "
+    "and contain a few.",
+)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Which roles mention Kafka?",
+        "Which postings talk about Kafka?",
+        "Do any jobs say they use Kafka?",
+        "Which roles refer to Kafka?",
+        "Which jobs involve Kafka?",
+        "Which postings contain Kafka?",
+        "Which roles ask for Kafka?",
+    ],
+)
+async def test_the_asking_is_not_searched_for(db_session, question: str) -> None:
+    """ "Which roles mention RAG?" is looking for RAG.
+
+    Measured on the owner's database: "mention" is in 1 open posting and "RAG"
+    in 134, so rarity ranked the asking above the subject, and the first result
+    was a Chainguard posting telling candidates to "mention that bonfires are
+    your jam". Every verb here is rarer in postings than a typical subject.
+    """
+    company = await _company(db_session)
+    await _posting(db_session, company, *_TALKATIVE)
+    kafka = await _posting(db_session, company, *KAFKA)
+
+    found = await retrieve(db_session, question)
 
     assert [p.posting_id for p in found.passages] == [kafka.id]
 
@@ -459,6 +498,49 @@ def test_a_named_company_does_not_choose_the_excerpt() -> None:
     assert "remote candidates" in chosen
 
 
+def test_a_term_deep_in_an_unpunctuated_list_is_still_quoted() -> None:
+    """Starburst's AI Agent Engineer names RAG in a bullet list with no full stops.
+
+    Windows only started at sentence boundaries, and the nearest one was 1,247
+    characters before "RAG", so no 600-character window could reach it. The
+    posting was retrieved for "Which roles mention RAG?" and the model was
+    handed an excerpt that never said RAG — so both llama3.1 and Nemotron left
+    it out of the answer, correctly, from what they were shown.
+    """
+    body = (
+        "About us. We build data products. "
+        + "Hands-on experience with agent frameworks and custom tooling " * 25
+        + "Production RAG pipeline experience (chunking strategies, vector databases)"
+    )
+
+    assert "RAG" in excerpt(body, "Which roles mention RAG?")
+
+
+async def test_the_excerpt_is_chosen_by_the_terms_that_were_searched(db_session) -> None:
+    """ "Which open roles use Kafka?" searches for Kafka, and quoted "easy to use".
+
+    The search drops a word in most postings ("use" is in 57% of the owner's),
+    and the excerpt did not: a window saying "use" tied with the one naming
+    Kafka, and the earlier one won. Measured on the owner's database: two of
+    the five Kafka postings were quoted without the word Kafka, and the model
+    said they did not mention it.
+    """
+    await _common(db_session, "use")
+    company = await _company(db_session)
+    await _posting(
+        db_session,
+        company,
+        "Data Platform Lead",
+        "Our platform is easy to use and teams use it daily. "
+        + "We value craft and care in everything we build. " * 15
+        + "You will work with Kafka, Flink and Spark.",
+    )
+
+    found = await retrieve(db_session, "Which open roles use Kafka?")
+
+    assert "Kafka" in found.passages[0].excerpt
+
+
 def test_a_short_description_is_quoted_whole() -> None:
     assert excerpt("Build pipelines on Kafka.", "Kafka") == "Build pipelines on Kafka."
 
@@ -585,3 +667,42 @@ def test_citations_are_read_in_every_shape_a_model_writes_them() -> None:
         "P5",
     }
     assert cited_labels("Band P1 pays more.") == set(), "only bracketed labels count"
+
+
+def test_lenticular_brackets_are_a_citation_too() -> None:
+    """Verbatim from Nemotron on OpenRouter, asked "Are there any roles using Zig?".
+
+    It cited the one Zig posting as 【P1】, the parser read only square
+    brackets, and the dock filed the posting the answer rested on under "not
+    cited in the answer".
+    """
+    from apps.api.routers.chat import cited_labels
+
+    reply = (
+        "Yes. The Vercel “Software Engineer, Platform” posting lists Zig as a desired "
+        "language (hands‑on experience with Go, Rust, or Zig in production systems)【P1】."
+    )
+    assert cited_labels(reply) == {"P1"}
+    assert cited_labels("Both fit 【P2, P4】.") == {"P2", "P4"}
+
+
+def test_a_label_opening_a_list_line_is_a_citation() -> None:
+    """Verbatim shape from Nemotron, asked "Which roles mention RAG?".
+
+    The answer was right — every posting, each with a quote — and listed them
+    as "- P1: Waymo …". With brackets required, all five were shown under "not
+    cited in the answer". A label that opens a line and is followed by a colon
+    or dash is not a salary band; one mid-sentence still is not a citation.
+    """
+    from apps.api.routers.chat import cited_labels
+
+    reply = (
+        "All five postings mention RAG:\n"
+        "- P1: Waymo – mentions “Retrieval-Augmented Generation (RAG)”\n"
+        "- **P2** – Starburst – “Production RAG pipeline experience”\n"
+        "3. P3: Sierra – “agent tooling, RAG, prompt engineering”\n"
+        "P4 — Cloudflare\n"
+    )
+    assert cited_labels(reply) == {"P1", "P2", "P3", "P4"}
+    assert cited_labels("Band P1 pays more.") == set()
+    assert cited_labels("P1 pays more than P2.") == set(), "a line opening on a label is not enough"

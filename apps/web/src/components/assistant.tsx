@@ -32,35 +32,63 @@ interface Turn {
   unsearchable?: number;
 }
 
+/** One retrieved posting, linked to its page. */
+function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
+  return (
+    <li>
+      <span className="font-mono text-ink-faint">{source.label}</span>{" "}
+      <Link
+        href={`/postings/${source.posting_id}`}
+        className={`${muted ? "text-ink-soft" : "text-ink"} underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn`}
+      >
+        {source.title}
+      </Link>
+      {source.company ? <span className="text-ink-faint"> · {source.company}</span> : null}
+    </li>
+  );
+}
+
 /**
- * The postings an answer cited, under the answer.
+ * The postings behind an answer, under it.
  *
- * Cited ones only: the search always returns its nearest few, and listing the
- * ones the answer ignored would present context as evidence. The coverage line
+ * Cited ones first and on their own, since those are what the answer rests on.
+ * The rest of what the search found follows under a label saying the answer did
+ * not use them. They used to be hidden, on the reasoning that listing them would
+ * present context as evidence — and then a local model that ignores what it was
+ * handed made the dock as wrong as itself: asked about Zig, llama3.1 answered
+ * "no" over the one posting that says Zig, and nothing on screen contradicted
+ * it. The label is what keeps them from reading as evidence. The coverage line
  * goes with them because "none of these" over a sixth of the corpus is a
  * different claim from the same words over all of it.
  */
-function CitedPostings({ turn }: { turn: Turn }) {
-  const cited = (turn.sources ?? []).filter((source) => source.cited);
-  if (cited.length === 0) return null;
+function RetrievedPostings({ turn }: { turn: Turn }) {
+  const sources = turn.sources ?? [];
+  if (sources.length === 0) return null;
+  const cited = sources.filter((source) => source.cited);
+  const uncited = sources.filter((source) => !source.cited);
   const total = (turn.searched ?? 0) + (turn.unsearchable ?? 0);
 
   return (
-    <div className="mt-1.5 max-w-[90%] space-y-0.5 text-left text-xs">
-      <ul className="space-y-0.5">
-        {cited.map((source) => (
-          <li key={source.label}>
-            <span className="font-mono text-ink-faint">{source.label}</span>{" "}
-            <Link
-              href={`/postings/${source.posting_id}`}
-              className="text-ink underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
-            >
-              {source.title}
-            </Link>
-            {source.company ? <span className="text-ink-faint"> · {source.company}</span> : null}
-          </li>
-        ))}
-      </ul>
+    <div className="mt-1.5 max-w-[90%] space-y-1.5 text-left text-xs">
+      {cited.length > 0 ? (
+        <ul className="space-y-0.5">
+          {cited.map((source) => (
+            <PostingLink key={source.label} source={source} />
+          ))}
+        </ul>
+      ) : null}
+      {uncited.length > 0 ? (
+        <div className="space-y-0.5">
+          <p className="text-ink-faint">
+            {cited.length > 0 ? "Also found" : "Found"} by the search, not cited in the answer:
+          </p>
+          <ul className="space-y-0.5">
+            {uncited.map((source) => (
+              <PostingLink key={source.label} source={source} muted />
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <p className="text-ink-faint">
         from a search of {turn.searched ?? 0} of {total} open postings
       </p>
@@ -324,7 +352,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
               >
                 {turn.text}
               </div>
-              {turn.role === "assistant" ? <CitedPostings turn={turn} /> : null}
+              {turn.role === "assistant" ? <RetrievedPostings turn={turn} /> : null}
             </div>
           ))
         )}

@@ -69,6 +69,7 @@ import asyncio
 import re
 import threading
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -151,11 +152,21 @@ _POSTING_WORDS = frozenset(_POSTING_WORDS_TEXT.split())
 #: these: "me" is in 1.9% of postings, so it scores as distinctive, and "Show
 #: me forward deployed engineer jobs." came back as five Pleo postings saying
 #: "Show me the benefits!".
+#:
+#: The third and fourth lines are what the question says a posting does with
+#: its subject, and the same trap one word along: "mention" is in 1 open
+#: posting and "RAG" in 134, so "Which roles mention RAG?" ranked a posting
+#: saying "be sure to mention that bonfires are your jam" first. Each of these
+#: is rarer in postings than a typical subject. "use", "require" and "include"
+#: are not here because they are common enough to cost nothing.
 _FRAMING_WORDS_TEXT = """
 which what who where when how any anything there some open available
 current currently apply applied application applications
 me my mine myself us show find list give tell get see look looking search
 want need interested something
+mention mentions mentioned mentioning say says said saying talk talks talking
+about regarding related relating refer refers referring referencing contain
+contains containing involve involves involving ask asks asked asking
 """
 _FRAMING_WORDS = _POSTING_WORDS | frozenset(_FRAMING_WORDS_TEXT.split())
 
@@ -854,7 +865,9 @@ async def retrieve(
             excerpt=(
                 _chunk_excerpt(hit.description or "", *chunk_spans[hit.posting_id])
                 if hit.posting_id in chunk_spans
-                else excerpt(hit.description or "", question, ignore=company_words)
+                else excerpt(
+                    hit.description or "", question, ignore=company_words, terms=terms or None
+                )
             ),
             application_status=statuses.get(hit.posting_id),
         )
@@ -913,12 +926,31 @@ async def _application_statuses(
     return {posting_id: status for posting_id, status in rows.all() if posting_id}
 
 
+#: Occurrences of one term that may seed a window. A posting repeating a word
+#: forty times needs one window near it, not forty.
+_NEAR_PER_TERM = 20
+
+
+def _starts_near(body: str, terms: set[str], width: int) -> list[int]:
+    """Word-aligned window starts a quarter-window before each term occurrence."""
+    lowered = body.lower()
+    starts: list[int] = []
+    for term in terms:
+        pattern = rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])"
+        for match in list(re.finditer(pattern, lowered))[:_NEAR_PER_TERM]:
+            at = max(0, match.start() - width // 4)
+            space = body.find(" ", at) if at else -1
+            starts.append(space + 1 if 0 <= space < match.start() else at)
+    return starts
+
+
 def excerpt(
     text: str,
     question: str,
     *,
     width: int = EXCERPT_CHARS,
     ignore: set[str] | frozenset[str] = frozenset(),
+    terms: Iterable[str] | None = None,
 ) -> str:
     """The `width`-character window of `text` that shares most with the question.
 
@@ -935,13 +967,24 @@ def excerpt(
     `ignore` is for words every candidate contains. Asked about "remote roles
     at Stripe", "stripe" opens every Stripe posting's preamble, and scoring on
     it quoted "Who we are… About Stripe" for all five results.
+
+    `terms` is what the search looked for, when it looked for something. The
+    question's own words include ones the search drops for being in most
+    postings, and scoring on those quoted "easy to use" for "Which open roles
+    use Kafka?" — two of five Kafka postings were handed to the model without
+    the word, and it said they did not mention it.
+
+    A window may also start a little before each place a term occurs, not only
+    at a sentence. A requirements list without full stops gave Starburst's RAG
+    line no sentence start within 600 characters, so no window could quote it.
     """
     body = " ".join(text.split())
     if len(body) <= width:
         return body
 
-    terms = set(tokenize(question)) - _FRAMING_WORDS - ignore
-    starts = [0] + [match.end() for match in _SENTENCE_START.finditer(body)]
+    terms = (set(terms) if terms is not None else set(tokenize(question))) - _FRAMING_WORDS - ignore
+    sentences = [0] + [match.end() for match in _SENTENCE_START.finditer(body)]
+    starts = sorted(set(sentences) | set(_starts_near(body, terms, width)))
     best_start, best_key = 0, (0, False)
     if terms:
         for start, following in zip(starts, [*starts[1:], len(body)], strict=True):

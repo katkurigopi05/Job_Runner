@@ -52,6 +52,7 @@ from apps.api.errors import ApiError
 from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
 from packages.core.models import Application, InboundMessage, Profile
+from packages.core.notify import ParkReason, asks, needs_owner
 from packages.core.schemas import ChatReply, ChatRequest, ChatSource
 from packages.llm import router as llm_router
 from packages.llm.audit import is_local
@@ -101,15 +102,30 @@ async def _context(
     Always true for the local model, and for a remote one only when the owner
     turned it on for that question.
     """
-    counts = dict(
-        (
-            await session.execute(
-                select(Application.status, func.count()).group_by(Application.status)
+    # By reason as well as status: `failed: 4` cannot say that three of them
+    # are blocked forms waiting to be finished by hand, and "what needs me?"
+    # answered "1 needs review" on the owner's database while they were.
+    rows = (
+        await session.execute(
+            select(Application.status, Application.failure_reason, func.count()).group_by(
+                Application.status, Application.failure_reason
             )
-        ).all()
-    )
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    parked: dict[ParkReason, int] = {}
+    for status, failure_reason, count in rows:
+        counts[status] = counts.get(status, 0) + count
+        if (reason := needs_owner(status, failure_reason)) is not None:
+            parked[reason] = parked.get(reason, 0) + count
     tally = [f"  {status}: {count}" for status, count in sorted(counts.items())]
-    lines = ["APPLICATIONS BY STATUS:", *(tally or ["  none yet"])]
+    waiting = [f"  {r.value}: {parked[r]} ({asks(r)})" for r in ParkReason if r in parked]
+    lines = [
+        "APPLICATIONS BY STATUS:",
+        *(tally or ["  none yet"]),
+        "WAITING ON YOU:",
+        *(waiting or ["  nothing"]),
+    ]
 
     profiles = list((await session.scalars(select(Profile))).all())
     if profiles:
@@ -214,18 +230,32 @@ def _postings_section(found: Retrieval) -> str:
     return "\n".join(lines)
 
 
-_BRACKETED = re.compile(r"\[([^\]]*)\]")
+#: Square brackets, and the lenticular 【】 some models cite with — Nemotron on
+#: OpenRouter wrote 【P1】, and a citation the parser cannot see is shown as
+#: one the answer did not use.
+_BRACKETED = re.compile(r"\[([^\]]*)\]|【([^】]*)】")
+#: A label opening a line, optionally as a list item or in bold, then a colon
+#: or a dash: "- P1: Waymo …". Nemotron listed every RAG posting this way, with
+#: a quote from each, and none of them counted.
+_LIST_LABEL = re.compile(r"^[ \t]*(?:[-*•]|\d+[.)])?[ \t]*\**P(\d+)\**[ \t]*[:–—-]", re.MULTILINE)
 _LABEL = re.compile(r"\bP(\d+)\b")
 
 
 def cited_labels(reply: str) -> set[str]:
     """Labels the reply cites, in any of the shapes a model writes them.
 
-    "[P1]", "[P1][P3]" and "[P1, P3]" all occur. Only bracketed text counts:
-    a bare "P1" can be a salary band or a priority, and reporting it as a
-    citation would mark a source as evidence the answer never used.
+    "[P1]", "[P1][P3]" and "[P1, P3]" all occur, and "- P1: …" opening a list
+    line. Otherwise a bare "P1" does not count: it can be a salary band or a
+    priority, and reporting it as a citation would mark a source as evidence
+    the answer never used.
     """
-    return {f"P{number}" for group in _BRACKETED.findall(reply) for number in _LABEL.findall(group)}
+    bracketed = {
+        f"P{number}"
+        for groups in _BRACKETED.findall(reply)
+        for group in groups
+        for number in _LABEL.findall(group)
+    }
+    return bracketed | {f"P{number}" for number in _LIST_LABEL.findall(reply)}
 
 
 #: Topics §2.2 keeps verbatim, as a person says them rather than as an ATS
