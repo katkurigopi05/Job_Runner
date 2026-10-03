@@ -166,6 +166,67 @@ async def test_the_answer_is_grounded_in_real_counts(client: AsyncClient, monkey
     assert "APPLICATIONS BY STATUS:" in seen["user"]
 
 
+async def test_what_waits_on_the_owner_is_named_with_its_reason(
+    client: AsyncClient, worker_session, monkeypatch
+) -> None:
+    """ "What needs me?" answered "1 application needs review" on the live
+    database, while three more were blocked by a captcha and waiting to be
+    finished by hand. The context carried counts by status only, and
+    `failed: 4` cannot say which failures are the owner's to finish.
+    """
+    import uuid as _uuid
+
+    import apps.api.routers.chat as chat_module
+    from packages.core.models import Application, Candidate, Profile, User
+
+    suffix = _uuid.uuid4().hex[:8]
+    user = User(email=f"o-{suffix}@example.com")
+    worker_session.add(user)
+    await worker_session.flush()
+    candidate = Candidate(user_id=user.id, name="Owner", email=f"c-{suffix}@example.com")
+    worker_session.add(candidate)
+    await worker_session.flush()
+    profile = Profile(candidate_id=candidate.id, label="p")
+    worker_session.add(profile)
+    await worker_session.flush()
+    for n, (status, reason) in enumerate(
+        [
+            ("needs_review", None),
+            ("failed", "manual_completion_required"),
+            ("failed", "manual_completion_required"),
+            ("failed", "site_error"),
+        ]
+    ):
+        worker_session.add(
+            Application(
+                candidate_id=candidate.id,
+                profile_id=profile.id,
+                url=f"https://x.test/{suffix}/{n}",
+                ats="greenhouse",
+                status=status,
+                failure_reason=reason,
+            )
+        )
+    await worker_session.commit()
+
+    recorder, seen = _recorder()
+    monkeypatch.setattr(chat_module.llm_router, "build_provider", lambda name=None: recorder())
+    answered = await client.post("/chat", json={"message": "what needs me?"})
+
+    assert answered.status_code == 200
+    lines = seen["user"].splitlines()
+    waiting: list[str] = []
+    for line in lines[lines.index("WAITING ON YOU:") + 1 :]:
+        if not line.startswith("  "):
+            break
+        waiting.append(line)
+    assert any(line.startswith("  review: 1 ") for line in waiting), waiting
+    assert any(line.startswith("  manual_completion_required: 2 ") for line in waiting), waiting
+    assert not any("site_error" in line for line in waiting), (
+        "a pipeline failure is not the owner's"
+    )
+
+
 async def test_empty_message_is_rejected(client: AsyncClient) -> None:
     answered = await client.post("/chat", json={"message": "   "})
     assert answered.status_code == 400

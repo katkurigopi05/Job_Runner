@@ -1,8 +1,8 @@
 # Job Runner
 
-A local, single-user job-application agent. It watches a curated list of company
-career pages, scores new postings against your profile, tailors your résumé per
-posting, and fills out the real ATS application form in a headless browser.
+A local, single-user job-application agent. It polls company career boards,
+scores new postings against your profile, tailors your résumé per posting, and
+fills out the real ATS application form in a headless browser.
 
 **Nothing is ever submitted without your explicit approval.** Every application
 stops at a review screen — showing the filled form and a screenshot — and waits
@@ -20,8 +20,11 @@ If those two things aren't what you're looking for, this isn't the right tool.
 
 ## What it does
 
-1. **Find** — polls a hand-picked list of career pages (not a mass crawl),
-   detects new postings, and scores them against your profile.
+1. **Find** — polls a registry of company career boards
+   (`seeds/companies.yaml`), detects new postings, and scores them against your
+   profile. The registry is a seed, not a boundary: `make discover` sweeps
+   aggregators, resolves each posting to a real ATS board where it can, and
+   promotes the boards it finds so they are polled first-hand from then on.
 2. **Prep** — rewrites your résumé bullets for the posting and generates a
    diff you can review. Tailoring rephrases and reorders facts already in your
    source résumé; the Projects section may add details GitHub reports for that
@@ -32,6 +35,54 @@ If those two things aren't what you're looking for, this isn't the right tool.
    questions for you to answer** rather than guessing.
 4. **Track** — ingests recruiter replies over email and routes them back to
    the right application.
+5. **Ask** — a chat assistant on the dashboard answers questions about your
+   applications and about the open postings themselves, from your own data.
+
+### What you see, and what is kept
+
+The feed is narrowed by filters you set — location, seniority, pay, skills,
+education, freshness, and work authorization. They are your input, kept apart
+from the profile that gets typed onto a form, so narrowing a search never
+changes what goes on an application.
+
+- **One search area, read the same way everywhere.** The shipped default is the
+  United States only, on-site in California and remote elsewhere
+  (`SEARCH_US_ONLY`, `SEARCH_REMOTE_OUTSIDE_CALIFORNIA`). The scoring gate, the
+  feed and the chat search all call one rule, and a posting listing several
+  offices is judged office by office. `make audit-locations` prints the places
+  no rule recognized, because a gap there does not raise — it quietly keeps a
+  foreign job or drops a local one.
+- **Work authorization is a filter, not a guess.** The feed can be asked for
+  postings that state sponsorship is available, and to leave out ones restricted
+  by citizenship. A posting that says nothing is reported as unknown, never as
+  an offer.
+- **Only the last 30 days of postings are kept** (`POSTING_MAX_AGE_DAYS`).
+  Older and closed postings are pruned at the start of every matching pass
+  (`POSTING_AUTO_PRUNE`), except any you applied to, swiped on, tailored a
+  résumé for, or graded. A posting with no date is never deleted for its age.
+
+### The assistant
+
+`/chat` on the dashboard, and a dock on the review screen.
+
+- **Grounded.** It is handed real counts, the application in front of you and
+  its recent replies, and told to say when it does not know.
+- **It can answer from the postings.** "Which open roles use Kafka?" or "jobs
+  at <company>" searches the open postings and cites them as `[P1]`…`[P5]`.
+  The cited ones are listed under the answer, and the rest of what the search
+  found follows under "not cited in the answer", so a posting the model
+  overlooked is still on screen. Keywords decide what is relevant and
+  embeddings only order the matches, searched in 500-character chunks so a
+  requirement at the bottom of a long posting is still found. The search is
+  kept to your search area unless the question names a place outside it, and
+  the answer says how many postings it searched and what the area left out.
+- **Local by default.** It answers with a model on this machine (Ollama). A
+  remote provider is used only when you pick one for that question, and
+  recruiter mail stays withheld from it unless you tick the box. The search
+  itself always runs locally.
+- **It will not answer for your profile.** Asked what to put for work
+  authorization, sponsorship, employment history or salary, it refuses in code
+  and points at the profile.
 
 See [`CLAUDE.md`](./CLAUDE.md) for the full build spec and non-negotiable
 rules, and [`docs/TSENTA_ARCHITECTURE.md`](./docs/TSENTA_ARCHITECTURE.md) for
@@ -85,6 +136,7 @@ grade its own output would certify itself.
 ```bash
 make bench-matching                          # the shipped scorer vs its ablations
 make bench-matching ARGS="--tag adjacent"    # only the hard cases
+make bench-matching ARGS="--tag adjacent --k 5 --real-embedder"   # on EMBEDDING_BACKEND
 ```
 
 Reports NDCG@K, MAP, MRR, precision and recall with bootstrap confidence
@@ -98,6 +150,15 @@ so no run over them may report a production candidate however good the numbers
 look. [`docs/ML_EVALUATION.md`](./docs/ML_EVALUATION.md) records what the
 numbers may and may not claim, and what data would have to arrive first.
 
+Two things about reading a run. The benchmark scores with the lexical embedder
+unless `--real-embedder` is passed, whatever is installed. And two of its
+variants, `hybrid_rrf` and `bm25_only`, fuse the dense ranking with BM25 by
+reciprocal rank fusion: on the adjacent-role slice with bge-small the fused
+ranking came in below both of its inputs, so fusion stays a benchmark variant
+and the feed's score is unchanged. Each fusion run prints how far the two
+signals agree, because a signal fused with itself produces a number that
+cannot be read.
+
 [`docs/BACKLOG.md`](./docs/BACKLOG.md) is the gap register: every capability
 the spec asks for, checked against the code, sized as buildable projects.
 
@@ -107,9 +168,13 @@ the spec asks for, checked against the code, sized as buildable projects.
   billing, no hosted deployment.
 - **Work authorization and employment-history answers are copied verbatim**
   from your profile — never LLM-generated. These have legal consequences.
-- **Crawling respects `robots.txt` and rate limits** (minimum 60s between
-  requests to the same host). Apply only to postings you personally intend to
-  pursue — this is not a spray-and-pray tool.
+- **Crawling respects `robots.txt` and rate limits.** Minimum 60s between
+  requests to the same host. The four multi-tenant ATS APIs — Greenhouse,
+  Lever, Ashby and Workable, each one endpoint serving every company's board
+  and listed by name in `ratelimit.SHARED_API_HOSTS` — have a 2s floor instead.
+  Neither floor can be configured lower, and a site's `Crawl-delay` or a
+  `429`/`Retry-After` still raises it. Apply only to postings you personally
+  intend to pursue — this is not a spray-and-pray tool.
 - **Secrets never touch the database in plaintext or logs.** ATS account
   passwords go through an encrypted vault, stored outside `storage/` so they
   never travel with your résumés and screenshots.
@@ -178,6 +243,33 @@ would tell you which you got.
 Bare `pytest` skips the database tests instead, so a fresh checkout is green
 before `make up`.
 
+### Day to day
+
+```bash
+make crawl                    # poll the registry for new postings; the worker does the work
+make discover                 # one aggregator sweep, promoting the boards it resolves
+make rescore                  # re-score open postings after a résumé or profile change
+make validate-seeds           # which registry boards still answer; reports, writes nothing
+
+make audit-locations          # how the search area reads every open posting's location
+make chunk-postings           # embed a backlog of postings for the chat search
+make prune-postings           # dry run: what the 30-day limit would delete
+make prune-postings apply=1   # delete and compact; a delete is final, so back up first
+make export-postings          # every posting to one CSV, with a bge-small embedding
+
+make backup                   # the database and local artifacts
+make backup-verify dir=<backup directory>   # prove it by restoring somewhere isolated
+```
+
+The matching pass after each crawl already prunes and chunks what is new, so
+`make prune-postings` and `make chunk-postings` are for clearing a backlog. The
+prune command is also the one that compacts the tables; the automatic pass does
+not, because compacting locks the tables search reads.
+
+Each target's options are in the comment above it in the `Makefile`.
+[`docs/USAGE.md`](./docs/USAGE.md) §8 walks through crawling, discovery and
+re-scoring.
+
 ### First-run notes
 
 Run `make doctor` rather than working through these by hand — it checks each
@@ -201,6 +293,14 @@ what tells you whether skipping it matters.
   worth doing before you trust a tailored résumé.
 - **The dashboard has its own dependencies**: `make web-install` before
   `make web`, once per checkout.
+- **Real embeddings are an optional extra**:
+  `.venv/bin/pip install -e ".[embeddings]"`. It pulls torch, which is why it
+  is not in `make install`. Without it scoring falls back to a lexical
+  embedder and logs `sentence_transformers_unavailable_using_lexical`;
+  postings are not chunked, so the chat search works from keywords and one
+  vector per posting, and `make export-postings` cannot run. After
+  changing `EMBEDDING_BACKEND`, run `make rescore re=1` — stored vectors from
+  one embedder are not comparable with another's.
 - **Port 5432** maps straight through. If you already run Postgres locally
   (Homebrew, Postgres.app), change the host side of the port mapping in
   `docker-compose.yml` or stop the other server first.
@@ -233,9 +333,11 @@ An edit arriving over MCP is written by a model, so unlike an edit typed on
 the review screen it is guard-checked, and the tool has no parameter that
 could turn that off.
 
-This project is built in phases (skeleton → first ATS → tailoring → MCP →
-discovery → tracker), each gated by its own test suite. See `CLAUDE.md` §9 for
-the current phase and what's implemented so far.
+This project was built in phases (skeleton → first ATS → tailoring → MCP →
+discovery → tracker), each gated by its own test suite, and all six are built.
+`CLAUDE.md` §9 defines the gates and §15 records what each one does *not*
+prove — two of them pass against fixtures rather than the owner's real
+material, and the live half of Gate 1 stops at a captcha by design.
 
 ## AI code review with Open Code Review
 

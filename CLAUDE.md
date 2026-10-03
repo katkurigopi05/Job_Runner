@@ -978,8 +978,9 @@ replies — so "which open roles use Kafka?" had nothing to be answered from.
 the chat route puts them in the context as `[P1]`…`[P5]`, with an excerpt,
 the company, and the owner's application status if there is one. The model
 is told to cite them; the reply's `sources` marks which it did, read out of
-the text rather than taken on the model's word, and the dashboard lists only
-the cited ones.
+the text rather than taken on the model's word, and the dashboard lists the
+cited ones first. It used to list only those; §20 records why it no longer
+does.
 
 Four things are load-bearing, and the first two were each found by running
 it against the owner's database rather than by reading it:
@@ -3453,3 +3454,90 @@ result is always non-negative — checked exhaustively for every `(N, n)` to
 that actually provides the guarantee. A guard that cannot fire reads as
 protection against a risk that does not exist, which is the same failure as a
 test that cannot fail.
+
+---
+
+## 20. What asking the assistant real questions found
+
+On 2026-10-03 the assistant was asked real questions against the owner's
+database, first with llama3.1 and then with Nemotron on OpenRouter, and every
+cited posting was checked against its stored text. Search was mostly right.
+What reached the model was not, and the dock hid what the model then missed.
+Six defects, each with a test.
+
+**The excerpt hid the evidence, and this was most of it.** Both models "under-
+cited" — llama3.1 cited 2 of 5 Kafka postings and answered "no roles use Zig"
+over the one posting that does. The models were answering correctly from what
+they were handed: `excerpt()` showed the asked-about word in **88 of 140**
+retrieved postings that contain it (30 technology questions). Two causes:
+
+- It scored windows on the question's own words, including ones the search
+  drops for being in most postings. "use" is in 57%, so "easy to use" tied
+  with the window naming Kafka, and the earlier one won. It now scores on the
+  terms the search used.
+- Windows started only at sentence boundaries. A requirements list without
+  full stops left Starburst's "Production RAG pipeline" 1,247 characters from
+  the nearest start. Windows may now also start a little before each match.
+
+After: **140 of 140**, and no posting where the old excerpt had the word and
+the new one lost it. On the same question Nemotron went from citing 3 of 5 to
+5 of 5.
+
+**Asking verbs were searched for.** "mention" is in 1 open posting and "RAG"
+in 134, so "Which roles mention RAG?" ranked "be sure to mention that bonfires
+are your jam" first. The §14 framing list now carries the asking verbs —
+mention, say, talk about, refer, contain, involve, ask — each measured rarer in
+postings than a typical subject.
+
+**The dock listed cited postings only.** §14's reasoning, that listing the rest
+would present context as evidence, holds for what sits under the answer, so
+cited postings still do. The rest follow under "not cited in the answer". With
+the old rule, a model that overlooks or denies a posting leaves nothing on
+screen to contradict it.
+
+**Citations the parser could not see.** Nemotron writes `【P1】` and opens list
+lines with `- P1:`. Both now count; a bare `P1` mid-sentence still does not.
+
+**"What needs me?" missed the forms waiting to be finished by hand.** The
+context carried counts by status, and `failed: 4` cannot say that three were
+`manual_completion_required`. A `WAITING ON YOU` section now uses
+`notify.needs_owner`, the doorbell's own definition, so the two cannot drift.
+
+**Green-card holders were read as excluded.** "U.S. citizenship or permanent
+residency" and "U.S. citizenship or U.S. permanent resident" both read as
+citizens-only: "residency" is not "resident" plus a suffix, and the second
+"U.S." stopped the gap at its full stop. Letting the gap cross any full stop
+was tried first and swept CoreWeave's export-control clause, on 103 postings,
+into a residency rule — its options (B) and (C) admit people who are not US
+persons. The gap now crosses only a "U.S." in front of the noun, and that
+clause is pinned as unstated. Exactly 3 open postings changed verdict. The 48
+"U.S. Person" export clauses already read as citizens-or-residents before this
+change were not revisited; refugees and asylees qualify under that definition
+too.
+
+### Text, semantic and hybrid retrieval, measured
+
+The shipped hybrid lets keywords decide relevance and vectors only order the
+matches (§14). That cannot reach a posting worded differently from the
+question, so it was measured against the alternatives, offline, on the live
+corpus:
+
+| | known item, natural (MRR) | known item, paraphrased (MRR / Hit@20) | judged P@5 |
+|---|---|---|---|
+| text only | 0.645 | 0.106 / 25% | **90%** |
+| semantic (bge-small chunks) | 0.581 | **0.335** / 50% | 65% |
+| hybrid, shipped | **0.756** | 0.147 / 31% | 82% |
+| hybrid, RRF union | 0.632 | 0.291 / **56%** | 80% |
+
+Known item: 16 random in-area postings, a question per posting written by
+Nemotron in two forms, the second forbidden from reusing the title or any
+technology or product name. Judged: 8 open questions, the top 5 of every mode
+pooled, shuffled and graded 0–2 by Nemotron from two windows of each posting.
+
+Read it as: the shipped design is right when the question names its subject,
+and blind when it does not; semantic search reaches paraphrases and pays for it
+in near-topic noise ("fraud detection for payments" returned a Security
+Incident Responder). **Nothing was changed on the strength of this**: 16 and 8
+questions, one free model as writer and judge, and the "natural" questions
+nearly all named a company, which only the shipped path filters on. It is the
+evidence for a decision, not the decision.

@@ -206,6 +206,57 @@ def test_an_abbreviated_us_does_not_split_the_sentence() -> None:
     assert citizenship_ok(resident, _posting("Must be a U.S. Citizen or Green Card holder."))
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Verbatim from two live postings, both labelled "US citizens only"
+        # on the feed and hidden by `exclude_citizenship_restricted`.
+        "This role requires U.S. citizenship or permanent residency for FedRAMP compliance.",
+        "This position requires U.S. citizenship or U.S. permanent resident (green card) status.",
+        "Applicants must hold US citizenship or permanent residence.",
+    ],
+)
+def test_a_green_card_holder_is_admitted_however_residency_is_worded(text: str) -> None:
+    """Two wordings got past the rule that exists for exactly this.
+
+    `permanent residency` is not `permanent resident` with letters added, so
+    the noun never matched. And the gap between the two halves refused every
+    full stop, so a second `U.S.` stopped it — the abbreviation the sentence
+    splitter had already learned to protect, one layer further in.
+    """
+    assert read_posting(text).citizenship is Citizenship.CITIZENS_OR_RESIDENTS_ONLY
+    resident = _profile(citizenship_status=CitizenshipStatus.PERMANENT_RESIDENT.value)
+    assert citizenship_ok(resident, _posting(text))
+
+
+def test_residency_in_the_next_clause_does_not_widen_a_citizens_only_rule() -> None:
+    """The gap may cross a `U.S.`, never a clause boundary."""
+    text = "U.S. citizenship is required; permanent residency is not sufficient."
+    assert read_posting(text).citizenship is Citizenship.CITIZENS_ONLY
+
+
+def test_an_export_clause_with_a_licence_route_is_not_a_residency_rule() -> None:
+    """Verbatim from CoreWeave, on 103 open postings.
+
+    It names citizens and permanent residents, and then admits anyone
+    "eligible and reasonably likely to obtain the required export
+    authorization". A first draft of the fix above let the gap cross any full
+    stop and read this as citizens-or-residents, which would hide every one of
+    those postings from a visa holder they are open to.
+    """
+    text = (
+        "To conform to U.S. Government export regulations applicable to that "
+        "information, applicant must either be (A) a U.S. person, defined as a (i) "
+        "U.S. citizen or national, (ii) U.S. lawful permanent resident (green card "
+        "holder), (iii) refugee under 8 U.S.C. § 1157, or (iv) asylee under 8 U.S.C. "
+        "§ 1158, (B) eligible to access the export controlled information without a "
+        "required export authorization, or (C) eligible and reasonably likely to "
+        "obtain the required export authorization from the applicable U.S. "
+        "government agency."
+    )
+    assert read_posting(text).citizenship is Citizenship.UNSTATED
+
+
 def test_a_posting_that_refuses_and_offers_is_ambiguous_not_a_refusal() -> None:
     """A contradiction is not evidence, and a hard filter needs evidence."""
     text = "We do not sponsor visas. Visa sponsorship is available for senior roles."

@@ -95,6 +95,15 @@ _ASKS: dict[ParkReason, str] = {
 }
 
 
+def asks(reason: ParkReason) -> str:
+    """What `reason` asks of the owner, in the doorbell's own words.
+
+    Public so the assistant describes a parked application the way the
+    notification did, rather than in a second vocabulary that can drift.
+    """
+    return _ASKS[reason]
+
+
 def needs_owner(status: str, failure_reason: str | None = None) -> ParkReason | None:
     """Whether this state is waiting on a person, and for what.
 
