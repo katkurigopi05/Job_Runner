@@ -145,11 +145,21 @@ _SPONSORSHIP_AVAILABLE = re.compile(
 #: Citizens *and* residents. Checked before the citizens-only list, because
 #: every phrasing here contains a citizens-only phrasing inside it, and the
 #: difference decides whether a green-card holder is excluded.
+#:
+#:
+#: `residen(?:t|cy|ce)` because "permanent residency" is not "permanent
+#: resident" with a suffix. The optional `U.S.` before the noun is the one full
+#: stop the gap may cross: "U.S. citizenship or U.S. permanent resident status"
+#: stopped at it and read as citizens-only. Letting the gap cross *any* full
+#: stop was tried and is wrong — it turned CoreWeave's export-control clause,
+#: whose options (B) and (C) admit people who are not US persons, into a
+#: residency restriction on 103 postings.
 _CITIZENS_OR_RESIDENTS = re.compile(
     r"(?:u\.?\s?s\.?|us|united\s+states)\s+"
     r"(?:citizens?(?:hip)?|persons?|nationals?)"
-    r"[^.;!?]{0,60}?(?:permanent\s+resident|green\s+card|lawful\s+resident|lpr)"
-    r"|(?:permanent\s+resident|green\s+card)[^.;!?]{0,60}?"
+    r"[^.;!?]{0,60}?(?:u\.?\s?s\.?\s+)?"
+    r"(?:permanent\s+residen(?:t|cy|ce)|green\s+card|lawful\s+resident|lpr)"
+    r"|(?:permanent\s+residen(?:t|cy|ce)|green\s+card)[^.;!?]{0,60}?"
     r"(?:u\.?\s?s\.?|us|united\s+states)\s+citizens?",
     re.I,
 )
