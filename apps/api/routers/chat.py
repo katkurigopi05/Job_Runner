@@ -51,13 +51,14 @@ from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
-from packages.core.models import Application, InboundMessage, Profile
+from packages.core.models import Application, InboundMessage, Posting, Profile
 from packages.core.notify import ParkReason, asks, needs_owner
 from packages.core.schemas import ChatReply, ChatRequest, ChatSource
 from packages.llm import router as llm_router
 from packages.llm.audit import is_local
 from packages.llm.prompts import CHAT_SYSTEM
 from packages.llm.provider import LLMError
+from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
 from packages.matching.retrieve import Retrieval, retrieve
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -179,7 +180,87 @@ async def _context(
     return "\n".join(lines)
 
 
-def _postings_section(found: Retrieval) -> str:
+#: Questions about what the owner is missing. Only these get the résumé-derived
+#: section: elsewhere it is noise, and for a remote provider it is the owner's
+#: skill list sent for no reason.
+_ASKS_ABOUT_GAPS = re.compile(
+    r"\b(?:lag(?:ging)?|lack(?:s|ing)?|missing|gaps?|weak(?:ness(?:es)?)?|improve|upskill"
+    r"|learn|résumés?|resumes?|cv|skills?|strengths?|qualif\w*)\b",
+    re.IGNORECASE,
+)
+
+#: Enough of each list to answer from, not a dump of the vocabulary.
+_GAPS_SHOWN = 12
+_COVERED_SHOWN = 8
+
+
+def asks_about_gaps(question: str) -> bool:
+    return bool(_ASKS_ABOUT_GAPS.search(question))
+
+
+def _gaps_section(report: GapReport) -> str:
+    """The owner's skills against what their top matches ask for.
+
+    Skill names and counts only. The résumé text stays on this machine: this
+    context can go to a remote provider, and §2.8 permits one résumé upload —
+    tailoring — which a chat question is not.
+    """
+    if not report.resumes:
+        return "SKILL GAPS: no résumé uploaded, so there is nothing to compare against"
+    lines = ["YOUR RÉSUMÉS — the skills read from each (their text is not included):"]
+    for resume in report.resumes:
+        labels = sorted((skill_label(k) for k in resume.skills), key=str.lower)
+        lines.append(f"  {resume.label}: {', '.join(labels) or 'no skills recognised'}")
+    total = report.read + report.unread
+    if not total:
+        lines.append("SKILL GAPS: no open matches yet to compare against")
+        return "\n".join(lines)
+    lines.append(
+        f"SKILL GAPS — what your top {total} open matches ask for, "
+        "read from each posting's requirements:"
+    )
+    if report.unread:
+        lines.append(f"  {report.unread} have no requirements read yet and are not counted")
+    lines.append("  not on any résumé:")
+    lines += [
+        f'    {d.label}: required by {d.required}, preferred by {d.preferred} — e.g. "{d.example}"'
+        for d in report.missing[:_GAPS_SHOWN]
+    ] or ["    nothing — every skill they ask for is on a résumé"]
+    lines.append("  already on a résumé:")
+    lines += [
+        f"    {d.label}: required by {d.required}, preferred by {d.preferred}"
+        f" — on {', '.join(d.on_resumes)}"
+        for d in report.covered[:_COVERED_SHOWN]
+    ] or ["    none of them"]
+    return "\n".join(lines)
+
+
+async def _unmet_by_posting(
+    session: SessionDep, found: Retrieval, report: GapReport
+) -> dict[uuid.UUID, str]:
+    """For each retrieved posting: what it asks for, and what no résumé lists."""
+    if not found.passages or not report.resumes:
+        return {}
+    have = frozenset().union(*(resume.skills for resume in report.resumes))
+    rows = await session.execute(
+        select(Posting.id, Posting.requirements_json).where(
+            Posting.id.in_([passage.posting_id for passage in found.passages])
+        )
+    )
+    lines: dict[uuid.UUID, str] = {}
+    for posting_id, requirements in rows.all():
+        if requirements is None:
+            lines[posting_id] = "requirements: not read yet"
+            continue
+        asked, unmet = asked_and_unmet(requirements, have)
+        lines[posting_id] = (
+            f"asks for: {', '.join(asked) or 'no skills it names as required or preferred'}\n"
+            f"       not on your résumés: {', '.join(unmet) or 'nothing it asks for'}"
+        )
+    return lines
+
+
+def _postings_section(found: Retrieval, unmet: dict[uuid.UUID, str] | None = None) -> str:
     """The retrieved postings, labelled for citation, with the search's reach.
 
     Coverage comes first and is stated even when nothing was found, because
@@ -227,6 +308,8 @@ def _postings_section(found: Retrieval) -> str:
         if passage.application_status:
             lines.append(f"       you applied: {passage.application_status}")
         lines.append(f"       excerpt: {passage.excerpt}")
+        if unmet and passage.posting_id in unmet:
+            lines.append(f"       {unmet[passage.posting_id]}")
     return "\n".join(lines)
 
 
@@ -414,7 +497,12 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
 
     context = await _context(session, body.application_id, include_mail=include_mail)
     found = await retrieve(session, question)
-    prompt = f"CONTEXT:\n{context}\n{_postings_section(found)}\n\nQUESTION:\n{question}"
+    gaps = await target_gaps(session) if asks_about_gaps(question) else None
+    unmet = await _unmet_by_posting(session, found, gaps) if gaps else None
+    sections = [context, _postings_section(found, unmet)]
+    if gaps is not None:
+        sections.append(_gaps_section(gaps))
+    prompt = "CONTEXT:\n" + "\n".join(sections) + f"\n\nQUESTION:\n{question}"
 
     try:
         provider = llm_router.build_provider(selected)
