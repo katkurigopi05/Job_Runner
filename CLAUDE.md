@@ -917,6 +917,19 @@ the prompt is a request and this is a rule — the check runs in code.
 application, and its recent replies, and told to say when it does not know. An
 assistant that invents an application status is worse than no assistant.
 
+**"Run crawler" is a command, and commands are handled in code.** Saying "run
+crawler", "find new jobs", "refresh the postings" and the like queues a crawl
+through `crawl_job.request_crawl` — the same door `make crawl` uses, with its
+one-crawl-at-a-time guard — and replies without asking any model, whichever
+provider is selected. The match is anchored to an imperative at the start, so
+"Which new jobs mention Kafka?" is still searched and "Did the crawler run?" is
+still answered. The reply says whether a worker is alive, because a crawl
+queued with nobody to run it reads exactly like a registry with nothing new.
+This reverses one half of a recorded decision: `routers/crawl.py` said starting
+a crawl "stays a deliberate act at a terminal". The owner asked for it on
+2026-10-04; a typed command is still deliberate, and the API is still
+loopback-only.
+
 The audit trail in `packages/llm/audit.py` records every provider call —
 digests and sizes, never the prompt itself. §2.8 wants proof of what left the
 machine; §10 forbids logging résumé contents. Both hold: the trail proves what

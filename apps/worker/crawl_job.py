@@ -8,13 +8,16 @@ keeps another worker from reclaiming the task mid-cycle.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.config import get_settings
+from packages.core.enums import QueueTaskStatus
 from packages.core.models import QueueTask
 from packages.core.queue import ClaimedTask, enqueue
 from packages.crawler.crawl import CrawlReport, crawl_all
@@ -32,6 +35,42 @@ CRAWL_TASK_KIND = "crawl"
 #: flag rather than named directly, so it is not listed as something a caller
 #: asks for by name.
 VALID_TRIGGERS = frozenset({"scheduled", "manual"})
+
+_UNFINISHED = (QueueTaskStatus.PENDING.value, QueueTaskStatus.RUNNING.value)
+
+
+@dataclass(frozen=True)
+class CrawlRequest:
+    #: The task this request queued, or None when one was already waiting.
+    queued: QueueTask | None
+    #: Crawl tasks pending or running before this request.
+    waiting: int
+
+
+async def request_crawl(
+    session: AsyncSession, payload: dict[str, Any] | None = None, *, trigger: str | None = None
+) -> CrawlRequest:
+    """Queue one registry crawl, unless one is already pending or running.
+
+    The one door for starting a crawl: `make crawl` and the assistant's "run
+    crawler" both come through here. A crawl already waiting makes a second
+    pointless — they would poll the same hosts minutes apart, the later one
+    would emit nothing, and it would spend the per-host limit §2.6 protects.
+
+    Does not commit; the caller owns the transaction, as with `enqueue`.
+    """
+    waiting = (
+        await session.scalar(
+            select(func.count())
+            .select_from(QueueTask)
+            .where(QueueTask.kind == CRAWL_TASK_KIND, QueueTask.status.in_(_UNFINISHED))
+        )
+        or 0
+    )
+    if waiting:
+        return CrawlRequest(queued=None, waiting=waiting)
+    body = {**(payload or {}), **({"trigger": trigger} if trigger else {})}
+    return CrawlRequest(queued=await enqueue(session, CRAWL_TASK_KIND, body), waiting=0)
 
 
 async def _schedule_next_tick(session: AsyncSession, payload: dict, seconds: int) -> None:

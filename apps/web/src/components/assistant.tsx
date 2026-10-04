@@ -146,6 +146,7 @@ const PROMPTS = [
   { icon: "📋", label: "What needs me?", text: "Which applications are waiting on me right now?" },
   { icon: "📊", label: "How's it going?", text: "Summarize where my applications stand." },
   { icon: "📮", label: "Any replies?", text: "Have I had any replies, and what did they say?" },
+  { icon: "🔎", label: "Find new jobs", text: "Find new jobs" },
   {
     icon: "🧭",
     label: "What am I lagging on?",
@@ -226,7 +227,9 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
       setStatus(
         body.provider === "refused"
           ? "refused · this one comes from your profile"
-          : body.local
+          : body.provider === "crawler"
+            ? "crawler · started from your command, no model asked"
+            : body.local
             ? `answered by ${body.model ?? body.provider} · on this machine`
             : `answered by ${body.model ?? body.provider} · this left your machine`,
       );
@@ -338,6 +341,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
               <p className="font-mono text-xs text-ink-faint">
                 {turn.role}
                 {turn.provider === "refused" ? " · refused" : ""}
+                {turn.provider === "crawler" ? " · crawler" : ""}
                 {turn.role === "assistant" && turn.provider !== "refused" && turn.local === false ? (
                   <span className="text-attn">
                     {" · "}

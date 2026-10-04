@@ -73,3 +73,34 @@ async def test_a_finished_crawl_does_not_block_the_next_one(db_session) -> None:
     await db_session.flush()
 
     assert await _crawl_count(db_session, unfinished) == 0
+
+
+@pytest.mark.asyncio
+async def test_requesting_a_crawl_queues_one_and_names_who_asked(db_session) -> None:
+    """`request_crawl` is the one door: `make crawl` and the assistant both use it."""
+    from apps.worker.crawl_job import request_crawl
+
+    first = await request_crawl(db_session, trigger="manual")
+    await db_session.flush()
+
+    assert first.queued is not None
+    assert first.waiting == 0
+    assert first.queued.payload_json["trigger"] == "manual"
+
+
+@pytest.mark.asyncio
+async def test_a_request_while_a_crawl_waits_queues_nothing(db_session) -> None:
+    """The guard itself. The test above it only ever counted rows it added, so it
+    passed with the guard deleted; the guard lived in the script's `main()`."""
+    from apps.worker.crawl_job import request_crawl
+
+    unfinished = (QueueTaskStatus.PENDING.value, QueueTaskStatus.RUNNING.value)
+    await request_crawl(db_session)
+    await db_session.flush()
+
+    second = await request_crawl(db_session)
+    await db_session.flush()
+
+    assert second.queued is None
+    assert second.waiting == 1
+    assert await _crawl_count(db_session, unfinished) == 1

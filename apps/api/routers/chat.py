@@ -50,8 +50,11 @@ from sqlalchemy import func, select
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
+from apps.worker.crawl_job import request_crawl
+from packages.core import heartbeat
 from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
+from packages.core.heartbeat import WorkerState
 from packages.core.models import Application, InboundMessage, Posting, Profile
 from packages.core.notify import ParkReason, asks, needs_owner
 from packages.core.schemas import ChatReply, ChatRequest, ChatSource
@@ -193,6 +196,62 @@ _ASKS_ABOUT_GAPS = re.compile(
 #: Enough of each list to answer from, not a dump of the vocabulary.
 _GAPS_SHOWN = 12
 _COVERED_SHOWN = 8
+
+
+#: Politeness and filler a command may open with: "can you run the crawler?".
+_POLITE = r"(?:(?:please|pls|hey|ok|okay|go|now|can you|could you|would you|will you)\s+)*"
+
+#: An instruction to look for new postings, as the owner phrases it. Anchored to
+#: the start and to an imperative verb, so a question *about* jobs ("Which new
+#: jobs mention Kafka?") or about the crawler ("Did the crawler run?") is never
+#: read as one — those are searched or answered, not acted on.
+_CRAWL_COMMAND = re.compile(
+    rf"^\s*{_POLITE}(?:"
+    r"(?:run|start|kick\s*off|trigger|launch|begin)\s+(?:the\s+|a\s+|another\s+|new\s+)?"
+    r"(?:job\s+)?crawl(?:er|ing)?\b"
+    r"|crawl(?:er)?(?:\s+(?:now|again|jobs|postings|the\s+registry))*\s*[.!?]*\s*$"
+    r"|(?:find|fetch|get|pull|grab|look\s+for|check\s+for|search\s+for|scan\s+for)\s+"
+    r"(?:some\s+|any\s+|me\s+|the\s+)?(?:new|fresh|latest)\s+"
+    r"(?:jobs?|postings?|roles?|openings?|listings?)\b"
+    r"|(?:refresh|update|reload|sync)\s+(?:the\s+|my\s+)?"
+    r"(?:jobs?|postings?|feed|listings?|job\s+board)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def asks_to_crawl(message: str) -> bool:
+    return bool(_CRAWL_COMMAND.search(message))
+
+
+async def _start_crawl(session: SessionDep) -> ChatReply:
+    """Queue a crawl through `request_crawl` and say plainly what happens next.
+
+    No model: a command is not a question, and nothing about it needs leaving
+    the machine. Whether a worker is alive is in the reply, because a crawl
+    queued with nobody to run it looks exactly like a registry with nothing new.
+    """
+    requested = await request_crawl(session, trigger="manual")
+    await session.commit()
+    alive = any(w.state is WorkerState.ALIVE for w in await heartbeat.workers(session))
+    if requested.queued is None:
+        reply = "A crawl is already queued or running, so I did not start another." + (
+            " New postings reach your feed as the worker gets through the registry."
+            if alive
+            else " No worker is running to do it, though: start one with `make worker`."
+        )
+    elif alive:
+        reply = (
+            "Crawl started. The worker is running and polls each company's board within "
+            "its rate limits, so new postings reach your feed over the next few minutes; "
+            "matching runs when the sweep finishes."
+        )
+    else:
+        reply = (
+            "Crawl queued, but no worker is running, so nothing happens until you start "
+            "one with `make worker`."
+        )
+    return ChatReply(reply=reply, provider="crawler", grounded=True, local=True, shared_mail=False)
 
 
 def asks_about_gaps(question: str) -> bool:
@@ -502,6 +561,11 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
             provider="refused",
             grounded=False,
         )
+
+    # "run crawler", "find new jobs": a command, acted on in code before any
+    # provider is chosen, so it reaches no model whichever one is selected.
+    if asks_to_crawl(question):
+        return await _start_crawl(session)
 
     selected = (body.provider or LOCAL_PROVIDER).strip().lower()
     if selected not in ALLOWED_PROVIDERS:
