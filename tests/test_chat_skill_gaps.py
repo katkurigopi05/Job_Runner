@@ -8,6 +8,7 @@ provider sends the smallest thing that answers it (§2.8).
 
 from __future__ import annotations
 
+import re
 import uuid
 
 from httpx import AsyncClient
@@ -172,3 +173,42 @@ async def test_comparing_against_the_resume_is_not_a_protected_question(
     body, _ = await _ask(client, monkeypatch, "What skills am I lacking compared to my resume?")
 
     assert body["provider"] != "refused"
+
+
+async def test_postings_found_for_a_gap_question_are_summarised_before_they_are_listed(
+    client: AsyncClient, worker_session, monkeypatch
+) -> None:
+    """The one question a LangGraph agent won in the 2026-10-04 comparison.
+
+    Asked "What am I missing for Kafka jobs?", the agent searched, then built
+    "Terraform: missing in the Faire, New Relic and Anthropic postings" itself.
+    The shipped assistant had every per-posting line in its context and
+    answered from the feed-wide table instead. The summary the agent built is
+    a count, so the code builds it, first, and the model reads it in one call.
+    """
+    profile, company = await _owner(worker_session)
+    await _target(
+        worker_session,
+        profile,
+        company,
+        "Data Engineer",
+        "You will build Kafka pipelines.",
+        _requirements(required=["kafka", "terraform", "scala"]),
+    )
+    await _target(
+        worker_session,
+        profile,
+        company,
+        "Platform Engineer",
+        "Kafka and Terraform for the platform.",
+        _requirements(required=["kafka", "terraform"]),
+    )
+    await worker_session.commit()
+
+    _, seen = await _ask(client, monkeypatch, "What am I missing for Kafka jobs?")
+
+    context = seen["user"]
+    across = next(line for line in context.splitlines() if "across these postings" in line)
+    assert re.search(r"Terraform \(P\d, P\d\), Scala \(P\d\)", across), across
+    assert "Kafka" not in across.split(":", 1)[1], "a skill the résumé lists is not missing"
+    assert context.index("across these postings") < context.index("[P1]"), "summary first"

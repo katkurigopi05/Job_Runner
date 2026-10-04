@@ -294,6 +294,46 @@ The reformulation loop has no analogue at all — their discovery is query-drive
 ours is registry-driven over ~50 curated companies in `seeds/companies.yaml`.
 There is no query to reformulate.
 
+**Re-checked 2026-10-04, by measurement rather than argument.** The chat
+assistant (CLAUDE.md §14) is the one part of this build an agent framework
+could plausibly serve, so it was rebuilt on LangGraph 1.2.12
+(`create_react_agent`) and both versions were asked the same seven questions.
+Same model (Nemotron on OpenRouter), same instructions, and three tools wrapping
+the exact functions the shipped route calls; the only difference was who
+decides what to look up. Each answer was checked against the database.
+
+| | shipped route | LangGraph agent |
+|---|---|---|
+| correct, of 7 | 6 at first; 7 after the fixes below | 6 |
+| model calls | 6 | 14 |
+| seconds, all seven | 14.6 | 41.1 |
+| work-authorization question | refused in code, no model call | declined by the prompt, one call |
+
+Where they differed:
+
+- **"What needs me?"** The agent read "needs" as skills employers need, called
+  `skill_gaps`, and never looked at the applications. The route always carries
+  the status counts, so there is no lookup for it to choose wrongly.
+- **"What am I missing for Kafka jobs?"** The agent won, naming all six skills
+  those postings ask for that no résumé lists; the route named none. Not
+  because it was an agent: the route searched for "missing" (98 postings) and
+  "am" ("I am", AM for account manager) above "Kafka" (124) and found no Kafka
+  job, while the agent rewrote the query to "Kafka" first. Fixed in the route —
+  those words are framing now — plus a computed "across these postings" line
+  and one prompt sentence: six of six, in one call.
+- The agent told the owner to add a skill to their résumé, which the prompt
+  forbids and the route did not do.
+
+Measured alongside: LangGraph adds 25 packages and 44 MB, among them
+`langchain-core`, `langsmith`, `openai` and `langgraph-sdk`. Its model calls do
+not pass through `packages/llm`, so §2.8's audit trail is bypassed unless a
+callback writes to it — the comparison needed one. And on a spent daily limit
+it failed in two seconds where the route took 155; that was the route's bug,
+since fixed, not a reason to adopt the framework.
+
+Verdict unchanged: **reject**. The one thing the agent did better was a count
+the code can compute and hand the model in a single call.
+
 ### 5.3 JSearch, OpenAI, Groq
 
 JSearch is metered RapidAPI; OpenAI and Groq are paid. §11 bars paid APIs

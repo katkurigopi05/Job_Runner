@@ -159,6 +159,14 @@ _POSTING_WORDS = frozenset(_POSTING_WORDS_TEXT.split())
 #: saying "be sure to mention that bonfires are your jam" first. Each of these
 #: is rarer in postings than a typical subject. "use", "require" and "include"
 #: are not here because they are common enough to cost nothing.
+#:
+#: The last line is the owner asking about themselves, measured the same way on
+#: 2026-10-04: "missing" is in 98 open postings and Kafka in 124, so "What am I
+#: missing for Kafka jobs?" ranked "missing" first and found no Kafka job. Left
+#: out on purpose: "lag" (Kafka postings say "consumer lag") and "cv" (computer
+#: vision); "learn" and "improve" are in most postings and dropped anyway.
+#: The question's own grammar went with it: "am" from "What am I…" matched
+#: "I am" and AM for account manager, so the auxiliaries are framing too.
 _FRAMING_WORDS_TEXT = """
 which what who where when how any anything there some open available
 current currently apply applied application applications
@@ -167,6 +175,10 @@ want need interested something
 mention mentions mentioned mentioning say says said saying talk talks talking
 about regarding related relating refer refers referring referencing contain
 contains containing involve involves involving ask asks asked asking
+missing lacking lack lacks lagging gap gaps weak weakness weaknesses upskill strengths
+qualify resume resumes résumé résumés
+am was were been do does did done should could would can shall might must had
+im ive ve whats whom whose ought
 """
 _FRAMING_WORDS = _POSTING_WORDS | frozenset(_FRAMING_WORDS_TEXT.split())
 
