@@ -246,6 +246,45 @@ async def test_the_asking_is_not_searched_for(db_session, question: str) -> None
     assert [p.posting_id for p in found.passages] == [kafka.id]
 
 
+#: One posting that uses every gap-asking word and is about none of them.
+_GAP_TALK = (
+    "Office Coordinator",
+    "I am sure nothing is missing here. If you feel lacking, or lagging, we fill gaps "
+    "and turn weaknesses into strengths, help you upskill, and you qualify. Send your "
+    "resume. Whom should you ask? Anyone who did it, had done it, or would.",
+)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "What am I missing for Kafka jobs?",
+        "What am I lacking for Kafka roles?",
+        "Where am I lagging for Kafka jobs?",
+        "What are my gaps and weaknesses for Kafka roles?",
+        "Do I qualify for Kafka jobs with my resume?",
+        "Whom should I ask about Kafka jobs I would have done?",
+    ],
+)
+async def test_asking_about_a_gap_is_not_searched_for(db_session, question: str) -> None:
+    """ "What am I missing for Kafka jobs?" is looking for Kafka.
+
+    Measured on the owner's database on 2026-10-04: "missing" is in 98 open
+    postings and Kafka in 124, and "am" matched "I am" and AM for account
+    manager, so the asking ranked first and the question got
+    a Brex product manager, a Cloudflare intern and an account manager. That is
+    why a LangGraph agent, which rewrote the query to "Kafka" before searching,
+    beat this route on the question in the comparison.
+    """
+    company = await _company(db_session)
+    await _posting(db_session, company, *_GAP_TALK)
+    kafka = await _posting(db_session, company, *KAFKA)
+
+    found = await retrieve(db_session, question)
+
+    assert [p.posting_id for p in found.passages] == [kafka.id]
+
+
 async def test_a_term_matches_a_whole_word_only(db_session) -> None:
     """ "rust" is not in "trust", and "go" is not in "good"."""
     company = await _company(db_session)

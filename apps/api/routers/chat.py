@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import dataclass
 
 from fastapi import APIRouter
 from sqlalchemy import func, select
@@ -235,32 +236,58 @@ def _gaps_section(report: GapReport) -> str:
     return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class _PostingGaps:
+    #: Per retrieved posting: what it asks for, and what no résumé lists.
+    lines: dict[uuid.UUID, str]
+    #: The same, counted across all of them, for the top of the section.
+    across: str | None
+
+
 async def _unmet_by_posting(
     session: SessionDep, found: Retrieval, report: GapReport
-) -> dict[uuid.UUID, str]:
-    """For each retrieved posting: what it asks for, and what no résumé lists."""
+) -> _PostingGaps:
+    """What the retrieved postings ask for that no résumé lists, each and together.
+
+    The together half exists because of a measured loss. Asked "What am I
+    missing for Kafka jobs?" on 2026-10-04, a LangGraph agent searched and then
+    built "Terraform: missing in the Faire, New Relic and Anthropic postings"
+    itself, in three model calls; this route had every per-posting line in its
+    context and answered from the feed-wide table. The summary is a count, so
+    it is computed here and put first.
+    """
     if not found.passages or not report.resumes:
-        return {}
+        return _PostingGaps({}, None)
     have = frozenset().union(*(resume.skills for resume in report.resumes))
     rows = await session.execute(
         select(Posting.id, Posting.requirements_json).where(
             Posting.id.in_([passage.posting_id for passage in found.passages])
         )
     )
+    requirements_by_id = dict(rows.all())
     lines: dict[uuid.UUID, str] = {}
-    for posting_id, requirements in rows.all():
+    where: dict[str, list[str]] = {}
+    for passage in found.passages:
+        requirements = requirements_by_id.get(passage.posting_id)
         if requirements is None:
-            lines[posting_id] = "requirements: not read yet"
+            lines[passage.posting_id] = "requirements: not read yet"
             continue
         asked, unmet = asked_and_unmet(requirements, have)
-        lines[posting_id] = (
+        lines[passage.posting_id] = (
             f"asks for: {', '.join(asked) or 'no skills it names as required or preferred'}\n"
             f"       not on your résumés: {', '.join(unmet) or 'nothing it asks for'}"
         )
-    return lines
+        for label in unmet:
+            where.setdefault(label, []).append(passage.label)
+    ranked = sorted(where, key=lambda label: (-len(where[label]), label.lower()))
+    across = "  across these postings, asked for and on none of your résumés: " + (
+        ", ".join(f"{label} ({', '.join(where[label])})" for label in ranked)
+        or "nothing — every skill they ask for is on a résumé"
+    )
+    return _PostingGaps(lines, across)
 
 
-def _postings_section(found: Retrieval, unmet: dict[uuid.UUID, str] | None = None) -> str:
+def _postings_section(found: Retrieval, gaps: _PostingGaps | None = None) -> str:
     """The retrieved postings, labelled for citation, with the search's reach.
 
     Coverage comes first and is stated even when nothing was found, because
@@ -302,14 +329,16 @@ def _postings_section(found: Retrieval, unmet: dict[uuid.UUID, str] | None = Non
                 else "  none shared anything with this question"
             )
         )
+    if gaps is not None and gaps.across:
+        lines.append(gaps.across)
     for passage in found.passages:
         where = " — ".join(part for part in (passage.company, passage.location) if part)
         lines.append(f"  [{passage.label}] {passage.title}" + (f" — {where}" if where else ""))
         if passage.application_status:
             lines.append(f"       you applied: {passage.application_status}")
         lines.append(f"       excerpt: {passage.excerpt}")
-        if unmet and passage.posting_id in unmet:
-            lines.append(f"       {unmet[passage.posting_id]}")
+        if gaps is not None and passage.posting_id in gaps.lines:
+            lines.append(f"       {gaps.lines[passage.posting_id]}")
     return "\n".join(lines)
 
 
@@ -498,8 +527,8 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     context = await _context(session, body.application_id, include_mail=include_mail)
     found = await retrieve(session, question)
     gaps = await target_gaps(session) if asks_about_gaps(question) else None
-    unmet = await _unmet_by_posting(session, found, gaps) if gaps else None
-    sections = [context, _postings_section(found, unmet)]
+    posting_gaps = await _unmet_by_posting(session, found, gaps) if gaps else None
+    sections = [context, _postings_section(found, posting_gaps)]
     if gaps is not None:
         sections.append(_gaps_section(gaps))
     prompt = "CONTEXT:\n" + "\n".join(sections) + f"\n\nQUESTION:\n{question}"
