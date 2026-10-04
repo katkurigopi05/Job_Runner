@@ -333,13 +333,63 @@ async def test_pool_members_get_distinct_worker_ids(monkeypatch) -> None:
 
     seen: list[str] = []
 
-    async def fake_run_forever(*, worker_id=None, lease_seconds=None):
+    async def fake_run_forever(*, worker_id=None, lease_seconds=None, stop=None):
         seen.append(worker_id)
 
     monkeypatch.setattr(worker_run, "run_forever", fake_run_forever)
     await worker_run.run_pool(3)
 
     assert len(set(seen)) == 3
+
+
+async def test_one_signal_stops_every_worker_in_the_pool(monkeypatch) -> None:
+    """Found stopping a four-worker pool on 2026-10-04: only one stopped.
+
+    Each member registered its own SIGINT/SIGTERM handler on the shared event
+    loop, and `add_signal_handler` replaces the previous one, so only the last
+    member ever heard the signal. The other three ignored SIGTERM and SIGINT
+    alike, and the pool could only be killed — which leaves heartbeats that
+    read as a crash, and can cut an application off mid-fill.
+    """
+    import asyncio
+    import os
+    import signal
+
+    from apps.worker import run as worker_run
+
+    said_goodbye: list[str] = []
+
+    class QuietHeartbeat:
+        def __init__(self, worker_id, sessionmaker) -> None:  # noqa: ANN001
+            self.worker_id = worker_id
+
+        async def pulse(self, *, stopped: bool = False, **kwargs) -> None:  # noqa: ANN003
+            if stopped:
+                said_goodbye.append(self.worker_id)
+
+    async def idle(**kwargs) -> bool:  # noqa: ANN003
+        return False
+
+    async def no_reminders(last_tick: float) -> float:
+        return last_tick
+
+    monkeypatch.setattr(worker_run, "Heartbeat", QuietHeartbeat)
+    monkeypatch.setattr(worker_run, "run_once", idle)
+    monkeypatch.setattr(worker_run, "_ring_reminders", no_reminders)
+    monkeypatch.setattr(worker_run, "IDLE_SLEEP_SECONDS", 0.01)
+
+    loop = asyncio.get_running_loop()
+    pool = asyncio.create_task(worker_run.run_pool(3))
+    try:
+        await asyncio.sleep(0.1)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(asyncio.shield(pool), timeout=3)
+    finally:
+        pool.cancel()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.remove_signal_handler(sig)
+
+    assert len(said_goodbye) == 3, f"only {said_goodbye} stopped"
 
 
 def test_discovery_is_a_registered_task_kind() -> None:

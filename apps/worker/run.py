@@ -234,22 +234,35 @@ async def _mark_application_failed(session, claimed: ClaimedTask, message: str) 
     await park_failed(session, application, FailureReason.SITE_ERROR, message)
 
 
+def _stop_on_signals() -> asyncio.Event:
+    """One event that SIGINT and SIGTERM set, registered once per event loop.
+
+    Once, because `add_signal_handler` replaces whatever was registered for
+    that signal before. When each pool member registered its own, only the
+    last heard the signal: stopping a four-worker pool stopped one of them,
+    and the rest could only be killed.
+    """
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, stop.set)
+    return stop
+
+
 async def run_forever(
     *,
     worker_id: str | None = None,
     lease_seconds: int | None = None,
+    stop: asyncio.Event | None = None,
 ) -> None:
     settings = get_settings()
     # A configured WORKER_ID is what lets a restarted worker recognize the
     # lease it left behind; the hostname is only a fallback.
     wid = worker_id or settings.worker_id or default_worker_id()
     lease_seconds = lease_seconds if lease_seconds is not None else settings.lease_seconds
-    stop = asyncio.Event()
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(sig, stop.set)
+    # A pool hands every member the same event; a lone worker makes its own.
+    stop = stop if stop is not None else _stop_on_signals()
 
     log.info("worker_started", worker_id=wid, lease_seconds=lease_seconds)
     heartbeat = Heartbeat(wid, core_db.get_sessionmaker())
@@ -325,10 +338,11 @@ async def run_pool(count: int, *, lease_seconds: int | None = None) -> None:
     """
     settings = get_settings()
     base = settings.worker_id or default_worker_id()
+    stop = _stop_on_signals()
 
     await asyncio.gather(
         *(
-            run_forever(worker_id=f"{base}-{index}", lease_seconds=lease_seconds)
+            run_forever(worker_id=f"{base}-{index}", lease_seconds=lease_seconds, stop=stop)
             for index in range(count)
         )
     )
