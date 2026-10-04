@@ -44,13 +44,8 @@ import argparse
 import asyncio
 from typing import Any
 
-from sqlalchemy import func, select
-
-from apps.worker.crawl_job import CRAWL_TASK_KIND
+from apps.worker.crawl_job import request_crawl
 from packages.core import db as core_db
-from packages.core.enums import QueueTaskStatus
-from packages.core.models import QueueTask
-from packages.core.queue import enqueue
 
 
 async def main() -> None:
@@ -113,25 +108,20 @@ async def main() -> None:
     if args.once:
         payload["repeat"] = False
 
-    unfinished = (QueueTaskStatus.PENDING.value, QueueTaskStatus.RUNNING.value)
-
     async with core_db.get_sessionmaker()() as session:
-        # A crawl already waiting makes a second one pointless: they would poll
-        # the same hosts minutes apart and the later one would emit nothing.
-        pending = await session.scalar(
-            select(func.count())
-            .select_from(QueueTask)
-            .where(QueueTask.kind == CRAWL_TASK_KIND, QueueTask.status.in_(unfinished))
-        )
-        if pending:
-            print(f"{pending} crawl task(s) already pending or running — not adding another.")
+        # The guard lives in `request_crawl`, shared with the assistant's
+        # "run crawler", so the two cannot disagree about when a crawl waits.
+        requested = await request_crawl(session, payload)
+        if requested.queued is None:
+            print(
+                f"{requested.waiting} crawl task(s) already pending or running — "
+                "not adding another."
+            )
             print("Start the worker with `make worker` if nothing is draining them.")
             return
-
-        task = await enqueue(session, CRAWL_TASK_KIND, payload)
         await session.commit()
 
-    print(f"queued crawl task {task.id}")
+    print(f"queued crawl task {requested.queued.id}")
     print("Run `make worker` if it is not already running — nothing happens until it drains.")
 
 

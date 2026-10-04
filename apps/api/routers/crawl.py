@@ -8,8 +8,15 @@ apart meant opening a terminal and querying Postgres.
 That is the blindness `/health` had before it learned to fail: the answer
 existed and nothing surfaced it.
 
-Read-only on purpose. Starting a crawl stays a deliberate act at a terminal,
-because it makes real outbound requests to employers' sites.
+Read-only on purpose. This said "starting a crawl stays a deliberate act at a
+terminal, because it makes real outbound requests to employers' sites", and
+the owner reversed the terminal half on 2026-10-04: typing "run crawler" or
+"find new jobs" to the assistant now starts one (`chat.asks_to_crawl`). The
+reason survives intact. It is still a deliberate act — a typed command, matched
+in code, never inferred from a question — still reachable only from this
+machine, and it still goes through `crawl_job.request_crawl`, so robots.txt,
+the per-host floors and the one-crawl-at-a-time guard are unchanged. This
+router stays read-only.
 """
 
 from __future__ import annotations
