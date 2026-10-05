@@ -19,6 +19,7 @@ from packages.core.models import Company, QueueTask
 from packages.core.queue import ClaimedTask
 from packages.crawler.board_directory import BoardDirectory, DirectoryEntry
 from packages.crawler.dispatch import CRAWL_COMPANY_TASK_KIND
+from packages.crawler.extract import ExtractedPosting
 
 
 @pytest.fixture
@@ -48,12 +49,16 @@ def _directory(*entries: tuple[str, str, str]) -> BoardDirectory:
     return BoardDirectory(DirectoryEntry(vendor=v, slug=s, company=c) for v, s, c in entries)
 
 
-def _probe_returning(seen: dict, jobs: int):
-    async def fake_probe(fetcher, vendor, slug):
+def _board_returning(seen: dict, jobs: int, text: str = "We build robots."):
+    async def fake_board(fetcher, vendor, slug):
         seen["probes"].append((vendor, slug))
-        return jobs, f"https://api.example/{vendor}/{slug}", None
+        postings = [
+            ExtractedPosting(external_id=str(i), url=f"https://x/{i}", description_raw=text)
+            for i in range(jobs)
+        ]
+        return postings, f"https://api.example/{vendor}/{slug}", None
 
-    return fake_probe
+    return fake_board
 
 
 async def _company(session, *, website: str | None) -> Company:
@@ -86,7 +91,7 @@ async def test_a_directory_board_is_verified_without_reading_the_site(
     monkeypatch.setattr(
         job, "load_directory", lambda: _directory(("ashby", "acme", "Acme Robotics"))
     )
-    monkeypatch.setattr(job, "_probe", _probe_returning(calls, jobs=4))
+    monkeypatch.setattr(job, "fetch_board", _board_returning(calls, jobs=4))
     company = await _company(db_session, website="https://acme.com")
 
     await job.handle_discover_company(db_session, _claim(company))
@@ -95,8 +100,51 @@ async def test_a_directory_board_is_verified_without_reading_the_site(
     assert (company.ats_type, company.slug) == ("ashby", "acme")
     assert company.source_evidence["method"] == "discovery_from_directory"
     assert company.source_evidence["why"] == "slug matches website"
+    assert company.source_evidence["confirmed_by"] == "slug is the website's .com name"
     assert calls["resolve"] == [], "the site and the guesses are not needed"
     assert await _crawls(db_session) == 1, "the board's first fetch is scheduled"
+
+
+async def test_a_namesake_board_falls_through_and_is_recorded(
+    db_session, calls, monkeypatch
+) -> None:
+    """Axle (axlepayments.com) was given Axle Informatics' board on 2026-10-05."""
+    monkeypatch.setattr(
+        job, "load_directory", lambda: _directory(("greenhouse", "acme", "Acme Robotics"))
+    )
+    monkeypatch.setattr(
+        job,
+        "fetch_board",
+        _board_returning(calls, jobs=11, text="Acme Robotics is a bioscience company."),
+    )
+    # The site's label says "Acme Robotics Finance": a longer name than the match.
+    company = await _company(db_session, website="https://acmeroboticsfinance.com")
+
+    await job.handle_discover_company(db_session, _claim(company))
+
+    assert company.source_status == SourceStatus.FAILED.value
+    assert len(calls["resolve"]) == 1, "the company's own site is still read"
+    assert company.source_evidence["unconfirmed"] == ["greenhouse/acme"]
+
+
+async def test_a_name_match_whose_board_names_the_website_is_verified(
+    db_session, calls, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        job, "load_directory", lambda: _directory(("lever", "acme-hq", "Acme Robotics"))
+    )
+    monkeypatch.setattr(
+        job,
+        "fetch_board",
+        _board_returning(calls, jobs=2, text="Learn more at https://acmerobotics.io/about"),
+    )
+    company = await _company(db_session, website="https://acmerobotics.io")
+
+    await job.handle_discover_company(db_session, _claim(company))
+
+    assert (company.ats_type, company.slug) == ("lever", "acme-hq")
+    assert company.source_evidence["why"] == "same name in directory"
+    assert company.source_evidence["confirmed_by"] == "board names the website"
 
 
 async def test_a_directory_board_with_no_open_jobs_falls_through_to_the_site(
@@ -106,7 +154,7 @@ async def test_a_directory_board_with_no_open_jobs_falls_through_to_the_site(
     monkeypatch.setattr(
         job, "load_directory", lambda: _directory(("ashby", "acme", "Acme Robotics"))
     )
-    monkeypatch.setattr(job, "_probe", _probe_returning(calls, jobs=0))
+    monkeypatch.setattr(job, "fetch_board", _board_returning(calls, jobs=0))
     company = await _company(db_session, website="https://acme.com")
 
     await job.handle_discover_company(db_session, _claim(company))

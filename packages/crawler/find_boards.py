@@ -60,7 +60,7 @@ import structlog
 
 from packages.ats.registry import detect_ats
 from packages.crawler.discover import slug_from_ats_url
-from packages.crawler.extract import extractor_for
+from packages.crawler.extract import ExtractedPosting, extractor_for
 from packages.crawler.fetch import Blocked, PoliteFetcher
 from packages.crawler.resolve import find_embedded
 
@@ -258,6 +258,20 @@ async def _probe(
     fetcher: PoliteFetcher, vendor: str, slug: str
 ) -> tuple[int | None, str, str | None]:
     """Try one vendor and slug. Returns (job count, url, blocked reason)."""
+    postings, url, blocked = await fetch_board(fetcher, vendor, slug)
+    return (None if postings is None else len(postings)), url, blocked
+
+
+async def fetch_board(
+    fetcher: PoliteFetcher, vendor: str, slug: str
+) -> tuple[list[ExtractedPosting] | None, str, str | None]:
+    """One board, parsed. Returns (postings, url, blocked reason).
+
+    The postings rather than their count, for a caller that has to read them
+    to decide whose board it is (`board_directory.confirms`). None when there
+    is no board to read — an unknown vendor, a refusal, an error, a body that
+    does not parse.
+    """
     extractor = extractor_for(vendor)
     if extractor is None:
         return None, "", None
@@ -281,7 +295,7 @@ async def _probe(
     except Exception:  # noqa: BLE001 - a body we cannot parse is not a board
         return None, url, None
 
-    return len(postings), url, None
+    return postings, url, None
 
 
 #: Board *roots*, as they appear in a company list. Deliberately separate
@@ -565,7 +579,13 @@ async def resolve_one(
     if not guess:
         if blocked_reason:
             return name, f"blocked: {blocked_reason}"
-        return name, "no board on its own site; name-guessing is off for a company with a website"
+        # "Did not lead to", not "has no": `from_url` returns None alike for a
+        # page naming no board, a dead site and a robots refusal, so this
+        # cannot claim the site was read.
+        return name, (
+            "its own site did not lead to a supported board; "
+            "name-guessing is off for a company with a website"
+        )
 
     candidates = slug_candidates(name)
     if not candidates:

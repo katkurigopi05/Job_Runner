@@ -40,6 +40,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from packages.core.config import get_settings
+from packages.crawler.extract import ExtractedPosting
 from packages.crawler.find_boards import VENDORS
 
 #: At most this many candidates are probed per company. Each is one request to
@@ -128,6 +129,9 @@ class Candidate:
     #: "slug matches website" or "same name in directory" — kept on the
     #: company's evidence, because the two are not equally strong.
     why: str
+    #: The directory's name for the board. For a name match it is the name the
+    #: match was made on, which `confirms` holds the website's label against.
+    company: str = ""
 
 
 def normalize_name(name: str) -> str:
@@ -137,17 +141,103 @@ def normalize_name(name: str) -> str:
     return "".join(words)
 
 
-def domain_stem(url: str | None) -> str:
-    """The registrable label of a URL's host: `https://jobs.acme.co.uk` → `acme`."""
+def _registrable_labels(url: str | None) -> list[str]:
+    """The labels of a URL's registrable domain: `jobs.acme.co.uk` → acme, co, uk."""
     if not url:
-        return ""
+        return []
     host = urlparse(url if "://" in url else f"https://{url}").hostname or ""
     labels = [label for label in host.lower().removeprefix("www.").split(".") if label]
     if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL:
-        return labels[-3]
-    if len(labels) >= 2:
-        return labels[-2]
+        return labels[-3:]
+    return labels[-2:]
+
+
+def domain_stem(url: str | None) -> str:
+    """The registrable label of a URL's host: `https://jobs.acme.co.uk` → `acme`."""
+    labels = _registrable_labels(url)
     return labels[0] if labels else ""
+
+
+def registrable_domain(url: str | None) -> str:
+    """A URL's registrable domain: `https://usa.baidu.com/x` → `baidu.com`."""
+    return ".".join(_registrable_labels(url))
+
+
+def confirms(
+    candidate: Candidate, website: str | None, postings: Iterable[ExtractedPosting]
+) -> str | None:
+    """Why this board is the company's own, or None if nothing says it is.
+
+    A name is shared and a domain is not. The 2026-10-05 benchmark verified
+    four namesakes from the directories — Artemis (artemispower.com) received
+    an AI-security startup's board, Axle (axlepayments.com) Axle Informatics',
+    Arena (arena.im) LMArena's — and in every one the evidence was a name, or a
+    label that some other company owns under a different TLD. So a board
+    counts when:
+
+    - its slug is the website's own `.com` label. Whoever holds `acme.com`
+      owns the name `acme`; a site on another TLD often chose it because the
+      `.com` belonged to someone else, which is exactly how arena.im lost.
+    - or its postings name the website's domain, in their text or in their
+      own URLs — Greenhouse returns the employer's careers URL when set.
+
+    - or, for a match made on the name, the website's label agrees with that
+      name. The label is then an independent witness: `artemispower`,
+      `axlepayments` and `beamsolutions` each say the company's name is longer
+      than the one that matched, and all three boards were namesakes, while
+      `tryascend`, `trybadge`, `arkham` and `better` agreed and were right. A
+      match made on the label gets no such pass — the label cannot vouch for
+      a match it made, which is how arena.im got LMArena's board.
+
+    With no website there is nothing to check a name against, and the
+    resolver already accepts a name guess on the same terms, so a name match
+    stands.
+    """
+    domain = registrable_domain(website)
+    if not domain:
+        return "no website to check against"
+    if candidate.why == "slug matches website" and domain == f"{candidate.slug.lower()}.com":
+        return "slug is the website's .com name"
+    mention = re.compile(rf"(?<![a-z0-9-]){re.escape(domain)}(?![a-z0-9-])")
+    for posting in postings:
+        text = f"{posting.url} {posting.description_raw or ''}".lower()
+        if mention.search(text):
+            return "board names the website"
+    if candidate.why == "same name in directory" and _label_agrees(
+        domain_stem(website), normalize_name(candidate.company)
+    ):
+        return "website agrees with the name"
+    return None
+
+
+#: Words a company puts around its name in a domain when the bare name was
+#: taken: getcensus, withpersona, frontapp, ironcladapp. They do not change
+#: whose name it is, unlike `power` in artemispower.
+_LABEL_PREFIXES = ("try", "get", "join", "use", "hello", "with", "meet", "go", "hey")
+_LABEL_SUFFIXES = ("app", "hq", "inc", "labs", "lab", "ai", "io", "tech", "team", "careers", "jobs")
+
+
+def _label_agrees(label: str, name: str) -> bool:
+    """Whether a domain label names the same company as `name`, both normalised.
+
+    Agrees when equal once a conventional prefix or suffix is set aside, or
+    when the label is the start of the name (`better` for Better Mortgage,
+    `baidu` for Baidu USA). Disagrees when the label adds words of its own.
+    """
+    label = re.sub(r"[^a-z0-9]", "", label.lower())
+    if not label or not name:
+        return False
+    if len(label) >= 3 and name.startswith(label):
+        return True
+    cores = {label}
+    for prefix in _LABEL_PREFIXES:
+        if label.startswith(prefix):
+            cores.add(label[len(prefix) :])
+    for core in list(cores):
+        for suffix in _LABEL_SUFFIXES:
+            if core.endswith(suffix):
+                cores.add(core[: -len(suffix)])
+    return name in cores
 
 
 class BoardDirectory:
@@ -180,7 +270,9 @@ class BoardDirectory:
                 if key in seen or entry.slug.lower() in GENERIC_SLUGS:
                     continue
                 seen.add(key)
-                found.append(Candidate(vendor=entry.vendor, slug=entry.slug, why=why))
+                found.append(
+                    Candidate(vendor=entry.vendor, slug=entry.slug, why=why, company=entry.company)
+                )
 
         if stem := domain_stem(website):
             add(self._by_slug.get(stem, []), "slug matches website")
@@ -225,8 +317,10 @@ __all__ = [
     "Candidate",
     "DirectoryEntry",
     "DirectoryFormatError",
+    "confirms",
     "directory_root",
     "domain_stem",
     "load_default",
     "normalize_name",
+    "registrable_domain",
 ]
