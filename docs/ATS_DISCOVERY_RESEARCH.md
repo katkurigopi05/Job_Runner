@@ -922,3 +922,53 @@ What this leaves for the remaining misses:
   out of the default path.
 - **Boards no directory lists** remain a question for the Wayback/Common
   Crawl slug index.
+
+### The full run (2026-10-05)
+
+`make crawl dispatch=1 limit=4000 max_backlog=4000`, 10 workers, every
+company then due: 3,352 never tried plus 169 earlier misses.
+
+| | |
+|---|---|
+| companies tried | 3,521 |
+| discovery wall clock | 89 minutes, about 40 companies a minute |
+| boards verified | **437**: 386 from the directories, 51 from the company's own site |
+| by platform | Greenhouse 212, Ashby 149, Lever 62, Workable 14 |
+| verified companies overall | 682, from 245 before |
+| new postings stored | 4,401; open postings 6,199 to 10,589 |
+| postings in the feed | 3,719 |
+| task or database-pool errors | 0 |
+
+How the 386 directory boards were confirmed: 248 by the slug being the
+website's `.com` name, 89 by the website agreeing with the matched name, 48 by
+the board naming the website, and 1 with no website to check. 116 companies
+had a directory candidate turned away as unconfirmed; each is on the company's
+evidence for a check by hand.
+
+Why the 3,084 misses missed, which the earlier runs could not say:
+
+| | count |
+|---|---|
+| site read, names no supported board | 2,191 |
+| robots.txt unreadable (mostly dead sites, per the retry above) | 626 |
+| site unreachable | 189 |
+| robots.txt disallows us | 59 |
+| board found but lists no open roles | 13 |
+| other | 6 |
+
+Three things the run showed about the queue, none of which corrupted
+anything:
+
+- **Discovery starves everything else.** The queue claims strictly by
+  `run_after`, and 3,521 discovery tasks were queued in one tick, so no board
+  was fetched and no matching pass ran for 80 minutes. Nothing was scored or
+  embedded until discovery drained.
+- **The one-hour provisional claim is shorter than a full-sheet run.** When
+  the next tick finally ran it re-queued 9 companies whose discovery task was
+  still pending. The strict ordering above is what kept that to 9.
+- **A new board is fetched twice.** Discovery queues its first fetch, and the
+  next tick queues the routine poll of the same board: 998 fetch tasks for
+  582 boards. The second finds nothing changed.
+
+The chunk-embedding backlog (3,346 postings at 500 per five-minute pass) was
+cleared with `make chunk-postings` in under three minutes.
