@@ -363,3 +363,28 @@ async def test_a_robots_refusal_on_one_vendor_is_still_reported() -> None:
     assert isinstance(result, tuple)
     assert result[1].startswith("blocked:")
     assert "robots.txt" in result[1]
+
+
+@pytest.mark.asyncio
+async def test_with_guessing_off_a_site_without_a_board_probes_no_ats_host() -> None:
+    """The trial's 188 sheet companies: guessing found none of them and was
+    nearly all of the wall clock. With it off, a site that names no board ends
+    the search instead of costing ~10 probes to the shared ATS hosts."""
+    requested: list[str] = []
+    page = "<html><a href='/team'>Team</a><p>We are hiring soon.</p></html>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.host)
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nDisallow:")
+        if request.url.host == "acme.com":
+            return httpx.Response(200, text=page)
+        return httpx.Response(200, text='{"jobs": [{"id": 1, "title": "x", "absolute_url": "y"}]}')
+
+    fetcher = PoliteFetcher(transport=httpx.MockTransport(handler))
+
+    outcome = await resolve_one("Acme", fetcher, url="https://acme.com", guess=False)
+
+    assert not isinstance(outcome, Resolved)
+    assert "name-guessing is off" in outcome[1]
+    assert set(requested) == {"acme.com"}, "no ATS host was asked anything"

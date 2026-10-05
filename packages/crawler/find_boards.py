@@ -527,6 +527,7 @@ async def resolve_one(
     *,
     url: str | None = None,
     vendors: tuple[str, ...] = VENDORS,
+    guess: bool = True,
 ) -> Resolved | tuple[str, str]:
     """Find one company's board. Returns a Resolved, or (name, reason).
 
@@ -536,7 +537,10 @@ async def resolve_one(
     said something would be choosing the worse answer.
 
     It falls through to name-guessing only when the URL yields nothing at all
-    — a dead link, a page with no ATS behind it, a robots refusal.
+    — a dead link, a page with no ATS behind it, a robots refusal — and only
+    when `guess` is set. `discover_company_job` turns it off for a company with
+    a website: on the owner's sheet it found nothing such a company's own site
+    had not, at ~10 shared-host probes each.
     """
     blocked_reason: str | None = None
 
@@ -557,6 +561,11 @@ async def resolve_one(
             # different company that happens to share a word.
             elif count == 0:
                 return name, f"board found ({vendor}/{slug}) but it lists no open roles"
+
+    if not guess:
+        if blocked_reason:
+            return name, f"blocked: {blocked_reason}"
+        return name, "no board on its own site; name-guessing is off for a company with a website"
 
     candidates = slug_candidates(name)
     if not candidates:

@@ -48,7 +48,15 @@ from apps.worker.crawl_job import request_crawl
 from packages.core import db as core_db
 
 
-async def main() -> None:
+def _positive(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be at least 1 — a backlog of 0 dispatches nothing")
+    return number
+
+
+def payload_from(argv: list[str] | None = None) -> dict[str, Any]:
+    """Parse `make crawl`'s flags into the payload `handle_crawl` reads."""
     parser = argparse.ArgumentParser(description="Queue one crawl of the company registry.")
     parser.add_argument(
         "--seed-path",
@@ -88,13 +96,23 @@ async def main() -> None:
             "unattended pilot keep going after you stop watching."
         ),
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--max-backlog",
+        type=_positive,
+        default=None,
+        help=(
+            "Outstanding company tasks a tick may leave queued before it stops "
+            "dispatching. Defaults to CRAWLER_MAX_BACKLOG. Raise it to queue a "
+            "whole imported sheet at once. Requires --dispatch."
+        ),
+    )
+    args = parser.parse_args(argv)
 
-    if (args.limit is not None or args.once) and not args.dispatch:
-        # Both only mean anything to the dispatching path, and silently
+    if (args.limit is not None or args.once or args.max_backlog is not None) and not args.dispatch:
+        # All three only mean anything to the dispatching path, and silently
         # accepting them on the other one is how a bounded pilot turns out to
         # have been unbounded.
-        parser.error("--limit and --once require --dispatch")
+        parser.error("--limit, --once and --max-backlog require --dispatch")
 
     payload: dict[str, Any] = {}
     if args.seed_path:
@@ -107,7 +125,13 @@ async def main() -> None:
         payload["limit"] = args.limit
     if args.once:
         payload["repeat"] = False
+    if args.max_backlog is not None:
+        payload["max_backlog"] = args.max_backlog
+    return payload
 
+
+async def main() -> None:
+    payload = payload_from()
     async with core_db.get_sessionmaker()() as session:
         # The guard lives in `request_crawl`, shared with the assistant's
         # "run crawler", so the two cannot disagree about when a crawl waits.

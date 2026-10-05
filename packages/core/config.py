@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -230,6 +231,15 @@ class Settings(BaseSettings):
     #: sample, so `greenhouse,lever,ashby` is a defensible pilot setting — and
     #: a real coverage loss, since genuine Workable employers become invisible.
     crawler_discovery_vendors: str = "greenhouse,lever,ashby,workable"
+
+    #: When discovery guesses board slugs from a company's name: `no_website`
+    #: (only for a company with no URL to read), `always`, or `never`. Guessing
+    #: is ~10 probes per company against shared ATS hosts at a 2s floor, and on
+    #: the 200-company trial of the owner's sheet it found none of the 188 sheet
+    #: companies — every sheet board came from the site or the directories —
+    #: while being nearly all of the wall clock. The 5 it did find were registry
+    #: companies with no website, which `no_website` keeps.
+    crawler_name_guessing: Literal["always", "no_website", "never"] = "no_website"
 
     #: Requests the crawler may make per window, across every host and every
     #: worker. **0 means unlimited, and that is the shipped default.**

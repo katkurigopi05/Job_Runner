@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching chunk-postings audit-locations prune-postings export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching fetch-board-directories chunk-postings audit-locations prune-postings export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -281,12 +281,15 @@ discover:
 #     make crawl dispatch=1 limit=20 once=1
 #                                       a bounded sweep that does not re-arm
 #                                       itself — what a pilot wants.
+#     make crawl dispatch=1 limit=4000 max_backlog=4000
+#                                       queue a whole imported sheet in one
+#                                       tick, rather than 2,000 then waiting.
 #
 # The default is the seed-file cycle, unchanged. `dispatch=1` is opt-in because
 # it polls a candidate table that can hold thousands of rows, and a command
 # whose cost changes silently is worse than one more flag.
 crawl:
-	$(PY)/python -m scripts.crawl $(if $(force),--force,) $(if $(filter 1,$(dispatch)),--dispatch,) $(if $(limit),--limit $(limit),) $(if $(filter 1,$(once)),--once,)
+	$(PY)/python -m scripts.crawl $(if $(force),--force,) $(if $(filter 1,$(dispatch)),--dispatch,) $(if $(limit),--limit $(limit),) $(if $(filter 1,$(once)),--once,) $(if $(max_backlog),--max-backlog $(max_backlog),)
 
 # make rescore — re-score every open posting against the profiles as they are
 # now. Crawling already re-scores, but returns early when the sweep emitted
@@ -379,6 +382,12 @@ inspect-csv:
 # existed. Local, resumable, no network.   make extract-requirements limit=500
 # Back up the database and local artifacts; verify by restoring somewhere isolated.
 #   make backup [vault=1] [browser=1]      make backup-verify dir=backups/jobrunner-... [keep=1]
+# make fetch-board-directories — download the two public board directories
+# discovery checks before reading a company's site, into storage/board_directories/
+# with their attribution. Two requests; re-run to refresh.
+fetch-board-directories:
+	$(PY)/python -m scripts.fetch_board_directories
+
 # make chunk-postings — split every open posting into 500-character chunks
 # (25-character overlap) and embed each with bge-small, for the chat search.
 # The matching pass after each crawl does new postings; this clears a backlog.
