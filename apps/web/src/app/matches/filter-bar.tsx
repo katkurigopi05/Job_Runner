@@ -22,6 +22,24 @@ const SENIORITY: Array<{ value: string; label: string }> = [
   { value: "principal", label: "principal" },
 ];
 
+/**
+ * The values are the keys of the API's role table (`matching/roles.py`), and a
+ * test holds this list to that table: an option the API refuses is a 400 on a
+ * click, and a role the table knows but this omits is a filter nobody can ask
+ * for. The label names the titles a role covers where its name does not.
+ */
+const ROLES: Array<{ value: string; label: string }> = [
+  { value: "software_engineer", label: "software engineer / SDE / MTS" },
+  { value: "backend_engineer", label: "backend engineer" },
+  { value: "frontend_engineer", label: "frontend engineer" },
+  { value: "fullstack_engineer", label: "full-stack engineer" },
+  { value: "data_engineer", label: "data engineer" },
+  { value: "data_scientist", label: "data scientist" },
+  { value: "machine_learning_engineer", label: "ML / AI engineer" },
+  { value: "data_analyst", label: "data / BI analyst" },
+  { value: "devops_engineer", label: "DevOps / SRE / platform" },
+];
+
 const EDUCATION: Array<{ value: string; label: string }> = [
   { value: "high_school", label: "high school" },
   { value: "associate", label: "associate" },
@@ -128,6 +146,23 @@ export function FilterBar({
         <label className="flex flex-col gap-1">
           <span className={LABEL}>keywords</span>
           {text("keywords", "python, postgres", "w-48")}
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className={LABEL}>role</span>
+          <select
+            value={value("role")}
+            onChange={(event) => set("role", event.target.value)}
+            title="Reads the job title only. A title that names none of these roles is hidden while a role is chosen."
+            className={FIELD}
+          >
+            <option value="">any role</option>
+            {ROLES.map((role) => (
+              <option key={role.value} value={role.value}>
+                {role.label}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="flex flex-col gap-1">
