@@ -785,6 +785,79 @@ Measured before building anything; scratch scripts, nothing committed yet.
 3. **Built.** `make crawl dispatch=1 limit=4000 max_backlog=4000` queues the
    whole sheet in one tick, instead of stalling at the 2,000 backlog default.
    The value rides along to every re-armed tick.
-4. **Not yet run.** Re-benchmark on the next 200 sheet companies: time,
-   yield, false matches. It contacts company sites and ATS hosts, so it runs
-   when the owner says so.
+4. **Run 2026-10-05**, below.
+
+### Benchmark: the next 200 sheet companies (2026-10-05)
+
+Same shape as the trial: `make crawl dispatch=1 limit=200 once=1`, 5
+workers, the same polite fetcher.
+
+| | trial (homepage + guessing) | with directories |
+|---|---|---|
+| discovery wall clock | 19 min | **10 min 52 s** |
+| boards verified | 33 (28 sheet + 5 registry) | **36**, all sheet companies |
+| via directory / homepage / guess | 0 / 28 / 5 | 33 / 3 / 0 |
+| end to end, incl. first fetch of every board | — | 15 min |
+
+**The directories produced namesakes, and nothing caught them.** Reading each
+board's postings: 5 of the 33 directory boards belonged to a different
+company with the same name.
+
+| sheet company | board given | whose board it was |
+|---|---|---|
+| Artemis (artemispower.com) | ashby/artemis | an AI cyber-defense startup |
+| Axle (axlepayments.com) | greenhouse/axle | Axle Informatics, bioscience, Rockville MD |
+| Arena (arena.im) | ashby/arena | LMArena, AI model evaluation |
+| Armory (armory.io) | ashby/armory | a NYC healthcare-payments startup |
+| Beam (beamsolutions.com) | greenhouse/beam | BEAM, a math-education nonprofit |
+
+A false board is worse than a missed one: the company reads as verified, so
+it is never looked at again, and the namesake's postings enter the feed
+under its name.
+
+`board_directory.confirms` is the fix, reading only what the probe already
+downloaded. A name can be shared; a domain cannot. A directory board counts
+when one of these holds:
+
+- its slug is the website's `.com` label;
+- its postings name the website's domain;
+- or, for a match made on the name, the website's label agrees with that
+  name.
+
+The third rule distinguishes the two kinds of label:
+
+- **Agree:** `tryascend`, `trybadge`, `arkham` and `better` match the name
+  (the last for Better Mortgage).
+- **Disagree:** `artemispower`, `axlepayments` and `beamsolutions` each say
+  the company's own name is longer than the one that matched.
+
+A slug match was found by the label, so the label cannot vouch for it: that
+is how arena.im got LMArena's board.
+
+Replayed over the 33:
+
+| | count |
+|---|---|
+| right boards kept | 26 |
+| namesakes kept | 0 |
+| namesakes rejected | 5 |
+| right boards turned away | 2 — Azumo (`.co`) and Basetwo AI (`.ai`), coined names whose boards never print their site |
+
+A turned-away board falls through to the homepage pass. It is also kept on
+the company's evidence as `unconfirmed`.
+
+The five namesake verifications were reverted in the database the same day.
+They were set back to `failed`, with the old evidence under `previous`, and
+made due for rediscovery. Their 27 postings were closed, not deleted; none
+had a match, a decision or an application.
+
+Two smaller findings:
+
+- **Every miss reads the same way.** `from_url` returns None alike for a page
+  naming no board, a dead site and a robots refusal. The reason now says the
+  site "did not lead to" a board rather than that it "has no board". Telling
+  those three apart needs `from_url` to return its reason.
+- **Four boards stored no postings.** Aquabyte, Arkham, Badge and Beam were
+  fetched, but every posting was past the 30-day limit
+  (`POSTING_MAX_AGE_DAYS`). That is correct, but it means a verified board
+  can sit in the registry contributing nothing until it posts again.
