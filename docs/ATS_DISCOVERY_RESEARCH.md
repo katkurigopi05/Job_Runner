@@ -861,3 +861,64 @@ Two smaller findings:
   fetched, but every posting was past the 30-day limit
   (`POSTING_MAX_AGE_DAYS`). That is correct, but it means a verified board
   can sit in the registry contributing nothing until it posts again.
+
+### DNS test and robots retry over every miss (2026-10-05)
+
+Both were suggested before building anything else for the misses. The DNS
+test was put forward by four of the five answers, and the robots retry was
+listed as open after the trial. They covered all 329 companies with a website
+that discovery had missed, with the 121 verified companies as a control.
+
+**DNS finds nothing here.** CNAMEs were resolved for `jobs.`, `careers.`,
+`talent.`, `apply.`, `hiring.` and `join.` on all 450 domains:
+
+- No subdomain points at Greenhouse, Lever, Ashby or Workable, in the misses
+  or in the control.
+- So DNS identified none of the 121 boards we already know.
+- 56 companies have some careers-subdomain CNAME, and they lead to CDNs and
+  hosting: AWS, Cloudflare, Azure, Akamai, Zoho.
+- Among the misses, DNS spotted another ATS for 4 companies: Phenom 2,
+  Eightfold 1, Breezy 1.
+
+The answers' premise, that careers subdomains CNAME to the ATS, does not hold
+for this sheet. The test confirmed the extraction itself works by following
+GitHub's and Airbnb's CNAME chains. DNS is not worth adding to discovery.
+
+**The robots retry recovered nothing.** 54 misses had failed at robots.txt
+across the two runs: 29 in the trial and 25 in the benchmark. A fresh request
+per host, a day later:
+
+| | count |
+|---|---|
+| domain no longer resolves | 14 |
+| TLS certificate failure | 17 |
+| timeouts and connection errors | 16 |
+| Cloudflare 503/526/530 (origin gone) | 4 |
+| readable again | 3 |
+
+All 3 readable sites — AdeptDC, After College and Ace AI — disallow us.
+Rediscovering them through the real handler confirmed it: each was refused
+at its own homepage. So the robots failures were mostly dead companies, not
+transient errors. The certificate failures are not something to work around,
+since accepting a broken certificate means weakening TLS.
+
+**That exposed a reason that lied.** All three were recorded as "its own site
+did not lead to a supported board", which reads as boardless. They were in
+fact refused. `from_url` now returns a `SiteReading` with the board, or why
+there is none, and a miss is recorded as one of three things:
+
+- `blocked: … disallowed by robots.txt`
+- `its own site could not be fetched (HTTP 503)`
+- `its own site names no supported board`
+
+ChatGPT's answer made the same point: a robots denial must not become "this
+company has no board".
+
+What this leaves for the remaining misses:
+
+- **Dead sites** are a sixth of all misses and cannot be recovered.
+- **JavaScript-only pages** were 24 of the trial's 167 misses. Only rendering
+  reads those, which was the one technique all five answers agreed to keep
+  out of the default path.
+- **Boards no directory lists** remain a question for the Wayback/Common
+  Crawl slug index.
