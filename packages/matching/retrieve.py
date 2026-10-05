@@ -202,6 +202,14 @@ _COMPANY_SUFFIXES = frozenset(_COMPANY_SUFFIXES_TEXT.split())
 #: filter the search to one company.
 _SHORT_NAME_MAX_SHARE = 0.02
 
+#: Above `_SHORT_NAME_MAX_SHARE` and up to this share of *other* companies'
+#: postings, a one-word name still means its company when that company has
+#: postings open: an employer others mention, not an ordinary word. Measured
+#: 2026-10-05: OpenAI 6.6%, Anthropic 4.7%, Stripe 4.4%, Ramp 4.1% elsewhere,
+#: against `robotics` 7.4% for a company with nothing open, and "power",
+#: "change", "matter", "based" at 18% and up.
+_MENTIONED_NAME_MAX_SHARE = 0.10
+
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _HIRING_MANAGER = re.compile(r"\bhiring managers?\b")
 
@@ -440,7 +448,10 @@ def _company_aliases(name: str, frequencies: idf.DocumentFrequencies) -> list[se
 
 
 async def _named_companies(
-    session: AsyncSession, words: set[str], frequencies: idf.DocumentFrequencies
+    session: AsyncSession,
+    words: set[str],
+    frequencies: idf.DocumentFrequencies,
+    question: str = "",
 ) -> tuple[list[uuid.UUID], set[str], list[str]]:
     """Registry companies the question names, the words that named them, and their names.
 
@@ -450,17 +461,74 @@ async def _named_companies(
     registry name counted. The words come back too, because a company's name
     is in every one of its postings and so cannot pick out the paragraph of
     any one of them.
+
+    A one-word alias has to pass `_one_word_names_it` as well. The registry
+    grew from about 180 curated names to 3,933 when the owner's sheet was
+    imported, 108 of them one ordinary word ("Do", "Based", "Fast", "Join"),
+    and "N Robotics" tokenizes to `robotics`: "robotics jobs" was read as
+    "postings at N Robotics" and found nothing over 103 that say robotics.
     """
-    rows = await session.execute(select(Company.id, Company.name))
+    rows = (await session.execute(select(Company.id, Company.name))).all()
+    matched: list[tuple[uuid.UUID, str, list[set[str]]]] = []
+    for company_id, name in rows:
+        hits = [a for a in _company_aliases(name or "", frequencies) if a <= words]
+        if hits:
+            matched.append((company_id, name, hits))
+
+    # Only companies named by nothing longer than one word need the check, and
+    # only they need their own postings counted.
+    doubtful = [cid for cid, _, hits in matched if all(len(a) == 1 for a in hits)]
+    own: dict[uuid.UUID, int] = {}
+    if doubtful and frequencies.usable:
+        counted = await session.execute(
+            select(Posting.company_id, func.count())
+            .where(Posting.company_id.in_(doubtful), Posting.closed_at.is_(None))
+            .group_by(Posting.company_id)
+        )
+        own = {company_id: count for company_id, count in counted.all()}
+
     named: list[uuid.UUID] = []
     naming: set[str] = set()
     names: list[str] = []
-    for company_id, name in rows.all():
-        if any(alias <= words for alias in _company_aliases(name or "", frequencies)):
-            named.append(company_id)
-            naming |= set(tokenize(name or ""))
-            names.append(name)
+    for company_id, name, hits in matched:
+        if all(len(a) == 1 for a in hits) and not any(
+            _one_word_names_it(next(iter(a)), own.get(company_id, 0), frequencies, question)
+            for a in hits
+        ):
+            continue
+        named.append(company_id)
+        naming |= set(tokenize(name or ""))
+        names.append(name)
     return named, naming, names
+
+
+def _one_word_names_it(
+    word: str, own_postings: int, frequencies: idf.DocumentFrequencies, question: str
+) -> bool:
+    """Whether a single word in a question means the company of that name.
+
+    Judged by how common the word is in *other* companies' postings, since a
+    company's own postings all carry its name:
+
+    - rare elsewhere: it names the company ("Vanta", "Notion");
+    - somewhat common: only for a company with open postings. "OpenAI" is in
+      7.9% of postings and "Stripe" in 4.4%, mostly other employers naming a
+      tool, and both are real employers here; `robotics` is in 7.4% and
+      "N Robotics" has none;
+    - common: only after "at" ("jobs at Based"), since "based", "fast" and
+      "join" are in half the corpus.
+
+    Without corpus statistics there is nothing to judge by, and the word counts
+    as it always did.
+    """
+    if not frequencies.usable:
+        return True
+    elsewhere = frequencies.document_share(word) - own_postings / frequencies.total
+    if elsewhere <= _SHORT_NAME_MAX_SHARE:
+        return True
+    if elsewhere <= _MENTIONED_NAME_MAX_SHARE and own_postings > 0:
+        return True
+    return re.search(rf"(?:\bat|@)\s+{re.escape(word)}\b", question.lower()) is not None
 
 
 async def _names_a_title(session: AsyncSession, subject: list[str]) -> bool:
@@ -732,7 +800,9 @@ async def retrieve(
     unframed = _HIRING_MANAGER.sub(" ", question.lower())
     asks_about_jobs = bool({w.rstrip(".") for w in _RAW_WORD.findall(unframed)} & _POSTING_WORDS)
     frequencies, active_revision = await idf.load_active(session)
-    companies, company_words, company_names = await _named_companies(session, words, frequencies)
+    companies, company_words, company_names = await _named_companies(
+        session, words, frequencies, question
+    )
     subject_terms = [t for t in tokenize(question) if t not in _FRAMING_WORDS]
     if not (asks_about_jobs or companies or await _names_a_title(session, subject_terms)):
         return Retrieval(attempted=False)
