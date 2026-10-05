@@ -28,6 +28,7 @@ returned from immediately rather than re-probed.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import structlog
@@ -37,18 +38,20 @@ from packages.core.config import get_settings
 from packages.core.enums import SourceStatus
 from packages.core.models import Company
 from packages.core.queue import ClaimedTask, enqueue
+from packages.crawler.board_directory import confirms
+from packages.crawler.board_directory import load_default as load_directory
 from packages.crawler.company_csv import is_search_url
 from packages.crawler.defer import defer_if_host_busy
 from packages.crawler.dispatch import CRAWL_COMPANY_TASK_KIND
-from packages.crawler.fetch import build_fetcher
-from packages.crawler.find_boards import VENDORS, Resolved, resolve_one
+from packages.crawler.fetch import PoliteFetcher, build_fetcher
+from packages.crawler.find_boards import VENDORS, Resolved, fetch_board, resolve_one
 from packages.crawler.runs import discovery_backoff, ensure_state
 
 log = structlog.get_logger(__name__)
 
 DISCOVER_COMPANY_TASK_KIND = "discover_company"
 
-__all__ = ["DISCOVER_COMPANY_TASK_KIND", "handle_discover_company", "lead_for"]
+__all__ = ["DISCOVER_COMPANY_TASK_KIND", "handle_discover_company", "lead_for", "should_guess"]
 
 
 class MalformedDiscoveryTask(ValueError):
@@ -75,6 +78,83 @@ def lead_for(company: Company) -> str | None:
             continue
         return value
     return None
+
+
+def should_guess(lead: str | None, policy: str) -> bool:
+    """Whether to fall back to guessing a slug from the company's name.
+
+    `no_website`, the default, guesses only when there is no site to read. On
+    the owner's sheet guessing found none of the 188 companies that had one —
+    their own pages had already said everything guessing could — and it was
+    nearly all of the wall clock, at ~10 probes to the shared ATS hosts each.
+    """
+    if policy == "always":
+        return True
+    if policy == "never":
+        return False
+    return lead is None
+
+
+@dataclass(frozen=True)
+class DirectoryResult:
+    """What the directories offered: a confirmed board, and what was turned down."""
+
+    resolved: Resolved | None = None
+    why: str | None = None
+    confirmed_by: str | None = None
+    #: Boards that listed postings but whose postings never named the company.
+    #: Kept on the evidence: a namesake turned down is a lead the owner can
+    #: check by hand, and silently dropping it would hide that it was offered.
+    unconfirmed: tuple[str, ...] = ()
+
+
+async def _from_directory(
+    fetcher: PoliteFetcher, company: Company, lead: str | None, vendors: tuple[str, ...]
+) -> DirectoryResult:
+    """A board a public directory lists for this company, confirmed live.
+
+    The directory is a proposal, never a verdict. Each candidate is fetched,
+    and counts only if it lists at least one open posting — the bar
+    `resolve_one` holds a guess to, since an empty 200 is usually a slug nobody
+    owns — **and** `board_directory.confirms` finds a domain saying it is this
+    company's. A name alone gave four namesakes in 33 on 2026-10-05.
+    """
+    directory = load_directory()
+    if directory is None:
+        return DirectoryResult()
+    website = company.supplied_website or lead
+    unconfirmed: list[str] = []
+    for candidate in directory.candidates(company.name, website):
+        if candidate.vendor not in vendors:
+            continue
+        postings, url, _blocked = await fetch_board(fetcher, candidate.vendor, candidate.slug)
+        if not postings:
+            continue
+        confirmed_by = confirms(candidate, website, postings)
+        if confirmed_by is None:
+            unconfirmed.append(f"{candidate.vendor}/{candidate.slug}")
+            log.info(
+                "directory_candidate_unconfirmed",
+                company=company.name,
+                ats=candidate.vendor,
+                slug=candidate.slug,
+                why=candidate.why,
+            )
+            continue
+        resolved = Resolved(
+            name=company.name,
+            ats=candidate.vendor,
+            slug=candidate.slug,
+            board_url=url,
+            open_jobs=len(postings),
+        )
+        return DirectoryResult(
+            resolved=resolved,
+            why=candidate.why,
+            confirmed_by=confirmed_by,
+            unconfirmed=tuple(unconfirmed),
+        )
+    return DirectoryResult(unconfirmed=tuple(unconfirmed))
 
 
 def _company_id(payload: dict) -> uuid.UUID:
@@ -117,23 +197,49 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
         or VENDORS
     )
 
+    outcome: Resolved | tuple[str, str]
     async with build_fetcher() as fetcher:
-        # A company's own host carries §2.6's ordinary 60s floor, and discovery
-        # makes up to two requests to it (the page, then one careers link). So
-        # the wait here is a minute, not two seconds, and sleeping through it in
-        # a worker slot is the costliest version of this problem.
-        if lead:
-            # Raises `TaskDeferred` if it hands the task back. The attempt is
-            # then not recorded, because nothing was tried — counting a limiter
-            # deferral as an attempt would back the company off as though its
-            # own site had failed.
-            await defer_if_host_busy(session, claimed, fetcher, lead)
-        outcome = await resolve_one(company.name, fetcher, url=lead, vendors=vendors)
+        # The directory goes first because its probes go to the shared ATS
+        # hosts (a 2s floor) rather than the company's own (60s), and on the
+        # trial it proposed 23 of the 33 boards found. A miss costs at most
+        # MAX_CANDIDATES probes and falls through to the site unchanged.
+        found = await _from_directory(fetcher, company, lead, vendors)
+        if found.resolved is not None:
+            outcome = found.resolved
+        else:
+            # A company's own host carries §2.6's ordinary 60s floor, and
+            # discovery makes up to two requests to it (the page, then one
+            # careers link). So the wait here is a minute, not two seconds,
+            # and sleeping through it in a worker slot is the costliest
+            # version of this problem.
+            if lead:
+                # Raises `TaskDeferred` if it hands the task back. The attempt
+                # is then not recorded, because nothing was tried — counting a
+                # limiter deferral as an attempt would back the company off as
+                # though its own site had failed.
+                await defer_if_host_busy(session, claimed, fetcher, lead)
+            outcome = await resolve_one(
+                company.name,
+                fetcher,
+                url=lead,
+                vendors=vendors,
+                guess=should_guess(lead, settings.crawler_name_guessing),
+            )
 
     state.discovery_last_at = now
     state.discovery_attempts += 1
 
+    # Recorded on success and failure alike: a namesake turned down beside a
+    # board found on the company's own site is still worth seeing.
+    unconfirmed = {"unconfirmed": list(found.unconfirmed)} if found.unconfirmed else {}
+
     if isinstance(outcome, Resolved):
+        if found.resolved is not None:
+            method, via = "discovery_from_directory", "directory"
+        elif lead:
+            method, via = "discovery_from_url", "url"
+        else:
+            method, via = "discovery_from_name", "name"
         company.ats_type = outcome.ats
         company.slug = outcome.slug
         company.careers_url = outcome.board_url
@@ -141,7 +247,13 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
         company.source_verified_at = now
         company.discovery_failure = None
         company.source_evidence = {
-            "method": "discovery_from_url" if lead else "discovery_from_name",
+            "method": method,
+            **(
+                {"why": found.why, "confirmed_by": found.confirmed_by}
+                if found.resolved is not None
+                else {}
+            ),
+            **unconfirmed,
             "lead": lead,
             "ats": outcome.ats,
             "slug": outcome.slug,
@@ -166,7 +278,7 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
             ats=outcome.ats,
             slug=outcome.slug,
             open_jobs=outcome.open_jobs,
-            via="url" if lead else "name",
+            via=via,
         )
         return
 
@@ -175,6 +287,7 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
     company.discovery_failure = reason
     company.source_evidence = {
         "method": "discovery_failed",
+        **unconfirmed,
         "lead": lead,
         "reason": reason,
         "attempts": state.discovery_attempts,

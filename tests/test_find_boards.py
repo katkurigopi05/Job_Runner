@@ -363,3 +363,85 @@ async def test_a_robots_refusal_on_one_vendor_is_still_reported() -> None:
     assert isinstance(result, tuple)
     assert result[1].startswith("blocked:")
     assert "robots.txt" in result[1]
+
+
+@pytest.mark.asyncio
+async def test_with_guessing_off_a_site_without_a_board_probes_no_ats_host() -> None:
+    """The trial's 188 sheet companies: guessing found none of them and was
+    nearly all of the wall clock. With it off, a site that names no board ends
+    the search instead of costing ~10 probes to the shared ATS hosts."""
+    requested: list[str] = []
+    page = "<html><a href='/team'>Team</a><p>We are hiring soon.</p></html>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.host)
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nDisallow:")
+        if request.url.host == "acme.com":
+            return httpx.Response(200, text=page)
+        return httpx.Response(200, text='{"jobs": [{"id": 1, "title": "x", "absolute_url": "y"}]}')
+
+    fetcher = PoliteFetcher(transport=httpx.MockTransport(handler))
+
+    outcome = await resolve_one("Acme", fetcher, url="https://acme.com", guess=False)
+
+    assert not isinstance(outcome, Resolved)
+    assert "name-guessing is off" in outcome[1]
+    assert set(requested) == {"acme.com"}, "no ATS host was asked anything"
+
+
+# A miss said "did not lead to a supported board" whatever happened, and the
+# 2026-10-05 robots retry showed why that matters: AdeptDC, After College and
+# Ace AI had robots.txt readable again, and all three disallow us. "We were not
+# allowed to look" and "we looked and found nothing" need different handling,
+# and a robots denial must never read as "this company has no board".
+
+
+def _site(robots: httpx.Response, page: httpx.Response, requested: list[str]):
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.host)
+        if request.url.path == "/robots.txt":
+            return robots
+        if request.url.host == "acme.com":
+            return page
+        return httpx.Response(200, text='{"jobs": [{"id": 1, "title": "x", "absolute_url": "y"}]}')
+
+    return PoliteFetcher(transport=httpx.MockTransport(handler))
+
+
+@pytest.mark.asyncio
+async def test_a_site_refused_by_robots_is_reported_as_blocked() -> None:
+    requested: list[str] = []
+    fetcher = _site(
+        httpx.Response(200, text="User-agent: *\nDisallow: /"),
+        httpx.Response(200, text="<a href='https://jobs.lever.co/acme'>Jobs</a>"),
+        requested,
+    )
+
+    outcome = await resolve_one("Acme", fetcher, url="https://acme.com", guess=False)
+
+    assert not isinstance(outcome, Resolved)
+    assert outcome[1].startswith("blocked:")
+    assert "disallowed by robots.txt" in outcome[1]
+    assert set(requested) == {"acme.com"}
+
+
+@pytest.mark.asyncio
+async def test_a_site_that_cannot_be_fetched_says_so() -> None:
+    fetcher = _site(httpx.Response(404), httpx.Response(503), [])
+
+    outcome = await resolve_one("Acme", fetcher, url="https://acme.com", guess=False)
+
+    assert not isinstance(outcome, Resolved)
+    assert "could not be fetched (HTTP 503)" in outcome[1]
+    assert "name-guessing is off" in outcome[1]
+
+
+@pytest.mark.asyncio
+async def test_a_site_read_without_a_board_says_it_names_none() -> None:
+    fetcher = _site(httpx.Response(404), httpx.Response(200, text="<p>About us.</p>"), [])
+
+    outcome = await resolve_one("Acme", fetcher, url="https://acme.com", guess=False)
+
+    assert not isinstance(outcome, Resolved)
+    assert "names no supported board" in outcome[1]

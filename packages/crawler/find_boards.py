@@ -60,7 +60,7 @@ import structlog
 
 from packages.ats.registry import detect_ats
 from packages.crawler.discover import slug_from_ats_url
-from packages.crawler.extract import extractor_for
+from packages.crawler.extract import ExtractedPosting, extractor_for
 from packages.crawler.fetch import Blocked, PoliteFetcher
 from packages.crawler.resolve import find_embedded
 
@@ -258,6 +258,20 @@ async def _probe(
     fetcher: PoliteFetcher, vendor: str, slug: str
 ) -> tuple[int | None, str, str | None]:
     """Try one vendor and slug. Returns (job count, url, blocked reason)."""
+    postings, url, blocked = await fetch_board(fetcher, vendor, slug)
+    return (None if postings is None else len(postings)), url, blocked
+
+
+async def fetch_board(
+    fetcher: PoliteFetcher, vendor: str, slug: str
+) -> tuple[list[ExtractedPosting] | None, str, str | None]:
+    """One board, parsed. Returns (postings, url, blocked reason).
+
+    The postings rather than their count, for a caller that has to read them
+    to decide whose board it is (`board_directory.confirms`). None when there
+    is no board to read — an unknown vendor, a refusal, an error, a body that
+    does not parse.
+    """
     extractor = extractor_for(vendor)
     if extractor is None:
         return None, "", None
@@ -281,7 +295,7 @@ async def _probe(
     except Exception:  # noqa: BLE001 - a body we cannot parse is not a board
         return None, url, None
 
-    return len(postings), url, None
+    return postings, url, None
 
 
 #: Board *roots*, as they appear in a company list. Deliberately separate
@@ -397,8 +411,25 @@ def careers_links(html: str, base: str) -> list[str]:
     return found
 
 
-async def from_url(url: str, fetcher: PoliteFetcher) -> tuple[str, str] | None:
-    """`(vendor, slug)` for a URL the owner supplied, or None.
+@dataclass(frozen=True)
+class SiteReading:
+    """What a company's own site said: a board, or why it said nothing.
+
+    The reason is kept because the misses are not one thing. On the owner's
+    sheet a robots refusal, a dead site and a page with no board were all
+    recorded as "did not lead to a supported board", and the 2026-10-05 retry
+    found three sites readable again that all disallow us — not boardless.
+    """
+
+    board: tuple[str, str] | None = None
+    #: robots.txt refused the page we needed.
+    blocked: str | None = None
+    #: The page could not be fetched: an exception type or an HTTP status.
+    unreachable: str | None = None
+
+
+async def from_url(url: str, fetcher: PoliteFetcher) -> SiteReading:
+    """`(vendor, slug)` for a URL the owner supplied, or why there is none.
 
     Two shapes arrive in a company list, and they need different handling.
 
@@ -417,40 +448,44 @@ async def from_url(url: str, fetcher: PoliteFetcher) -> tuple[str, str] | None:
     """
     root = board_root(url)
     if root:
-        return root
+        return SiteReading(board=root)
 
     # A link to one specific posting also names the board.
     if detect_ats(url):
         slug = slug_from_ats_url(url)
         vendor = detect_ats(url)
         if slug and vendor and SLUG_RE.match(slug):
-            return vendor, slug
+            return SiteReading(board=(vendor, slug))
 
     try:
         response = await fetcher.fetch(url)
     except Blocked as exc:
         log.info("careers_page_blocked", url=url, reason=str(exc))
-        return None
+        return SiteReading(blocked=str(exc))
     except Exception as exc:  # noqa: BLE001 - a careers page is a hint, not a dependency
         log.debug("careers_page_failed", url=url, error=type(exc).__name__)
-        return None
+        return SiteReading(unreachable=type(exc).__name__)
 
     if not response.ok:
-        return None
+        return SiteReading(unreachable=f"HTTP {response.status}")
 
     found = _board_in(response.text)
     if found:
-        return found
+        return SiteReading(board=found)
 
     # The supplied URL was a home page with no board on it. The board is
     # usually one link away — `/careers` — and following it is the difference
     # between resolving a company from evidence and falling back to guessing a
     # slug from its name.
+    hop_blocked: str | None = None
     for link in careers_links(response.text, url)[:MAX_CAREERS_HOPS]:
         try:
             page = await fetcher.fetch(link)
         except Blocked as exc:
             log.info("careers_page_blocked", url=link, reason=str(exc))
+            # The careers page is where the board would be, so a refusal there
+            # is a refusal of the answer, not a page that named nothing.
+            hop_blocked = hop_blocked or str(exc)
             continue
         except Exception as exc:  # noqa: BLE001 - a careers page is a hint
             log.debug("careers_page_failed", url=link, error=type(exc).__name__)
@@ -460,8 +495,8 @@ async def from_url(url: str, fetcher: PoliteFetcher) -> tuple[str, str] | None:
         found = _board_in(page.text)
         if found:
             log.info("board_found_via_careers_link", company_page=url, careers_page=link)
-            return found
-    return None
+            return SiteReading(board=found)
+    return SiteReading(blocked=hop_blocked)
 
 
 #: Any supported-ATS URL as it appears in a page's markup — href, iframe src,
@@ -527,6 +562,7 @@ async def resolve_one(
     *,
     url: str | None = None,
     vendors: tuple[str, ...] = VENDORS,
+    guess: bool = True,
 ) -> Resolved | tuple[str, str]:
     """Find one company's board. Returns a Resolved, or (name, reason).
 
@@ -536,14 +572,19 @@ async def resolve_one(
     said something would be choosing the worse answer.
 
     It falls through to name-guessing only when the URL yields nothing at all
-    — a dead link, a page with no ATS behind it, a robots refusal.
+    — a dead link, a page with no ATS behind it, a robots refusal — and only
+    when `guess` is set. `discover_company_job` turns it off for a company with
+    a website: on the owner's sheet it found nothing such a company's own site
+    had not, at ~10 shared-host probes each.
     """
     blocked_reason: str | None = None
+    reading = SiteReading()
 
     if url:
-        known = await from_url(url, fetcher)
-        if known:
-            vendor, slug = known
+        reading = await from_url(url, fetcher)
+        blocked_reason = reading.blocked
+        if reading.board:
+            vendor, slug = reading.board
             count, board_url, blocked = await _probe(fetcher, vendor, slug)
             if count:
                 return Resolved(
@@ -557,6 +598,21 @@ async def resolve_one(
             # different company that happens to share a word.
             elif count == 0:
                 return name, f"board found ({vendor}/{slug}) but it lists no open roles"
+
+    if not guess:
+        if blocked_reason:
+            return name, f"blocked: {blocked_reason}"
+        if reading.unreachable:
+            return name, (
+                f"its own site could not be fetched ({reading.unreachable}); "
+                "name-guessing is off for a company with a website"
+            )
+        if not url:
+            return name, "no website to read, and name-guessing is off"
+        return name, (
+            "its own site names no supported board; "
+            "name-guessing is off for a company with a website"
+        )
 
     candidates = slug_candidates(name)
     if not candidates:
