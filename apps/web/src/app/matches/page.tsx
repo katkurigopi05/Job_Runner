@@ -55,6 +55,7 @@ function verdict(rank: number, total: number) {
 
 const FILTER_KEYS = [
   "keywords",
+  "role",
   "locations",
   "remote",
   "min_seniority",

@@ -146,3 +146,77 @@ async def test_a_named_company_with_nothing_open_says_so(
 
     assert answered.status_code == 200
     assert "no open postings at Mistral AI" in seen["user"]
+
+
+# --- an ordinary word is not a company ---------------------------------------------
+#
+# After the owner's 3,802-company sheet was imported the registry held 3,933
+# names, 108 of them a single word found in more than 2% of other companies'
+# postings: "Do", "Based", "Fast", "Join", "Future", and "N Robotics" and
+# "3 Data", which the tokenizer shortens to `robotics` and `data`. On
+# 2026-10-05 "robotics jobs" returned nothing over 103 postings that say
+# robotics, because the question was read as "postings at N Robotics".
+
+
+async def _robotics_corpus(session):
+    """A company the tokenizer shortens to `robotics`, and a posting that says it."""
+    shortened = await _company(session, "N Robotics")
+    employer = await _company(session, "Apptronik")
+    posting = await _posting(session, employer, "Controls Engineer", "Humanoid robotics.")
+    await _stats(session, robotics=7, humanoid=1)
+    return shortened, posting
+
+
+async def test_a_common_word_is_not_read_as_a_company_with_no_postings(db_session) -> None:
+    _, posting = await _robotics_corpus(db_session)
+
+    found = await retrieve(db_session, "robotics jobs")
+
+    assert found.companies == ()
+    assert [p.posting_id for p in found.passages] == [posting.id]
+
+
+async def test_a_very_common_word_names_a_company_only_after_at(db_session) -> None:
+    """ "Based" is a company on the sheet, and a word in 71% of postings."""
+    based = await _company(db_session, "Based")
+    other = await _company(db_session, "Acme")
+    theirs = await _posting(db_session, based, "Founding Engineer")
+    ours = await _posting(db_session, other, "Platform Engineer", "Based in San Francisco.")
+    await _stats(db_session, based=71, founding=1)
+
+    ordinary = await retrieve(db_session, "roles based in San Francisco")
+    assert ordinary.companies == ()
+    assert ours.id in [p.posting_id for p in ordinary.passages]
+
+    # "founding" gives the keyword scan something to find; a question naming
+    # only the company is answered from vectors, which these rows do not have.
+    named = await retrieve(db_session, "founding engineer jobs at Based")
+    assert named.companies == ("Based",)
+    assert [p.posting_id for p in named.passages] == [theirs.id]
+
+
+async def test_an_employer_others_mention_is_still_named(db_session) -> None:
+    """OpenAI is in 7.9% of postings, most of them other companies'."""
+    openai = await _company(db_session, "OpenAI")
+    other = await _company(db_session, "Acme")
+    theirs = await _posting(db_session, openai, "Research Engineer")
+    await _posting(db_session, other, "ML Engineer", "Experience with the OpenAI API.")
+    await _stats(db_session, openai=8, research=2)
+
+    found = await retrieve(db_session, "OpenAI jobs")
+
+    assert found.companies == ("OpenAI",)
+    assert [p.posting_id for p in found.passages] == [theirs.id]
+
+
+async def test_a_rare_one_word_name_still_names_its_company(db_session) -> None:
+    """The case that worked before, with nothing open: it must still say so."""
+    await _company(db_session, "Vanta")
+    other = await _company(db_session, "Acme")
+    await _posting(db_session, other, "Engineer")
+    await _stats(db_session, vanta=1, engineer=60)
+
+    found = await retrieve(db_session, "jobs at Vanta")
+
+    assert found.companies == ("Vanta",)
+    assert found.passages == ()
