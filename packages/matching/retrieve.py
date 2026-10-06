@@ -91,7 +91,14 @@ from packages.matching.embed import (
 )
 from packages.matching.locality import Locality, area_exclusion, locality_of
 from packages.matching.rerank import Reranker, get_reranker, reorder
-from packages.matching.roles import canonical, named_in
+from packages.matching.roles import (
+    alias_label,
+    canonical,
+    display_name,
+    kind_of,
+    named_in,
+    related_to,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -261,6 +268,8 @@ class Passage:
     excerpt: str
     #: The owner's application for this posting, if there is one.
     application_status: str | None
+    #: The kind of role its title names ("AI engineer"), when a role was asked for.
+    kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -272,6 +281,7 @@ class Listed:
     company: str | None
     location: str | None
     url: str
+    kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -310,6 +320,13 @@ class Retrieval:
     role_total: int | None = None
     #: The next matches after `passages`, in the same order, up to `MORE_LIMIT`.
     more: tuple[Listed, ...] = ()
+    #: The kinds of title that role is made of, each with how many open
+    #: postings in the area carry it: the kind that was typed first, then by
+    #: count. One role in the table is several kinds to the owner, and the two
+    #: largest kinds of AI / ML engineer ask for different things.
+    kinds: tuple[tuple[str, int], ...] = ()
+    #: Neighbouring roles' table keys, for links to the feed. Never mixed in.
+    related: tuple[str, ...] = ()
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -631,6 +648,21 @@ async def _titles_in_question(
 def _role_of(title: str) -> str | None:
     """`roles.canonical`, remembered: a role question reads every open title."""
     return canonical(title)
+
+
+@lru_cache(maxsize=50_000)
+def _kind_of(title: str) -> str | None:
+    return kind_of(title)
+
+
+def _kinds(pool: list[_Hit], typed: set[str]) -> list[tuple[str, int]]:
+    """A role's kinds of title with their counts: what was typed, then by count."""
+    counts: dict[str, int] = {}
+    for hit in pool:
+        kind = _kind_of(hit.title or "")
+        if kind is not None:
+            counts[kind] = counts.get(kind, 0) + 1
+    return sorted(counts.items(), key=lambda item: (item[0] not in typed, -item[1], item[0]))
 
 
 async def _role_hits(
@@ -985,7 +1017,8 @@ async def retrieve(
     # ("using Kafka") is what to look for among that role's postings.
     asked_roles = named_in(question)
     if asked_roles:
-        role_words = set().union(*asked_roles.values())
+        typed_aliases = set().union(*asked_roles.values())
+        role_words = {word for alias in typed_aliases for word in alias.split()}
         terms = _search_terms(question, frequencies, exclude=company_words | role_words)
 
     area = _search_area(question)
@@ -994,10 +1027,24 @@ async def retrieve(
     # title) and is still one posting the area left out.
     left_out: set[uuid.UUID] = set()
     role_pool: list[_Hit] | None = None
+    kinds: list[tuple[str, int]] = []
     if asked_roles:
         of_the_role = await _role_hits(session, set(asked_roles), companies)
         role_pool = [hit for hit in of_the_role if not (area and _outside_area(hit))]
         left_out |= {hit.posting_id for hit in of_the_role} - {hit.posting_id for hit in role_pool}
+        kinds = _kinds(role_pool, {alias_label(alias) for alias in typed_aliases})
+    # The kind that was typed goes first, then the others by size: asked for
+    # "AI engineer", the eighteen titled that are not behind forty-one titled
+    # "machine learning engineer" because those happen to be newer.
+    kind_rank = {kind: rank for rank, (kind, _) in enumerate(kinds)}
+
+    def by_kind(hits: list[_Hit]) -> list[_Hit]:
+        if not kind_rank:
+            return hits
+        return sorted(
+            hits, key=lambda hit: kind_rank.get(_kind_of(hit.title or "") or "", len(kind_rank))
+        )
+
     # "jobs at Astranis" says nothing to order by: the re-ranker would shuffle
     # one company's postings by their likeness to its name, and take 1.5 s.
     only_names_a_company = bool(companies) and not beyond_the_name and not asked_roles
@@ -1064,12 +1111,15 @@ async def retrieve(
         # The re-ranker orders the rest. A posting named by its title was
         # asked for outright, and no model's opinion of its text outranks that.
         named = [hit for hit in ordered if hit.posting_id in by_title]
+        # By kind before the re-ranker, so its thirty places go to what was
+        # typed, and again after it, so it orders within a kind and not across.
         rest, reranked_by = await _reranked(
             reranker,
             question,
-            [hit for hit in ordered if hit.posting_id not in by_title],
+            by_kind([hit for hit in ordered if hit.posting_id not in by_title]),
             among_spans,
         )
+        rest = by_kind(rest)
         chosen = (named + rest)[:limit]
         more_hits = (named + rest)[limit : limit + MORE_LIMIT]
         outside = len(left_out)
@@ -1148,6 +1198,7 @@ async def retrieve(
                 )
             ),
             application_status=statuses.get(hit.posting_id),
+            kind=_kind_of(hit.title or "") if kind_rank else None,
         )
         for index, hit in enumerate(chosen, start=1)
     )
@@ -1161,7 +1212,7 @@ async def retrieve(
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,
         reranked_by=reranked_by,
-        roles=tuple(key.replace("_", " ") for key in sorted(asked_roles)),
+        roles=tuple(display_name(key) for key in sorted(asked_roles)),
         role_keys=tuple(sorted(asked_roles)),
         role_total=len(role_pool) if role_pool is not None else None,
         more=tuple(
@@ -1171,8 +1222,18 @@ async def retrieve(
                 company=hit.company,
                 location=hit.location,
                 url=hit.url,
+                kind=_kind_of(hit.title or "") if kind_rank else None,
             )
             for hit in more_hits
+        ),
+        kinds=tuple(kinds),
+        related=tuple(
+            dict.fromkeys(
+                neighbour
+                for key in sorted(asked_roles)
+                for neighbour in related_to(key)
+                if neighbour not in asked_roles
+            )
         ),
     )
 

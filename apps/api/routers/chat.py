@@ -57,13 +57,20 @@ from packages.core.enums import ErrorCode
 from packages.core.heartbeat import WorkerState
 from packages.core.models import Application, InboundMessage, Posting, Profile
 from packages.core.notify import ParkReason, asks, needs_owner
-from packages.core.schemas import ChatReply, ChatRequest, ChatSource
+from packages.core.schemas import (
+    ChatKind,
+    ChatRelatedRole,
+    ChatReply,
+    ChatRequest,
+    ChatSource,
+)
 from packages.llm import router as llm_router
 from packages.llm.audit import is_local
 from packages.llm.prompts import CHAT_SYSTEM
 from packages.llm.provider import LLMError
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
 from packages.matching.retrieve import Retrieval, retrieve
+from packages.matching.roles import display_name
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -381,12 +388,14 @@ def _postings_section(found: Retrieval, gaps: _PostingGaps | None = None) -> str
         # The model sees the closest few. Without the count it cannot say
         # there are more, and three shown out of sixty-one read as "three".
         count = found.role_total or 0
+        breakdown = ", ".join(f"{number} {kind}" for kind, number in found.kinds)
         lines.append(
             f"  role asked for: {' or '.join(found.roles)}. {count} open posting"
             f"{'' if count == 1 else 's'} in the search area "
-            f"{'has' if count == 1 else 'have'} such a title; the closest "
-            f"{len(found.passages)} are below and the owner sees the rest listed under "
-            "your answer. Say how many there are."
+            f"{'has' if count == 1 else 'have'} such a title"
+            + (f" ({breakdown})" if len(found.kinds) > 1 else "")
+            + f"; the closest {len(found.passages)} are below and the owner sees the rest "
+            "listed by kind under your answer. Say how many there are of each kind."
         )
     if not found.passages:
         within = " in the search area" if found.outside_area else ""
@@ -677,6 +686,7 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
                 location=passage.location,
                 url=passage.url,
                 cited=passage.label in cited,
+                kind=passage.kind,
             )
             for passage in found.passages
         ],
@@ -691,8 +701,13 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
                 company=listed.company,
                 location=listed.location,
                 url=listed.url,
+                kind=listed.kind,
             )
             for listed in found.more
+        ],
+        matched_kinds=[ChatKind(label=kind, count=number) for kind, number in found.kinds],
+        related_roles=[
+            ChatRelatedRole(label=display_name(key), filter=key) for key in found.related
         ],
         matched_role=" or ".join(found.roles) or None,
         postings_matched_total=found.role_total,

@@ -28,7 +28,7 @@ from packages.matching.locality import (
     location_aliases,
     reads_as_remote,
 )
-from packages.matching.roles import ROLE_ALIASES, canonical
+from packages.matching.roles import ROLE_ALIASES, canonical, display_name
 
 #: What `SearchFilters.role` may ask for: the alias table's own keys, not a
 #: second list, so a role added to `roles.py` is askable the same day.
@@ -306,7 +306,7 @@ def _location_mentions(location: str, wanted: str) -> bool:
 
 
 def _role_label(role: str) -> str:
-    return role.replace("_", " ")
+    return display_name(role)
 
 
 def is_remote(posting: Posting) -> bool:

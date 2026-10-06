@@ -637,6 +637,23 @@ class ChatSource(BaseModel):
     #: Read out of the reply, not reported by the model. A source the answer
     #: never mentions was context, not evidence.
     cited: bool = False
+    #: The kind of role the title names ("AI engineer"), when the question
+    #: asked for a role. The dashboard groups the list under these.
+    kind: str | None = None
+
+
+class ChatKind(BaseModel):
+    """One kind of title within the role asked for, and how many postings carry it."""
+
+    label: str
+    count: int
+
+
+class ChatRelatedRole(BaseModel):
+    """A neighbouring role: its name, and the feed's `role` filter value for it."""
+
+    label: str
+    filter: str
 
 
 class ChatReply(BaseModel):
@@ -683,6 +700,13 @@ class ChatReply(BaseModel):
     #: The feed's `role` filter value, when exactly one role was named, so
     #: the dashboard can link to the same list on /matches.
     matched_role_filter: str | None = None
+    #: The role's kinds of title with their counts, the one that was typed
+    #: first. "AI engineer" and "machine learning engineer" are one role in
+    #: the table and ask for different things, so they are listed apart.
+    matched_kinds: list[ChatKind] = Field(default_factory=list)
+    #: Neighbouring roles, as links to the feed. Their postings are never
+    #: mixed into this answer.
+    related_roles: list[ChatRelatedRole] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------

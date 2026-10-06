@@ -20,6 +20,20 @@ interface Source {
   company: string | null;
   location?: string | null;
   cited: boolean;
+  /** The kind of role the title names ("AI engineer"), when a role was asked for. */
+  kind?: string | null;
+}
+
+/** One kind of title within the role asked for, and how many postings carry it. */
+interface Kind {
+  label: string;
+  count: number;
+}
+
+/** A neighbouring role, with the feed's filter value for it. */
+interface RelatedRole {
+  label: string;
+  filter: string;
 }
 
 /** How many further matches one click reveals. */
@@ -42,6 +56,10 @@ interface Turn {
   matchedTotal?: number | null;
   /** The feed's role filter value for that kind, when there is exactly one. */
   matchedRoleFilter?: string | null;
+  /** That role's kinds of title with their counts, the one that was typed first. */
+  kinds?: Kind[];
+  /** Neighbouring roles to look at next. Their postings are not in this answer. */
+  relatedRoles?: RelatedRole[];
   /** Open postings the search covered, and the ones it could not reach. */
   searched?: number;
   unsearchable?: number;
@@ -68,6 +86,21 @@ function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
   );
 }
 
+const LINK =
+  "text-ink-soft underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn";
+
+/** Consecutive matches of one kind, in the order they arrived. */
+function groupByKind(items: Source[]): Array<{ kind: string; items: Source[] }> {
+  const groups: Array<{ kind: string; items: Source[] }> = [];
+  for (const item of items) {
+    const kind = item.kind ?? "other titles";
+    const last = groups[groups.length - 1];
+    if (last && last.kind === kind) last.items.push(item);
+    else groups.push({ kind, items: [item] });
+  }
+  return groups;
+}
+
 /**
  * The matches that did not fit in the answer, ten at a time.
  *
@@ -76,29 +109,88 @@ function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
  * saying so. These are the rest, in the search's order, revealed a page at a
  * time so a long list does not bury the conversation. They were never shown to
  * the model, which is why they carry no citation label.
+ *
+ * When the question named a role they are laid out like a dictionary: each
+ * kind of title is a heading with its postings under it, the kind that was
+ * typed first. One role is several kinds to the person reading. "AI engineer"
+ * and "machine learning engineer" share a row in the role table, and their
+ * postings ask for different things (LLMs and TypeScript against PyTorch and
+ * TensorFlow), so a single run-together list would hide the difference the
+ * question was asking about.
  */
 function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
   const more = turn.more ?? [];
+  const kinds = turn.kinds ?? [];
+  const related = turn.relatedRoles ?? [];
   const [visible, setVisible] = useState(MORE_PAGE);
-  if (more.length === 0) return null;
+  if (more.length === 0 && kinds.length === 0) return null;
 
   const total = turn.matchedTotal ?? null;
   const remaining = more.length - Math.min(visible, more.length);
   // The reply carries a bounded list. Past it, the feed has the whole one.
   const beyondTheList = total !== null ? total - shownAbove - more.length : 0;
+  const shown = more.slice(0, visible);
+  const countOf = new Map(kinds.map((kind) => [kind.label, kind.count]));
+  const aboveOf = new Map<string, number>();
+  for (const source of turn.sources ?? []) {
+    if (source.kind) aboveOf.set(source.kind, (aboveOf.get(source.kind) ?? 0) + 1);
+  }
 
   return (
-    <div className="space-y-1">
-      <p className="text-ink-soft">
-        {total !== null && turn.matchedRole
-          ? `${total} open ${turn.matchedRole} posting${total === 1 ? "" : "s"} in your search area. The next ones:`
-          : "More that the search found:"}
-      </p>
-      <ol className="space-y-0.5">
-        {more.slice(0, visible).map((source) => (
-          <PostingLink key={source.posting_id} source={source} muted />
-        ))}
-      </ol>
+    <div className="space-y-1.5">
+      {total !== null && turn.matchedRole ? (
+        <p className="text-ink-soft">
+          {total} open {turn.matchedRole} posting{total === 1 ? "" : "s"} in your search area
+          {kinds.length > 1 ? (
+            <>
+              :{" "}
+              {kinds.map((kind, index) => (
+                <span key={kind.label}>
+                  {index > 0 ? " · " : ""}
+                  {kind.label} <span className="font-mono tabular-nums">{kind.count}</span>
+                </span>
+              ))}
+            </>
+          ) : (
+            "."
+          )}
+        </p>
+      ) : more.length > 0 ? (
+        <p className="text-ink-soft">More that the search found:</p>
+      ) : null}
+
+      {kinds.length > 0 ? (
+        <dl className="space-y-1.5">
+          {groupByKind(shown).map((group) => {
+            const above = aboveOf.get(group.kind) ?? 0;
+            return (
+              <div key={group.kind}>
+                <dt className="font-mono text-ink">
+                  {group.kind}
+                  <span className="text-ink-faint">
+                    {countOf.has(group.kind) ? ` · ${countOf.get(group.kind)}` : ""}
+                    {above > 0 ? ` · ${above} in the answer above` : ""}
+                  </span>
+                </dt>
+                <dd>
+                  <ol className="space-y-0.5 border-l border-rule-soft pl-2.5">
+                    {group.items.map((source) => (
+                      <PostingLink key={source.posting_id} source={source} muted />
+                    ))}
+                  </ol>
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      ) : (
+        <ol className="space-y-0.5">
+          {shown.map((source) => (
+            <PostingLink key={source.posting_id} source={source} muted />
+          ))}
+        </ol>
+      )}
+
       <div className="flex flex-wrap items-center gap-3">
         {remaining > 0 ? (
           <button
@@ -110,14 +202,25 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
           </button>
         ) : null}
         {turn.matchedRoleFilter && (remaining === 0 || beyondTheList > 0) ? (
-          <Link
-            href={`/matches?role=${turn.matchedRoleFilter}`}
-            className="text-ink-soft underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
-          >
+          <Link href={`/matches?role=${turn.matchedRoleFilter}`} className={LINK}>
             {beyondTheList > 0 ? `${beyondTheList} more on the feed` : "see them all on the feed"}
           </Link>
         ) : null}
       </div>
+
+      {related.length > 0 ? (
+        <p className="text-ink-faint">
+          Related roles, on the feed:{" "}
+          {related.map((role, index) => (
+            <span key={role.filter}>
+              {index > 0 ? " · " : ""}
+              <Link href={`/matches?role=${role.filter}`} className={LINK}>
+                {role.label}
+              </Link>
+            </span>
+          ))}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -296,6 +399,8 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           matchedRole: body.matched_role,
           matchedTotal: body.postings_matched_total,
           matchedRoleFilter: body.matched_role_filter,
+          kinds: body.matched_kinds,
+          relatedRoles: body.related_roles,
           searched: body.postings_searched,
           unsearchable: body.postings_unsearchable,
         },

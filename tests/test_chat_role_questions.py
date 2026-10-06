@@ -100,7 +100,7 @@ async def test_a_question_naming_a_role_finds_every_title_of_that_role(db_sessio
     ids = [p.posting_id for p in found.passages]
     assert set(ids) == {staff.id, ml.id, exact.id}
     assert manager.id not in ids, "mentioning the role is not being the role"
-    assert found.roles == ("machine learning engineer",)
+    assert found.roles == ("AI / ML engineer",)
     assert found.role_total == 3
 
 
@@ -242,12 +242,12 @@ async def test_the_reply_carries_the_count_and_the_rest_of_the_list(
     body = answered.json()
     assert answered.status_code == 200
     assert body["postings_matched_total"] == 8
-    assert body["matched_role"] == "machine learning engineer"
+    assert body["matched_role"] == "AI / ML engineer"
     assert len(body["sources"]) == 5
     assert len(body["more_sources"]) == 3
     assert all(source["cited"] is False for source in body["more_sources"])
     assert "8 open postings" in seen["user"], "the model is told how many there are"
-    assert "machine learning engineer" in seen["user"]
+    assert "AI / ML engineer" in seen["user"]
 
 
 # --- the dashboard -----------------------------------------------------------------
@@ -277,3 +277,163 @@ def test_the_rest_are_shown_ten_at_a_time() -> None:
 def test_a_role_answer_links_to_the_whole_list_on_the_feed() -> None:
     """Past what the reply carries, the feed's role filter is the full list."""
     assert "/matches?role=" in DOCK
+
+
+# --- one role, several kinds of title ----------------------------------------------
+#
+# The owner asked for the heading to read "AI / ML engineer", "if the description
+# is the same". It is not. Measured on the in-area postings on 2026-10-06, 18
+# titled AI engineer and 39 titled machine learning engineer:
+#
+#     LLMs 50% v 33%   machine learning 39% v 97%   PyTorch 17% v 69%
+#     TensorFlow rare v 41%   TypeScript 17% v rare
+#
+# Their skill profiles are 0.80 alike, which is what machine learning engineer
+# and data scientist score, and the table keeps those two apart. So the list is
+# shown the way the owner then suggested, "like a dictionary": each kind of
+# title under its own heading, the one they typed first.
+
+
+def test_the_role_is_named_for_both_of_its_halves() -> None:
+    from packages.matching.roles import display_name
+
+    assert display_name("machine_learning_engineer") == "AI / ML engineer"
+    assert display_name("data_engineer") == "data engineer"
+
+
+@pytest.mark.parametrize(
+    ("title", "kind"),
+    [
+        ("Staff AI Engineer (Data & Intelligence)", "AI engineer"),
+        ("Senior Machine Learning Engineer, Ads", "machine learning engineer"),
+        ("Applied ML Engineer", "applied ML engineer"),
+        ("Member of Technical Staff", "member of technical staff"),
+        ("SDE II", "SDE"),
+        ("Product Manager", None),
+    ],
+)
+def test_a_title_is_read_for_the_kind_of_role_it_names(title: str, kind: str | None) -> None:
+    from packages.matching.roles import kind_of
+
+    assert kind_of(title) == kind
+
+
+async def _mixed_kinds(session):
+    """Newest first: two machine-learning titles, then two AI ones, then deep learning."""
+    company = await _company(session)
+    return {
+        "ml_new": await _posting(session, company, "Machine Learning Engineer, Ads", days_ago=0),
+        "ml_old": await _posting(session, company, "Senior Machine Learning Engineer", days_ago=1),
+        "ai_new": await _posting(session, company, "Staff AI Engineer", days_ago=2),
+        "ai_old": await _posting(session, company, "Applied AI Engineer", days_ago=3),
+        "deep": await _posting(session, company, "Deep Learning Engineer", days_ago=4),
+    }
+
+
+async def test_the_kind_that_was_typed_is_listed_first(db_session) -> None:
+    posts = await _mixed_kinds(db_session)
+
+    found = await retrieve(db_session, "AI engineer jobs")
+
+    order = [p.posting_id for p in found.passages]
+    assert order[:2] == [posts["ai_new"].id, posts["ai_old"].id], "older, and still first"
+    assert found.kinds[0] == ("AI engineer", 2)
+
+
+async def test_asking_for_the_other_kind_puts_it_first(db_session) -> None:
+    posts = await _mixed_kinds(db_session)
+
+    found = await retrieve(db_session, "machine learning engineer jobs")
+
+    assert [p.posting_id for p in found.passages][:2] == [posts["ml_new"].id, posts["ml_old"].id]
+    assert found.kinds[0] == ("machine learning engineer", 2)
+
+
+async def test_every_kind_is_counted_over_the_whole_role(db_session) -> None:
+    """The counts are of the role, not of the five that fit in the prompt."""
+    await _mixed_kinds(db_session)
+
+    found = await retrieve(db_session, "AI engineer jobs")
+
+    assert dict(found.kinds) == {
+        "AI engineer": 2,
+        "machine learning engineer": 2,
+        "deep learning engineer": 1,
+    }
+    assert [kind for kind, _ in found.kinds][1] == "machine learning engineer", "then by count"
+    assert sum(count for _, count in found.kinds) == found.role_total
+
+
+async def test_each_match_says_which_kind_it_is(db_session) -> None:
+    company = await _company(db_session)
+    for n in range(4):
+        await _posting(db_session, company, f"AI Engineer, Team {n}", days_ago=n)
+    for n in range(4):
+        await _posting(db_session, company, f"Machine Learning Engineer {n}", days_ago=n)
+
+    found = await retrieve(db_session, "AI engineer jobs")
+
+    assert {p.kind for p in found.passages[:4]} == {"AI engineer"}
+    assert [m.kind for m in found.more] == ["machine learning engineer"] * 3
+
+
+async def test_a_keyword_question_has_no_kinds(db_session) -> None:
+    company = await _company(db_session)
+    await _posting(db_session, company, "Engineer", "Kafka pipelines.")
+
+    found = await retrieve(db_session, "kafka roles")
+
+    assert found.kinds == ()
+    assert found.passages[0].kind is None
+
+
+def test_related_roles_are_neighbours_not_the_same_role() -> None:
+    """Offered as somewhere else to look, never mixed into the list."""
+    from packages.matching.roles import ROLE_ALIASES, related_to
+
+    assert "data_scientist" in related_to("machine_learning_engineer")
+    for role in ROLE_ALIASES:
+        neighbours = related_to(role)
+        assert role not in neighbours
+        assert set(neighbours) <= set(ROLE_ALIASES), "a neighbour the feed cannot filter on"
+
+
+async def test_the_reply_carries_the_dictionary(
+    client: AsyncClient, worker_session, monkeypatch
+) -> None:
+    import apps.api.routers.chat as chat_module
+    from packages.llm.provider import StubProvider
+
+    seen: dict[str, str] = {}
+
+    class Recorder(StubProvider):
+        async def complete(self, system: str, user: str, **kwargs) -> str:
+            seen["user"] = user
+            return "ok"
+
+    await _mixed_kinds(worker_session)
+    worker_session.add(CorpusStats(revision=1, total_documents=0, counts_json={}))
+    await worker_session.commit()
+    monkeypatch.setattr(chat_module.llm_router, "build_provider", lambda name=None: Recorder())
+
+    body = (await client.post("/chat", json={"message": "AI engineer jobs"})).json()
+
+    assert body["matched_kinds"][0] == {"label": "AI engineer", "count": 2}
+    assert [k["label"] for k in body["matched_kinds"]][1:] == [
+        "machine learning engineer",
+        "deep learning engineer",
+    ]
+    assert {s["kind"] for s in body["sources"]} == {
+        "AI engineer",
+        "machine learning engineer",
+        "deep learning engineer",
+    }
+    assert {"label": "data scientist", "filter": "data_scientist"} in body["related_roles"]
+    assert "2 AI engineer" in seen["user"], "the model is told the breakdown"
+    assert "2 machine learning engineer" in seen["user"]
+
+
+def test_the_dock_groups_the_list_under_each_kind() -> None:
+    assert "body.matched_kinds" in DOCK
+    assert "body.related_roles" in DOCK
+    assert "source.kind" in DOCK, "the dock never reads which kind a match is"

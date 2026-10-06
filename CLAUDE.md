@@ -3699,3 +3699,49 @@ Measured on the live database: the owner's question now returns role
 about 1.9 s with the re-ranker on. Role matching reads every open title and
 costs 0.1-0.2 s, including the 1,027 software-engineer postings.
 
+### One role, several kinds of title
+
+The owner asked for the heading to read "AI / ML engineer", "if the
+description is the same". It is not, measured on the in-area postings on
+2026-10-06, 18 titled AI engineer against 39 titled machine learning engineer:
+
+| names the skill | AI-titled | ML-titled |
+|---|---|---|
+| LLMs | 50% | 33% |
+| machine learning | 39% | 97% |
+| PyTorch | 17% | 69% |
+| TensorFlow | rare | 41% |
+| TypeScript | 17% | rare |
+
+Their skill profiles are 0.80 alike. Machine learning engineer and data
+scientist score the same 0.80, and the table keeps those two apart. Small
+samples, so a direction rather than a measure: here "AI engineer" mostly means
+building with LLMs and "ML engineer" mostly means training models.
+
+So the role is *named* "AI / ML engineer" (`roles.display_name`, also the
+feed's dropdown) and *listed* the way the owner then suggested, "like a
+dictionary":
+
+- **Each kind of title is a heading with its postings under it.** A kind is
+  the alias a title was recognised by (`roles.kind_of`): on the corpus, AI
+  engineer 18, machine learning engineer 41, deep learning engineer 1, applied
+  ML engineer 1. Nothing is invented; a title worded "Agentic AI Engineer"
+  would be listed under AI engineer the day one is crawled.
+- **The kind that was typed goes first**, then the others by size. Asked for
+  "AI engineer", the eighteen are not behind forty-one that happen to be newer.
+  The candidates are ordered by kind before the re-ranker, so its thirty
+  places go to what was typed, and again after it, so it orders within a kind
+  and not across.
+- **Counts are of the role, not of the page.** `Retrieval.kinds` is counted
+  over every in-area posting of the role; the reply's `matched_kinds` and the
+  context line carry it, so the model can say "18 AI engineer and 41 machine
+  learning engineer" while being shown five.
+- **Related roles are links, never results.** `roles.related_to` names
+  neighbours (data scientist and data engineer for this one) and the dock
+  links them to the feed. Their postings are not mixed in, and the alias
+  table, which also feeds scoring and Gate 5, is untouched.
+
+Not done, and the measurement is the argument for it: splitting the row into
+two roles. That changes the feed's filter, the scorer's title match and the
+Gate 5 set, so it is a change of its own.
+
