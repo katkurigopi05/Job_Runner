@@ -3651,3 +3651,51 @@ free memory went from 58% to 42% with both loaded. The pool is
 **The feed is untouched.** `Match.score` is still the cosine `rubric.py` and
 §19 defend. §19's "no cross-encoder reranker" was about the feed and about an
 *unmeasured* stage; this one is the assistant's, and measured first.
+
+---
+
+## 22. A question that names a kind of job
+
+The owner asked the assistant "any jobs with job types AI engineer" on
+2026-10-05. It listed three postings titled exactly "AI Engineer", a director
+of programme management, and said no requirements were listed. In the search
+area 61 postings were that role. Four causes, each with a test in
+`tests/test_chat_role_questions.py`:
+
+- **"types" was the search term.** "AI" is in 81% of postings and "engineer"
+  in 39%, so §14's rarity rule dropped both and searched on the one word left.
+  "type", "types", "kind" and "kinds" are framing words now.
+- **Only a whole title in the question was found by title.** A named role is
+  now looked up through `matching/roles.py`, the table the feed's role filter
+  uses, so "AI engineer" finds "Staff AI Engineer" and "Machine Learning
+  Engineer" and not a Product Manager posting that mentions one. The words
+  that named the role are not searched for; what is left of the question
+  ("using Kafka") is searched among that role's postings, and if none says it
+  the role alone is the answer.
+- **Nothing said there were more.** `Retrieval.role_total` is how many open
+  postings in the area carry the title. The context tells the model the
+  number; the reply carries the next matches as `more_sources` (up to
+  `MORE_LIMIT`, 100), and the dock lists them ten at a time, with a link to
+  `/matches?role=…` for whatever is past that.
+- **The excerpt was the employer's pitch.** Found by title, a posting has no
+  term to quote on, so `excerpt` took the first 600 characters. With nothing
+  to quote it now starts at the requirements heading, when
+  `experience.heading_kind` finds one (1,057 of 1,500 sampled postings).
+
+Three things to keep:
+
+- **Five is what fits in a prompt, not the answer.** `more_sources` exists for
+  every search, not only role questions. They were never shown to the model,
+  so they carry no citation label and are never marked cited.
+- **A posting the area leaves out is counted once**, by id. One posting can be
+  found by its role and by its exact title; the first version counted it
+  twice, and two of the area tests caught it.
+- **Roles outside the table are not helped.** "Product manager jobs" is still
+  a keyword search. The table is nine engineering and data roles, and it also
+  feeds scoring and Gate 5, so extending it is a change of its own.
+
+Measured on the live database: the owner's question now returns role
+"machine learning engineer", 61 in the area, five shown and 56 listed, in
+about 1.9 s with the re-ranker on. Role matching reads every open title and
+costs 0.1-0.2 s, including the 1,027 software-engineer postings.
+

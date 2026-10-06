@@ -71,6 +71,7 @@ import threading
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import NamedTuple
 
 import structlog
@@ -90,6 +91,7 @@ from packages.matching.embed import (
 )
 from packages.matching.locality import Locality, area_exclusion, locality_of
 from packages.matching.rerank import Reranker, get_reranker, reorder
+from packages.matching.roles import canonical, named_in
 
 log = structlog.get_logger(__name__)
 
@@ -107,6 +109,11 @@ EXCERPT_CHARS = 600
 #: embeddings have something to re-order; small enough that the re-ranking
 #: query stays a lookup by id.
 KEYWORD_POOL = 30
+
+#: How many further matches a reply lists after the ones the model was shown.
+#: The owner asked for "the jobs", and five is what fits in a prompt, not what
+#: there is; the dashboard shows these ten at a time.
+MORE_LIMIT = 100
 
 #: Keyword matches read when the owner's search area applies, before the area
 #: cuts them back to `KEYWORD_POOL`. On the owner's database 11 of 25 answers
@@ -168,6 +175,11 @@ _POSTING_WORDS = frozenset(_POSTING_WORDS_TEXT.split())
 #: vision); "learn" and "improve" are in most postings and dropped anyway.
 #: The question's own grammar went with it: "am" from "What am I…" matched
 #: "I am" and AM for account manager, so the auxiliaries are framing too.
+#:
+#: And "type" and "kind": the owner asked for "jobs with job types AI
+#: engineer" on 2026-10-05. "AI" is in 81% of postings and "engineer" in 39%,
+#: so "types" was the one word left to search on, and it found a director of
+#: programme management.
 _FRAMING_WORDS_TEXT = """
 which what who where when how any anything there some open available
 current currently apply applied application applications
@@ -180,6 +192,7 @@ missing lacking lack lacks lagging gap gaps weak weakness weaknesses upskill str
 qualify resume resumes résumé résumés
 am was were been do does did done should could would can shall might must had
 im ive ve whats whom whose ought
+type types kind kinds
 """
 _FRAMING_WORDS = _POSTING_WORDS | frozenset(_FRAMING_WORDS_TEXT.split())
 
@@ -251,6 +264,17 @@ class Passage:
 
 
 @dataclass(frozen=True)
+class Listed:
+    """A match that did not fit in the prompt: enough to list and link, no excerpt."""
+
+    posting_id: uuid.UUID
+    title: str
+    company: str | None
+    location: str | None
+    url: str
+
+
+@dataclass(frozen=True)
 class Retrieval:
     #: False when the question was not about postings and nothing was searched.
     attempted: bool
@@ -276,6 +300,16 @@ class Retrieval:
     #: The model that re-ordered the top results, or None when none did: no
     #: model is configured, it failed, or there was nothing to re-order.
     reranked_by: str | None = None
+    #: The kinds of job the question named, in words ("machine learning
+    #: engineer"), from the same table as the feed's role filter.
+    roles: tuple[str, ...] = ()
+    #: Their table keys, for a link to the feed filtered the same way.
+    role_keys: tuple[str, ...] = ()
+    #: How many open postings in the search area carry such a title, or None
+    #: when no role was named. The passages are the closest few of these.
+    role_total: int | None = None
+    #: The next matches after `passages`, in the same order, up to `MORE_LIMIT`.
+    more: tuple[Listed, ...] = ()
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -593,6 +627,36 @@ async def _titles_in_question(
     return [_Hit(*row) for row in (await session.execute(query)).all()]
 
 
+@lru_cache(maxsize=50_000)
+def _role_of(title: str) -> str | None:
+    """`roles.canonical`, remembered: a role question reads every open title."""
+    return canonical(title)
+
+
+async def _role_hits(
+    session: AsyncSession, roles: set[str], companies: list[uuid.UUID]
+) -> list[_Hit]:
+    """Open postings whose title names one of `roles`, newest first.
+
+    By the alias table, so "Staff AI Engineer" and "Machine Learning Engineer"
+    are both found for "AI engineer", and a Product Manager posting that only
+    mentions one is not. Titles first, since reading 10,589 descriptions to
+    keep 61 would be most of the search's time: 0.1 s this way on the owner's
+    corpus, and 0.2 s for the 1,027 software-engineer postings.
+    """
+    query = select(Posting.id, Posting.title).where(Posting.closed_at.is_(None))
+    if companies:
+        query = query.where(Posting.company_id.in_(companies))
+    query = query.order_by(Posting.first_seen_at.desc(), Posting.id)
+    ids = [
+        posting_id
+        for posting_id, title in (await session.execute(query)).all()
+        if _role_of(title or "") in roles
+    ]
+    found = await _hits_for(session, ids)
+    return [found[posting_id] for posting_id in ids if posting_id in found]
+
+
 async def _keyword_hits(
     session: AsyncSession,
     terms: list[str],
@@ -600,6 +664,7 @@ async def _keyword_hits(
     companies: list[uuid.UUID],
     *,
     pool: int = KEYWORD_POOL,
+    only: list[uuid.UUID] | None = None,
 ) -> list[_Hit]:
     """Open postings containing a question term, rarest matches first.
 
@@ -620,6 +685,9 @@ async def _keyword_hits(
     )
     if companies:
         found = found.where(Posting.company_id.in_(companies))
+    if only is not None:
+        # A role was named: its postings are the ones being asked about.
+        found = found.where(Posting.id.in_(only))
     # MATERIALIZED, or Postgres may inline the CTE and rebuild `doc` per term.
     matched = found.cte("matched").prefix_with("MATERIALIZED")
 
@@ -910,20 +978,53 @@ async def retrieve(
     else:
         beyond_the_name = terms
 
+    # A kind of job, named: "AI engineer", "SRE". Its postings are found by
+    # title through the role table, so the words that named it are not also
+    # searched for. "AI" is in 81% of the owner's postings and "engineer" in
+    # 39%; neither can pick a posting out, and what is left of the question
+    # ("using Kafka") is what to look for among that role's postings.
+    asked_roles = named_in(question)
+    if asked_roles:
+        role_words = set().union(*asked_roles.values())
+        terms = _search_terms(question, frequencies, exclude=company_words | role_words)
+
     area = _search_area(question)
     outside = 0
+    # By id, because one posting can be found two ways (its role and its exact
+    # title) and is still one posting the area left out.
+    left_out: set[uuid.UUID] = set()
+    role_pool: list[_Hit] | None = None
+    if asked_roles:
+        of_the_role = await _role_hits(session, set(asked_roles), companies)
+        role_pool = [hit for hit in of_the_role if not (area and _outside_area(hit))]
+        left_out |= {hit.posting_id for hit in of_the_role} - {hit.posting_id for hit in role_pool}
     # "jobs at Astranis" says nothing to order by: the re-ranker would shuffle
     # one company's postings by their likeness to its name, and take 1.5 s.
-    only_names_a_company = bool(companies) and not beyond_the_name
+    only_names_a_company = bool(companies) and not beyond_the_name and not asked_roles
     # Loading the model blocks for seconds the first time, so off the loop.
     reranker = None if only_names_a_company else await asyncio.to_thread(get_reranker)
     reranked_by: str | None = None
     titled = await _titles_in_question(session, question, companies)
-    if terms or titled:
+    more_hits: list[_Hit] = []
+    if terms or titled or role_pool is not None:
         pool = _AREA_POOL if area else KEYWORD_POOL
-        scanned = (
-            await _keyword_hits(session, terms, frequencies, companies, pool=pool) if terms else []
-        )
+        if role_pool is None:
+            scanned = (
+                await _keyword_hits(session, terms, frequencies, companies, pool=pool)
+                if terms
+                else []
+            )
+        else:
+            # Among the role's postings only. If none of them says what else
+            # was asked, the role alone is the better answer than nothing.
+            among_role = [hit.posting_id for hit in role_pool]
+            scanned = (
+                await _keyword_hits(
+                    session, terms, frequencies, companies, pool=len(among_role), only=among_role
+                )
+                if terms and among_role
+                else []
+            ) or role_pool
         already = {hit.posting_id for hit in titled}
         scanned = [hit for hit in scanned if hit.posting_id not in already]
         if area:
@@ -931,8 +1032,12 @@ async def retrieve(
             # in the pool that an in-area one could have had.
             kept_titled = [hit for hit in titled if not _outside_area(hit)]
             kept_scanned = [hit for hit in scanned if not _outside_area(hit)]
-            outside = len(titled) + len(scanned) - len(kept_titled) - len(kept_scanned)
-            titled, scanned = kept_titled, kept_scanned[:KEYWORD_POOL]
+            left_out |= {hit.posting_id for hit in titled + scanned} - {
+                hit.posting_id for hit in kept_titled + kept_scanned
+            }
+            # A role's postings are all listed, so they are not cut to a pool.
+            titled = kept_titled
+            scanned = kept_scanned if role_pool is not None else kept_scanned[:KEYWORD_POOL]
         keyword = titled + scanned
         among = [hit.posting_id for hit in keyword]
         by_space = [
@@ -966,6 +1071,8 @@ async def retrieve(
             among_spans,
         )
         chosen = (named + rest)[:limit]
+        more_hits = (named + rest)[limit : limit + MORE_LIMIT]
+        outside = len(left_out)
         searched, unsearchable = open_total, 0
     else:
         width = limit * _AREA_WIDEN if area else limit
@@ -1009,6 +1116,12 @@ async def retrieve(
             outside += len(ranked) - len(eligible)
             eligible, reranked_by = await _reranked(reranker, question, eligible, chunk_spans)
             chosen = eligible[:limit]
+        shown = {hit.posting_id for hit in chosen}
+        more_hits = [
+            hit
+            for hit in ranked
+            if hit.posting_id not in shown and not (area and _outside_area(hit))
+        ][:MORE_LIMIT]
         searched = await _reachable(session, list(chunk_vectors), list(vectors))
         unsearchable = max(0, open_total - searched)
 
@@ -1025,7 +1138,13 @@ async def retrieve(
                 _chunk_excerpt(hit.description or "", *chunk_spans[hit.posting_id])
                 if hit.posting_id in chunk_spans
                 else excerpt(
-                    hit.description or "", question, ignore=company_words, terms=terms or None
+                    hit.description or "",
+                    question,
+                    ignore=company_words,
+                    # For a role question the terms are what was asked beyond
+                    # the role, even when that is nothing: quoting on "AI"
+                    # finds the employer's own pitch, not the requirements.
+                    terms=terms if (terms or role_pool is not None) else None,
                 )
             ),
             application_status=statuses.get(hit.posting_id),
@@ -1042,6 +1161,19 @@ async def retrieve(
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,
         reranked_by=reranked_by,
+        roles=tuple(key.replace("_", " ") for key in sorted(asked_roles)),
+        role_keys=tuple(sorted(asked_roles)),
+        role_total=len(role_pool) if role_pool is not None else None,
+        more=tuple(
+            Listed(
+                posting_id=hit.posting_id,
+                title=hit.title or "(untitled)",
+                company=hit.company,
+                location=hit.location,
+                url=hit.url,
+            )
+            for hit in more_hits
+        ),
     )
 
 
@@ -1104,6 +1236,26 @@ def _starts_near(body: str, terms: set[str], width: int) -> list[int]:
     return starts
 
 
+def _requirements_start(text: str) -> int | None:
+    """Where a posting's requirements heading begins, in whitespace-collapsed text.
+
+    `experience.heading_kind` is the reader of headings ("Requirements", "What
+    we look for", "Minimum qualifications"); on a sample of 1,500 of the
+    owner's postings it found one in 1,057. None when there is none.
+    """
+    from packages.matching.experience import Demand, heading_kind
+
+    offset = 0
+    for line in text.splitlines():
+        collapsed = " ".join(line.split())
+        if not collapsed:
+            continue
+        if heading_kind(collapsed) is Demand.MANDATORY:
+            return offset
+        offset += len(collapsed) + 1
+    return None
+
+
 def excerpt(
     text: str,
     question: str,
@@ -1153,6 +1305,12 @@ def excerpt(
             if (hits, opens_on_match) > best_key:
                 best_start, best_key = start, (hits, opens_on_match)
 
+    if best_key == (0, False):
+        # Nothing to quote on, so the opening would be chosen, and a posting
+        # opens with the employer describing itself. What it asks for is the
+        # more useful 600 characters, when it has a heading to find them by.
+        best_start = _requirements_start(text) or 0
+
     window = body[best_start : best_start + width]
     if best_start + len(window) < len(body):
         # End on a word, not inside one.
@@ -1160,4 +1318,13 @@ def excerpt(
     return ("…" if best_start > 0 else "") + window
 
 
-__all__ = ["DEFAULT_LIMIT", "EXCERPT_CHARS", "Passage", "Retrieval", "excerpt", "retrieve"]
+__all__ = [
+    "DEFAULT_LIMIT",
+    "EXCERPT_CHARS",
+    "MORE_LIMIT",
+    "Listed",
+    "Passage",
+    "Retrieval",
+    "excerpt",
+    "retrieve",
+]
