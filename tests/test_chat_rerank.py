@@ -7,6 +7,12 @@ Letting Qwen3-Embedding-0.6B re-score the best chunk of the top 30 candidates
 took that to 77% and 36% — nearly what re-embedding the whole corpus with it
 gets (80% and 34%), with nothing to backfill and about 1.6 s per question.
 
+That was a simulation over a pure vector search. Through the real `retrieve()`
+on the full corpus the same day it was 64% against 70% without it, and 7%
+either way on paraphrases, so the owner's machine runs with it off
+(docs/ML_EVALUATION.md, *The re-ranker, measured live*). These tests hold the
+properties of the stage for whoever turns it on again.
+
 So the re-ranker only ever re-orders. It never adds a posting the search did
 not find, which keeps §14's rule that keywords decide relevance, and it is off
 unless a model is named, so a machine without it searches exactly as before.
