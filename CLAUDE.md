@@ -3611,3 +3611,91 @@ cannot say "none" — all 150 absent words got five results — and finds a rare
 word one time in five. A union hybrid inherits that. So the paraphrase gain
 measured above can only be had where keywords matched something; pooling must
 never fill an empty keyword result.
+
+---
+
+## 21. A second model re-orders the assistant's search
+
+`packages/matching/rerank.py`. The assistant's chunks are embedded with
+bge-small because it is fast, and it was the weakest of four models measured
+on 2026-10-05. Qwen3-Embedding-0.6B re-scoring the best chunk of the top 30
+results took the right posting into the top five for 77% of test questions
+against 64%, nearly what re-embedding the whole corpus with it gets (80%),
+with nothing to backfill. `docs/ML_EVALUATION.md` has the tables.
+
+Five properties a later change could quietly break:
+
+- **It only re-orders.** It is handed what the search found and returns the
+  same postings in a new order. §14's rule stands: keywords decide what is
+  relevant. `test_it_never_adds_a_posting_the_search_did_not_find` holds it.
+- **Off unless a model is named.** `CHAT_RERANK_MODEL` ships empty, so a fresh
+  checkout neither downloads 1.2 GB nor holds 0.7 GB in the API process. The
+  owner's `.env` names `Qwen/Qwen3-Embedding-0.6B`. `conftest._no_reranker`
+  blanks it for the suite, for the reason `_lexical_embedder` exists: a suite
+  whose verdict depends on the developer's `.env` is not testing the code.
+- **A failure leaves the search's order.** No model, a load error, an encode
+  error: the assistant answers from the first-stage order and the reply's
+  `postings_reranked_by` is null. It never falls back to another model.
+- **A posting asked for by its title stays first**, and a question that only
+  names a company is not re-ranked. "jobs at Astranis" says nothing to order
+  by: on the live database it shuffled one company's postings by their
+  likeness to its name and took 1.5 s to do it.
+- **It stays on this machine.** The model is local, like the rest of
+  retrieval, so §2.8 is unchanged and nothing new leaves.
+
+It adds about 1.3-1.8 s to a question (30 chunks at 19 a second on the M4's
+GPU) and holds two models in the API process, bge-small and the re-ranker:
+free memory went from 58% to 42% with both loaded. The pool is
+`CHAT_RERANK_POOL`, 30; 100 measured no better.
+
+**The feed is untouched.** `Match.score` is still the cosine `rubric.py` and
+§19 defend. §19's "no cross-encoder reranker" was about the feed and about an
+*unmeasured* stage; this one is the assistant's, and measured first.
+
+---
+
+## 22. A question that names a kind of job
+
+The owner asked the assistant "any jobs with job types AI engineer" on
+2026-10-05. It listed three postings titled exactly "AI Engineer", a director
+of programme management, and said no requirements were listed. In the search
+area 61 postings were that role. Four causes, each with a test in
+`tests/test_chat_role_questions.py`:
+
+- **"types" was the search term.** "AI" is in 81% of postings and "engineer"
+  in 39%, so §14's rarity rule dropped both and searched on the one word left.
+  "type", "types", "kind" and "kinds" are framing words now.
+- **Only a whole title in the question was found by title.** A named role is
+  now looked up through `matching/roles.py`, the table the feed's role filter
+  uses, so "AI engineer" finds "Staff AI Engineer" and "Machine Learning
+  Engineer" and not a Product Manager posting that mentions one. The words
+  that named the role are not searched for; what is left of the question
+  ("using Kafka") is searched among that role's postings, and if none says it
+  the role alone is the answer.
+- **Nothing said there were more.** `Retrieval.role_total` is how many open
+  postings in the area carry the title. The context tells the model the
+  number; the reply carries the next matches as `more_sources` (up to
+  `MORE_LIMIT`, 100), and the dock lists them ten at a time, with a link to
+  `/matches?role=…` for whatever is past that.
+- **The excerpt was the employer's pitch.** Found by title, a posting has no
+  term to quote on, so `excerpt` took the first 600 characters. With nothing
+  to quote it now starts at the requirements heading, when
+  `experience.heading_kind` finds one (1,057 of 1,500 sampled postings).
+
+Three things to keep:
+
+- **Five is what fits in a prompt, not the answer.** `more_sources` exists for
+  every search, not only role questions. They were never shown to the model,
+  so they carry no citation label and are never marked cited.
+- **A posting the area leaves out is counted once**, by id. One posting can be
+  found by its role and by its exact title; the first version counted it
+  twice, and two of the area tests caught it.
+- **Roles outside the table are not helped.** "Product manager jobs" is still
+  a keyword search. The table is nine engineering and data roles, and it also
+  feeds scoring and Gate 5, so extending it is a change of its own.
+
+Measured on the live database: the owner's question now returns role
+"machine learning engineer", 61 in the area, five shown and 56 listed, in
+about 1.9 s with the re-ranker on. Role matching reads every open title and
+costs 0.1-0.2 s, including the 1,027 software-engineer postings.
+

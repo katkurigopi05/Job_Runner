@@ -668,6 +668,21 @@ class ChatReply(BaseModel):
     #: found" means less when the second number is large.
     postings_searched: int = 0
     postings_unsearchable: int = 0
+    #: The local model that re-ordered `sources`, or None when the search's
+    #: own order stands (`matching/rerank.py`).
+    postings_reranked_by: str | None = None
+    #: The matches after `sources`, in the same order. Five fit in a prompt;
+    #: the owner asked for the jobs, so the rest are listed, never cited, and
+    #: the dashboard shows them ten at a time.
+    more_sources: list[ChatSource] = Field(default_factory=list)
+    #: The kind of job the question named ("machine learning engineer") and
+    #: how many open postings in the search area carry such a title. Both
+    #: None when the question named no role.
+    matched_role: str | None = None
+    postings_matched_total: int | None = None
+    #: The feed's `role` filter value, when exactly one role was named, so
+    #: the dashboard can link to the same list on /matches.
+    matched_role_filter: str | None = None
 
 
 # --------------------------------------------------------------------------

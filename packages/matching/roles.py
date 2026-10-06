@@ -211,6 +211,21 @@ def roles_in(text: str) -> set[str]:
     return {_ALIAS_TO_ROLE[alias] for alias in _ALIASES_BY_LENGTH if f" {alias} " in haystack}
 
 
+def named_in(text: str) -> dict[str, set[str]]:
+    """The canonical roles a text names, each with the words that named it.
+
+    `roles_in` with its evidence. The assistant's search needs the words: in
+    "AI engineer jobs using Kafka" they say which role, and what is left over
+    is what to search that role's postings for.
+    """
+    haystack = f" {_SPACE_RE.sub(' ', _PUNCT_RE.sub(' ', text.lower()))} "
+    named: dict[str, set[str]] = {}
+    for alias in _ALIASES_BY_LENGTH:
+        if f" {alias} " in haystack:
+            named.setdefault(_ALIAS_TO_ROLE[alias], set()).update(alias.split())
+    return named
+
+
 def same_role(left: str, right: str) -> bool:
     """Whether two titles name one role. Unrecognized titles never match."""
     canonical_left = canonical(left)

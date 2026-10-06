@@ -377,6 +377,17 @@ def _postings_section(found: Retrieval, gaps: _PostingGaps | None = None) -> str
         )
     elif found.area_waived:
         lines.append("  search area: not applied, the question names a place outside it")
+    if found.roles:
+        # The model sees the closest few. Without the count it cannot say
+        # there are more, and three shown out of sixty-one read as "three".
+        count = found.role_total or 0
+        lines.append(
+            f"  role asked for: {' or '.join(found.roles)}. {count} open posting"
+            f"{'' if count == 1 else 's'} in the search area "
+            f"{'has' if count == 1 else 'have'} such a title; the closest "
+            f"{len(found.passages)} are below and the owner sees the rest listed under "
+            "your answer. Say how many there are."
+        )
     if not found.passages:
         within = " in the search area" if found.outside_area else ""
         lines.append(
@@ -671,4 +682,19 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
         ],
         postings_searched=found.searched,
         postings_unsearchable=found.unsearchable,
+        postings_reranked_by=found.reranked_by,
+        more_sources=[
+            ChatSource(
+                label="",
+                posting_id=listed.posting_id,
+                title=listed.title,
+                company=listed.company,
+                location=listed.location,
+                url=listed.url,
+            )
+            for listed in found.more
+        ],
+        matched_role=" or ".join(found.roles) or None,
+        postings_matched_total=found.role_total,
+        matched_role_filter=found.role_keys[0] if len(found.role_keys) == 1 else None,
     )

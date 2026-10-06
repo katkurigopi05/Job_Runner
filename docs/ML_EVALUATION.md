@@ -350,3 +350,99 @@ than shipped dark.
   `apps/api/routers/matches.py` already filters in Python rather than SQL, for
   the same reason it always has: the fields are read out of text. Same code
   both sides, or the number means nothing.
+
+## Embedding models for the assistant's search, and the re-ranker (2026-10-05)
+
+This is about the assistant's chunk search (`matching/retrieve.py`), not the
+feed's score. *The reranker is deliberately not built*, above, is about the
+feed and still stands: nothing here touches `Match.score`.
+
+### What was measured
+
+56 open in-area postings were drawn at random. Nemotron (OpenRouter) wrote two
+questions for each: a **natural** one that may use the posting's words but not
+its company, and a **paraphrased** one that may not reuse the title or any
+technology, product or company name. Each model embedded the same chunk texts
+(the stored 500-character chunks) and ranked the pool by each posting's best
+chunk. The score is the rank of the posting a question was written from.
+
+All four models ran on the M4's GPU (MPS; Qwen 4B through Ollama).
+
+| pool | | bge-small | bge-large | Qwen3-Embedding-0.6B | Qwen3-Embedding-4B (Q4) |
+|---|---|---|---|---|---|
+| 1,000 postings, 14,112 chunks, 1.35M tokens | natural, top 5 | 64% | 71% | 80% | not run |
+| | paraphrased, top 5 | 11% | 29% | 34% | not run |
+| 400 postings, 5,652 chunks, 543K tokens | natural, top 5 | 77% | 79% | 93% | 91% |
+| | paraphrased, top 5 | 32% | 45% | 52% | 71% |
+
+Paired differences in MRR, 95% bootstrap interval over questions:
+
+| comparison | natural | paraphrased |
+|---|---|---|
+| bge-large over bge-small (1,000) | +0.078 [+0.019, +0.147] | +0.088 [+0.036, +0.149] |
+| Qwen 0.6B over bge-large (1,000) | +0.081 [+0.013, +0.150] | +0.062 [-0.009, +0.138] |
+| Qwen 4B over Qwen 0.6B (400) | +0.046 [-0.036, +0.132] | +0.114 [+0.019, +0.212] |
+
+So the order is Qwen 4B, Qwen 0.6B, bge-large, bge-small. Two of the steps are
+not established: 0.6B over bge-large on paraphrased questions, and 4B over
+0.6B on natural ones.
+
+### What each costs on the owner's machine
+
+| | bge-small | bge-large | Qwen 0.6B | Qwen 4B (Q4) |
+|---|---|---|---|---|
+| chunks per second | 366 | 34 | 19 | 3.3 |
+| the corpus: 141,603 chunks, 13.6M tokens | 6 min | 69 min | 2 hours | 12 hours |
+| dimensions | 384 | 1,024 | 1,024 | 2,560 |
+| stored as `halfvec` | 109 MB | 290 MB | 290 MB | 725 MB |
+
+Three things learned running them:
+
+- **Time a model on distinct texts.** A probe that sent one sentence 64 times
+  reported 29 chunks a second for Qwen 4B. On real chunks it does 3.3.
+- **Cap Ollama's context.** Qwen 4B loaded at Ollama's default 32,768-token
+  context took 8.7 GB of 16; at 1,024 it took 3.3 GB.
+- **Half precision did not help here.** Qwen 0.6B in fp16 on MPS was no faster
+  than fp32 and peaked at 2.7-3.1 GB against 0.85 GB. Batches of 8 were
+  fastest (18.7 chunks a second, against 17.0 at 32 and 15.5 at 64).
+
+Qwen's vectors can be shortened. Qwen 4B's first 384 numbers, re-normalised,
+still put the right posting in the top five for 55% of paraphrased questions
+on the 400 pool, above bge-large's 45% at 1,024. Shortening saves storage and
+search time, not embedding time.
+
+### The re-ranker
+
+Re-embedding the corpus is the expensive way to use a better model. The cheap
+way keeps bge-small and has the better model re-score only the best chunk of
+the top candidates. Simulated from the saved vectors, 1,000 pool, top 5:
+
+| | natural | paraphrased | one-off cost |
+|---|---|---|---|
+| bge-small alone | 64% | 11% | none |
+| bge-small, then Qwen 0.6B on the top 30 | 77% | 36% | none |
+| bge-small, then Qwen 0.6B on the top 100 | 71% | 29% | none |
+| Qwen 0.6B for everything | 80% | 34% | 2 hours |
+
+That is what `matching/rerank.py` does, with `CHAT_RERANK_MODEL` naming the
+model. On the 400 pool Qwen 4B as the re-ranker reached 84% and 52%: it cannot
+find what bge-small's top 30 left out, and at 3.3 chunks a second it costs
+about 9 s a question against 1.6 s.
+
+Measured on the live database (10,589 open postings) with the real model: a
+question went from 0.4-1.0 s to 1.7-2.3 s, and free memory from 58% to 42%
+with both models loaded.
+
+### What this does not establish
+
+- 56 postings, and one free model wrote every question. Enough to order four
+  models; the percentages will move on the owner's own questions.
+- The pools are 400 and 1,000 postings against 10,589 live, so every
+  percentage here is higher than the assistant's would be.
+- The re-ranking rows are simulated from stored vectors. The shipped path also
+  fuses keyword rank and applies the search area before the re-ranker runs.
+- A second check, each model's top five on 8 open questions graded by an LLM,
+  has not run: the OpenRouter allowance was spent.
+
+The benchmark scripts and vectors are in `storage/embed_rank_bench/`, which
+git ignores. Committing it as a repeatable command is still to do.

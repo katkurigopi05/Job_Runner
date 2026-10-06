@@ -8,14 +8,22 @@ import { useEffect, useRef, useState } from "react";
    pinned to the bottom. That app leans on system defaults, so there is no
    palette to copy — these are the shapes, carried into this app's colours. */
 
-/** A posting retrieved for a question. `cited` is read out of the reply. */
+/**
+ * A posting retrieved for a question. `cited` is read out of the reply. The
+ * label is what the model was told to cite ("P1"); it is empty for a match
+ * that was listed for the owner without being shown to the model.
+ */
 interface Source {
   label: string;
   posting_id: string;
   title: string;
   company: string | null;
+  location?: string | null;
   cited: boolean;
 }
+
+/** How many further matches one click reveals. */
+const MORE_PAGE = 10;
 
 interface Turn {
   role: "you" | "assistant";
@@ -27,6 +35,13 @@ interface Turn {
   /** Whether recruiter mail was actually in that turn's context. */
   sharedMail?: boolean;
   sources?: Source[];
+  /** Matches after `sources`, in order: found, listed, never shown to the model. */
+  more?: Source[];
+  /** The kind of job the question named, and how many open postings are one. */
+  matchedRole?: string | null;
+  matchedTotal?: number | null;
+  /** The feed's role filter value for that kind, when there is exactly one. */
+  matchedRoleFilter?: string | null;
   /** Open postings the search covered, and the ones it could not reach. */
   searched?: number;
   unsearchable?: number;
@@ -36,7 +51,11 @@ interface Turn {
 function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
   return (
     <li>
-      <span className="font-mono text-ink-faint">{source.label}</span>{" "}
+      {source.label ? (
+        <>
+          <span className="font-mono text-ink-faint">{source.label}</span>{" "}
+        </>
+      ) : null}
       <Link
         href={`/postings/${source.posting_id}`}
         className={`${muted ? "text-ink-soft" : "text-ink"} underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn`}
@@ -44,7 +63,62 @@ function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
         {source.title}
       </Link>
       {source.company ? <span className="text-ink-faint"> · {source.company}</span> : null}
+      {source.location ? <span className="text-ink-faint"> · {source.location}</span> : null}
     </li>
+  );
+}
+
+/**
+ * The matches that did not fit in the answer, ten at a time.
+ *
+ * Five postings fit in a prompt. Asked for "jobs with job types AI engineer",
+ * the assistant showed three and there were sixty-one, with nothing on screen
+ * saying so. These are the rest, in the search's order, revealed a page at a
+ * time so a long list does not bury the conversation. They were never shown to
+ * the model, which is why they carry no citation label.
+ */
+function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
+  const more = turn.more ?? [];
+  const [visible, setVisible] = useState(MORE_PAGE);
+  if (more.length === 0) return null;
+
+  const total = turn.matchedTotal ?? null;
+  const remaining = more.length - Math.min(visible, more.length);
+  // The reply carries a bounded list. Past it, the feed has the whole one.
+  const beyondTheList = total !== null ? total - shownAbove - more.length : 0;
+
+  return (
+    <div className="space-y-1">
+      <p className="text-ink-soft">
+        {total !== null && turn.matchedRole
+          ? `${total} open ${turn.matchedRole} posting${total === 1 ? "" : "s"} in your search area. The next ones:`
+          : "More that the search found:"}
+      </p>
+      <ol className="space-y-0.5">
+        {more.slice(0, visible).map((source) => (
+          <PostingLink key={source.posting_id} source={source} muted />
+        ))}
+      </ol>
+      <div className="flex flex-wrap items-center gap-3">
+        {remaining > 0 ? (
+          <button
+            type="button"
+            onClick={() => setVisible((count) => count + MORE_PAGE)}
+            className="rounded border border-rule px-2.5 py-1 font-mono text-xs text-ink-soft transition-colors hover:border-attn hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+          >
+            show next {Math.min(MORE_PAGE, remaining)} · {remaining} more
+          </button>
+        ) : null}
+        {turn.matchedRoleFilter && (remaining === 0 || beyondTheList > 0) ? (
+          <Link
+            href={`/matches?role=${turn.matchedRoleFilter}`}
+            className="text-ink-soft underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+          >
+            {beyondTheList > 0 ? `${beyondTheList} more on the feed` : "see them all on the feed"}
+          </Link>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -89,6 +163,7 @@ function RetrievedPostings({ turn }: { turn: Turn }) {
           </ul>
         </div>
       ) : null}
+      <MoreMatches turn={turn} shownAbove={sources.length} />
       <p className="text-ink-faint">
         from a search of {turn.searched ?? 0} of {total} open postings
       </p>
@@ -217,6 +292,10 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           local: body.local,
           sharedMail: body.shared_mail,
           sources: body.sources,
+          more: body.more_sources,
+          matchedRole: body.matched_role,
+          matchedTotal: body.postings_matched_total,
+          matchedRoleFilter: body.matched_role_filter,
           searched: body.postings_searched,
           unsearchable: body.postings_unsearchable,
         },
