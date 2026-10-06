@@ -57,15 +57,26 @@ from packages.core.enums import ErrorCode
 from packages.core.heartbeat import WorkerState
 from packages.core.models import Application, InboundMessage, Posting, Profile
 from packages.core.notify import ParkReason, asks, needs_owner
-from packages.core.schemas import ChatReply, ChatRequest, ChatSource
+from packages.core.schemas import (
+    ChatKind,
+    ChatRelatedRole,
+    ChatReply,
+    ChatRequest,
+    ChatSource,
+)
 from packages.llm import router as llm_router
 from packages.llm.audit import is_local
 from packages.llm.prompts import CHAT_SYSTEM
 from packages.llm.provider import LLMError
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
 from packages.matching.retrieve import Retrieval, retrieve
+from packages.matching.roles import display_name
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+#: How many kinds of title the model is told about by name. A word in 222
+#: titles has dozens of kinds; the largest few say what the list is made of.
+_KINDS_IN_CONTEXT = 8
 
 #: What answers when the request does not say. Still the local model: widening
 #: the ceiling did not move the floor, and the common case must not cost
@@ -381,12 +392,31 @@ def _postings_section(found: Retrieval, gaps: _PostingGaps | None = None) -> str
         # The model sees the closest few. Without the count it cannot say
         # there are more, and three shown out of sixty-one read as "three".
         count = found.role_total or 0
+        breakdown = ", ".join(f"{number} {kind}" for kind, number in found.kinds)
         lines.append(
             f"  role asked for: {' or '.join(found.roles)}. {count} open posting"
             f"{'' if count == 1 else 's'} in the search area "
-            f"{'has' if count == 1 else 'have'} such a title; the closest "
-            f"{len(found.passages)} are below and the owner sees the rest listed under "
-            "your answer. Say how many there are."
+            f"{'has' if count == 1 else 'have'} such a title"
+            + (f" ({breakdown})" if len(found.kinds) > 1 else "")
+            + f"; the closest {len(found.passages)} are below and the owner sees the rest "
+            "listed by kind under your answer. Say how many there are of each kind."
+        )
+    if found.title_words:
+        # Searched by title because every word asked for is in most
+        # descriptions. The model sees five; the count is what stops "five"
+        # being read as "all", and the kinds are what the list is sorted by.
+        count = found.title_total or 0
+        words = " and ".join(f'"{word}"' for word in found.title_words)
+        shown = found.kinds[:_KINDS_IN_CONTEXT]
+        breakdown = ", ".join(f"{number} {kind}" for kind, number in shown)
+        if len(found.kinds) > len(shown):
+            breakdown += f", and {len(found.kinds) - len(shown)} more kinds"
+        lines.append(
+            f"  titles searched: {count} open posting{'' if count == 1 else 's'} in the search "
+            f"area {'has' if count == 1 else 'have'} {words} in the title"
+            + (f" ({breakdown})" if len(found.kinds) > 1 else "")
+            + f"; the closest {len(found.passages)} are below and the owner sees the rest "
+            "listed by kind under your answer. Say how many there are and name the main kinds."
         )
     if not found.passages:
         within = " in the search area" if found.outside_area else ""
@@ -677,6 +707,7 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
                 location=passage.location,
                 url=passage.url,
                 cited=passage.label in cited,
+                kind=passage.kind,
             )
             for passage in found.passages
         ],
@@ -691,10 +722,18 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
                 company=listed.company,
                 location=listed.location,
                 url=listed.url,
+                kind=listed.kind,
             )
             for listed in found.more
         ],
+        matched_kinds=[ChatKind(label=kind, count=number) for kind, number in found.kinds],
+        related_roles=[
+            ChatRelatedRole(label=display_name(key), filter=key) for key in found.related
+        ],
         matched_role=" or ".join(found.roles) or None,
-        postings_matched_total=found.role_total,
+        postings_matched_total=(
+            found.role_total if found.role_total is not None else found.title_total
+        ),
+        matched_title_words=list(found.title_words),
         matched_role_filter=found.role_keys[0] if len(found.role_keys) == 1 else None,
     )

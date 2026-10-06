@@ -3726,3 +3726,107 @@ Measured on the live database: the owner's question now returns role
 about 1.9 s with the re-ranker on. Role matching reads every open title and
 costs 0.1-0.2 s, including the 1,027 software-engineer postings.
 
+### One role, several kinds of title
+
+The owner asked for the heading to read "AI / ML engineer", "if the
+description is the same". It is not, measured on the in-area postings on
+2026-10-06, 18 titled AI engineer against 39 titled machine learning engineer:
+
+| names the skill | AI-titled | ML-titled |
+|---|---|---|
+| LLMs | 50% | 33% |
+| machine learning | 39% | 97% |
+| PyTorch | 17% | 69% |
+| TensorFlow | rare | 41% |
+| TypeScript | 17% | rare |
+
+Their skill profiles are 0.80 alike. Machine learning engineer and data
+scientist score the same 0.80, and the table keeps those two apart. Small
+samples, so a direction rather than a measure: here "AI engineer" mostly means
+building with LLMs and "ML engineer" mostly means training models.
+
+So the role is *named* "AI / ML engineer" (`roles.display_name`, also the
+feed's dropdown) and *listed* the way the owner then suggested, "like a
+dictionary":
+
+- **Each kind of title is a heading with its postings under it.** A kind is
+  the alias a title was recognised by (`roles.kind_of`): on the corpus, AI
+  engineer 18, machine learning engineer 41, deep learning engineer 1, applied
+  ML engineer 1. Nothing is invented; a title worded "Agentic AI Engineer"
+  would be listed under AI engineer the day one is crawled.
+- **The kind that was typed goes first**, then the others by size. Asked for
+  "AI engineer", the eighteen are not behind forty-one that happen to be newer.
+  The candidates are ordered by kind before the re-ranker, so its thirty
+  places go to what was typed, and again after it, so it orders within a kind
+  and not across.
+- **Counts are of the role, not of the page.** `Retrieval.kinds` is counted
+  over every in-area posting of the role; the reply's `matched_kinds` and the
+  context line carry it, so the model can say "18 AI engineer and 41 machine
+  learning engineer" while being shown five.
+- **Related roles are links, never results.** `roles.related_to` names
+  neighbours (data scientist and data engineer for this one) and the dock
+  links them to the feed. Their postings are not mixed in, and the alias
+  table, which also feeds scoring and Gate 5, is untouched.
+
+Not done, and the measurement is the argument for it: splitting the row into
+two roles. That changes the feed's filter, the scorer's title match and the
+Gate 5 set, so it is a change of its own.
+
+### A word too common for descriptions, looked for in titles
+
+The owner asked "any roles with AI" on 2026-10-06 and was shown a data-centre
+hardware engineer, an internal-communications role and an account associate,
+all at OpenAI. "AI" is in 81% of descriptions, so §14's rule dropped it as a
+term; with no term left the search fell back to vectors, and the nearest
+things to the two letters "AI" are employers with AI in their name.
+
+The same words are rare where a posting names itself:
+
+| | descriptions | titles |
+|---|---|---|
+| AI | 81.0% | 4.5% |
+| data | 75.7% | 3.8% |
+| security | 35.5% | 3.0% |
+| product | 69.3% | 7.2% |
+
+So when nothing in a question is rare enough to search descriptions for, and
+no role from the table was named, its words are looked for in titles
+(`retrieve._title_word_hits`), and the result is the same dictionary: 222
+postings for "AI" in the owner's area, AI engineer 18 first, then applied AI,
+AI security engineer, applied AI architect, then kinds that carry the word in
+a qualifier (software engineer 32, for "Software Engineer, AI Infrastructure").
+
+Five things to keep:
+
+- **Only when there is no keyword.** "AI roles using Kafka" is still a search
+  for Kafka. Keywords decide relevance whenever there is one (§14).
+- **Only if a title has every word.** Otherwise the old search stands, vectors
+  included. `test_no_title_with_the_word_falls_back_to_the_old_search`.
+- **Word forms are compared by stem, on both sides.** `tokenize` keeps
+  "engineering" and "engineer" apart, and "data engineering roles" is asking
+  for data engineers. `_stem` only has to be consistent, not correct.
+- **A kind is a known role, or a title two postings share.** A title the role
+  table recognises is the kind it names. One it does not is its own words with
+  the level and qualifiers off ("product manager"); a one-off goes under
+  "other titles", or 157 postings with 98 distinct titles would be 98 headings.
+- **The headings are ordered for the reader**: more of what was asked first
+  ("product manager" before "engineering manager"), then a kind the table
+  knows before a family of titles, then by size, one-offs last.
+
+This also reaches roles the table does not hold. "product manager jobs" was a
+keyword search with both words dropped; it is 247 titles now, product manager
+147 and product marketing manager 47.
+
+### `make api` could not survive its own reload
+
+Found while building the above, and it looked like a hang in the code being
+edited. `make api` runs uvicorn with `--reload`; a reload asks the old worker
+to stop, uvicorn waits for open connections to close, and the dashboard holds
+one that never does: the live status stream (§17). With any dashboard tab
+open, the first saved file left the API accepting nothing. Its event loop was
+idle in `kevent`, one connection sat on port 8000, and `/health` timed out.
+
+`--timeout-graceful-shutdown 3` bounds the wait.
+`tests/test_dev_api_reloads.py` holds it. A server started before the change
+keeps the old behaviour until it is restarted.
+

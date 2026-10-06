@@ -212,18 +212,95 @@ def roles_in(text: str) -> set[str]:
 
 
 def named_in(text: str) -> dict[str, set[str]]:
-    """The canonical roles a text names, each with the words that named it.
+    """The canonical roles a text names, each with the aliases that named it.
 
-    `roles_in` with its evidence. The assistant's search needs the words: in
-    "AI engineer jobs using Kafka" they say which role, and what is left over
-    is what to search that role's postings for.
+    `roles_in` with its evidence. The assistant's search needs it twice over:
+    in "AI engineer jobs using Kafka" the alias says which role and which kind
+    of that role ("AI engineer", not "machine learning engineer"), and what is
+    left of the question is what to search that role's postings for.
     """
     haystack = f" {_SPACE_RE.sub(' ', _PUNCT_RE.sub(' ', text.lower()))} "
     named: dict[str, set[str]] = {}
     for alias in _ALIASES_BY_LENGTH:
         if f" {alias} " in haystack:
-            named.setdefault(_ALIAS_TO_ROLE[alias], set()).update(alias.split())
+            named.setdefault(_ALIAS_TO_ROLE[alias], set()).add(alias)
     return named
+
+
+#: What a role is called on screen, where its key does not say it. One role in
+#: the table is two words to the owner: asked for "AI engineer" on 2026-10-06
+#: the assistant answered about "machine learning engineer" postings.
+_DISPLAY_NAMES = {"machine_learning_engineer": "AI / ML engineer"}
+
+#: Written as initials, however an alias spells them.
+_INITIALS = {
+    "ai": "AI",
+    "ml": "ML",
+    "mle": "MLE",
+    "mts": "MTS",
+    "sde": "SDE",
+    "swe": "SWE",
+    "sre": "SRE",
+    "bi": "BI",
+    "etl": "ETL",
+    "api": "API",
+    "ui": "UI",
+    "devops": "DevOps",
+}
+
+
+def display_name(role: str) -> str:
+    """A canonical role in words: "AI / ML engineer", "data engineer"."""
+    return _DISPLAY_NAMES.get(role, role.replace("_", " "))
+
+
+def alias_label(alias: str) -> str:
+    """An alias as a heading: "ai engineer" is "AI engineer"."""
+    return " ".join(_INITIALS.get(word, word) for word in alias.split())
+
+
+def kind_of(title: str) -> str | None:
+    """The kind of role a title names, by the alias it was recognised by.
+
+    A role in the table is several kinds of title. On the owner's corpus the
+    61 AI / ML engineer postings were 41 "machine learning engineer", 18 "AI
+    engineer", one "deep learning engineer" and one "applied ML engineer", and
+    the first two ask for different things: LLMs and TypeScript against PyTorch
+    and TensorFlow. Calling them one role is right for the feed's filter and
+    wrong for a list the owner reads. None when no alias is recognised.
+    """
+    for form in (_surface(title), normalize(title)):
+        if not form:
+            continue
+        if form in _ALIAS_TO_ROLE:
+            return alias_label(form)
+        padded = f" {form} "
+        for alias in _ALIASES_BY_LENGTH:
+            if f" {alias} " in padded:
+                return alias_label(alias)
+    return None
+
+
+#: Roles worth a look after this one. Neighbours, never synonyms: nothing here
+#: merges two roles, and the alias table above is untouched. Machine learning
+#: engineer and data scientist are 0.80 alike by the skills their postings ask
+#: for, which is as alike as the two kinds of AI / ML engineer are.
+_RELATED = {
+    "software_engineer": ("backend_engineer", "fullstack_engineer", "frontend_engineer"),
+    "backend_engineer": ("software_engineer", "fullstack_engineer", "devops_engineer"),
+    "frontend_engineer": ("fullstack_engineer", "software_engineer"),
+    "fullstack_engineer": ("software_engineer", "backend_engineer", "frontend_engineer"),
+    "data_engineer": ("machine_learning_engineer", "data_analyst", "data_scientist"),
+    "data_scientist": ("machine_learning_engineer", "data_analyst", "data_engineer"),
+    "machine_learning_engineer": ("data_scientist", "data_engineer"),
+    "data_analyst": ("data_scientist", "data_engineer"),
+    "devops_engineer": ("backend_engineer", "software_engineer"),
+}
+
+
+def related_to(role: str) -> tuple[str, ...]:
+    """Neighbouring roles, nearest first. Empty for a role with none listed."""
+    return _RELATED.get(role, ())
 
 
 def same_role(left: str, right: str) -> bool:

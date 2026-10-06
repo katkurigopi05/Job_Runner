@@ -96,10 +96,7 @@ def test_no_role_asked_for_keeps_every_title() -> None:
 
 
 def test_the_filter_describes_itself() -> None:
-    assert (
-        "role: machine learning engineer"
-        in SearchFilters(role="machine_learning_engineer").describe()
-    )
+    assert "role: AI / ML engineer" in SearchFilters(role="machine_learning_engineer").describe()
 
 
 # --- one vocabulary, in three places ---------------------------------------

@@ -667,10 +667,16 @@ async def test_the_search_coverage_is_in_the_context(
     Nothing in this question is distinctive, so only vectors can answer, and
     one posting has none. The model is told, so it can say "none of the
     postings I could search" rather than "none exist".
+
+    The question was "any data engineering roles?" until words too common for
+    descriptions began to be looked for in titles: one of these postings is
+    titled "Senior Data Engineer", so titles answered it and every posting
+    was reached. These words are in no title, which is the case this test is
+    about.
     """
     import apps.api.routers.chat as chat_module
 
-    await _common(worker_session, "data", "engineering")
+    await _common(worker_session, "streaming", "pipelines")
     company = await _company(worker_session)
     await _posting(worker_session, company, *KAFKA)
     await _posting(worker_session, company, *FRONTEND, embedded=False)
@@ -679,7 +685,7 @@ async def test_the_search_coverage_is_in_the_context(
     recorder, seen = _recorder("ok")
     monkeypatch.setattr(chat_module.llm_router, "build_provider", lambda name=None: recorder())
 
-    answered = await client.post("/chat", json={"message": "any data engineering roles?"})
+    answered = await client.post("/chat", json={"message": "any streaming pipelines roles?"})
 
     assert answered.status_code == 200
     assert "searched 1 of 2 open postings" in seen["user"]

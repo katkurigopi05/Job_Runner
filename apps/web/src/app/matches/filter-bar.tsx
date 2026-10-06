@@ -35,7 +35,7 @@ const ROLES: Array<{ value: string; label: string }> = [
   { value: "fullstack_engineer", label: "full-stack engineer" },
   { value: "data_engineer", label: "data engineer" },
   { value: "data_scientist", label: "data scientist" },
-  { value: "machine_learning_engineer", label: "ML / AI engineer" },
+  { value: "machine_learning_engineer", label: "AI / ML engineer" },
   { value: "data_analyst", label: "data / BI analyst" },
   { value: "devops_engineer", label: "DevOps / SRE / platform" },
 ];
