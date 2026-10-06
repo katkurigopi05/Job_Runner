@@ -3856,3 +3856,26 @@ idle in `kevent`, one connection sat on port 8000, and `/health` timed out.
 `tests/test_dev_api_reloads.py` holds it. A server started before the change
 keeps the old behaviour until it is restarted.
 
+
+### Words that join a role to its subject
+
+The owner asked "any jobs role based on ai" on 2026-10-06 and was shown one
+posting, "Enterprise Sales Executive, AI Solutions - US-Based", where "any
+roles with AI" lists 222. `tokenize` drops "on" and keeps "based", and the
+title search above wants every word asked for in the title.
+
+"based" is in 0.18% of the owner's titles and 70% of their descriptions. The
+same held for the other connectives measured that day: "focused", "require",
+"use", "include", "within", "relevant", "specific", "driven" and their forms,
+each in under 0.05% of titles. They are framing words now (`_FRAMING_WORDS`),
+the list §14 keeps for words rarity cannot be trusted to remove.
+
+It fixed a second fault with the same cause. The ones in under 30% of
+descriptions were being searched for there: "roles focused on security"
+dropped "security" (36%) as too common and returned postings that say
+"focused". It lists 153 security titles now.
+
+Left out on purpose: "field" (1.2% of titles, Field Engineer), "area" (Area
+Manager) and "level". Unchanged: a question with a rare word is still a
+keyword search, so "roles requiring Kafka" returns what "Which open roles use
+Kafka?" does. `tests/test_chat_connecting_words.py` holds all of it.
