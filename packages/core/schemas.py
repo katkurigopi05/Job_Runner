@@ -707,6 +707,10 @@ class ChatReply(BaseModel):
     #: Neighbouring roles, as links to the feed. Their postings are never
     #: mixed into this answer.
     related_roles: list[ChatRelatedRole] = Field(default_factory=list)
+    #: The question's words that were looked for in titles, as typed ("AI"),
+    #: when none of it was rare enough to look for in descriptions. Then
+    #: `postings_matched_total` counts the titles and `matched_role` is None.
+    matched_title_words: list[str] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------

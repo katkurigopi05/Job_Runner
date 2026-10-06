@@ -69,7 +69,7 @@ import asyncio
 import re
 import threading
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import NamedTuple
@@ -99,6 +99,7 @@ from packages.matching.roles import (
     named_in,
     related_to,
 )
+from packages.matching.roles import normalize as role_words_of
 
 log = structlog.get_logger(__name__)
 
@@ -327,6 +328,12 @@ class Retrieval:
     kinds: tuple[tuple[str, int], ...] = ()
     #: Neighbouring roles' table keys, for links to the feed. Never mixed in.
     related: tuple[str, ...] = ()
+    #: The question's words that were looked for in titles, as the owner typed
+    #: them, when nothing in it was rare enough to look for in descriptions.
+    title_words: tuple[str, ...] = ()
+    #: How many open postings in the search area have them in the title, or
+    #: None when titles were not searched.
+    title_total: int | None = None
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -655,14 +662,111 @@ def _kind_of(title: str) -> str | None:
     return kind_of(title)
 
 
-def _kinds(pool: list[_Hit], typed: set[str]) -> list[tuple[str, int]]:
-    """A role's kinds of title with their counts: what was typed, then by count."""
+#: The heading for titles that are one of a kind. A list of 157 postings with
+#: 98 distinct titles is not a dictionary if every title is its own entry.
+OTHER_TITLES = "other titles"
+
+
+def _stem(word: str) -> str:
+    """A word with its ending off, so a question and a title can agree.
+
+    `tokenize` keeps word forms apart, and "data engineering roles" is asking
+    for data engineers. Applied to both sides, so it only has to be
+    consistent, not correct: "sales" and "sale" are one word here either way.
+    """
+    for suffix in ("ing", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
+@lru_cache(maxsize=50_000)
+def _title_stems(title: str) -> frozenset[str]:
+    return frozenset(_stem(word) for word in tokenize(title))
+
+
+async def _title_word_hits(
+    session: AsyncSession, stems: set[str], companies: list[uuid.UUID]
+) -> list[_Hit]:
+    """Open postings whose title has every one of `stems`, newest first.
+
+    For a question with no word rare enough to search descriptions for. "AI"
+    is in 81% of the owner's descriptions and 4.5% of their titles, `data` 76%
+    and 3.8%, `security` 36% and 3.0%: common where a posting talks, telling
+    where it names itself. Reading 10,589 titles this way takes 0.05 s.
+    """
+    query = select(Posting.id, Posting.title).where(Posting.closed_at.is_(None))
+    if companies:
+        query = query.where(Posting.company_id.in_(companies))
+    query = query.order_by(Posting.first_seen_at.desc(), Posting.id)
+    ids = [
+        posting_id
+        for posting_id, title in (await session.execute(query)).all()
+        if stems <= _title_stems(title or "")
+    ]
+    found = await _hits_for(session, ids)
+    return [found[posting_id] for posting_id in ids if posting_id in found]
+
+
+def _family(title: str) -> str:
+    """A title's own words as a heading: level and qualifiers off, no stray marks.
+
+    `roles.normalize` leaves the full stop of "Sr." behind, which made a kind
+    called ". product marketing manager" beside "product marketing manager".
+    """
+    words = [word.strip(".") for word in role_words_of(title).split()]
+    return alias_label(" ".join(word for word in words if any(c.isalnum() for c in word)))
+
+
+def _kind_labels(pool: list[_Hit]) -> dict[uuid.UUID, str]:
+    """Each posting's heading in the dictionary of kinds.
+
+    A title the role table recognises is the kind it names ("AI engineer",
+    "software engineer"). One it does not is its own words with the level and
+    the qualifiers off ("product manager"), when at least two postings share
+    them, and `OTHER_TITLES` when it is the only one.
+    """
+    known = {hit.posting_id: _kind_of(hit.title or "") for hit in pool}
+    family = {hit.posting_id: known[hit.posting_id] or _family(hit.title or "") for hit in pool}
+    shared: dict[str, int] = {}
+    for label in family.values():
+        shared[label] = shared.get(label, 0) + 1
+    return {
+        posting_id: (label if known[posting_id] or (label and shared[label] > 1) else OTHER_TITLES)
+        for posting_id, label in family.items()
+    }
+
+
+def _kinds(
+    labels: dict[uuid.UUID, str], typed: Callable[[str], int], known: set[str]
+) -> list[tuple[str, int]]:
+    """The kinds with their counts, in the order the owner reads them.
+
+    `typed` says how much of what was asked a heading holds, and more comes
+    first: for "product manager", "product manager" before "engineering
+    manager". Then a kind the role table knows before a family of titles, so
+    "AI engineer" is ahead of "applied AI architect". Then by size. One-offs
+    last.
+    """
     counts: dict[str, int] = {}
-    for hit in pool:
-        kind = _kind_of(hit.title or "")
-        if kind is not None:
-            counts[kind] = counts.get(kind, 0) + 1
-    return sorted(counts.items(), key=lambda item: (item[0] not in typed, -item[1], item[0]))
+    for label in labels.values():
+        counts[label] = counts.get(label, 0) + 1
+    return sorted(
+        counts.items(),
+        key=lambda item: (
+            item[0] == OTHER_TITLES,
+            -typed(item[0]),
+            item[0] not in known,
+            -item[1],
+            item[0],
+        ),
+    )
+
+
+def _as_typed(question: str, word: str) -> str:
+    """A word in the owner's own capitals: "ai" was typed "AI"."""
+    found = re.search(rf"(?<![A-Za-z0-9]){re.escape(word)}(?![A-Za-z0-9])", question, re.I)
+    return found.group(0) if found else word
 
 
 async def _role_hits(
@@ -1028,11 +1132,42 @@ async def retrieve(
     left_out: set[uuid.UUID] = set()
     role_pool: list[_Hit] | None = None
     kinds: list[tuple[str, int]] = []
+    label_of: dict[uuid.UUID, str] = {}
+    title_words: tuple[str, ...] = ()
     if asked_roles:
         of_the_role = await _role_hits(session, set(asked_roles), companies)
         role_pool = [hit for hit in of_the_role if not (area and _outside_area(hit))]
         left_out |= {hit.posting_id for hit in of_the_role} - {hit.posting_id for hit in role_pool}
-        kinds = _kinds(role_pool, {alias_label(alias) for alias in typed_aliases})
+        label_of = _kind_labels(role_pool)
+        typed_kinds = {alias_label(alias) for alias in typed_aliases}
+        kinds = _kinds(label_of, lambda label: int(label in typed_kinds), set(label_of.values()))
+    elif not beyond_the_name:
+        # Nothing in the question is rare enough to look for in descriptions.
+        # "any roles with AI" was answered from vectors, which found employers
+        # with AI in their name. Its words are looked for in titles instead,
+        # and only if no title has them does the old search stand.
+        asked_words = [
+            word
+            for word in dict.fromkeys(tokenize(question))
+            if word not in _FRAMING_WORDS and word not in company_words
+        ]
+        stems = {_stem(word) for word in asked_words}
+        of_the_title = await _title_word_hits(session, stems, companies) if stems else []
+        if of_the_title:
+            role_pool = [hit for hit in of_the_title if not (area and _outside_area(hit))]
+            left_out |= {hit.posting_id for hit in of_the_title} - {
+                hit.posting_id for hit in role_pool
+            }
+            title_words = tuple(_as_typed(question, word) for word in asked_words)
+            label_of = _kind_labels(role_pool)
+            kinds = _kinds(
+                label_of,
+                lambda label: len(stems & {_stem(word) for word in tokenize(label)}),
+                {kind for hit in role_pool if (kind := _kind_of(hit.title or "")) is not None},
+            )
+            # With a company named, `terms` fell back to its name. The titles
+            # are the search now, so that must not become a keyword scan.
+            terms = []
     # The kind that was typed goes first, then the others by size: asked for
     # "AI engineer", the eighteen titled that are not behind forty-one titled
     # "machine learning engineer" because those happen to be newer.
@@ -1042,12 +1177,15 @@ async def retrieve(
         if not kind_rank:
             return hits
         return sorted(
-            hits, key=lambda hit: kind_rank.get(_kind_of(hit.title or "") or "", len(kind_rank))
+            hits,
+            key=lambda hit: kind_rank.get(label_of.get(hit.posting_id, ""), len(kind_rank)),
         )
 
     # "jobs at Astranis" says nothing to order by: the re-ranker would shuffle
     # one company's postings by their likeness to its name, and take 1.5 s.
-    only_names_a_company = bool(companies) and not beyond_the_name and not asked_roles
+    only_names_a_company = (
+        bool(companies) and not beyond_the_name and not asked_roles and not title_words
+    )
     # Loading the model blocks for seconds the first time, so off the loop.
     reranker = None if only_names_a_company else await asyncio.to_thread(get_reranker)
     reranked_by: str | None = None
@@ -1198,7 +1336,7 @@ async def retrieve(
                 )
             ),
             application_status=statuses.get(hit.posting_id),
-            kind=_kind_of(hit.title or "") if kind_rank else None,
+            kind=label_of.get(hit.posting_id),
         )
         for index, hit in enumerate(chosen, start=1)
     )
@@ -1214,7 +1352,9 @@ async def retrieve(
         reranked_by=reranked_by,
         roles=tuple(display_name(key) for key in sorted(asked_roles)),
         role_keys=tuple(sorted(asked_roles)),
-        role_total=len(role_pool) if role_pool is not None else None,
+        role_total=len(role_pool) if role_pool is not None and asked_roles else None,
+        title_words=title_words,
+        title_total=len(role_pool) if role_pool is not None and title_words else None,
         more=tuple(
             Listed(
                 posting_id=hit.posting_id,
@@ -1222,7 +1362,7 @@ async def retrieve(
                 company=hit.company,
                 location=hit.location,
                 url=hit.url,
-                kind=_kind_of(hit.title or "") if kind_rank else None,
+                kind=label_of.get(hit.posting_id),
             )
             for hit in more_hits
         ),

@@ -39,6 +39,9 @@ interface RelatedRole {
 /** How many further matches one click reveals. */
 const MORE_PAGE = 10;
 
+/** How many kinds the summary names before it says "and N more". */
+const KINDS_NAMED = 8;
+
 interface Turn {
   role: "you" | "assistant";
   text: string;
@@ -60,6 +63,8 @@ interface Turn {
   kinds?: Kind[];
   /** Neighbouring roles to look at next. Their postings are not in this answer. */
   relatedRoles?: RelatedRole[];
+  /** Words looked for in titles, as typed ("AI"), when titles were what was searched. */
+  titleWords?: string[];
   /** Open postings the search covered, and the ones it could not reach. */
   searched?: number;
   unsearchable?: number;
@@ -126,6 +131,16 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
   if (more.length === 0 && kinds.length === 0) return null;
 
   const total = turn.matchedTotal ?? null;
+  const titleWords = turn.titleWords ?? [];
+  // What was counted: a role from the table, or the titles holding a word.
+  const counted =
+    total === null
+      ? null
+      : turn.matchedRole
+        ? `${total} open ${turn.matchedRole} posting${total === 1 ? "" : "s"} in your search area`
+        : titleWords.length > 0
+          ? `${total} open posting${total === 1 ? "" : "s"} with ${titleWords.join(" and ")} in the title, in your search area`
+          : null;
   const remaining = more.length - Math.min(visible, more.length);
   // The reply carries a bounded list. Past it, the feed has the whole one.
   const beyondTheList = total !== null ? total - shownAbove - more.length : 0;
@@ -138,18 +153,19 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
 
   return (
     <div className="space-y-1.5">
-      {total !== null && turn.matchedRole ? (
+      {counted ? (
         <p className="text-ink-soft">
-          {total} open {turn.matchedRole} posting{total === 1 ? "" : "s"} in your search area
+          {counted}
           {kinds.length > 1 ? (
             <>
               :{" "}
-              {kinds.map((kind, index) => (
+              {kinds.slice(0, KINDS_NAMED).map((kind, index) => (
                 <span key={kind.label}>
                   {index > 0 ? " · " : ""}
                   {kind.label} <span className="font-mono tabular-nums">{kind.count}</span>
                 </span>
               ))}
+              {kinds.length > KINDS_NAMED ? ` · and ${kinds.length - KINDS_NAMED} more kinds` : ""}
             </>
           ) : (
             "."
@@ -401,6 +417,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           matchedRoleFilter: body.matched_role_filter,
           kinds: body.matched_kinds,
           relatedRoles: body.related_roles,
+          titleWords: body.matched_title_words,
           searched: body.postings_searched,
           unsearchable: body.postings_unsearchable,
         },
