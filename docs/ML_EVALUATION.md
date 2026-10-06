@@ -433,6 +433,55 @@ Measured on the live database (10,589 open postings) with the real model: a
 question went from 0.4-1.0 s to 1.7-2.3 s, and free memory from 58% to 42%
 with both models loaded.
 
+### The re-ranker, measured live: it did not help
+
+The table above is a simulation, and the last section warned that the shipped
+path differs from it. On 2026-10-05 the same 56 postings and 112 questions
+were run through the assistant's real `retrieve()`, over all 10,589 open
+postings (141,603 chunks, 13.6M tokens), once with the re-ranker patched out
+and once with Qwen3-Embedding-0.6B on the top 30. All 56 postings are inside
+the search area. The score is where the posting a question was written from
+lands among the five shown to the model and the list under the answer.
+
+| | natural, off | natural, on | paraphrased, off | paraphrased, on |
+|---|---|---|---|---|
+| first | 50% | 48% | 4% | 2% |
+| in the five shown | 70% | 64% | 7% | 7% |
+| in the first 15 | 82% | 79% | 12% | 14% |
+| anywhere in the list | 86% | 86% | 16% | 16% |
+| MRR | 0.602 | 0.568 | 0.054 | 0.045 |
+| median time | 0.52 s | 2.13 s | 0.81 s | 2.36 s |
+
+Per question, the re-ranker moved the right posting up on 4 natural questions
+and down on 11, and up on 4 paraphrased ones and down on 5. The rest did not
+move.
+
+Why the simulation did not carry over:
+
+- **It re-ranked a different first stage.** The simulation's top 30 came from
+  bge-small vectors alone. The shipped top 30 is chosen by keywords and
+  ordered by keyword score, with a title match counted twice, then fused with
+  vector rank. That order is already good when the question names the job,
+  and the re-ranker throws it away: "What Primary Care Nurse Practitioner jobs
+  are available for adult patient care?" went from rank 2 to 21.
+- **A re-orderer cannot add what was not found.** For 47 of the 56 paraphrased
+  questions the posting never entered the list, because the question shares no
+  distinguishing word with it. "Anywhere in the list" is identical with the
+  re-ranker on and off, as it has to be.
+
+What this establishes and does not: 70% against 64% is three questions of 56,
+so the re-ranker being *worse* is not shown. That it is *no better*, for 1.6 s
+a question and a second model in memory, is. It is off on the owner's machine.
+8 of the 56 natural questions were answered by the role path (CLAUDE.md §22),
+which finds postings by title and was not part of the simulation at all.
+
+The paraphrased row is the real gap, and it is the one CLAUDE.md §20 already
+measured from the other side: letting vectors add candidates reaches
+paraphrases and brings near-topic noise with it. That is a change to which
+postings are found, not to their order.
+
+The script is `storage/embed_rank_bench/er_live.py`; it makes no LLM call.
+
 ### What this does not establish
 
 - 56 postings, and one free model wrote every question. Enough to order four
@@ -441,6 +490,7 @@ with both models loaded.
   percentage here is higher than the assistant's would be.
 - The re-ranking rows are simulated from stored vectors. The shipped path also
   fuses keyword rank and applies the search area before the re-ranker runs.
+  This is the caveat that mattered: see *The re-ranker, measured live*, above.
 - A second check, each model's top five on 8 open questions graded by an LLM,
   has not run: the OpenRouter allowance was spent.
 

@@ -3623,6 +3623,29 @@ results took the right posting into the top five for 77% of test questions
 against 64%, nearly what re-embedding the whole corpus with it gets (80%),
 with nothing to backfill. `docs/ML_EVALUATION.md` has the tables.
 
+**Those numbers were a simulation, and the live search did not repeat them.**
+It is switched off on the owner's machine as of 2026-10-05. The 77% came from
+re-scoring the top 30 of a pure bge-small vector search over a 1,000-posting
+pool. The shipped search is not that: keywords choose the candidates and
+order them, with title matches counted twice (§14), and the re-ranker replaces
+that order. Run through the real `retrieve()` over all 10,589 open postings,
+same 56 postings and 112 questions:
+
+| in the five shown | re-ranker off | re-ranker on |
+|---|---|---|
+| question names the job | 70% | 64% |
+| question paraphrases it | 7% | 7% |
+| median time per question | 0.5 s / 0.8 s | 2.1 s / 2.4 s |
+
+On the questions that name the job it moved the right posting down on 11 and
+up on 4, some of them a long way (rank 2 to 21). On the paraphrased ones the
+right posting was never in the list for 47 of 56, and a stage that only
+re-orders cannot fix that. So it cost 1.6 s a question and bought nothing
+measurable. Three questions separate 70% from 64%, so "worse" is not
+established; "no better" is. The code stays, off by default as it always was.
+What the paraphrased row needs is candidates the keywords did not find, which
+is a change to §14's rule and not a model.
+
 Five properties a later change could quietly break:
 
 - **It only re-orders.** It is handed what the search found and returns the
@@ -3630,7 +3653,8 @@ Five properties a later change could quietly break:
   relevant. `test_it_never_adds_a_posting_the_search_did_not_find` holds it.
 - **Off unless a model is named.** `CHAT_RERANK_MODEL` ships empty, so a fresh
   checkout neither downloads 1.2 GB nor holds 0.7 GB in the API process. The
-  owner's `.env` names `Qwen/Qwen3-Embedding-0.6B`. `conftest._no_reranker`
+  owner's `.env` named `Qwen/Qwen3-Embedding-0.6B` until the live measurement
+  above, and is empty again. `conftest._no_reranker`
   blanks it for the suite, for the reason `_lexical_embedder` exists: a suite
   whose verdict depends on the developer's `.env` is not testing the code.
 - **A failure leaves the search's order.** No model, a load error, an encode
@@ -3650,7 +3674,10 @@ free memory went from 58% to 42% with both loaded. The pool is
 
 **The feed is untouched.** `Match.score` is still the cosine `rubric.py` and
 §19 defend. §19's "no cross-encoder reranker" was about the feed and about an
-*unmeasured* stage; this one is the assistant's, and measured first.
+*unmeasured* stage; this one is the assistant's, and measured first. Measured
+in simulation, that is, which is the lesson of this section: §19 asked for a
+measurement before a ranking stage ships, and a measurement of something other
+than the shipped path did not count as one.
 
 ---
 
