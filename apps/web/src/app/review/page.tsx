@@ -72,11 +72,12 @@ export default async function ReviewPage() {
         </p>
       ) : (
         <div className="space-y-8">
-          {waiting.map((application) => {
+          {waiting.map((application, index) => {
             const resumeId = attachedResumeId(application, profiles);
             return (
               <ReviewCard
                 key={application.id}
+                upNext={index === 0}
                 application={application}
                 resume={resumeId ? (parsed.get(resumeId) ?? null) : null}
                 tailored={Boolean(application.tailored_resume_id)}

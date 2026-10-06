@@ -101,6 +101,32 @@ tree buys little when there are a dozen of them. Recording the deviation matters
 more than the choice: a stack table that describes something the repo does not
 contain is worse than either option.
 
+**Two effect libraries, since 2026-10-05.** `border-beam` and `thinking-orbs`
+(MIT, no dependencies of their own, from `Jakubantalik/Libraries.dev`) are the
+dashboard's first runtime dependencies beyond Next and React. The owner asked
+for them and approved the two placements, and each has exactly one: the orb in
+the assistant while a question is out, the beam round the heading of the card
+at the head of `/review`. `globals.css` rule 2 is one meaning per accent, and a
+travelling light is a louder accent than a colour; `tests/test_dashboard_effects.py`
+holds the two placements and the exact pins. `/chat` grew 109 to 120 kB of
+first-load JavaScript and `/review` 120 to 143 kB.
+
+Four things about `border-beam` that only its built file and a screenshot
+showed, each handled in `review-card.tsx`:
+
+- Its `theme="auto"` reads the system preference and never `[data-theme]`, so
+  with light picked in the toggle on a dark system it drew for dark.
+  `lib/display.ts` resolves the theme by `globals.css`'s own rule and passes it.
+- It reads a detected corner radius of zero as "not found" and falls back to
+  16px, which rounded every card in the queue. The radius is passed.
+- It sweeps by angle. Round the whole card, which runs to several screens, the
+  light spent its cycle on the long sides and was out of view; it goes round
+  the heading.
+- Its travelling kind leaves reduced motion to the caller, so the beam is
+  switched off there. Every card is wrapped and `active` chooses, because
+  wrapping only the lit card would remount the next one as it moved up and drop
+  the answers typed into it.
+
 Postgres runs on **5433** on the owner's machine, not the 5432 in the row above:
 another project holds 5432. The remap lives in an uncommitted
 `docker-compose.override.yml`, and `.env` points at 5433 to match.

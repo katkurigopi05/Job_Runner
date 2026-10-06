@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { ThinkingOrb } from "thinking-orbs";
 
 /* Styling cues borrowed from the photo-editor: an emoji-prefixed toolbar row,
    a grey working canvas the content sits on, and a left-aligned status line
@@ -566,7 +567,14 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
             </div>
           ))
         )}
-        {busy ? <p className="px-1 font-mono text-xs text-ink-faint">…</p> : null}
+        {busy ? (
+          // Hidden from assistive tech: the status line below already says
+          // what is happening, and says where the question went.
+          <p className="flex items-center gap-2 px-1 text-xs text-ink-faint">
+            <ThinkingOrb state="working" size={20} aria-hidden="true" />
+            <span className="font-mono">assistant</span>
+          </p>
+        ) : null}
         <div ref={endRef} />
       </div>
 

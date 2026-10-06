@@ -10,9 +10,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "border-beam": "1.4.1",
     "next": "15.5.4",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "thinking-orbs": "0.3.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "3.3.6",
