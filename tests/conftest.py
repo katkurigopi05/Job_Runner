@@ -417,6 +417,33 @@ def _lexical_embedder():
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _no_reranker():
+    """Tests search without the re-ranker `.env` may name.
+
+    The same hazard as `_lexical_embedder`. The owner's `.env` names
+    `CHAT_RERANK_MODEL`, so without this every retrieval test on their machine
+    would load a 0.7 GB model and assert an order CI, which has no `.env`,
+    never sees. Tests of the re-ranker install a fake one.
+    """
+    import os
+
+    from packages.core.config import get_settings
+    from packages.matching.rerank import get_reranker
+
+    previous = os.environ.get("CHAT_RERANK_MODEL")
+    os.environ["CHAT_RERANK_MODEL"] = ""
+    get_settings.cache_clear()
+    get_reranker.cache_clear()
+    yield
+    get_reranker.cache_clear()
+    if previous is None:
+        os.environ.pop("CHAT_RERANK_MODEL", None)
+    else:
+        os.environ["CHAT_RERANK_MODEL"] = previous
+    get_settings.cache_clear()
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _postings_of_any_age():
     """Store postings of any age unless a test asks for a limit.
 

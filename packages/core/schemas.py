@@ -668,6 +668,9 @@ class ChatReply(BaseModel):
     #: found" means less when the second number is large.
     postings_searched: int = 0
     postings_unsearchable: int = 0
+    #: The local model that re-ordered `sources`, or None when the search's
+    #: own order stands (`matching/rerank.py`).
+    postings_reranked_by: str | None = None
 
 
 # --------------------------------------------------------------------------

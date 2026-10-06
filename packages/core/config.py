@@ -309,6 +309,17 @@ class Settings(BaseSettings):
     #: still wins.
     embedding_backend: str = "lexical"
 
+    #: A second embedding model that re-orders the assistant's top search
+    #: results (`matching/rerank.py`). Empty, as shipped, means none: a fresh
+    #: checkout neither downloads a model nor holds one in the API process.
+    #: The owner's machine names `Qwen/Qwen3-Embedding-0.6B`, which took the
+    #: right posting into the top five for 77% of questions against 64%, at
+    #: about 1.6 s a question and 0.7 GB.
+    chat_rerank_model: str = ""
+    #: How many of the search's top results the re-ranker re-scores. The cost
+    #: is per candidate, and 100 measured no better than 30.
+    chat_rerank_pool: int = 30
+
     storage_root: str = "./storage"
     #: Where `make backup` writes. Outside storage_root so a backup never
     #: contains itself, and gitignored like it.

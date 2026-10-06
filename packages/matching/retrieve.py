@@ -89,6 +89,7 @@ from packages.matching.embed import (
     tokenize,
 )
 from packages.matching.locality import Locality, area_exclusion, locality_of
+from packages.matching.rerank import Reranker, get_reranker, reorder
 
 log = structlog.get_logger(__name__)
 
@@ -272,6 +273,9 @@ class Retrieval:
     #: the area. "None at Faculty" and "none at Faculty where you search" are
     #: different answers.
     outside_area: int = 0
+    #: The model that re-ordered the top results, or None when none did: no
+    #: model is configured, it failed, or there was nothing to re-order.
+    reranked_by: str | None = None
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -768,6 +772,47 @@ def _chunk_excerpt(description: str, start: int, length: int) -> str:
     return ("…" if start > 0 else "") + text + ("…" if start + length < len(body) else "")
 
 
+def _rerank_pool() -> int:
+    return max(0, get_settings().chat_rerank_pool)
+
+
+def _rerank_text(hit: _Hit, span: tuple[int, int] | None) -> str:
+    """What the re-ranker reads for a posting: its best chunk, or its opening.
+
+    The chunk the first model ranked the posting by, because that is the
+    arrangement that was measured. A posting with no chunks is read from the
+    top, one chunk's worth.
+    """
+    from packages.matching.chunks import CHUNK_SIZE, normalize
+
+    body = normalize(hit.description or "")
+    start, length = span if span is not None else (0, CHUNK_SIZE)
+    return body[start : start + length] or (hit.title or "")
+
+
+async def _reranked(
+    reranker: Reranker | None,
+    question: str,
+    hits: list[_Hit],
+    spans: dict[uuid.UUID, tuple[int, int]],
+) -> tuple[list[_Hit], str | None]:
+    """`hits` with its top `_rerank_pool()` re-ordered, and the model that did it.
+
+    Only ever a re-ordering of what it was given (`rerank.py`). Any failure
+    leaves the search's own order: the assistant has to answer either way.
+    """
+    head = hits[: _rerank_pool()]
+    if reranker is None or len(head) < 2:
+        return hits, None
+    passages = [_rerank_text(hit, spans.get(hit.posting_id)) for hit in head]
+    try:
+        scores = await asyncio.to_thread(reranker.scores, question, passages)
+        return reorder(head, scores) + hits[len(head) :], reranker.name
+    except Exception as exc:  # noqa: BLE001 - search must not depend on the second model
+        log.warning("rerank_failed", model=reranker.name, error=type(exc).__name__)
+        return hits, None
+
+
 def _fuse(keyword: list[uuid.UUID], by_space: list[list[uuid.UUID]]) -> dict[uuid.UUID, float]:
     """Reciprocal Rank Fusion of the keyword order with each posting's vector order.
 
@@ -860,10 +905,19 @@ async def retrieve(
         # every one of its postings equally, so the ones that say "remote" get
         # padded out with ones that do not. Kept only when it is all the
         # question asks, so "jobs at Stripe" still reads every Stripe posting.
-        terms = _search_terms(question, frequencies, exclude=company_words) or terms
+        beyond_the_name = _search_terms(question, frequencies, exclude=company_words)
+        terms = beyond_the_name or terms
+    else:
+        beyond_the_name = terms
 
     area = _search_area(question)
     outside = 0
+    # "jobs at Astranis" says nothing to order by: the re-ranker would shuffle
+    # one company's postings by their likeness to its name, and take 1.5 s.
+    only_names_a_company = bool(companies) and not beyond_the_name
+    # Loading the model blocks for seconds the first time, so off the loop.
+    reranker = None if only_names_a_company else await asyncio.to_thread(get_reranker)
+    reranked_by: str | None = None
     titled = await _titles_in_question(session, question, companies)
     if terms or titled:
         pool = _AREA_POOL if area else KEYWORD_POOL
@@ -888,21 +942,36 @@ async def retrieve(
         ]
         # Last, so that in `_fuse` a posting with chunks is ranked by its best
         # chunk rather than by its one truncated vector.
+        among_spans: dict[uuid.UUID, tuple[int, int]] = {}
         for model, vector in chunk_vectors.items():
             if among:
                 best = await _best_chunks(session, model, vector, among=among)
                 by_space.append([posting_id for posting_id, _, _ in best])
+                among_spans.update({pid: (start, length) for pid, start, length in best})
         fused = _fuse(among, by_space)
         # A posting asked for by its title goes first, longest title first.
         # Then the fused order; the sort is stable, so a tie keeps the keyword
         # order.
         by_title = {hit.posting_id: len(hit.title or "") for hit in titled}
-        chosen = sorted(
+        ordered = sorted(
             keyword, key=lambda hit: (-by_title.get(hit.posting_id, 0), -fused[hit.posting_id])
-        )[:limit]
+        )
+        # The re-ranker orders the rest. A posting named by its title was
+        # asked for outright, and no model's opinion of its text outranks that.
+        named = [hit for hit in ordered if hit.posting_id in by_title]
+        rest, reranked_by = await _reranked(
+            reranker,
+            question,
+            [hit for hit in ordered if hit.posting_id not in by_title],
+            among_spans,
+        )
+        chosen = (named + rest)[:limit]
         searched, unsearchable = open_total, 0
     else:
         width = limit * _AREA_WIDEN if area else limit
+        if reranker is not None:
+            # Enough candidates for the re-ranker to have something to order.
+            width = max(width, _rerank_pool())
         per_space: list[list[_Hit]] = []
         for model, vector in chunk_vectors.items():
             best = (await _best_chunks(session, model, vector, companies=companies))[:width]
@@ -924,14 +993,22 @@ async def retrieve(
                 if rank < len(hits) and hits[rank].posting_id not in taken:
                     taken.add(hits[rank].posting_id)
                     ranked.append(hits[rank])
-        chosen = []
-        for hit in ranked:
-            if len(chosen) == limit:
-                break
-            if area and _outside_area(hit):
-                outside += 1
-                continue
-            chosen.append(hit)
+        if reranker is None:
+            chosen = []
+            for hit in ranked:
+                if len(chosen) == limit:
+                    break
+                if area and _outside_area(hit):
+                    outside += 1
+                    continue
+                chosen.append(hit)
+        else:
+            # The area first, so the re-ranker never spends a place on a
+            # posting that would be left out anyway.
+            eligible = [hit for hit in ranked if not (area and _outside_area(hit))]
+            outside += len(ranked) - len(eligible)
+            eligible, reranked_by = await _reranked(reranker, question, eligible, chunk_spans)
+            chosen = eligible[:limit]
         searched = await _reachable(session, list(chunk_vectors), list(vectors))
         unsearchable = max(0, open_total - searched)
 
@@ -964,6 +1041,7 @@ async def retrieve(
         area=area,
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,
+        reranked_by=reranked_by,
     )
 
 

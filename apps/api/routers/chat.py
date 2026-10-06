@@ -671,4 +671,5 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
         ],
         postings_searched=found.searched,
         postings_unsearchable=found.unsearchable,
+        postings_reranked_by=found.reranked_by,
     )
