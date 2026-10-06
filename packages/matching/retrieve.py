@@ -173,8 +173,7 @@ _POSTING_WORDS = frozenset(_POSTING_WORDS_TEXT.split())
 #: its subject, and the same trap one word along: "mention" is in 1 open
 #: posting and "RAG" in 134, so "Which roles mention RAG?" ranked a posting
 #: saying "be sure to mention that bonfires are your jam" first. Each of these
-#: is rarer in postings than a typical subject. "use", "require" and "include"
-#: are not here because they are common enough to cost nothing.
+#: is rarer in postings than a typical subject.
 #:
 #: The last line is the owner asking about themselves, measured the same way on
 #: 2026-10-04: "missing" is in 98 open postings and Kafka in 124, so "What am I
@@ -188,6 +187,20 @@ _POSTING_WORDS = frozenset(_POSTING_WORDS_TEXT.split())
 #: engineer" on 2026-10-05. "AI" is in 81% of postings and "engineer" in 39%,
 #: so "types" was the one word left to search on, and it found a director of
 #: programme management.
+#:
+#: The line after it is what joins a role to its subject: "roles *based on*
+#: AI", "*focused on* security", "that *require* Kafka". This comment used to
+#: say "use", "require" and "include" were left out as common enough to cost
+#: nothing. That was true of "use" (59% of postings) only while descriptions
+#: were all that was searched. The owner asked "any jobs role based on ai" on
+#: 2026-10-06 and got 1 posting where "any roles with AI" got 222: `tokenize`
+#: drops "on" and keeps "based", and the title search (below) wants every word
+#: asked for in the title. Each of these is in under 0.2% of titles. And
+#: "require" (23%), "focused" (25%), "relevant" (27%) and "specific" (28%) sit
+#: under the 30% cut-off, so they were searched for in descriptions: "roles
+#: focused on security" lost "security" (36%) and found postings that say
+#: "focused". Left out on purpose: "field" (1.2% of titles, Field Engineer),
+#: "area" (Area Manager) and "level", which says something about the job.
 _FRAMING_WORDS_TEXT = """
 which what who where when how any anything there some open available
 current currently apply applied application applications
@@ -201,6 +214,9 @@ qualify resume resumes résumé résumés
 am was were been do does did done should could would can shall might must had
 im ive ve whats whom whose ought
 type types kind kinds
+based base use uses used focus focused focuses focusing require requires
+required requiring include includes around within such relevant specific
+oriented centric driven
 """
 _FRAMING_WORDS = _POSTING_WORDS | frozenset(_FRAMING_WORDS_TEXT.split())
 
