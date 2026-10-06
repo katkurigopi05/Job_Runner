@@ -2,7 +2,9 @@
 
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
+import { BorderBeam } from "border-beam";
 import type { Application, Readiness, ResumeParsed, Screening } from "@/lib/api";
+import { usePrefersReducedMotion, useResolvedTheme } from "@/lib/display";
 import { ResumePreview } from "@/components/resume-preview";
 import { ResumeEditor } from "@/components/resume-editor";
 import { ResumeDiffView } from "@/components/resume-diff";
@@ -52,15 +54,23 @@ function Submitting({
   );
 }
 
+/** Three times the library's cycle: it circles a heading that is being read. */
+const BEAM_SECONDS = 6;
+
 export function ReviewCard({
   application,
   resume,
   tailored,
+  upNext = false,
 }: {
   application: Application;
   resume: ResumeParsed | null;
   tailored: boolean;
+  /** The oldest card in the queue: the next thing to decide, and the only one lit. */
+  upNext?: boolean;
 }) {
+  const theme = useResolvedTheme();
+  const reducedMotion = usePrefersReducedMotion();
   const review = application.review ?? {};
   const unanswered = review.unanswered ?? [];
   const required = unanswered.filter((q) => q.required !== false);
@@ -88,23 +98,48 @@ export function ReviewCard({
 
   return (
     <article className="border border-rule bg-paper-raised">
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-rule px-6 py-5">
-        <div className="min-w-0">
-          <h2 className="font-display text-2xl leading-tight">{host}</h2>
-          <a
-            href={application.url}
-            target="jobrunner-form"
-            rel="noreferrer"
-            className="mt-1 block truncate font-mono text-xs text-ink-faint underline-offset-4 hover:text-ink-soft hover:underline"
-          >
-            {application.url}
-          </a>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          <StatusPill status={application.status} reason={application.failure_reason} />
-          <FillRate rate={review.fill_rate} />
-        </div>
-      </header>
+      {/* A light travelling round the heading of the card that is next.
+          Amber means "this needs you" (globals.css, rule 2), hence the warm
+          palette with its hue held still; a light on every card would say
+          nothing about any of them.
+
+          Every card is wrapped and `active` does the choosing, so the tree
+          keeps its shape: wrapping only the lit one would remount the next
+          card when it moves up, and drop the answers typed into it.
+
+          Round the heading and not the card, which runs to several screens:
+          the library sweeps by angle, so on a tall box the light spends its
+          cycle on the long sides, out of view. `theme` is passed because the
+          library's `auto` never reads `[data-theme]`; `borderRadius` because
+          it takes a detected radius of zero for "not found" and rounds the
+          corners to 16px; and it leaves reduced motion to its caller. */}
+      <BorderBeam
+        active={upNext && !reducedMotion}
+        theme={theme}
+        size="md"
+        colorVariant="sunset"
+        staticColors
+        borderRadius={0}
+        duration={BEAM_SECONDS}
+      >
+        <header className="flex flex-wrap items-start justify-between gap-4 border-b border-rule px-6 py-5">
+          <div className="min-w-0">
+            <h2 className="font-display text-2xl leading-tight">{host}</h2>
+            <a
+              href={application.url}
+              target="jobrunner-form"
+              rel="noreferrer"
+              className="mt-1 block truncate font-mono text-xs text-ink-faint underline-offset-4 hover:text-ink-soft hover:underline"
+            >
+              {application.url}
+            </a>
+          </div>
+          <div className="flex flex-col items-end gap-2">
+            <StatusPill status={application.status} reason={application.failure_reason} />
+            <FillRate rate={review.fill_rate} />
+          </div>
+        </header>
+      </BorderBeam>
 
       <ReadinessPanel readiness={review.readiness} />
 
