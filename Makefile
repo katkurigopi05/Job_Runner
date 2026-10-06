@@ -51,8 +51,12 @@ check-migrations:
 
 check: lint typecheck test
 
+# The bounded shutdown is what lets a reload finish. Uvicorn waits for open
+# connections before stopping the old worker, and the dashboard's live status
+# stream never closes, so with a tab open the first saved file left the API
+# accepting nothing. Three seconds covers an ordinary request.
 api:
-	$(PY)/uvicorn apps.api.main:app --reload --host 127.0.0.1 --port 8000
+	$(PY)/uvicorn apps.api.main:app --reload --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 3
 
 worker:
 	$(PY)/python -m apps.worker.run
