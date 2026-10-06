@@ -3843,20 +3843,6 @@ This also reaches roles the table does not hold. "product manager jobs" was a
 keyword search with both words dropped; it is 247 titles now, product manager
 147 and product marketing manager 47.
 
-### `make api` could not survive its own reload
-
-Found while building the above, and it looked like a hang in the code being
-edited. `make api` runs uvicorn with `--reload`; a reload asks the old worker
-to stop, uvicorn waits for open connections to close, and the dashboard holds
-one that never does: the live status stream (§17). With any dashboard tab
-open, the first saved file left the API accepting nothing. Its event loop was
-idle in `kevent`, one connection sat on port 8000, and `/health` timed out.
-
-`--timeout-graceful-shutdown 3` bounds the wait.
-`tests/test_dev_api_reloads.py` holds it. A server started before the change
-keeps the old behaviour until it is restarted.
-
-
 ### Words that join a role to its subject
 
 The owner asked "any jobs role based on ai" on 2026-10-06 and was shown one
@@ -3879,3 +3865,16 @@ Left out on purpose: "field" (1.2% of titles, Field Engineer), "area" (Area
 Manager) and "level". Unchanged: a question with a rare word is still a
 keyword search, so "roles requiring Kafka" returns what "Which open roles use
 Kafka?" does. `tests/test_chat_connecting_words.py` holds all of it.
+
+### `make api` could not survive its own reload
+
+Found while building the above, and it looked like a hang in the code being
+edited. `make api` runs uvicorn with `--reload`; a reload asks the old worker
+to stop, uvicorn waits for open connections to close, and the dashboard holds
+one that never does: the live status stream (§17). With any dashboard tab
+open, the first saved file left the API accepting nothing. Its event loop was
+idle in `kevent`, one connection sat on port 8000, and `/health` timed out.
+
+`--timeout-graceful-shutdown 3` bounds the wait.
+`tests/test_dev_api_reloads.py` holds it. A server started before the change
+keeps the old behaviour until it is restarted.
