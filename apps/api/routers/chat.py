@@ -52,7 +52,7 @@ from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from apps.worker.crawl_job import request_crawl
 from packages.core import heartbeat
-from packages.core.config import get_settings
+from packages.core.config import Settings, get_settings
 from packages.core.enums import ErrorCode
 from packages.core.heartbeat import WorkerState
 from packages.core.models import Application, InboundMessage, Posting, Profile
@@ -657,7 +657,8 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
                 f"OLLAMA_MODEL is set to {model!r}, which Ollama serves from its own "
                 "servers rather than this machine — so this would not be the local "
                 "answer it claims to be. Set OLLAMA_MODEL to a model you have pulled "
-                "(llama3.1 is the default), or pick a cloud provider explicitly.",
+                f"({Settings.model_fields['ollama_model'].default} is the default), "
+                "or pick a cloud provider explicitly.",
             )
         # The assistant answers from context it was handed and is told to say
         # when it does not know. Inventing an application status is the exact

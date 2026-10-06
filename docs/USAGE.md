@@ -170,7 +170,7 @@ ollama serve
 In another terminal, pull the default model once:
 
 ```bash
-ollama pull llama3.1
+ollama pull hf.co/unsloth/Qwen3-8B-GGUF:Q3_K_M
 ```
 
 The dashboard assistant answers locally by default, and `LLM_PROVIDER` never
@@ -819,7 +819,7 @@ Run:
 
 ```bash
 ollama serve
-ollama pull llama3.1
+ollama pull hf.co/unsloth/Qwen3-8B-GGUF:Q3_K_M
 ```
 
 Ollama is optional for core crawling and application work.

@@ -934,6 +934,62 @@ constructed — the inbox is rules-only, deciding 29 of those 30 emails without
 a model at all. The assistant is the one live local-model path, so it is the
 one the choice was made on.
 
+**It is Qwen3 8B at 3 bits since 2026-10-06**
+(`hf.co/unsloth/Qwen3-8B-GGUF:Q3_K_M`, 4.1 GB), and the two paragraphs above
+describe the model it replaced. The owner asked for a better local model and
+it was measured on the assistant itself: twelve questions (the four prompt
+buttons, Kafka, "any jobs role based on ai", security, Zig, a paraphrase, a
+date that is not in the data, "hello", "jobs at Stripe"), each prompt built
+from the owner's data the way `/chat` builds it, each answer checked against
+what the model had been handed. Same request as the provider sends, context
+capped at 4,096, thinking off, one model loaded at a time.
+
+| | right | partly | missed | wrong or invented | all 12 | held | lowest free |
+|---|---|---|---|---|---|---|---|
+| `llama3.1` (Ollama, 4-bit) | 2 | 5 | 0 | 5 | 102 s | 5.26 GB | 32% |
+| Qwen3 8B, Ollama `Q3_K_M` | 9 | 2 | 1 | 0 | 141 s | 4.82 GB | 34% |
+| Qwen3 8B, MLX 3-bit | 7 | 2 | 0 | 3 | 181 s | 4.70 GB | 36% |
+| Qwen3 8B, MLX 4-bit DWQ | 8 | 3 | 1 | 0 | 146 s | 5.69 GB | 31% |
+| Qwen3 8B, MLX 4-bit | 9 | 1 | 1 | 1 | 143 s | 5.69 GB | 30% |
+
+`llama3.1`'s five: "You have 3 profiles that need manual completion" (they are
+applications, and the one awaiting review was left out); nine kinds of
+security role it made up after the real ones; "the interview date is copied
+word for word from your profile"; "We haven't started searching for jobs"; and
+"all four postings are from Stripe" under a list of five.
+
+Four things to keep in mind about that table:
+
+- **One run each, twelve questions, one judge.** A one-answer difference is
+  noise. The gap between 5 wrong and 0 is not.
+- **MLX was tried as the engine and not adopted.** It writes at 17 to 21
+  tokens a second against Ollama's 12, but reads the prompt at about 150 a
+  second, so a 1,300-token prompt waits 8 s for its first word against about
+  5 s. End to end it was no faster, no more accurate, and held the same at the
+  same bits. It would also need an idle unload built, which Ollama does itself.
+- **The 4-bit build of the same model does not fit.** Loading a 5 GB model
+  takes about 1.5 times its size for a few seconds: `llama3.1` took the
+  machine from 71% free to 26%, and `qwen3:8b` straight after it to 20%.
+- **Two things made the result and both are now in the request**
+  (`OllamaProvider`, `tests/test_ollama_local_model.py`). Qwen3 reasons before
+  it answers and every caller passes `max_tokens` as an answer budget, §7's
+  OpenRouter trap again, so `think: false` is sent to a model the daemon lists
+  as thinking. And the context is capped by `OLLAMA_NUM_CTX` (4,096), because
+  what a loaded model holds grows with it. A hosted `:cloud` model is sent
+  neither.
+
+What was *not* measured: tailoring and the cover letter. The local model also
+answers those when `LLM_TASK_TAILOR=ollama` or `LLM_FALLBACK_LOCAL` sends them
+there, and in the local column of **Compare models**. Qwen3 at 3 bits has not
+been run on them, and a prompt longer than the context cap is cut by Ollama
+without an error. `llama3.1` and the 4-bit `qwen3:8b` were deleted from the
+owner's machine the same day, at their request.
+
+Found on the way and not fixed: with no recruiter replies stored the context
+has no replies section at all, so no model can answer "Any replies?" with
+"none". Qwen restated the application counts; `llama3.1` said "no new replies",
+which was true and was a guess.
+
 **§2.2 is refused before the model is reached.** Asked what to put for work
 authorization, sponsorship, employment history, or salary, the route returns a
 refusal and points at the profile. The system prompt says the same thing, but
