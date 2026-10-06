@@ -37,6 +37,7 @@ from packages.matching.locality import rank as locality_rank
 from packages.matching.personalize import SKIP_REASONS, Applied, adjust
 from packages.matching.requirements import EDUCATION_LEVELS, PERIODS
 from packages.matching.search import (
+    ROLE_FILTERS,
     SENIORITY_ORDER,
     SPONSORSHIP_FILTERS,
     SearchFilters,
@@ -85,6 +86,9 @@ async def list_matches(
     # Search filters — what the owner asked to see. Deliberately not read from
     # the profile: narrowing a search must not change what goes on a form.
     keywords: str = "",
+    #: One role from `ROLE_FILTERS`, read from the title alone. A vocabulary
+    #: rather than free text, so a typo is a 400 and not "no preference".
+    role: str | None = None,
     locations: str = "",
     remote: bool | None = None,
     min_seniority: str | None = None,
@@ -134,6 +138,7 @@ async def list_matches(
 
     filters = SearchFilters(
         keywords=tuple(k.strip() for k in keywords.split(",") if k.strip()),
+        role=_one_of(role, ROLE_FILTERS, "role") if role else None,
         locations=tuple(loc.strip() for loc in locations.split(",") if loc.strip()),
         remote=remote,
         min_seniority=min_seniority,

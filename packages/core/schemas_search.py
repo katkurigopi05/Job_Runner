@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 FILTER_KEYS = frozenset(
     {
         "keywords",
+        "role",
         "locations",
         "remote",
         "min_seniority",

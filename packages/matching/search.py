@@ -28,7 +28,11 @@ from packages.matching.locality import (
     location_aliases,
     reads_as_remote,
 )
-from packages.matching.roles import canonical
+from packages.matching.roles import ROLE_ALIASES, canonical
+
+#: What `SearchFilters.role` may ask for: the alias table's own keys, not a
+#: second list, so a role added to `roles.py` is askable the same day.
+ROLE_FILTERS = tuple(ROLE_ALIASES)
 
 #: Seniority ladder, low to high. Matching is by position so "senior or above"
 #: is expressible without enumerating every title an employer might invent.
@@ -64,6 +68,17 @@ class SearchFilters:
 
     #: All must appear somewhere in title, location, or description.
     keywords: tuple[str, ...] = ()
+    #: One of `ROLE_FILTERS`: keep only postings whose **title** names this
+    #: role, under any of its aliases (`matching/roles.py`).
+    #:
+    #: Separate from `keywords` because it asks a different question. A
+    #: keyword matches anywhere, so "software engineer" keeps a Product
+    #: Manager posting that says "work with software engineers"; this reads
+    #: the title alone. A title naming no recognised role is not a match for
+    #: any role (§16). There is no `include_unknown_role` twin: five in six
+    #: titles in the feed name no role in the table, so widening it would
+    #: return nearly everything and the filter would appear to do nothing.
+    role: str | None = None
     #: Any one of these must appear in the location, case-insensitive.
     #:
     #: Matched on a word boundary rather than as a bare substring. "CA" is the
@@ -166,6 +181,8 @@ class SearchFilters:
         parts: list[str] = []
         if self.keywords:
             parts.append("keywords: " + ", ".join(self.keywords))
+        if self.role:
+            parts.append("role: " + _role_label(self.role))
         if self.locations:
             parts.append("location: " + " or ".join(self.locations))
         if self.remote is True:
@@ -288,6 +305,10 @@ def _location_mentions(location: str, wanted: str) -> bool:
     return True
 
 
+def _role_label(role: str) -> str:
+    return role.replace("_", " ")
+
+
 def is_remote(posting: Posting) -> bool:
     """Whether this posting offers remote work. See `locality.reads_as_remote`.
 
@@ -331,6 +352,13 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
             if (asked := canonical(keyword)) is not None and asked == wanted_role:
                 continue
             reasons.append(f"missing keyword {keyword!r}")
+
+    if filters.role:
+        named = canonical(posting.title or "")
+        if named is None:
+            reasons.append("title names no recognised role")
+        elif named != filters.role:
+            reasons.append(f"title names a different role ({_role_label(named)})")
 
     if filters.locations:
         # The raw string, not a lowered copy: `locality_of` reads state codes
