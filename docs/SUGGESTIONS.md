@@ -10,18 +10,20 @@ is for everything else.
 ## Status key
 
 - **open**: agreed as worth doing, not started
+- **in review**: built, with the pull request that carries it
 - **built**: done, with the commit or section that records it
 - **dropped**: tried or re-read and not worth it, with the reason
 
 ---
 
-## To work on, 2026-10-08
+## Worked on 2026-10-07
 
-Added 2026-10-07. Items 1 to 3 come from an "Inference Engineering" cheat
-sheet the owner shared; item 4 came out of evaluating Sentience Governor.
-Suggested order is the order below.
+Added 2026-10-07 and built the same day, each in its own pull request off
+`main`. Items 1 to 3 come from an "Inference Engineering" cheat sheet the
+owner shared; item 4 came out of evaluating Sentience Governor. Each entry
+keeps what was planned, followed by what happened.
 
-### S1. Stream the assistant's answer (open)
+### S1. Stream the assistant's answer (in review, #128)
 
 **What.** The assistant waits for the whole answer before showing any of it.
 `OllamaProvider._request` sends `"stream": False` (`packages/llm/provider.py:220`),
@@ -58,7 +60,15 @@ screen at about 5 s. The model is no faster; the wait is.
 answer is complete, in a real browser through the dashboard proxy; cited
 postings are still marked; `tests/test_chat_api.py` and the chat suites pass.
 
-### S2. Record prompt-read and answer-write time per call (open)
+**What happened.** Built as `POST /chat/stream`; `/chat` is unchanged. In a
+real browser through the proxy: first words at 11.3 s and finished at 19.9 s
+with the model not yet loaded; first byte at 0.5 s and finished at 6.3 s with
+it warm. Only the two Ollama providers stream; a cloud answer still arrives
+whole. During the live check free memory went to 17% once, under the agreed
+20% floor, with the model, the API, the dashboard and a headless browser all
+running; the guard unloaded the model.
+
+### S2. Record prompt-read and answer-write time per call (in review, #129)
 
 **What.** Ollama's reply already carries `prompt_eval_count`,
 `prompt_eval_duration`, `eval_count`, `eval_duration` and `load_duration`.
@@ -83,7 +93,19 @@ only the new part, it cannot be used as the truncation signal on its own.
 **Done when.** A local call's trail entry shows both token counts and both
 durations, a test holds the fields, and a prompt built past the cap is flagged.
 
-### S3. Try an 8-bit KV cache to double the local context (open)
+**What happened.** Kept in `llm-timings.jsonl` beside the audit trail, not in
+it, because the daily quota counts the trail's lines. The check asked for
+above changed the plan. On Ollama 0.40.0:
+
+- the prompt count is the whole prompt even when most of it was reused;
+- a prompt longer than the context is **refused** (HTTP 400), not cut. The
+  provider used to report only "400 Bad Request"; it now quotes the daemon's
+  reason with both numbers;
+- the silent case is a prompt that fits with an answer that does not (3,796
+  read, 600 written, context 4,096, an ordinary reply). That is what
+  `context_full` flags.
+
+### S3. Try an 8-bit KV cache to double the local context (dropped, #130 records it)
 
 **What.** Ollama can store the attention cache at 8 bits instead of 16:
 `OLLAMA_KV_CACHE_TYPE=q8_0` with `OLLAMA_FLASH_ATTENTION=1`, set on the daemon.
@@ -115,7 +137,20 @@ size for a few seconds. Agree the free-memory floor first (30% was used on
 **Done when.** The three-row table exists. Adopt only if q8_0 is no worse on
 wrong answers and memory held at 8,192 is no higher than today's.
 
-### S4. Make Claude Code ask before it approves an application (open)
+**What happened.** Measured on a second daemon so the owner's settings were
+not touched. The first half of the bar held and the second did not.
+
+| cache, context | held | all 12 | writes |
+|---|---|---|---|
+| 16-bit, 4,096 (shipped) | 4.82 GB | 146 s | 11.7 tok/s |
+| 8-bit, 4,096 | 4.54 GB | 134 s | 13.5 tok/s |
+| 8-bit, 8,192 | 4.98 GB | 192 s | 8.7 tok/s |
+
+The 8-bit answers were the 16-bit ones word for word on 7 of 12 and differed
+in wording only on the rest. `OLLAMA_NUM_CTX` stays 4,096. #130 puts the table
+in CLAUDE.md §14 and the how-to in `docs/USAGE.md`. See S6 for what is left.
+
+### S4. Make Claude Code ask before it approves an application (in review, #126)
 
 **What.** A permission rule so an assistant driving the Jobrunner MCP server
 has to stop and ask before these two calls:
@@ -148,6 +183,45 @@ bypass permission modes. If it does not, say so beside the rule.
 
 **Done when.** A session asked to approve a parked application stops for
 confirmation, and `docs/USAGE.md` says the rule exists.
+
+**What happened.** The check asked for above found something stronger than the
+rule. An MCP server can mark a tool with
+`_meta["anthropic/requiresUserInteraction"]`, and Claude Code 2.1.214 and
+later then prompts on every call in every permission mode, past any allow
+rule. Both are in: the mark on the two tools, and the ask rule in a new shared
+`.claude/settings.json` for a build that does not read the mark. An ask rule
+does prompt in auto and bypass modes, by the docs. Not watched live: the
+Job Runner MCP server is switched off in this machine's
+`.claude/settings.local.json`.
+
+---
+
+## Open, from the work above
+
+### S5. Record a streamed answer's timings (open)
+
+#128 adds `OllamaProvider.stream` and #129 records `complete` and
+`complete_json`. They were written apart, so a streamed answer, which is now
+every answer in the dock, is not in `llm-timings.jsonl`. The closing line of
+Ollama's stream carries the same numbers. A few lines in `stream`, once both
+have merged. The daemon's refusal reason (`_ollama_reason`) needs the same
+wiring there.
+
+### S6. Decide on the 8-bit cache for your Ollama (open, the owner's call)
+
+At the shipped context it held 0.28 GB less and gave the same answers. It is a
+setting of the Ollama app, not of the repository, so it was not applied.
+`docs/USAGE.md` in #130 has the two `launchctl setenv` lines. They last until
+the Mac restarts, and they were measured through `ollama serve`, not through
+the app.
+
+### S7. A timing test that fails on a slow CI runner (open)
+
+`tests/test_shared_ratelimit.py::test_four_concurrent_fetchers_are_spaced_by_the_floor`
+failed once on #126, in the gate-5 step, after passing in gate-0 of the same
+run: requests 1.886 s apart against a 2.0 s floor with 5% allowed. #126 does
+not touch the crawler. The job was re-run. The allowance, or the clock the
+test reads, is what to look at.
 
 ---
 
