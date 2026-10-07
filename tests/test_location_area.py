@@ -157,3 +157,48 @@ def test_strict_drops_what_it_cannot_place() -> None:
     assert strict("Remote (North America)") == "location not recognized"
     assert strict("Remote") == "no location given"
     assert strict("San Francisco, CA") is None
+
+
+#: Verbatim from the owner's open postings on 2026-10-06. The location field
+#: names no place, the title does, and all of them were kept: 50 distinct
+#: titles. The first was one of five answers to the owner's own Kafka question.
+PLACE_IN_THE_TITLE = [
+    ("On-Call Maintenance Specialist, Data Science - Contract Role (India)", "Remote"),
+    ("Influencer Marketing Coordinator (Canada)", "Remote"),
+    ("Partner Engineer, Spain", "Distributed"),
+    ("Senior Customer Engineer, Named - Vancouver, BC ", "Hybrid"),
+    ("Principal Partner Engineer, Japan (Based in Tokyo)", "Hybrid"),
+    ("Sales Enablement Specialist - EMEA", "Hybrid"),
+    ("Senior Account Executive, Turkey - Startups", "Hybrid"),
+    ("Director, Strategic Accounts - Toronto", None),
+]
+
+#: And what must not move. A title with no place, an American one, and a
+#: place abroad in the title of a posting whose location says where it is.
+TITLE_DOES_NOT_DECIDE = [
+    ("Software Engineer", "Remote"),
+    ("Account Executive, Georgia", "Remote"),
+    ("Senior Customer Engineer - Seattle", "Hybrid"),
+    ("Account Executive, EMEA accounts", "San Francisco, CA"),
+    ("Solutions Engineer, Japan Market", "Remote - US"),
+]
+
+
+@pytest.mark.parametrize(("title", "location"), PLACE_IN_THE_TITLE)
+def test_a_place_abroad_named_only_in_the_title_is_read(title: str, location: str | None) -> None:
+    """Some boards write "Hybrid" in the location field and the place in the title.
+
+    A field that names no place is no evidence, and the rule keeps it. The
+    title is the only place left that says where the job is.
+    """
+    reason = area_exclusion(location, title=title, description="", remote_outside_california=True)
+
+    assert reason is not None and "title" in reason
+
+
+@pytest.mark.parametrize(("title", "location"), TITLE_DOES_NOT_DECIDE)
+def test_the_title_is_read_only_when_the_location_says_nothing(title: str, location: str) -> None:
+    assert (
+        area_exclusion(location, title=title, description="", remote_outside_california=True)
+        is None
+    )

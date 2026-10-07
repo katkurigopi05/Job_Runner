@@ -4090,3 +4090,62 @@ are an employer listing the same job more than once, with the same title,
 place and text but its own requisition id and URL each time (Process Street
 has one five times). §16 does not merge within one source or across
 requisition ids, and those are the employer's own listings.
+
+---
+
+## 26. What checking the assistant's wiring found
+
+On 2026-10-06 every path the assistant has was run against the owner's
+database: the fields the dashboard reads against the ones the API sends,
+sixteen questions through `retrieve()`, thirteen through `/chat` on the local
+model, each provider, and one through the dashboard's proxy. The fields agree,
+the refusal, the crawl command, the four buttons and the application context
+answered correctly, and the counts matched the database. Four things did not.
+
+- **A citation in round brackets did not count.** Qwen3 writes "(P1)". An
+  answer resting on four postings had all five filed under "not cited".
+  `cited_labels` reads brackets holding labels and nothing else, so "(the P2
+  band)" is still prose.
+- **"skill" was searched for.** The owner typed "any companies required skill
+  of kafka list them". The word is in 9.6% of descriptions, under the 30% that
+  drops a common word, and in 0.00% of titles. A posting that says "skill" and
+  nothing of Kafka took one of the five places. It is a framing word now, with
+  "skills", "skilled", "needs", "needed", "needing" and "them" (§22).
+- **"software engineer jobs in London" opened with three roles in San Jose.**
+  Two causes. A place named in a question was only a keyword, matched the same
+  in a location field as in a list of an employer's offices: a term in the
+  location now counts twice, as one in the title does. And a posting whose
+  whole title is in the question goes first, which for a question about
+  software engineers is every posting titled "Software Engineer": when
+  something more was asked and some of the role's postings say it, a posting
+  goes first for its title only if it is one of them.
+- **A remote role in India was inside the search area.** Its location field
+  says "Remote" and its title says "(India)". A field that names no place is
+  no evidence, and `area_exclusion` kept it: 50 open postings, one of them
+  among five answers about Kafka. When the field is silent the title is read,
+  and only for a place abroad. This is the one rule (§15), so the feed and the
+  scoring gate read it too.
+
+On the 112 benchmark questions (52 of the 56 postings still open) the right
+posting was in the five shown for 39 natural questions against 38, and for 2
+paraphrased against 2.
+
+Seen and left alone:
+
+- **The employer's own repeats take places among the five.** Roku lists
+  "Software Engineer" in San Jose three times, as three requisitions. §25
+  leaves them as rows; showing one of them is a decision for the owner.
+- **"jobs at ZEIT" says there are none.** The row was set aside for Vercel's
+  board (§25) and the assistant does not follow that to Vercel.
+- **The picker offers providers that are not set up.** Anthropic has no key
+  and `ollama_cloud` answered 402. Both fail with the provider's reason.
+- **Qwen3 volunteered a list of "skills not on the résumé"** under a question
+  about roles with AI in the title. The question is not a gap question and
+  the context held no gap section: the model's own framing of a requirements
+  excerpt.
+
+Found by the pull request, not by this check: a secret scanner failed #125 on
+one line of `tests/test_data_api_builder.py`, the expected output of the
+connection-string builder, with a made-up username and password written out
+as one string. The test assembles them now, and this paragraph does not quote
+the line, since the scanner reads prose as well.

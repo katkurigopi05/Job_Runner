@@ -1291,6 +1291,14 @@ def area_exclusion(
         return f"location {location!r} is on-site outside California"
     if abroad:
         return f"location {location!r} is outside the United States"
+    # The field named no place at all, and some boards write "Hybrid" or
+    # "Remote" there and put the place in the title: "Partner Engineer, Spain".
+    # Fifty such titles were kept on the owner's database, one of them among
+    # five answers to a question about Kafka. Read only here, where the field
+    # is silent, and only for a place abroad: a title is not where a posting
+    # says it is on-site in another state.
+    if not unplaced and title and locality_of(title) is Locality.ELSEWHERE:
+        return f"title {title!r} names a place outside the United States"
     if allow_unknown_location:
         return None
     return "location not recognized" if unplaced else "no location given"
