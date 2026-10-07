@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Any, Protocol, TypeVar
 
 import httpx
@@ -125,8 +126,16 @@ class StubProvider:
 
 
 #: Whether a model reasons before it answers, by `(base_url, model)`, as the
-#: daemon reported it. Asked once: `/chat` builds a provider per question.
-_THINKING_MODELS: dict[tuple[str, str], bool] = {}
+#: daemon reported it and when. Not asked per call: `/chat` builds a provider
+#: per question.
+_THINKING_MODELS: dict[tuple[str, str], tuple[bool, float]] = {}
+
+#: How long the daemon's answer is believed. The API runs for days, and a tag
+#: can be pulled again as a model that reasons, or a newer daemon can list a
+#: capability it did not: kept for the life of the process, the old answer
+#: would leave such a model with no switch and its `max_tokens` spent on
+#: reasoning. Asking again is one request to this machine.
+THINKING_ANSWER_KEPT_S = 600.0
 
 
 class OllamaProvider:
@@ -179,22 +188,30 @@ class OllamaProvider:
         Asked rather than guessed from the name, and sent only to those:
         the switch means nothing to a model without the capability. A daemon
         that does not answer is not remembered as "no" — the call that follows
-        will fail on its own if Ollama is down, and say so.
+        will fail on its own if Ollama is down, and say so. If it answered
+        before, that answer stands until it answers again.
+
+        Two questions asked at once may both reach the daemon. Each gets the
+        same answer from this machine, and a lock here would be held across a
+        network call to save one of them.
         """
         key = (self.base_url, self.model)
-        if key not in _THINKING_MODELS:
-            try:
-                resp = await client.post(
-                    f"{self.base_url}/api/show",
-                    json={"model": self.model},
-                    headers=self._headers(),
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
-                _THINKING_MODELS[key] = "thinking" in (resp.json().get("capabilities") or [])
-            except Exception:  # noqa: BLE001 - the answer is optional; the call is not
-                return False
-        return _THINKING_MODELS[key]
+        known = _THINKING_MODELS.get(key)
+        if known is not None and time.monotonic() - known[1] < THINKING_ANSWER_KEPT_S:
+            return known[0]
+        try:
+            resp = await client.post(
+                f"{self.base_url}/api/show",
+                json={"model": self.model},
+                headers=self._headers(),
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            thinks = "thinking" in (resp.json().get("capabilities") or [])
+        except Exception:  # noqa: BLE001 - the answer is optional; the call is not
+            return known[0] if known is not None else False
+        _THINKING_MODELS[key] = (thinks, time.monotonic())
+        return thinks
 
     async def _request(
         self, client: httpx.AsyncClient, messages: list[dict[str, str]], **extra: Any

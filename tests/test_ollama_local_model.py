@@ -134,6 +134,50 @@ async def test_the_daemon_is_asked_once_per_model(ollama) -> None:
     assert [body.get("think") for body in daemon.chats()] == [False, False, False, False]
 
 
+async def test_the_daemons_answer_is_asked_for_again_once_it_is_old(ollama, monkeypatch) -> None:
+    """Raised by the review of pull request 125, and it is right.
+
+    The answer was kept for the life of the process, and the API runs for
+    days. A tag can be pulled again as a model that reasons, or a newer daemon
+    can start listing a capability it did not list, and until the API was
+    restarted a thinking model would be sent no switch: `max_tokens` spent on
+    reasoning and an empty answer, the fault this file exists for.
+    """
+    clock = [1000.0]
+    monkeypatch.setattr(provider_module.time, "monotonic", lambda: clock[0])
+    daemon = ollama(["completion"])
+    await OllamaProvider("http://test", model=QWEN_3BIT).complete("sys", "usr")
+
+    daemon.capabilities = ["completion", "thinking"]
+    clock[0] += provider_module.THINKING_ANSWER_KEPT_S - 1
+    await OllamaProvider("http://test", model=QWEN_3BIT).complete("sys", "usr")
+    clock[0] += 2
+    await OllamaProvider("http://test", model=QWEN_3BIT).complete("sys", "usr")
+
+    assert daemon.shows() == 2, "asked at the start, and again once the answer was old"
+    assert [body.get("think") for body in daemon.chats()] == [None, None, False]
+
+
+async def test_an_old_answer_is_kept_while_the_daemon_is_not_answering(ollama, monkeypatch) -> None:
+    """A question that fails is not an answer of "no", old answer or not.
+
+    The same review asked for a failure to be remembered as "does not think".
+    That is the one thing here that must not happen: one refused connection
+    would switch reasoning back on for a model that reasons, for as long as
+    the answer is kept.
+    """
+    clock = [1000.0]
+    monkeypatch.setattr(provider_module.time, "monotonic", lambda: clock[0])
+    daemon = ollama(["completion", "thinking"])
+    await OllamaProvider("http://test", model=QWEN_3BIT).complete("sys", "usr")
+
+    daemon.show_fails = True
+    clock[0] += provider_module.THINKING_ANSWER_KEPT_S + 1
+    await OllamaProvider("http://test", model=QWEN_3BIT).complete("sys", "usr")
+
+    assert [body.get("think") for body in daemon.chats()] == [False, False]
+
+
 async def test_an_unanswered_question_about_thinking_does_not_fail_the_call(ollama) -> None:
     daemon = ollama(None, show_fails=True)
 
