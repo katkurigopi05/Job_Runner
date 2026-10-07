@@ -1018,6 +1018,33 @@ digests and sizes, never the prompt itself. §2.8 wants proof of what left the
 machine; §10 forbids logging résumé contents. Both hold: the trail proves what
 was sent without becoming a second copy of it.
 
+**What a call cost is kept beside it** (2026-10-07). Ollama answers every chat
+call with the tokens it read and wrote and how long each took, and the
+provider kept only the text. `packages/llm/timing.py` writes them to
+`llm-timings.jsonl`: counts, durations and the digest the trail holds for the
+same call. It is a second file because `quota.py` counts the trail's lines,
+one per call. Three things were measured on Ollama 0.40.0 that day, with the
+local model at a context of 4,096:
+
+- **The prompt count is the whole prompt** even when most of it was reused
+  from the question before: 560 tokens reported, read in 0.25 s, against
+  4.2 s for the first question with the same opening.
+- **A prompt longer than the context is refused, not cut.** HTTP 400, with a
+  body naming both numbers ("request (6076 tokens) exceeds the available
+  context size (4096 tokens)"). The provider used to report "400 Bad Request"
+  and nothing else, so it read as a model that was down;
+  `provider._ollama_reason` now quotes the daemon, for this and for any other
+  refusal. `tests/test_ollama_refusal_reason.py` uses the body it sent.
+- **An answer that runs out of context is silent.** A prompt of 3,796 tokens
+  with the usual 600 to answer came back as 600 written and
+  `done_reason: "length"`, 4,396 tokens through a context of 4,096. The
+  daemon made room by dropping the start of the prompt and said nothing.
+  `CallTiming.context_full` is that sum reaching the cap, logged as
+  `llm_context_full`.
+
+Not in it: a streamed answer, and any provider other than the two Ollama
+ones. Nothing reads the file yet except `timing.read_timings`.
+
 ---
 
 ### Ollama's own hosted models
