@@ -128,7 +128,10 @@ def test_backoff_never_shortens_an_interval() -> None:
 async def _company(db_session, name: str = "Acme") -> Company:
     company = Company(
         name=name,
-        slug="acme",
+        # Its own board: one board has one verified row
+        # (`uq_companies_verified_board`), and two of these in one test are
+        # two companies, not one board held twice.
+        slug=name.lower(),
         ats_type="greenhouse",
         poll_interval_s=HOUR,
         # See `runs.fetchable()`: only a verified board is fetch work.

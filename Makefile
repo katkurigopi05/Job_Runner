@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching fetch-board-directories chunk-postings audit-locations prune-postings export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -412,6 +412,15 @@ chunk-postings:
 # likely to be misread, so a gap in locality.py shows instead of hiding.
 audit-locations:
 	$(PY)/python -m scripts.audit_locations
+
+# One board, one company row. The owner's sheet lists a company under an old
+# name and a new one; both were verified on the same board and every posting
+# on it was stored twice. A repair for a database older than the index that
+# now refuses that. Back up first.
+#     make merge-duplicate-boards            what would change
+#     make merge-duplicate-boards apply=1    merge
+merge-duplicate-boards:
+	$(PY)/python -m scripts.merge_duplicate_boards $(if $(filter 1,$(apply)),--apply,)
 
 # make prune-postings — delete closed postings and ones posted more than
 # POSTING_MAX_AGE_DAYS (30) ago, keeping any you applied to, swiped on,

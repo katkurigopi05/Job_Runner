@@ -317,6 +317,19 @@ class Company(Base):
         # across different ATS vendors, and enforcing otherwise would make a
         # collision an import failure rather than a fact to look at.
         Index("ix_companies_ats_slug", "ats_type", "slug"),
+        # One board, one *verified* row. The index above is not unique so that
+        # a collision stays a fact to look at, and it still is: any number of
+        # hint, unverified and failed rows may name a board. What this refuses
+        # is two rows being polled for it, which stored every posting on
+        # eleven boards twice (`crawler/duplicate_boards.py`). Discovery asks
+        # first; this is what holds when two tasks resolve one board at once.
+        Index(
+            "uq_companies_verified_board",
+            "ats_type",
+            "slug",
+            unique=True,
+            postgresql_where=text("source_status = 'verified'"),
+        ),
     )
 
 

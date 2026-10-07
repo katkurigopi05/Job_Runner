@@ -527,3 +527,38 @@ async def test_the_dry_run_computes_the_real_change_and_writes_nothing(
             select(func.count()).select_from(Company).where(Company.name == "DryRun Co")
         )
     assert count == 0
+
+
+async def test_a_seed_takes_its_board_from_a_row_already_polling_it(db_session) -> None:
+    """One board has one verified row (`uq_companies_verified_board`).
+
+    The sheet's "ZEIT" was verified on `greenhouse/vercel` by discovery, and
+    the registry then lists Vercel there. Without this the sync stops on the
+    index. With it done carelessly the board is polled under the new name
+    while the old row's postings stay open for ever, since nothing polls a
+    set-aside row to close them, and every posting is held twice again.
+    """
+    from packages.core.models import Posting
+
+    zeit = Company(
+        name="ZEIT", ats_type="greenhouse", slug="vercel", source_status=SourceStatus.VERIFIED.value
+    )
+    db_session.add(zeit)
+    await db_session.flush()
+    db_session.add(
+        Posting(company_id=zeit.id, external_id="101", url="https://x.test/101", title="Engineer")
+    )
+    await db_session.flush()
+
+    outcome = await sync_registry(
+        db_session,
+        [CompanySeed(name="Vercel", slug="vercel", ats="greenhouse", checked="2026-10-06")],
+    )
+
+    vercel = await db_session.scalar(select(Company).where(Company.name == "Vercel"))
+    assert vercel.source_status == SourceStatus.VERIFIED.value
+    assert zeit.source_status == SourceStatus.FAILED.value
+    assert zeit.source_evidence["duplicate_of"] == str(vercel.id)
+    assert outcome.took_over == ["Vercel <- ZEIT"]
+    holders = (await db_session.scalars(select(Posting.company_id))).all()
+    assert holders == [vercel.id], "the posting moved with the board"

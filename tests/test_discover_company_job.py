@@ -216,3 +216,72 @@ def test_an_unknown_policy_is_refused(monkeypatch) -> None:
     monkeypatch.setenv("CRAWLER_NAME_GUESSING", "sometimes")
     with pytest.raises(ValidationError):
         Settings()
+
+
+# --- a board somebody already holds ---------------------------------------------
+#
+# The owner's sheet lists a company under an old name and a new one. Both
+# resolve to the same board, and verifying both stored every posting on eleven
+# boards twice (`packages/crawler/duplicate_boards.py`).
+
+
+async def _holder(session) -> Company:
+    holder = Company(
+        name="Acme", ats_type="ashby", slug="acme", source_status=SourceStatus.VERIFIED.value
+    )
+    session.add(holder)
+    await session.flush()
+    return holder
+
+
+async def test_a_board_another_company_holds_is_not_verified_twice(
+    db_session, calls, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        job, "load_directory", lambda: _directory(("ashby", "acme", "Acme Robotics"))
+    )
+    monkeypatch.setattr(job, "fetch_board", _board_returning(calls, jobs=4))
+    holder = await _holder(db_session)
+    company = await _company(db_session, website="https://acme.com")
+
+    await job.handle_discover_company(db_session, _claim(company))
+
+    assert company.source_status == SourceStatus.FAILED.value
+    assert company.slug is None
+    assert company.source_evidence["method"] == "duplicate_board"
+    assert company.source_evidence["duplicate_of"] == str(holder.id)
+    assert "Acme" in (company.discovery_failure or "")
+    assert await _crawls(db_session) == 0, "the board is already being polled"
+
+
+async def test_losing_a_race_for_a_board_ends_the_same_way(db_session, calls, monkeypatch) -> None:
+    """Two tasks can resolve one board at once, each before the other commits.
+
+    Neither then finds a holder. Reproduced by answering "nobody" the first
+    time the handler asks: the write is what meets the other row, at the
+    index, and the handler has to come out of that with the company set aside
+    rather than with a failed task.
+    """
+    monkeypatch.setattr(
+        job, "load_directory", lambda: _directory(("ashby", "acme", "Acme Robotics"))
+    )
+    monkeypatch.setattr(job, "fetch_board", _board_returning(calls, jobs=4))
+    holder = await _holder(db_session)
+    company = await _company(db_session, website="https://acme.com")
+    real, asked = job.holder_of, []
+
+    async def nobody_at_first(session, ats, slug, *, other_than):
+        asked.append((ats, slug))
+        if len(asked) == 1:
+            return None
+        return await real(session, ats, slug, other_than=other_than)
+
+    monkeypatch.setattr(job, "holder_of", nobody_at_first)
+
+    await job.handle_discover_company(db_session, _claim(company))
+
+    assert len(asked) == 2
+    assert company.source_status == SourceStatus.FAILED.value
+    assert company.source_evidence["duplicate_of"] == str(holder.id)
+    assert await _crawls(db_session) == 0
+    assert holder.source_status == SourceStatus.VERIFIED.value

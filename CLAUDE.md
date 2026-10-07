@@ -4027,3 +4027,66 @@ Three things to keep:
 Not fixed, and seen the same day: `make workers` ignored both an interrupt and
 a terminate for 20 seconds and had to be killed. The five tasks it was running
 kept their leases for the five minutes those last.
+
+---
+
+## 25. One board is polled under one company row
+
+The owner asked for no duplicates on 2026-10-06, after a crawl. There were
+282, and none of the constraints could see them.
+
+Eleven boards were each verified under two company rows: Vercel and ZEIT,
+Elastic and Elastic.co, Flexport and Deliverr, Teleport and Gravitational,
+Replit and Repl.it. The owner's sheet lists a company under an old name and a
+new one, discovery resolved both to the same board, and nothing asked whether
+somebody already held it. Each board was fetched twice a cycle and every
+posting on it stored twice, same URL and same text: 282 of 11,429 open
+postings. The assistant had answered a Kafka question with a Vercel job listed
+as "ZEIT". `uq_postings_company_external_id` is per company, and the two
+copies belong to two companies.
+
+`packages/crawler/duplicate_boards.py` is the fix, in three places:
+
+- **Discovery asks first.** `holder_of` is consulted before a company is
+  verified; a board somebody holds sets the newcomer aside and queues no
+  crawl.
+- **The database refuses the rest.** `uq_companies_verified_board` is a
+  partial unique index on `(ats_type, slug)` for verified rows only. Two
+  discovery tasks can resolve one board at once, each before the other
+  commits, and then neither finds a holder: the index is what still holds.
+  The handler writes inside a savepoint and comes out of that with the
+  company set aside, not with a failed task.
+- **`make merge-duplicate-boards` repaired what was there**, after a verified
+  backup: 11 rows set aside, 282 copies deleted, 32 scores that only a copy
+  had moved to the original, nothing of the owner's touched.
+
+Five things to keep:
+
+- **The row that loses a board is kept.** It becomes `failed`, with no slug,
+  carrying what it resolved to and who holds it (`duplicate_board`). The
+  registry keeps evidence, not deletions (§9), and the row is the only record
+  that the sheet named that company. Two of the eleven are probably not
+  renames at all (Twelve and Twelve Labs, Alchemy and Alchemy Cloud): the
+  board belongs to one and discovery guessed it for the other. Set aside is
+  right for both readings.
+- **The row named like the board keeps it** (`keeper_of`): "Vercel" for
+  `vercel`, "Teleport" for `goteleport`. The name is what the owner reads on
+  a card. Where the names say nothing, the older row. Discovery cannot wait
+  to compare names, so there the first row verified keeps it.
+- **A row that loses a board loses its postings to the holder too**
+  (`absorb`). Nothing polls a set-aside row, so nothing would ever close
+  them, and the holder's next fetch would store each one a second time.
+  `sync_registry` does this when a seed names a board a sheet row holds.
+- **The index is only on verified rows.** The comment on
+  `ix_companies_ats_slug` wanted a collision to stay a fact to look at, and
+  it does: hint, unverified and failed rows may name a board any number of
+  times.
+- **The opening of a savepoint flushes.** The first version changed the row
+  and then opened the savepoint, so the change met the index outside it and
+  took the whole transaction down. The row is changed inside.
+
+What was left alone, and is a decision rather than a defect: 41 open postings
+are an employer listing the same job more than once, with the same title,
+place and text but its own requisition id and URL each time (Process Street
+has one five times). §16 does not merge within one source or across
+requisition ids, and those are the employer's own listings.
