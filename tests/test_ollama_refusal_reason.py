@@ -118,6 +118,22 @@ async def test_a_key_in_the_daemons_words_is_not_repeated(refusing) -> None:
     assert "unauthorized" in str(refused.value)
 
 
+async def test_only_the_start_of_a_long_reason_is_quoted(refusing) -> None:
+    """Found in review. The daemon's words go into an exception that is logged
+    and shown, and nothing promises they never repeat what they were sent. A
+    reason is a sentence; whatever runs on past that is left behind (§10)."""
+    echoed = "could not parse the request: " + "the whole of a résumé, repeated back " * 40
+    refusing(400, body={"error": echoed})
+
+    with pytest.raises(LLMError) as refused:
+        await _local().complete("sys", "usr")
+
+    message = str(refused.value)
+    assert "could not parse the request" in message
+    assert len(message) < 400
+    assert message.endswith("…")
+
+
 async def test_a_refused_call_is_in_the_audit_trail_and_has_no_timing(refusing) -> None:
     """The prompt was sent, so the trail has its line. Nothing was measured."""
     refusing(400, body=TOO_LONG)
