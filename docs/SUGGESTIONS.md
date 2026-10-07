@@ -295,6 +295,12 @@ company and role; their email, phone, profile link and the owner's notes on
 them are not. Adding or changing a task over MCP was left out, and is the
 next step if it is wanted.
 
+Found on the way and fixed in the same pull request: an id given to any tool
+went bare into the path it asked the API for, so `../inbox?` in place of an
+application's id read the recruiter mail, and `../resumes/<id>/edit?` sent the
+guarded résumé edit to the route that does not guard. Every id is checked now.
+`CLAUDE.md` §9, Phase 4, has what was measured.
+
 ### M4. Status questions (open)
 
 The audit trail ("what left my machine this week"), setup health, the weekly

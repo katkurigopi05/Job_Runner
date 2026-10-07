@@ -27,10 +27,15 @@ Two things to know about the tool surface:
   of its tool, so a model has nowhere to put one. §2.2 says a model never
   writes a work-authorization answer, and a question the pipeline could not
   map can be exactly that.
+- **An id is one part of a path.** Every id a tool is given goes through
+  `_id` on its way into a request's path. Written bare, `../resumes/<id>/edit?`
+  in place of an application's id sent the guarded résumé edit to the route
+  that does not guard.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
@@ -95,6 +100,31 @@ async def _call(method: str, path: str, **kwargs: Any) -> Any:
         return {"error": str(exc)}
     except ApiCallFailed as exc:
         return {"error": exc.message, "code": exc.code}
+
+
+#: What an id is made of, as far as a path is concerned. Whether it is
+#: anybody's id is the API's to say: every id it issues is a UUID and it
+#: answers `invalid_request` to anything else.
+_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _id(value: str, name: str = "application_id") -> str:
+    """An id on its way into a path. Anything that is not one is refused.
+
+    Every path below is written with this. httpx resolves `..` before it
+    sends, so `../inbox?` in place of an application's id asked the API for
+    `GET /inbox`: the recruiter mail this server has no tool for, on purpose.
+    The one calling is a model, and a posting or a reply it has read can tell
+    it what to pass. `tests/test_mcp_ids.py` reads this file to keep a tool
+    written later from leaving it out.
+    """
+    if not isinstance(value, str) or not _ID.fullmatch(value):
+        # The value is not repeated back: it may be the instruction that put it there.
+        raise ToolError(
+            f"`{name}` is not an id, so nothing was asked of Jobrunner. "
+            "Pass one a listing tool returned."
+        )
+    return value
 
 
 # --------------------------------------------------------------------------
@@ -266,13 +296,13 @@ async def apply_to_url(candidate_id: str, profile_id: str, url: str) -> dict[str
 @server.tool()
 async def application_status(application_id: str) -> dict[str, Any]:
     """Current status of one application, with its review record."""
-    return await _call("GET", f"/applications/{application_id}")
+    return await _call("GET", f"/applications/{_id(application_id)}")
 
 
 @server.tool()
 async def application_history(application_id: str) -> dict[str, Any]:
     """The append-only event log for an application — every state change."""
-    events = await _call("GET", f"/applications/{application_id}/events")
+    events = await _call("GET", f"/applications/{_id(application_id)}/events")
     return {"events": events}
 
 
@@ -393,7 +423,7 @@ async def _owners_answers(application_id: str, ctx: Context) -> Elicit[BaseModel
     Runs before the tool, in place of an argument a model could fill. With
     nothing open there is nothing to ask and no form.
     """
-    application = await _call("GET", f"/applications/{application_id}")
+    application = await _call("GET", f"/applications/{_id(application_id)}")
     if not isinstance(application, dict) or "error" in application:
         raise ToolError(
             str(application.get("error") if isinstance(application, dict) else application)
@@ -409,7 +439,9 @@ async def _owners_answers(application_id: str, ctx: Context) -> Elicit[BaseModel
     )
 
 
-async def _owners_code(ctx: Context) -> Elicit[_Code]:
+async def _owners_code(application_id: str, ctx: Context) -> Elicit[_Code]:
+    # Before the form: an id that will be refused is not worth a code typed for it.
+    _id(application_id)
     _must_reach_the_owner(ctx, "a verification code")
     return Elicit("The site sent you a verification code. Type it here.", _Code)
 
@@ -439,7 +471,7 @@ async def approve_application(
     typed = answers.data.model_dump(by_alias=True)
     return await _call(
         "POST",
-        f"/applications/{application_id}/review",
+        f"/applications/{_id(application_id)}/review",
         json={
             "approve": True,
             # A field left empty is still an open question, not an answer.
@@ -454,7 +486,7 @@ async def reject_application(application_id: str, note: str | None = None) -> di
     """Reject a parked application. Terminal — it fails as rejected_at_review."""
     return await _call(
         "POST",
-        f"/applications/{application_id}/review",
+        f"/applications/{_id(application_id)}/review",
         json={"approve": False, "answers": {}, "note": note},
     )
 
@@ -473,7 +505,9 @@ async def submit_otp(
             "submitted": False,
             "error": "No code was sent: the owner closed the form without typing one.",
         }
-    return await _call("POST", f"/applications/{application_id}/otp", json={"code": code.data.code})
+    return await _call(
+        "POST", f"/applications/{_id(application_id)}/otp", json={"code": code.data.code}
+    )
 
 
 @server.tool()
@@ -506,7 +540,7 @@ async def compare_tailoring(application_id: str, cloud: str | None = None) -> di
     """
     result = await _call(
         "POST",
-        f"/applications/{application_id}/tailoring/compare",
+        f"/applications/{_id(application_id)}/tailoring/compare",
         json={"cloud": cloud},
     )
     if not isinstance(result, dict):
@@ -549,7 +583,7 @@ async def select_tailoring(application_id: str, resume_id: str) -> dict[str, Any
     """
     return await _call(
         "POST",
-        f"/applications/{application_id}/tailoring/select",
+        f"/applications/{_id(application_id)}/tailoring/select",
         json={"resume_id": resume_id},
     )
 
@@ -566,7 +600,7 @@ async def inspect_application_resume(application_id: str) -> dict[str, Any]:
     Call this before `edit_application_resume`: sections are replaced whole, so
     an edit has to be built from the current set rather than guessed.
     """
-    return await _call("GET", f"/applications/{application_id}/resume")
+    return await _call("GET", f"/applications/{_id(application_id)}/resume")
 
 
 @server.tool()
@@ -611,7 +645,7 @@ async def edit_application_resume(
     """
     result = await _call(
         "POST",
-        f"/applications/{application_id}/resume/edit",
+        f"/applications/{_id(application_id)}/resume/edit",
         json={
             "contact": {
                 "name": contact_name,
@@ -750,7 +784,7 @@ async def application_tracking(application_id: str) -> dict[str, Any]:
     phone and profile link, and the owner's notes on them, are on the
     dashboard and are not sent here.
     """
-    tracking = await _call("GET", f"/applications/{application_id}/tracking")
+    tracking = await _call("GET", f"/applications/{_id(application_id)}/tracking")
     if "contacts" not in tracking:
         return tracking
     return {
@@ -798,7 +832,7 @@ async def inspect_resume(resume_id: str) -> dict[str, Any]:
     Worth checking before applying: a section missing here is one an ATS
     reading the same file may also miss.
     """
-    return await _call("GET", f"/resumes/{resume_id}/parsed")
+    return await _call("GET", f"/resumes/{_id(resume_id, 'resume_id')}/parsed")
 
 
 @server.tool()
@@ -815,7 +849,7 @@ async def preview_resume(resume_id: str, job_text: str = "", limit: int = 4) -> 
     """
     return await _call(
         "POST",
-        f"/resumes/{resume_id}/preview",
+        f"/resumes/{_id(resume_id, 'resume_id')}/preview",
         params={"job_text": job_text, "limit": limit},
     )
 
@@ -876,7 +910,7 @@ async def curate_project(
         body["pinned"] = pinned
     if include is not None:
         body["include"] = include
-    return await _call("PATCH", f"/projects/{project_id}", json=body)
+    return await _call("PATCH", f"/projects/{_id(project_id, 'project_id')}", json=body)
 
 
 def main() -> None:

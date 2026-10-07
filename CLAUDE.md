@@ -678,6 +678,46 @@ application's own page.
 Not done: a task names its application by URL. No tracking route carries the
 company or the role.
 
+**An id handed to a tool could name another route** (2026-10-07, found beside
+the tracker tools). Every tool that takes an id wrote it bare into the path it
+asked the API for, and httpx resolves `..` before it sends. The one calling is
+a model, and a posting or a reply it has read can tell it what to pass.
+Measured against the real app, before the fix:
+
+```text
+application_history(application_id="../candidates?")
+    asked for GET /candidates, returned the candidate list under "events"
+edit_application_resume(application_id="../resumes/<id>/edit?", sections=...)
+    asked for POST /resumes/<id>/edit, stored an invented line as version 2
+```
+
+The second is §2.1. `edit_application_resume` runs the fabrication guard
+because a model is typing; the résumés page's route does not, because there
+the owner is; and the two take the same body (§15, *Editing the résumé on the
+review screen*). `test_the_tool_cannot_turn_the_guard_off` held the tool's
+arguments and was green throughout. The same shape read `/inbox` and
+`/contacts`: the recruiter mail the server has no tool for, and the contact
+details the tracker tool above had just been written to leave out.
+
+Every id now goes through `_id` on its way into a path
+(`apps/mcp/server.py`). `tests/test_mcp_ids.py` holds three things:
+
+- **An id is letters, digits, hyphens and underscores.** One part of a path,
+  so it cannot climb, add a part, or turn the rest into a query. Whether it
+  is anybody's id is still the API's to say, with its own error.
+- **Nothing is formatted into a path without it.** Read from the source. The
+  tracker tool above was written without it, and no list of tools holds one
+  that does not exist yet.
+- **A refused id is not repeated back**, and for `submit_otp` it is refused
+  before the owner is asked to type a code.
+
+The approval gate was not reachable this way: `/review` needs `approve: true`
+in the body, a tool's body is its own, and the only tool that sends it is the
+one that asks the owner. Other routes that write were reachable, and they were
+not each tried. Not done: `ResumeEdit` still accepts a `guard` field it does
+not read, and nothing in the API tells an assistant's request from the
+dashboard's.
+
 ### Phase 5 — Discovery
 
 Build: company registry (hand-picked, seeded from a YAML file). Crawler with
