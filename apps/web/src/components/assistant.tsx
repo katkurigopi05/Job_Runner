@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 
+import { readFrames } from "@/lib/chat-stream";
+
 /* Styling cues borrowed from the photo-editor: an emoji-prefixed toolbar row,
    a grey working canvas the content sits on, and a left-aligned status line
    pinned to the bottom. That app leans on system defaults, so there is no
@@ -349,6 +351,58 @@ const PROMPTS = [
   },
 ];
 
+/** The reply `/chat` returns, and the closing frame of `/chat/stream`. */
+interface Reply {
+  reply: string;
+  provider: string;
+  model?: string;
+  local?: boolean;
+  shared_mail?: boolean;
+  sources?: Source[];
+  more_sources?: Source[];
+  matched_role?: string | null;
+  postings_matched_total?: number | null;
+  matched_role_filter?: string | null;
+  matched_kinds?: Kind[];
+  related_roles?: RelatedRole[];
+  matched_title_words?: string[];
+  postings_searched?: number;
+  postings_unsearchable?: number;
+}
+
+function turnFrom(body: Reply): Turn {
+  return {
+    role: "assistant",
+    text: body.reply,
+    provider: body.provider,
+    model: body.model,
+    local: body.local,
+    sharedMail: body.shared_mail,
+    sources: body.sources,
+    more: body.more_sources,
+    matchedRole: body.matched_role,
+    matchedTotal: body.postings_matched_total,
+    matchedRoleFilter: body.matched_role_filter,
+    kinds: body.matched_kinds,
+    relatedRoles: body.related_roles,
+    titleWords: body.matched_title_words,
+    searched: body.postings_searched,
+    unsearchable: body.postings_unsearchable,
+  };
+}
+
+/** What the status line says once an answer is complete. */
+function answeredBy(body: Reply): string {
+  if (body.provider === "refused") return "refused · this one comes from your profile";
+  if (body.provider === "crawler") return "crawler · started from your command, no model asked";
+  // `body.local` is computed server-side from the model, not inferred from the
+  // provider name: an Ollama-served `:cloud` model is not local, and the
+  // status line must not say otherwise.
+  return body.local
+    ? `answered by ${body.model ?? body.provider} · on this machine`
+    : `answered by ${body.model ?? body.provider} · this left your machine`;
+}
+
 export function Assistant({ applicationId }: { applicationId?: string }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
@@ -379,7 +433,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
     setStatus(chosen.local ? "thinking on this machine…" : `sending to ${chosen.label}…`);
 
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -389,11 +443,13 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           share_mail: shareMail,
         }),
       });
-      const body = await response.json();
 
-      if (!response.ok) {
+      if (!response.ok || !response.body) {
         // The most common failure is Ollama not running, and the API's message
         // names the command that fixes it. Surfacing it beats "request failed".
+        // It still arrives as a status code: the stream starts only once the
+        // model has written its first piece.
+        const body = await response.json().catch(() => null);
         setTurns((held) => [
           ...held,
           { role: "assistant", text: body?.error?.message ?? "The assistant is unavailable." },
@@ -402,39 +458,53 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
         return;
       }
 
-      setTurns((held) => [
-        ...held,
-        {
-          role: "assistant",
-          text: body.reply,
-          provider: body.provider,
-          model: body.model,
-          local: body.local,
-          sharedMail: body.shared_mail,
-          sources: body.sources,
-          more: body.more_sources,
-          matchedRole: body.matched_role,
-          matchedTotal: body.postings_matched_total,
-          matchedRoleFilter: body.matched_role_filter,
-          kinds: body.matched_kinds,
-          relatedRoles: body.related_roles,
-          titleWords: body.matched_title_words,
-          searched: body.postings_searched,
-          unsearchable: body.postings_unsearchable,
-        },
-      ]);
-      // `body.local` is computed server-side from the model, not inferred from
-      // the provider name — an Ollama-served `:cloud` model is not local, and
-      // the status line must not say otherwise.
-      setStatus(
-        body.provider === "refused"
-          ? "refused · this one comes from your profile"
-          : body.provider === "crawler"
-            ? "crawler · started from your command, no model asked"
-            : body.local
-            ? `answered by ${body.model ?? body.provider} · on this machine`
-            : `answered by ${body.model ?? body.provider} · this left your machine`,
-      );
+      // The answer is shown as it is written. The first piece opens a turn and
+      // the rest are added to it; nobody else can add one meanwhile, because
+      // sending is off while `busy`.
+      let writing = false;
+      let finished = false;
+      try {
+        for await (const frame of readFrames<Reply>(response.body)) {
+          if (frame.type === "delta") {
+            const piece = frame.text;
+            if (!writing) {
+              writing = true;
+              setTurns((held) => [...held, { role: "assistant", text: piece }]);
+              setStatus(chosen.local ? "writing on this machine…" : `${chosen.label} is writing…`);
+            } else {
+              setTurns((held) => [
+                ...held.slice(0, -1),
+                { ...held[held.length - 1], text: held[held.length - 1].text + piece },
+              ]);
+            }
+          } else if (frame.type === "done") {
+            // The whole reply replaces what was shown while it was written:
+            // the same text, now with who answered and what it cited.
+            const turn = turnFrom(frame.reply);
+            setTurns((held) => (writing ? [...held.slice(0, -1), turn] : [...held, turn]));
+            setStatus(answeredBy(frame.reply));
+            finished = true;
+          } else {
+            setTurns((held) => [...held, { role: "assistant", text: frame.message }]);
+            setStatus(chosen.local ? "local model stopped part way" : `${chosen.label} stopped part way`);
+            finished = true;
+          }
+        }
+      } catch {
+        // The response broke off, or a line of it could not be read.
+      }
+      if (!finished) {
+        setTurns((held) => [
+          ...held,
+          {
+            role: "assistant",
+            text: writing
+              ? "The answer was cut off before it finished. What arrived is above; ask again for the rest."
+              : "The answer never arrived. Ask again.",
+          },
+        ]);
+        setStatus("answer cut off");
+      }
     } catch {
       setTurns((held) => [
         ...held,

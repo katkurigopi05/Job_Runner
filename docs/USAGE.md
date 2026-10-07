@@ -457,6 +457,14 @@ Every remote answer is labelled in the transcript with the model, that it left
 the machine, and whether mail went with it. The choice is per question and is
 not remembered.
 
+**The answer appears as it is written.** The local model's words show up as it
+writes them, and the postings it cited are listed when it has finished. A cloud
+model's answer still arrives in one piece. If an answer stops part way the
+panel says so, and what had arrived stays on screen.
+
+The panel reads `POST /chat/stream`. `POST /chat` is unchanged and still
+returns the whole reply at once, for a script or `curl`.
+
 Useful dashboard assistant prompts include:
 
 ```text

@@ -27,6 +27,7 @@ import json
 import os
 import re
 import time
+from collections.abc import AsyncIterator
 from typing import Any, Protocol, TypeVar
 
 import httpx
@@ -67,6 +68,27 @@ class LLMProvider(Protocol):
     ) -> str: ...
 
     async def complete_json(self, system: str, user: str, schema: type[T]) -> T: ...
+
+
+async def stream_text(
+    provider: LLMProvider,
+    system: str,
+    user: str,
+    *,
+    max_tokens: int = 1024,
+    temperature: float = DEFAULT_TEMPERATURE,
+) -> AsyncIterator[str]:
+    """A provider's answer as it is written, or whole if it cannot say it that way.
+
+    Only the Ollama providers have a `stream`. The others answer in one piece,
+    which a caller that shows pieces as they come handles like any other.
+    """
+    streamer = getattr(provider, "stream", None)
+    if streamer is None:
+        yield await provider.complete(system, user, max_tokens=max_tokens, temperature=temperature)
+        return
+    async for piece in streamer(system, user, max_tokens=max_tokens, temperature=temperature):
+        yield piece
 
 
 class StubProvider:
@@ -275,6 +297,61 @@ class OllamaProvider:
                 return schema.model_validate_json(content)
             except Exception as exc:
                 raise LLMError(f"Ollama JSON call failed: {_scrubbed(exc)}") from exc
+
+    async def stream(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int = 1024,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> AsyncIterator[str]:
+        """The answer in the pieces the daemon writes it in.
+
+        The same request as `complete`, with the stream asked for. The audit
+        line is written when the call is made, as it is there: closing the
+        stream early does not unsend the prompt.
+
+        Closing it does close the connection, and Ollama stops writing when
+        its reader goes away. A dock that is closed mid-answer must not leave
+        the model finishing an answer for nobody.
+        """
+        record(self.name, system, user, model=getattr(self, "model", None))
+        async with httpx.AsyncClient() as client:
+            try:
+                body = await self._request(
+                    client,
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    options=self._options(max_tokens, temperature),
+                    stream=True,
+                )
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/api/chat",
+                    json=body,
+                    headers=self._headers(),
+                    # Between pieces, not for the whole answer.
+                    timeout=120.0,
+                ) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        part = json.loads(line)
+                        if part.get("error"):
+                            raise LLMError(f"Ollama call failed: {part['error']}")
+                        piece = (part.get("message") or {}).get("content") or ""
+                        if piece:
+                            yield piece
+                        if part.get("done"):
+                            return
+            except LLMError:
+                raise
+            except Exception as exc:
+                raise LLMError(f"Ollama call failed: {_scrubbed(exc)}") from exc
 
 
 #: Gemini authenticates with the key as a *query parameter*, so the key is part

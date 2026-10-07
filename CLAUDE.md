@@ -3344,6 +3344,54 @@ applies, and real sockets, so incremental delivery and client disconnect are
 the real thing. Disconnect is what stops the watcher, so mocking it would have
 left the one property nobody would notice failing untested.
 
+### The assistant's answer is a stream too
+
+Added 2026-10-07. `POST /chat` sends nothing until the model has finished, so
+the dock sat empty while the local model read the prompt and then wrote at
+about 12 tokens a second. `POST /chat/stream`
+(`apps/api/routers/chat_stream.py`) sends each piece as it is written, one
+JSON object to a line, and closes with the reply `/chat` returns. The dock
+reads it (`apps/web/src/lib/chat-stream.ts`).
+
+Seen in a real browser through the dashboard's proxy, local model, the owner's
+data. "What needs me?", model not yet loaded: first words at 11.3 s, finished
+at 19.9 s, the text longer at 41 of 42 samples in between. A second question
+with the model warm, asked by `curl` with a browser's `Accept-Encoding`: first
+byte at 0.5 s, finished at 6.3 s, 68 pieces, not compressed. The model writes
+no faster. What changed is when the first word shows.
+
+Everything above about streams applied again, and four things are new:
+
+- **The rules before the model are `/chat`'s own functions.** `prepare`,
+  `provider_for` and `did_not_answer` in `routers/chat.py` are called by both
+  routes: the §2.2 refusal, the crawl command, the provider checks and the
+  no-fallback errors (§14). A refusal or a command is one closing frame and no
+  model. `test_the_closing_frame_is_the_reply_the_plain_route_gives` compares
+  the two replies whole.
+- **Citations arrive last.** They are read out of the finished text (§14), and
+  a label can be split across two pieces. The dock replaces what it showed
+  while the answer was written with the finished reply.
+- **The first piece is waited for before the response starts.** Until then
+  there is a status code to answer with, so "Ollama is not running" is the
+  same error, with the same message, that `/chat` gives. After that a failure
+  is an `error` frame and there is no closing reply: half an answer is not
+  listed with sources under it.
+- **A reader who leaves stops the model.** Closing the stream closes the
+  connection to Ollama, which stops writing. The route takes no request
+  session: everything is read first, on a session opened and closed inside
+  one shielded awaitable, for the reason the status stream shields its read.
+
+Only the two Ollama providers stream. Gemini, Anthropic, OpenRouter and the
+stub have no `stream` method, and `stream_text` sends their answer as one
+piece, so a cloud answer still arrives all at once.
+
+Not done: a model that is still being loaded sends nothing for as long as the
+load takes, which is what the proxy's 330 s limit is for. And during the live
+check the machine went to 17% free once, with the model, the API, the
+dashboard and a headless browser all running, and the guard unloaded the
+model; the second question's 30 s to first word includes that reload and is
+not a measurement of the route.
+
 ---
 
 ## 18. The feed could not be asked the one question that decides eligibility
