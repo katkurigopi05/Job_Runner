@@ -7,8 +7,11 @@ two things were measured by hand or not at all:
 - **Reading against writing.** CLAUDE.md §14 found that MLX wrote faster than
   Ollama and read the prompt slower, and so was no faster end to end. That
   took a separate benchmark to see; the split is in every reply.
-- **A prompt past the context cap.** §14 records that Ollama cuts one without
-  an error. A context filled to the cap is the only sign of it.
+- **An answer that runs out of context.** A prompt that fits, with an answer
+  that does not, is answered as if nothing happened: the daemon drops the
+  start of the prompt to make room and reports an ordinary reply. Tokens read
+  plus tokens written reaching the cap is the only sign of it. (A prompt that
+  is itself too long is refused outright; `test_ollama_refusal_reason.py`.)
 
 The timings are their own file. The audit trail answers "what left this
 machine" and the daily quota is counted from its lines, so a second line per
@@ -185,7 +188,21 @@ async def test_nothing_of_the_prompt_is_written_down(daemon) -> None:
 
 
 async def test_a_context_filled_to_the_cap_is_flagged(daemon, logged) -> None:
-    """Ollama cuts a prompt longer than the cap and says nothing."""
+    """The numbers the daemon sent on 2026-10-07 for an answer that ran out of room:
+    3,796 read, 600 written, a context of 4,096, and no error."""
+    cap = get_settings().ollama_num_ctx
+    daemon({**MEASURED, "prompt_eval_count": 3_796, "eval_count": 600, "done_reason": "length"})
+
+    await _local().complete(SYSTEM, USER)
+
+    [kept] = timing.read_timings()
+    assert kept.context_full
+    [warning] = logged.named("llm_context_full")
+    assert warning["context_limit"] == cap == 4_096
+    assert (warning["prompt_tokens"], warning["answer_tokens"]) == (3_796, 600)
+
+
+async def test_a_context_that_is_exactly_full_is_flagged(daemon) -> None:
     cap = get_settings().ollama_num_ctx
     daemon({**MEASURED, "prompt_eval_count": cap - 100, "eval_count": 100})
 
@@ -193,9 +210,6 @@ async def test_a_context_filled_to_the_cap_is_flagged(daemon, logged) -> None:
 
     [kept] = timing.read_timings()
     assert kept.context_full
-    [warning] = logged.named("llm_context_full")
-    assert warning["context_limit"] == cap
-    assert warning["prompt_tokens"] == cap - 100
 
 
 async def test_a_context_with_room_left_is_not_flagged(daemon, logged) -> None:

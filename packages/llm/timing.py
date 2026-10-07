@@ -7,9 +7,17 @@ the text. Two things follow from keeping the rest:
   loading plus reading the prompt; how fast the answer comes is a separate
   number. CLAUDE.md §14 needed a benchmark to see that one engine was faster
   at the second and slower at the first.
-- **A filled context is visible.** Ollama cuts a prompt that is longer than
-  the context it was given and returns no error. Tokens read plus tokens
-  written reaching the cap is the sign.
+- **A filled context is visible.** An answer that runs into the end of the
+  context is not an error. Measured on Ollama 0.40.0 (2026-10-07): a prompt
+  of 3,796 tokens and an answer budget of 600 in a context of 4,096 came back
+  as 600 tokens written and `done_reason: "length"`, 4,396 in all. The model
+  kept writing by letting go of the start of what it had been given, and the
+  reply says nothing about it. Tokens read plus tokens written reaching the
+  cap is the only sign.
+
+  A prompt that is itself longer than the context is a different case and is
+  not silent: the daemon refuses it (HTTP 400), and `provider._ollama_reason`
+  reports both numbers.
 
 This is a second file beside the audit trail, not more lines in it. The trail
 answers "what left this machine", and `quota.py` counts its lines: one per
@@ -85,10 +93,10 @@ class CallTiming:
     def context_full(self) -> bool:
         """Whether what was read and written reached the cap.
 
-        Either the prompt was cut to fit, or the answer ran into the end of
-        the context and the start of the prompt was dropped to make room. The
-        daemon reports neither, and both mean the model did not have all of
-        what it was handed.
+        The answer ran into the end of the context, and the daemon made room
+        by dropping the start of what the model had been given. It reports
+        that as an ordinary answer, and it means the model did not have all
+        of its prompt while it wrote.
         """
         if self.context_limit is None or self.prompt_tokens is None:
             return False

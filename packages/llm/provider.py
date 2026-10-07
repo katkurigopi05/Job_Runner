@@ -262,7 +262,7 @@ class OllamaProvider:
                 payload = resp.json()
                 content = str(payload["message"]["content"])
             except Exception as exc:
-                raise LLMError(f"Ollama call failed: {_scrubbed(exc)}") from exc
+                raise LLMError(f"Ollama call failed: {_ollama_reason(exc)}") from exc
         self._measured(payload, user, options)
         return content
 
@@ -290,7 +290,7 @@ class OllamaProvider:
                 payload = resp.json()
                 parsed = schema.model_validate_json(payload["message"]["content"])
             except Exception as exc:
-                raise LLMError(f"Ollama JSON call failed: {_scrubbed(exc)}") from exc
+                raise LLMError(f"Ollama JSON call failed: {_ollama_reason(exc)}") from exc
         self._measured(payload, user, options)
         return parsed
 
@@ -318,9 +318,62 @@ def _scrubbed(exc: Exception) -> str:
     real answer was a read timeout and the log said only "TokenRouter call
     failed:".
     """
-    scrubbed = _KEY_QUERY_RE.sub(r"\1***", str(exc))
-    scrubbed = _KEY_HEADER_RE.sub(r"\1***", scrubbed)
-    return scrubbed.strip() or type(exc).__name__
+    return _scrub(str(exc)) or type(exc).__name__
+
+
+def _scrub(text: str) -> str:
+    """`text` with any credential-shaped value removed. One rule for both callers."""
+    scrubbed = _KEY_QUERY_RE.sub(r"\1***", text)
+    return _KEY_HEADER_RE.sub(r"\1***", scrubbed).strip()
+
+
+#: What Ollama's runner calls a prompt longer than the context it was loaded with.
+_TOO_LONG = "exceed_context_size_error"
+
+
+def _ollama_reason(exc: Exception) -> str:
+    """Why Ollama refused a call, in its own words when it gave any.
+
+    `raise_for_status` knows the status and the URL. The reason is in the
+    body, and the body used to be thrown away, so every refusal read as
+    "400 Bad Request" and the caller's advice was to start Ollama.
+
+    The one refusal with numbers in it is a prompt longer than the context
+    (measured on 0.40.0, 2026-10-07): the daemon does not cut it, it refuses
+    it. Both numbers and the setting are named, because the owner can act on
+    that and cannot act on a status code.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return _scrubbed(exc)
+    try:
+        said = response.json().get("error")
+    except Exception:  # noqa: BLE001 - a body that is not JSON carries no reason
+        return _scrubbed(exc)
+    if isinstance(said, str):
+        # The daemon passes its runner's error on as a string of JSON.
+        try:
+            inner = json.loads(said)
+        except ValueError:
+            inner = None
+        if isinstance(inner, dict) and isinstance(inner.get("error"), dict):
+            said = inner["error"]
+    if isinstance(said, dict):
+        prompt_tokens, context = said.get("n_prompt_tokens"), said.get("n_ctx")
+        if (
+            said.get("type") == _TOO_LONG
+            and isinstance(prompt_tokens, int)
+            and isinstance(context, int)
+        ):
+            return (
+                f"the prompt is {prompt_tokens:,} tokens and the model's context is "
+                f"{context:,}, so Ollama refused it. OLLAMA_NUM_CTX sets a local "
+                "model's context"
+            )
+        said = said.get("message")
+    if isinstance(said, str) and said.strip():
+        return _scrub(said)
+    return _scrubbed(exc)
 
 
 class OllamaCloudProvider(OllamaProvider):
