@@ -19,6 +19,26 @@ async def test_health(client: AsyncClient) -> None:
     assert r.json() == {"status": "ok", "api": "ok", "database": "ok"}
 
 
+async def test_the_root_says_where_things_are(client: AsyncClient) -> None:
+    """Opening the API's own address has to answer, or a working API reads as broken.
+
+    `/` had no route, so `http://127.0.0.1:8000/` in a browser returned the 404
+    envelope — the same body a wrong path gets. The owner read it as the API
+    being down while 81 operations under it were answering.
+
+    Every path it names is fetched: an index that points at a route which does
+    not answer is the same mistake one step later.
+    """
+    r = await client.get("/")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "Jobrunner"
+    assert body["dashboard"] == "http://localhost:3001"
+    for key in ("docs", "openapi", "health"):
+        assert (await client.get(body[key])).status_code == 200, key
+
+
 async def test_an_unmatched_path_uses_the_shared_envelope(client: AsyncClient) -> None:
     """§10 promises one error shape. A 404 had two.
 

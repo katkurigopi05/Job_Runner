@@ -62,6 +62,28 @@ app.include_router(tracking.router)
 app.include_router(events.router)
 
 
+@app.get("/", tags=["meta"])
+async def index() -> dict[str, str]:
+    """Where things are, for someone who opened the API's address in a browser.
+
+    `/` had no route, so that returned the 404 envelope, and a 404 from the
+    front door reads as an API that is down. Paths rather than absolute URLs
+    for what this app serves: it does not know what host it was reached by.
+    The dashboard is another process, so that one is the configured address.
+
+    No database call. `/health` is the check; this has to answer when the
+    check would fail, to say where the check is.
+    """
+    return {
+        "name": app.title,
+        "version": app.version,
+        "docs": "/docs",
+        "openapi": "/openapi.json",
+        "health": "/health",
+        "dashboard": get_settings().dashboard_url,
+    }
+
+
 @app.get("/health", tags=["meta"])
 async def health() -> dict[str, str]:
     """Whether the API is up *and* whether it can reach the database.
