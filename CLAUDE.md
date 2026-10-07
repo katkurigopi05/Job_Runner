@@ -197,6 +197,7 @@ jobrunner/
 │   │   ├── apply_job.py          the apply pipeline
 │   │   └── crawl_job.py          career-page polling
 │   ├── mcp/                      MCP server exposing tools to Claude Code
+│   ├── dab/                      Data API Builder config: read-only REST and GraphQL, §23
 │   └── web/                      Next.js dashboard
 │       └── assistant             local chat over the owner's own data, §14
 ├── packages/
@@ -933,6 +934,62 @@ Worth knowing what that benchmark did *not* prove. Of §7's five tasks only
 constructed — the inbox is rules-only, deciding 29 of those 30 emails without
 a model at all. The assistant is the one live local-model path, so it is the
 one the choice was made on.
+
+**It is Qwen3 8B at 3 bits since 2026-10-06**
+(`hf.co/unsloth/Qwen3-8B-GGUF:Q3_K_M`, 4.1 GB), and the two paragraphs above
+describe the model it replaced. The owner asked for a better local model and
+it was measured on the assistant itself: twelve questions (the four prompt
+buttons, Kafka, "any jobs role based on ai", security, Zig, a paraphrase, a
+date that is not in the data, "hello", "jobs at Stripe"), each prompt built
+from the owner's data the way `/chat` builds it, each answer checked against
+what the model had been handed. Same request as the provider sends, context
+capped at 4,096, thinking off, one model loaded at a time.
+
+| | right | partly | missed | wrong or invented | all 12 | held | lowest free |
+|---|---|---|---|---|---|---|---|
+| `llama3.1` (Ollama, 4-bit) | 2 | 5 | 0 | 5 | 102 s | 5.26 GB | 32% |
+| Qwen3 8B, Ollama `Q3_K_M` | 9 | 2 | 1 | 0 | 141 s | 4.82 GB | 34% |
+| Qwen3 8B, MLX 3-bit | 7 | 2 | 0 | 3 | 181 s | 4.70 GB | 36% |
+| Qwen3 8B, MLX 4-bit DWQ | 8 | 3 | 1 | 0 | 146 s | 5.69 GB | 31% |
+| Qwen3 8B, MLX 4-bit | 9 | 1 | 1 | 1 | 143 s | 5.69 GB | 30% |
+
+`llama3.1`'s five: "You have 3 profiles that need manual completion" (they are
+applications, and the one awaiting review was left out); nine kinds of
+security role it made up after the real ones; "the interview date is copied
+word for word from your profile"; "We haven't started searching for jobs"; and
+"all four postings are from Stripe" under a list of five.
+
+Four things to keep in mind about that table:
+
+- **One run each, twelve questions, one judge.** A one-answer difference is
+  noise. The gap between 5 wrong and 0 is not.
+- **MLX was tried as the engine and not adopted.** It writes at 17 to 21
+  tokens a second against Ollama's 12, but reads the prompt at about 150 a
+  second, so a 1,300-token prompt waits 8 s for its first word against about
+  5 s. End to end it was no faster, no more accurate, and held the same at the
+  same bits. It would also need an idle unload built, which Ollama does itself.
+- **The 4-bit build of the same model does not fit.** Loading a 5 GB model
+  takes about 1.5 times its size for a few seconds: `llama3.1` took the
+  machine from 71% free to 26%, and `qwen3:8b` straight after it to 20%.
+- **Two things made the result and both are now in the request**
+  (`OllamaProvider`, `tests/test_ollama_local_model.py`). Qwen3 reasons before
+  it answers and every caller passes `max_tokens` as an answer budget, §7's
+  OpenRouter trap again, so `think: false` is sent to a model the daemon lists
+  as thinking. And the context is capped by `OLLAMA_NUM_CTX` (4,096), because
+  what a loaded model holds grows with it. A hosted `:cloud` model is sent
+  neither.
+
+What was *not* measured: tailoring and the cover letter. The local model also
+answers those when `LLM_TASK_TAILOR=ollama` or `LLM_FALLBACK_LOCAL` sends them
+there, and in the local column of **Compare models**. Qwen3 at 3 bits has not
+been run on them, and a prompt longer than the context cap is cut by Ollama
+without an error. `llama3.1` and the 4-bit `qwen3:8b` were deleted from the
+owner's machine the same day, at their request.
+
+Found on the way and not fixed: with no recruiter replies stored the context
+has no replies section at all, so no model can answer "Any replies?" with
+"none". Qwen restated the application counts; `llama3.1` said "no new replies",
+which was true and was a guess.
 
 **§2.2 is refused before the model is reached.** Asked what to put for work
 authorization, sponsorship, employment history, or salary, the route returns a
@@ -3878,3 +3935,217 @@ idle in `kevent`, one connection sat on port 8000, and `/health` timed out.
 `--timeout-graceful-shutdown 3` bounds the wait.
 `tests/test_dev_api_reloads.py` holds it. A server started before the change
 keeps the old behaviour until it is restarted.
+
+---
+
+## 23. A second, generated API beside the written one
+
+`make dab` runs Microsoft's Data API Builder (2.0.12, MIT, a `dotnet` tool)
+over three sources and serves them on `127.0.0.1:5050`: REST with `$filter`,
+`$select`, `$orderby`, `$first` and `$after`, a Swagger page at `/swagger`,
+and GraphQL at `/graphql` with joins. The owner asked for it on 2026-10-06,
+after the DP-800 course's section on the tool (their `DP-800DAB` workspace).
+
+It answers questions nobody wrote a route for. The routes in `apps/api`
+each do one thing; "open postings paying over 200,000, highest
+first" or "my top matches with their company" was a `psql` session.
+
+```text
+GET /api/Posting?$filter=closed_at eq null and salary_min gt 200000&$orderby=salary_min desc&$first=3
+{ matches(first: 3, orderBy: {score: DESC}) { items { score posting { title company { name } } } } }
+```
+
+It is a second door onto the database and does not inherit the first one's
+guards, so five things are held by `tests/test_data_api_builder.py`:
+
+- **Three sources: `companies`, `matches`, and `api_postings`.** Résumés,
+  profiles, applications and recruiter mail are not served (§2.8). Adding a
+  source means adding it to the test as well as the config.
+- **Read only, twice.** The config grants `read` and nothing else, and the
+  connection asks Postgres to start every transaction read-only. Measured
+  with a scratch config that *allowed* writes: a delete came back
+  `25006: cannot execute DELETE in a read-only transaction`.
+- **This machine only.** `scripts/run_dab.py` sets the address and takes no
+  setting for the host; `JOBRUNNER_DAB_PORT` moves the port. §3 records what
+  a network bind nobody had read cost the dashboard.
+- **No MCP endpoint and no telemetry.** The course's own rule is that an MCP
+  endpoint is never left anonymous, and `apps/mcp` is this project's. The
+  generated config also exported traces to wherever `OTEL_*` pointed.
+- **Started by the launcher, never `dab start`.** The tool reads `.env` from
+  its working directory. The project's holds every key there is, and the tool
+  cannot parse it anyway: started in the repository root it crashed.
+
+Four things only running it showed:
+
+- **It cannot read a pgvector column.** `postings` stopped it at start-up
+  ("Reading as 'System.Object' is not supported for fields having
+  DataTypeName 'public.vector'"). `api_postings` is a view with the columns
+  named and the embedding left out. A column added to `postings` later is not
+  served until it is added to the view, and a migration that changes the type
+  of a column the view uses has to drop the view first.
+- **A view may not have relationships.** Declared `"type": "view"` it refused
+  to start ("Cannot define relationship for entity: Posting") and
+  `dab validate` crashed on a cast. It is declared `"type": "table"` with its
+  key named, which is what the course's own config does for its view.
+- **Port 5000, the tool's default, is macOS's AirPlay receiver.**
+- **`salary_min` is in the posting's own currency and period.** The first
+  query above returned rupee salaries in Hyderabad. Filter on
+  `salary_currency` and `salary_period` too.
+
+Not done: nothing in the dashboard or the assistant calls it, CI does not
+have the tool installed and so never starts it, and the course's deployment
+half (a container registry, Container Apps, Azure monitoring) is paid hosting
+that §11 rules out.
+
+---
+
+## 24. Discovery waits for everything else
+
+Found on 2026-10-06 by starting a crawl and watching it. One tick queued 3,234
+`discover_company` tasks and 682 `crawl_company` tasks with the same
+`run_after`, and `claim_task` ordered by `run_after` alone. Five workers took
+discovery, about 17 tasks a minute, and after two minutes no board had been
+polled and no posting had arrived. At that rate the board polls, which are
+what bring postings in, were three hours away.
+
+`claim_task` takes `after_others`: kinds claimed only when nothing else is
+runnable. The worker passes `YIELDING_KINDS`, which is `discover_company`.
+After the restart, 134 boards were polled in the first 75 seconds and 227 new
+postings stored.
+
+Three things to keep:
+
+- **It is not only about the crawl.** An approved application and the inbox
+  poll are queue tasks too, and both would have waited behind the discovery
+  backlog. Nothing was waiting that day, which is why it had not been seen.
+- **Only runnable work is yielded to.** The next tick is always pending with a
+  `run_after` a few minutes ahead. Yielding to that would leave discovery
+  idle with nothing to wait for. `tests/test_queue.py` holds it.
+- **Among discovery tasks the order is still `run_after`**, which is what
+  `defer_task` moves when it hands a task back for a busy host.
+
+Not fixed, and seen the same day: `make workers` ignored both an interrupt and
+a terminate for 20 seconds and had to be killed. The five tasks it was running
+kept their leases for the five minutes those last.
+
+---
+
+## 25. One board is polled under one company row
+
+The owner asked for no duplicates on 2026-10-06, after a crawl. There were
+282, and none of the constraints could see them.
+
+Eleven boards were each verified under two company rows: Vercel and ZEIT,
+Elastic and Elastic.co, Flexport and Deliverr, Teleport and Gravitational,
+Replit and Repl.it. The owner's sheet lists a company under an old name and a
+new one, discovery resolved both to the same board, and nothing asked whether
+somebody already held it. Each board was fetched twice a cycle and every
+posting on it stored twice, same URL and same text: 282 of 11,429 open
+postings. The assistant had answered a Kafka question with a Vercel job listed
+as "ZEIT". `uq_postings_company_external_id` is per company, and the two
+copies belong to two companies.
+
+`packages/crawler/duplicate_boards.py` is the fix, in three places:
+
+- **Discovery asks first.** `holder_of` is consulted before a company is
+  verified; a board somebody holds sets the newcomer aside and queues no
+  crawl.
+- **The database refuses the rest.** `uq_companies_verified_board` is a
+  partial unique index on `(ats_type, slug)` for verified rows only. Two
+  discovery tasks can resolve one board at once, each before the other
+  commits, and then neither finds a holder: the index is what still holds.
+  The handler writes inside a savepoint and comes out of that with the
+  company set aside, not with a failed task.
+- **`make merge-duplicate-boards` repaired what was there**, after a verified
+  backup: 11 rows set aside, 282 copies deleted, 32 scores that only a copy
+  had moved to the original, nothing of the owner's touched.
+
+Five things to keep:
+
+- **The row that loses a board is kept.** It becomes `failed`, with no slug,
+  carrying what it resolved to and who holds it (`duplicate_board`). The
+  registry keeps evidence, not deletions (§9), and the row is the only record
+  that the sheet named that company. Two of the eleven are probably not
+  renames at all (Twelve and Twelve Labs, Alchemy and Alchemy Cloud): the
+  board belongs to one and discovery guessed it for the other. Set aside is
+  right for both readings.
+- **The row named like the board keeps it** (`keeper_of`): "Vercel" for
+  `vercel`, "Teleport" for `goteleport`. The name is what the owner reads on
+  a card. Where the names say nothing, the older row. Discovery cannot wait
+  to compare names, so there the first row verified keeps it.
+- **A row that loses a board loses its postings to the holder too**
+  (`absorb`). Nothing polls a set-aside row, so nothing would ever close
+  them, and the holder's next fetch would store each one a second time.
+  `sync_registry` does this when a seed names a board a sheet row holds.
+- **The index is only on verified rows.** The comment on
+  `ix_companies_ats_slug` wanted a collision to stay a fact to look at, and
+  it does: hint, unverified and failed rows may name a board any number of
+  times.
+- **The opening of a savepoint flushes.** The first version changed the row
+  and then opened the savepoint, so the change met the index outside it and
+  took the whole transaction down. The row is changed inside.
+
+What was left alone, and is a decision rather than a defect: 41 open postings
+are an employer listing the same job more than once, with the same title,
+place and text but its own requisition id and URL each time (Process Street
+has one five times). §16 does not merge within one source or across
+requisition ids, and those are the employer's own listings.
+
+---
+
+## 26. What checking the assistant's wiring found
+
+On 2026-10-06 every path the assistant has was run against the owner's
+database: the fields the dashboard reads against the ones the API sends,
+sixteen questions through `retrieve()`, thirteen through `/chat` on the local
+model, each provider, and one through the dashboard's proxy. The fields agree,
+the refusal, the crawl command, the four buttons and the application context
+answered correctly, and the counts matched the database. Four things did not.
+
+- **A citation in round brackets did not count.** Qwen3 writes "(P1)". An
+  answer resting on four postings had all five filed under "not cited".
+  `cited_labels` reads brackets holding labels and nothing else, so "(the P2
+  band)" is still prose.
+- **"skill" was searched for.** The owner typed "any companies required skill
+  of kafka list them". The word is in 9.6% of descriptions, under the 30% that
+  drops a common word, and in 0.00% of titles. A posting that says "skill" and
+  nothing of Kafka took one of the five places. It is a framing word now, with
+  "skills", "skilled", "needs", "needed", "needing" and "them" (§22).
+- **"software engineer jobs in London" opened with three roles in San Jose.**
+  Two causes. A place named in a question was only a keyword, matched the same
+  in a location field as in a list of an employer's offices: a term in the
+  location now counts twice, as one in the title does. And a posting whose
+  whole title is in the question goes first, which for a question about
+  software engineers is every posting titled "Software Engineer": when
+  something more was asked and some of the role's postings say it, a posting
+  goes first for its title only if it is one of them.
+- **A remote role in India was inside the search area.** Its location field
+  says "Remote" and its title says "(India)". A field that names no place is
+  no evidence, and `area_exclusion` kept it: 50 open postings, one of them
+  among five answers about Kafka. When the field is silent the title is read,
+  and only for a place abroad. This is the one rule (§15), so the feed and the
+  scoring gate read it too.
+
+On the 112 benchmark questions (52 of the 56 postings still open) the right
+posting was in the five shown for 39 natural questions against 38, and for 2
+paraphrased against 2.
+
+Seen and left alone:
+
+- **The employer's own repeats take places among the five.** Roku lists
+  "Software Engineer" in San Jose three times, as three requisitions. §25
+  leaves them as rows; showing one of them is a decision for the owner.
+- **"jobs at ZEIT" says there are none.** The row was set aside for Vercel's
+  board (§25) and the assistant does not follow that to Vercel.
+- **The picker offers providers that are not set up.** Anthropic has no key
+  and `ollama_cloud` answered 402. Both fail with the provider's reason.
+- **Qwen3 volunteered a list of "skills not on the résumé"** under a question
+  about roles with AI in the title. The question is not a gap question and
+  the context held no gap section: the model's own framing of a requirements
+  excerpt.
+
+Found by the pull request, not by this check: a secret scanner failed #125 on
+one line of `tests/test_data_api_builder.py`, the expected output of the
+connection-string builder, with a made-up username and password written out
+as one string. The test assembles them now, and this paragraph does not quote
+the line, since the scanner reads prose as well.

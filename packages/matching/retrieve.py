@@ -217,6 +217,7 @@ type types kind kinds
 based base use uses used focus focused focuses focusing require requires
 required requiring include includes around within such relevant specific
 oriented centric driven
+skill skills skilled needs needed needing them
 """
 _FRAMING_WORDS = _POSTING_WORDS | frozenset(_FRAMING_WORDS_TEXT.split())
 
@@ -473,6 +474,14 @@ def _outside_area(hit: _Hit) -> bool:
             remote_outside_california=get_settings().search_remote_outside_california,
         )
         is not None
+    )
+
+
+def _located_at(hit: _Hit, terms: list[str]) -> bool:
+    """Whether the posting's location field holds one of the question's terms, as a word."""
+    location = (hit.location or "").lower()
+    return any(
+        re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", location) for term in terms
     )
 
 
@@ -851,7 +860,16 @@ async def _keyword_hits(
         weight = frequencies.idf(term)
         hit = matched.c.doc.regexp_match(_term_pattern(term), flags="i")
         in_title = Posting.title.regexp_match(_term_pattern(term), flags="i")
-        score = score + case((hit, weight), else_=0.0) + case((in_title, weight), else_=0.0)
+        # And twice in the location: "software engineer jobs in London"
+        # returned roles in San Jose whose employer lists a London office. A
+        # word in that field is the posting saying where it is.
+        in_location = Posting.location.regexp_match(_term_pattern(term), flags="i")
+        score = (
+            score
+            + case((hit, weight), else_=0.0)
+            + case((in_title, weight), else_=0.0)
+            + case((in_location, weight), else_=0.0)
+        )
 
     query = (
         select(
@@ -1219,13 +1237,24 @@ async def retrieve(
             # Among the role's postings only. If none of them says what else
             # was asked, the role alone is the better answer than nothing.
             among_role = [hit.posting_id for hit in role_pool]
-            scanned = (
+            saying_it = (
                 await _keyword_hits(
                     session, terms, frequencies, companies, pool=len(among_role), only=among_role
                 )
                 if terms and among_role
                 else []
-            ) or role_pool
+            )
+            scanned = saying_it or role_pool
+            if saying_it:
+                # A title that is the role's own name is in every question
+                # about the role, so it goes first whatever else was asked:
+                # "software engineer jobs in London" opened with three
+                # postings titled "Software Engineer" in San Jose that say
+                # nothing of London. When something more was asked and some
+                # of the role's postings say it, a posting goes first for its
+                # title only if it is one of them.
+                matching = {hit.posting_id for hit in saying_it}
+                titled = [hit for hit in titled if hit.posting_id in matching]
         already = {hit.posting_id for hit in titled}
         scanned = [hit for hit in scanned if hit.posting_id not in already]
         if area:
@@ -1259,8 +1288,18 @@ async def retrieve(
         # Then the fused order; the sort is stable, so a tie keeps the keyword
         # order.
         by_title = {hit.posting_id: len(hit.title or "") for hit in titled}
+        # Between postings with the same title, the one located where the
+        # question says. They are found by title and never scored by the
+        # keyword scan, so "software engineer jobs in London" put three in
+        # San Jose first: the title was all that had been compared.
+        there = {hit.posting_id for hit in titled if _located_at(hit, terms)}
         ordered = sorted(
-            keyword, key=lambda hit: (-by_title.get(hit.posting_id, 0), -fused[hit.posting_id])
+            keyword,
+            key=lambda hit: (
+                -by_title.get(hit.posting_id, 0),
+                hit.posting_id not in there,
+                -fused[hit.posting_id],
+            ),
         )
         # The re-ranker orders the rest. A posting named by its title was
         # asked for outright, and no model's opinion of its text outranks that.

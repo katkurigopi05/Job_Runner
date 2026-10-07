@@ -1,0 +1,185 @@
+{
+  "$schema": "https://github.com/Azure/data-api-builder/releases/download/v2.0.12/dab.draft.schema.json",
+  "data-source": {
+    "database-type": "postgresql",
+    "connection-string": "@env('JOBRUNNER_DAB_CONN')"
+  },
+  "runtime": {
+    "rest": {
+      "enabled": true,
+      "path": "/api",
+      "request-body-strict": false
+    },
+    "graphql": {
+      "enabled": true,
+      "path": "/graphql",
+      "allow-introspection": true
+    },
+    "mcp": {
+      "enabled": false,
+      "path": "/mcp"
+    },
+    "host": {
+      "cors": {
+        "origins": [],
+        "allow-credentials": false
+      },
+      "authentication": {
+        "provider": "Unauthenticated"
+      },
+      "mode": "development"
+    },
+    "pagination": {
+      "default-page-size": 100,
+      "max-page-size": 1000,
+      "next-link-relative": false
+    },
+    "health": {
+      "enabled": true,
+      "roles": []
+    }
+  },
+  "autoentities": {},
+  "entities": {
+    "Company": {
+      "source": {
+        "object": "public.companies",
+        "type": "table"
+      },
+      "fields": [],
+      "graphql": {
+        "enabled": true,
+        "type": {
+          "singular": "Company",
+          "plural": "Companies"
+        }
+      },
+      "rest": {
+        "enabled": true
+      },
+      "permissions": [
+        {
+          "role": "anonymous",
+          "actions": [
+            {
+              "action": "read"
+            }
+          ]
+        }
+      ],
+      "relationships": {
+        "postings": {
+          "cardinality": "many",
+          "target.entity": "Posting",
+          "source.fields": [
+            "id"
+          ],
+          "target.fields": [
+            "company_id"
+          ],
+          "linking.source.fields": [],
+          "linking.target.fields": []
+        }
+      }
+    },
+    "Posting": {
+      "source": {
+        "object": "public.api_postings",
+        "type": "table"
+      },
+      "fields": [
+        {
+          "name": "id",
+          "primary-key": true
+        }
+      ],
+      "graphql": {
+        "enabled": true,
+        "type": {
+          "singular": "Posting",
+          "plural": "Postings"
+        }
+      },
+      "rest": {
+        "enabled": true
+      },
+      "permissions": [
+        {
+          "role": "anonymous",
+          "actions": [
+            {
+              "action": "read"
+            }
+          ]
+        }
+      ],
+      "relationships": {
+        "company": {
+          "cardinality": "one",
+          "target.entity": "Company",
+          "source.fields": [
+            "company_id"
+          ],
+          "target.fields": [
+            "id"
+          ],
+          "linking.source.fields": [],
+          "linking.target.fields": []
+        },
+        "matches": {
+          "cardinality": "many",
+          "target.entity": "Match",
+          "source.fields": [
+            "id"
+          ],
+          "target.fields": [
+            "posting_id"
+          ],
+          "linking.source.fields": [],
+          "linking.target.fields": []
+        }
+      }
+    },
+    "Match": {
+      "source": {
+        "object": "public.matches",
+        "type": "table"
+      },
+      "fields": [],
+      "graphql": {
+        "enabled": true,
+        "type": {
+          "singular": "Match",
+          "plural": "Matches"
+        }
+      },
+      "rest": {
+        "enabled": true
+      },
+      "permissions": [
+        {
+          "role": "anonymous",
+          "actions": [
+            {
+              "action": "read"
+            }
+          ]
+        }
+      ],
+      "relationships": {
+        "posting": {
+          "cardinality": "one",
+          "target.entity": "Posting",
+          "source.fields": [
+            "posting_id"
+          ],
+          "target.fields": [
+            "id"
+          ],
+          "linking.source.fields": [],
+          "linking.target.fields": []
+        }
+      }
+    }
+  }
+}

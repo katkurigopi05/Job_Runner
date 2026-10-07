@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Any, Protocol, TypeVar
 
 import httpx
@@ -124,8 +125,36 @@ class StubProvider:
         return self.calls[-1] if self.calls else None
 
 
+#: Whether a model reasons before it answers, by `(base_url, model)`, as the
+#: daemon reported it and when. Not asked per call: `/chat` builds a provider
+#: per question.
+_THINKING_MODELS: dict[tuple[str, str], tuple[bool, float]] = {}
+
+#: How long the daemon's answer is believed. The API runs for days, and a tag
+#: can be pulled again as a model that reasons, or a newer daemon can list a
+#: capability it did not: kept for the life of the process, the old answer
+#: would leave such a model with no switch and its `max_tokens` spent on
+#: reasoning. Asking again is one request to this machine.
+THINKING_ANSWER_KEPT_S = 600.0
+
+
 class OllamaProvider:
     name = "ollama"
+
+    #: A model held in this machine's memory gets a capped context and, if it
+    #: is one that reasons first, its thinking switched off. Both were part of
+    #: what was measured when the model was chosen (`ollama_model` in
+    #: `core/config.py`), and neither is Ollama's default:
+    #:
+    #: - every caller passes `max_tokens` as an answer budget, and a thinking
+    #:   model spends it reasoning. §7 records that on OpenRouter: 300 tokens,
+    #:   `finish_reason="length"`, empty content;
+    #: - what a loaded model holds grows with its context, and this is a 16 GB
+    #:   machine.
+    #:
+    #: `OllamaCloudProvider` turns it off. A hosted model's context costs this
+    #: machine nothing, and only the local path was measured.
+    shapes_for_this_machine = True
 
     def _headers(self) -> dict[str, str]:
         """Nothing to send. `OllamaCloudProvider` overrides this.
@@ -145,6 +174,54 @@ class OllamaProvider:
         ).rstrip("/")
         self.model = model or os.environ.get("OLLAMA_MODEL") or settings.ollama_model
 
+    def _options(self, max_tokens: int, temperature: float) -> dict[str, Any]:
+        options: dict[str, Any] = {"num_predict": max_tokens, "temperature": temperature}
+        if self.shapes_for_this_machine:
+            from packages.core.config import get_settings
+
+            options["num_ctx"] = get_settings().ollama_num_ctx
+        return options
+
+    async def _thinks(self, client: httpx.AsyncClient) -> bool:
+        """Whether the daemon lists this model as one that reasons first.
+
+        Asked rather than guessed from the name, and sent only to those:
+        the switch means nothing to a model without the capability. A daemon
+        that does not answer is not remembered as "no" — the call that follows
+        will fail on its own if Ollama is down, and say so. If it answered
+        before, that answer stands until it answers again.
+
+        Two questions asked at once may both reach the daemon. Each gets the
+        same answer from this machine, and a lock here would be held across a
+        network call to save one of them.
+        """
+        key = (self.base_url, self.model)
+        known = _THINKING_MODELS.get(key)
+        if known is not None and time.monotonic() - known[1] < THINKING_ANSWER_KEPT_S:
+            return known[0]
+        try:
+            resp = await client.post(
+                f"{self.base_url}/api/show",
+                json={"model": self.model},
+                headers=self._headers(),
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            thinks = "thinking" in (resp.json().get("capabilities") or [])
+        except Exception:  # noqa: BLE001 - the answer is optional; the call is not
+            return known[0] if known is not None else False
+        _THINKING_MODELS[key] = (thinks, time.monotonic())
+        return thinks
+
+    async def _request(
+        self, client: httpx.AsyncClient, messages: list[dict[str, str]], **extra: Any
+    ) -> dict[str, Any]:
+        """The `/api/chat` body, single-sourced for both calls below."""
+        body: dict[str, Any] = {"model": self.model, "messages": messages, "stream": False, **extra}
+        if self.shapes_for_this_machine and await self._thinks(client):
+            body["think"] = False
+        return body
+
     async def complete(
         self,
         system: str,
@@ -158,15 +235,14 @@ class OllamaProvider:
             try:
                 resp = await client.post(
                     f"{self.base_url}/api/chat",
-                    json={
-                        "model": self.model,
-                        "messages": [
+                    json=await self._request(
+                        client,
+                        [
                             {"role": "system", "content": system},
                             {"role": "user", "content": user},
                         ],
-                        "stream": False,
-                        "options": {"num_predict": max_tokens, "temperature": temperature},
-                    },
+                        options=self._options(max_tokens, temperature),
+                    ),
                     headers=self._headers(),
                     timeout=120.0,
                 )
@@ -182,16 +258,15 @@ class OllamaProvider:
             try:
                 resp = await client.post(
                     f"{self.base_url}/api/chat",
-                    json={
-                        "model": self.model,
-                        "messages": [
+                    json=await self._request(
+                        client,
+                        [
                             {"role": "system", "content": system_with_json},
                             {"role": "user", "content": user},
                         ],
-                        "stream": False,
-                        "format": "json",
-                        "options": {"num_predict": 1024, "temperature": JSON_TEMPERATURE},
-                    },
+                        format="json",
+                        options=self._options(1024, JSON_TEMPERATURE),
+                    ),
                     headers=self._headers(),
                     timeout=120.0,
                 )
@@ -268,6 +343,9 @@ class OllamaCloudProvider(OllamaProvider):
     """
 
     name = "ollama_cloud"
+
+    #: Sent as it always was: no context cap and no thinking switch.
+    shapes_for_this_machine = False
 
     #: What the owner asked for. Pinned rather than tracking "latest" for the
     #: reason the other providers pin: the trail should name what actually ran,

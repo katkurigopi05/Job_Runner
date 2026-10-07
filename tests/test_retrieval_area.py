@@ -167,3 +167,79 @@ async def test_a_company_hiring_only_abroad_says_so(
     assert answered.status_code == 200
     assert "1 matching posting outside it left out" in seen["user"]
     assert "no open postings at Faculty in the search area" in seen["user"]
+
+
+async def test_a_place_asked_for_ranks_the_postings_located_there(db_session) -> None:
+    """ "software engineer jobs in London" returned three roles in San Jose.
+
+    Found on 2026-10-06. The place a question names waives the area and is
+    then only a keyword, and a posting matched it the same whether it was
+    located in London or listed London among its employer's offices. With 28
+    software engineer postings located there, the five shown were in San Jose,
+    Gurgaon and "United States": ties went to the newest. A word in the
+    location field is the posting saying where it is, and counts as a word in
+    the title does.
+    """
+    company = await _company(db_session)
+    mentions = [
+        await _posting(
+            db_session,
+            company,
+            "San Jose, California",
+            "Software Engineer",
+            f"Build streaming. Our offices are in San Jose, London and Tokyo. Team {n}.",
+        )
+        for n in range(4)
+    ]
+    located = await _posting(
+        db_session, company, "London, UK", "Software Engineer", "Build streaming for the home."
+    )
+
+    found = await retrieve(db_session, "software engineer jobs in London")
+
+    assert found.passages[0].posting_id == located.id
+    assert {p.posting_id for p in found.passages} >= {m.id for m in mentions[:1]}, (
+        "a mention is still a match, behind the postings that are there"
+    )
+
+
+async def test_a_title_that_is_only_the_roles_name_does_not_outrank_the_place(db_session) -> None:
+    """The shape it had on the owner's database, which the test above did not have.
+
+    The three postings in San Jose were titled exactly "Software Engineer" and
+    do not mention London at all. A posting whose whole title is in the
+    question goes first, and for a question about software engineers that is
+    every posting titled "Software Engineer", wherever it is. The London ones
+    are titled "Software Engineer, Payments" and were listed after them.
+    """
+    company = await _company(db_session)
+    for n in range(3):
+        await _posting(
+            db_session,
+            company,
+            "San Jose, California",
+            "Software Engineer",
+            f"Build streaming {n}.",
+        )
+    located = await _posting(
+        db_session, company, "London, UK", "Software Engineer, Payments", "Build payments."
+    )
+
+    found = await retrieve(db_session, "software engineer jobs in London")
+
+    assert [p.posting_id for p in found.passages] == [located.id]
+    assert len(found.more) == 0, "the three in San Jose say nothing of London"
+
+
+async def test_a_role_asked_for_alone_still_lists_its_exact_titles_first(db_session) -> None:
+    """And what must not move: with nothing more asked, the title rule stands."""
+    company = await _company(db_session)
+    longer = await _posting(
+        db_session, company, "San Francisco, CA", "Staff Software Engineer, Payments", "Build."
+    )
+    exact = await _posting(db_session, company, "San Francisco, CA", "Software Engineer", "Build.")
+
+    found = await retrieve(db_session, "software engineer jobs")
+
+    assert [p.posting_id for p in found.passages][0] == exact.id
+    assert longer.id in {p.posting_id for p in found.passages}

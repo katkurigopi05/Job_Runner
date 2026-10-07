@@ -751,3 +751,43 @@ def test_a_label_opening_a_list_line_is_a_citation() -> None:
     assert cited_labels(reply) == {"P1", "P2", "P3", "P4"}
     assert cited_labels("Band P1 pays more.") == set()
     assert cited_labels("P1 pays more than P2.") == set(), "a line opening on a label is not enough"
+
+
+def test_a_citation_in_round_brackets_counts() -> None:
+    """Verbatim from Qwen3 8B on this machine, asked the owner's own question on 2026-10-06.
+
+    It named four of the five postings and cited each as "(P1)". The parser
+    read square and lenticular brackets only, so the dock filed all five under
+    "not cited in the answer" beneath an answer that rested on four of them.
+
+    Only brackets holding labels and nothing else: "(the P2 band)" is prose.
+    """
+    from apps.api.routers.chat import cited_labels
+
+    reply = (
+        "The companies that require the skill of Kafka are: MyFitnessPal (P1), "
+        "Robinhood (P2), Robinhood (P4), and Weights & Biases (CoreWeave) (P5)."
+    )
+    assert cited_labels(reply) == {"P1", "P2", "P4", "P5"}
+    assert cited_labels("Both fit (P2, P4).") == {"P2", "P4"}
+    assert cited_labels("It pays (the P2 band) more, and P3 is a priority.") == set()
+
+
+async def test_skill_is_how_the_question_is_asked_not_what_it_asks_for(db_session) -> None:
+    """The owner typed "any companies required skill of kafka list them".
+
+    "skill" is in 9.6% of open descriptions, under the 30% that drops a word
+    for being common, so it was searched for beside "kafka", and a posting
+    that says "skill" and nothing about Kafka took one of the five places. It
+    is in 0.00% of titles ("skills" 0.02%): a word of the question, like the
+    connecting words beside it.
+    """
+    from packages.matching import idf
+    from packages.matching.retrieve import _search_terms
+
+    frequencies, _ = await idf.load_active(db_session)
+
+    assert _search_terms("any companies required skill of kafka list them", frequencies) == [
+        "kafka"
+    ]
+    assert _search_terms("roles needing Rust skills", frequencies) == ["rust"]

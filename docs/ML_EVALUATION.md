@@ -496,3 +496,69 @@ The script is `storage/embed_rank_bench/er_live.py`; it makes no LLM call.
 
 The benchmark scripts and vectors are in `storage/embed_rank_bench/`, which
 git ignores. Committing it as a repeatable command is still to do.
+
+## EmbeddingGemma 2 on one day's postings (2026-10-06)
+
+The owner asked for `google/embeddinggemma-2` to be tried on the day's
+postings, in a column of its own. It reads 8,192 tokens, so a posting goes in
+as one vector: `postings.description_embedding_gemma`, half precision, 768
+numbers. Nothing in the product read it.
+
+**The column is gone.** The owner had it dropped the same day, once the
+result was in, and the migration that added it was removed with it: it never
+reached `main`. The 1,261 vectors are kept as a file beside the scripts, so
+the table below can be reproduced without the column.
+
+1,261 postings first seen that day were embedded whole (1,505,405 tokens,
+median 1,146 a posting, longest 2,960). Gemini wrote a natural and a
+paraphrased question for 40 of them, with the rules used for the 56 benchmark
+postings. Each question was asked of the 1,261, and the score is where the
+posting it was written from landed.
+
+| | natural, top 5 | natural, MRR | paraphrased, top 5 | paraphrased, MRR |
+|---|---|---|---|---|
+| EmbeddingGemma 2, one vector a posting | 37 of 40 | 0.808 | 16 of 40 | 0.253 |
+| bge-small, best chunk (what the assistant ranks by) | 30 | 0.577 | 11 | 0.232 |
+| bge-small, best chunk or the title's vector | 39 | 0.865 | 12 | 0.195 |
+| bge-small, one vector a posting (first 512 tokens) | 16 | 0.368 | 11 | 0.205 |
+
+What it shows:
+
+- **As one vector for a whole posting it is far better than bge-small**: 37
+  against 16 on natural questions. That is the 512-token window, measured
+  from the other side: bge-small's single vector never reads the requirements.
+- **Against the chunk search, its lead on natural questions was the title.**
+  The model card's document form is `title: <title> | text: <body>`, and the
+  chunks never contain a title. Once bge-small may also match the title, it is
+  ahead: 39 against 37, and higher on 9 questions to gemma's 5. The shipped
+  search already finds a named job by its title, through keywords.
+- **On paraphrased questions it is a little ahead and that is not
+  established.** 16 against 11 or 12 in the top five; by rank, higher on 21 or
+  22 questions and lower on 17.
+
+What it cost on the owner's machine: 605 s for the 1,261 (2.1 postings a
+second, 2,490 tokens a second), so about 90 minutes for the 11,148 open
+postings, with 2.2 GB held on the GPU. Three things only running it showed:
+
+- **It needs sentence-transformers 6.1; the project has 6.0.** It ran in an
+  environment of its own, fed from a file.
+- **Its loader imports the image and audio libraries even for text**:
+  pillow, torchvision, torchaudio, librosa, soundfile. Loaded with
+  `config_kwargs={"vision_config": None, "audio_config": None}` it is 271M
+  parameters of the 740M.
+- **Four postings a batch ran out of GPU memory 104 postings in.** Batches
+  are cut by padded tokens now (3,000), and the cache is emptied after each.
+
+What this does not establish: 40 postings and one model writing the
+questions, Gemini here and Nemotron for the 56. Gemini's natural questions
+are mostly the title ("What are the Catering Assistant roles available?"),
+which is why the title control mattered. The pool is one day, 1,261 postings
+against 11,148, so every number is higher than it would be live. And none of
+it went through `retrieve()`: the last time a better model was put through
+the real search it changed nothing, because keywords choose the candidates.
+
+Scripts are in `storage/embed_rank_bench/` (`er_gemma_dump.py`,
+`er_gemma_embed.py`, `er_gemma_questions.py`, `er_gemma_today.py`), with the
+vectors and questions in `gemma_today/`. The comparison reads the vectors from
+that file now. When this table was made it searched the column in Postgres,
+with the same ranking: nearest by cosine, ties by id.

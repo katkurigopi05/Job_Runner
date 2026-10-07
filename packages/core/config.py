@@ -83,7 +83,27 @@ class Settings(BaseSettings):
     #:
     #: A field rather than a Python default because the value was previously
     #: written into three files and settable in none.
-    ollama_model: str = "llama3.1"
+    #:
+    #: That paragraph describes `llama3.1`, which this was until 2026-10-06.
+    #: The owner then compared local models on the assistant itself: twelve
+    #: questions, prompts built from their data as `/chat` builds them, each
+    #: answer checked against what the model had been handed. `llama3.1` got
+    #: 2 right and 5 wrong or invented; Qwen3 8B at 3 bits got 9 right and
+    #: none wrong, holding 4.82 GB against 5.26, at 12 tokens a second against
+    #: 15. The same model at 4 bits could not load under a 30%-free floor on
+    #: this 16 GB machine. One run each, one judge: CLAUDE.md §14 has the table.
+    #:
+    #: The email benchmark above was not repeated for it. Nothing constructs
+    #: `LLMClassifier` (§14), so no live path reads mail with this model.
+    #:
+    #: Pulled with `ollama pull hf.co/unsloth/Qwen3-8B-GGUF:Q3_K_M` (4.1 GB).
+    ollama_model: str = "hf.co/unsloth/Qwen3-8B-GGUF:Q3_K_M"
+    #: The context a local model is loaded with, in tokens. What a loaded
+    #: model holds grows with this, and the comparison above was made at
+    #: 4,096: the assistant's longest prompt is about 1,700 tokens and it may
+    #: answer in 600. A prompt longer than this is cut by Ollama without an
+    #: error, so raise it before pointing a longer task at the local model.
+    ollama_num_ctx: int = 4096
 
     #: Which model the `ollama_cloud` provider asks for — one Ollama hosts on
     #: its own servers rather than this machine.

@@ -32,6 +32,7 @@ job so that file keeps its single writer.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from urllib.parse import urlparse
@@ -44,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.enums import SourceStatus
 from packages.core.models import Company, CompanyCrawlState
 from packages.crawler.company_csv import Classified, TriageReport
+from packages.crawler.duplicate_boards import absorb, holder_of
 from packages.crawler.extract import CompanySeed, RetiredSeed
 
 log = structlog.get_logger(__name__)
@@ -200,6 +202,9 @@ class SyncReport:
     #: Names in both sections — retired on one board, live again on another.
     #: The live seed wins and the retirement is recorded on its evidence.
     moved_boards: list[str] = field(default_factory=list)
+    #: "Seed <- row": a board the registry lists that another verified row was
+    #: polling. One board has one verified row; the curated name keeps it.
+    took_over: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         text = (
@@ -212,7 +217,29 @@ class SyncReport:
         if self.moved_boards:
             moved = ", ".join(self.moved_boards)
             text += f", {len(self.moved_boards)} moved to a new board ({moved})"
+        if self.took_over:
+            text += f", {len(self.took_over)} boards taken over ({', '.join(self.took_over)})"
         return text
+
+
+async def _take_board(
+    session: AsyncSession, company: Company, seed: CompanySeed, now: datetime, outcome: SyncReport
+) -> None:
+    """Give `seed`'s board to `company` if another verified row is polling it.
+
+    `uq_companies_verified_board` allows one verified row for a board, and the
+    registry is the curated list: its name for a board is the one to keep.
+    The other row is set aside with its postings folded in
+    (`duplicate_boards.absorb`), so nothing is stored twice.
+    """
+    if not seed.slug or not seed.ats:
+        return
+    other = await holder_of(session, seed.ats, seed.slug, other_than=company.id)
+    if other is None:
+        return
+    name = other.name
+    await absorb(session, company, other, ats=seed.ats, slug=seed.slug, now=now)
+    outcome.took_over.append(f"{seed.name} <- {name}")
 
 
 #: `source_evidence.method` for a row the registry retired. Read by the
@@ -274,6 +301,9 @@ async def sync_registry(
 
         if company is None:
             company = Company(
+                # Given here, not by the database, so a row set aside for
+                # this one can name it before it is written.
+                id=uuid.uuid4(),
                 name=seed.name,
                 domain=seed.domain,
                 careers_url=seed.careers_url,
@@ -284,6 +314,7 @@ async def sync_registry(
                 source_verified_at=checked or current,
                 source_evidence=evidence,
             )
+            await _take_board(session, company, seed, current, outcome)
             session.add(company)
             await session.flush()
             outcome.created += 1
@@ -294,6 +325,7 @@ async def sync_registry(
             outcome.newer_in_db += 1
             continue
 
+        await _take_board(session, company, seed, current, outcome)
         board_changed = (company.ats_type, company.slug) != (seed.ats, seed.slug)
         company.ats_type = seed.ats
         company.slug = seed.slug

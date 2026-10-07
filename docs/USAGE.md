@@ -137,6 +137,25 @@ JOBRUNNER_WEB_HOST=0.0.0.0 make web
 Nothing about the dashboard is authenticated, so that decision is the whole of
 the protection. `JOBRUNNER_WEB_PORT` moves the port the same way.
 
+Optional — query the job tables directly:
+
+```bash
+make dab
+```
+
+Open `http://127.0.0.1:5050/swagger`. This is Microsoft's Data API Builder over
+companies, postings and matches, read only: REST with `$filter`, `$select`,
+`$orderby`, `$first` and `$after`, and GraphQL at `/graphql`.
+
+```text
+http://127.0.0.1:5050/api/Posting?$filter=closed_at eq null and salary_currency eq 'USD' and salary_period eq 'year' and salary_min gt 200000&$select=title,location,salary_min&$orderby=salary_min desc&$first=10
+```
+
+It needs the tool installed once (`dotnet tool install --global
+Microsoft.DataApiBuilder`) and the migrations applied (`make migrate`), and it
+does not need `make api`. It listens on this machine only;
+`JOBRUNNER_DAB_PORT` moves the port. CLAUDE.md §23 has what it serves and why.
+
 The header shows a status pill. When everything is up it reads `localhost only`;
 it turns amber for `db down` (run `make up`) and red for `api down` (run
 `make api`), so you never have to guess which process stopped.
@@ -170,7 +189,7 @@ ollama serve
 In another terminal, pull the default model once:
 
 ```bash
-ollama pull llama3.1
+ollama pull hf.co/unsloth/Qwen3-8B-GGUF:Q3_K_M
 ```
 
 The dashboard assistant answers locally by default, and `LLM_PROVIDER` never
@@ -819,7 +838,7 @@ Run:
 
 ```bash
 ollama serve
-ollama pull llama3.1
+ollama pull hf.co/unsloth/Qwen3-8B-GGUF:Q3_K_M
 ```
 
 Ollama is optional for core crawling and application work.
