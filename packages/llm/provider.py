@@ -330,6 +330,11 @@ def _scrub(text: str) -> str:
 #: What Ollama's runner calls a prompt longer than the context it was loaded with.
 _TOO_LONG = "exceed_context_size_error"
 
+#: How much of the daemon's own sentence is repeated. It goes into an exception
+#: that is logged and shown, and nothing promises it never echoes what it was
+#: sent. A reason fits in this; a prompt does not (§10).
+_REASON_QUOTED_CHARS = 300
+
 
 def _ollama_reason(exc: Exception) -> str:
     """Why Ollama refused a call, in its own words when it gave any.
@@ -372,7 +377,10 @@ def _ollama_reason(exc: Exception) -> str:
             )
         said = said.get("message")
     if isinstance(said, str) and said.strip():
-        return _scrub(said)
+        reason = _scrub(said)
+        if len(reason) > _REASON_QUOTED_CHARS:
+            return reason[:_REASON_QUOTED_CHARS].rstrip() + "…"
+        return reason
     return _scrubbed(exc)
 
 
