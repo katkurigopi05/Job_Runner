@@ -225,6 +225,36 @@ a résumé written by `llama3.1` after the allowance ran out is a different
 document from one written by Gemini, and you should be able to tell before
 approving it.
 
+#### The local model's context
+
+`OLLAMA_NUM_CTX` in `.env` is how many tokens a local model is loaded with:
+its prompt and its answer together. It ships at 4,096. The assistant's longest
+prompt is about 1,400 tokens with 600 to answer, so it fits with room to spare.
+
+Ollama refuses a prompt that is longer than the context (HTTP 400). If a
+tailoring or cover-letter call on the local model fails that way, the context
+is what to raise. Measured on a 16 GB Mac on 2026-10-07, same model, same
+twelve questions:
+
+| setting | memory held | answer speed |
+|---|---|---|
+| context 4,096 (shipped) | 4.82 GB | 11.7 tokens a second |
+| context 4,096, 8-bit cache | 4.54 GB | 13.5 tokens a second |
+| context 8,192, 8-bit cache | 4.98 GB | 8.7 tokens a second |
+
+The 8-bit cache is a setting of Ollama itself, not of Job Runner. The answers
+were the same with it on. To turn it on for the Ollama app on macOS, set both
+variables and reopen Ollama:
+
+```bash
+launchctl setenv OLLAMA_FLASH_ATTENTION 1
+launchctl setenv OLLAMA_KV_CACHE_TYPE q8_0
+```
+
+That is Ollama's documented way to give the app a setting, and it lasts until
+the Mac restarts. The measurement was made by starting `ollama serve` with the
+two variables set, not through the app.
+
 #### When an OpenRouter route stops working
 
 `OPENROUTER_MODEL` defaults to `stealth/ox-alpha`, and pre-release routes are
