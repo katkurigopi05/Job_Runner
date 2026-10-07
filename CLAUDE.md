@@ -678,6 +678,10 @@ application's own page.
 Not done: a task names its application by URL. No tracking route carries the
 company or the role.
 
+Seen on the owner's data the same day, over stdio with the API up: nothing
+waiting, and no task or contact on the one application tried. The grouping
+and the contact cut have been seen on test rows only.
+
 **An id handed to a tool could name another route** (2026-10-07, found beside
 the tracker tools). Every tool that takes an id wrote it bare into the path it
 asked the API for, and httpx resolves `..` before it sends. The one calling is
