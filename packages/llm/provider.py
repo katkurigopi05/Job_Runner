@@ -33,6 +33,7 @@ import httpx
 import structlog
 from pydantic import BaseModel
 
+from packages.llm import timing
 from packages.llm.audit import CLOUD_MODEL_MARKERS, record
 from packages.llm.pacing import MAX_RETRIES, pacer_for, reset_beyond_reach, retry_after_seconds
 
@@ -182,6 +183,16 @@ class OllamaProvider:
             options["num_ctx"] = get_settings().ollama_num_ctx
         return options
 
+    def _measured(self, payload: dict[str, Any], user: str, options: dict[str, Any]) -> None:
+        """Keep what the daemon says the call cost. See `packages/llm/timing.py`."""
+        timing.note(
+            payload,
+            provider=self.name,
+            model=getattr(self, "model", None),
+            user=user,
+            context_limit=options.get("num_ctx"),
+        )
+
     async def _thinks(self, client: httpx.AsyncClient) -> bool:
         """Whether the daemon lists this model as one that reasons first.
 
@@ -231,6 +242,7 @@ class OllamaProvider:
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> str:
         record(self.name, system, user, model=getattr(self, "model", None))
+        options = self._options(max_tokens, temperature)
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.post(
@@ -241,19 +253,23 @@ class OllamaProvider:
                             {"role": "system", "content": system},
                             {"role": "user", "content": user},
                         ],
-                        options=self._options(max_tokens, temperature),
+                        options=options,
                     ),
                     headers=self._headers(),
                     timeout=120.0,
                 )
                 resp.raise_for_status()
-                return str(resp.json()["message"]["content"])
+                payload = resp.json()
+                content = str(payload["message"]["content"])
             except Exception as exc:
                 raise LLMError(f"Ollama call failed: {_scrubbed(exc)}") from exc
+        self._measured(payload, user, options)
+        return content
 
     async def complete_json(self, system: str, user: str, schema: type[T]) -> T:
         record(self.name, system, user, model=getattr(self, "model", None))
         system_with_json = f"{system}\n\n{render_json_instruction(schema)}"
+        options = self._options(1024, JSON_TEMPERATURE)
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.post(
@@ -265,16 +281,18 @@ class OllamaProvider:
                             {"role": "user", "content": user},
                         ],
                         format="json",
-                        options=self._options(1024, JSON_TEMPERATURE),
+                        options=options,
                     ),
                     headers=self._headers(),
                     timeout=120.0,
                 )
                 resp.raise_for_status()
-                content = resp.json()["message"]["content"]
-                return schema.model_validate_json(content)
+                payload = resp.json()
+                parsed = schema.model_validate_json(payload["message"]["content"])
             except Exception as exc:
                 raise LLMError(f"Ollama JSON call failed: {_scrubbed(exc)}") from exc
+        self._measured(payload, user, options)
+        return parsed
 
 
 #: Gemini authenticates with the key as a *query parameter*, so the key is part
