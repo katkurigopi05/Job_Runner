@@ -17,6 +17,10 @@ Two things to know about the tool surface:
   `edit_application_resume` (guard-checked, because a model is typing).
   `preview_resume` is assembly only — source résumé plus ranked GitHub
   projects — and says so.
+- **The owner's two decisions make the client ask.** `approve_application`
+  and `submit_otp` are marked so that Claude Code prompts on every call (see
+  `ASKS_THE_OWNER`). Their docstrings ask a model to wait for the owner; the
+  mark is what makes the client wait.
 """
 
 from __future__ import annotations
@@ -38,6 +42,27 @@ work-authorization question.
 """.strip()
 
 server = MCPServer(name="jobrunner", instructions=INSTRUCTIONS)
+
+#: Claude Code shows the permission prompt on every call to a tool whose
+#: `tools/list` entry carries this in `_meta`: in every permission mode, past
+#: any allow rule, with no "don't ask again". In the one mode that never
+#: prompts it refuses the call. The value has to be the JSON boolean.
+ASK_FLAG = "anthropic/requiresUserInteraction"
+
+#: The tools that carry it: the two that move a parked application on the
+#: owner's say-so (§2.3). Over MCP the caller is a model, and "only call it
+#: when the owner has actually decided" is a sentence in a docstring.
+#:
+#: `.claude/settings.json` holds an ask rule for the same two, for a client
+#: build that does not read the flag. `tests/test_mcp.py` keeps this tuple,
+#: the decorators below and that file in agreement.
+#:
+#: `reject_application` is left out. It is terminal, but it sends nothing to
+#: an employer, and a prompt on every tool the review gate has would be read
+#: past.
+ASKS_THE_OWNER: tuple[str, ...] = ("approve_application", "submit_otp")
+
+_ASK_EVERY_TIME: dict[str, Any] = {ASK_FLAG: True}
 
 #: Replaced in tests to bind the tools to the ASGI app instead of a socket.
 _client = JobrunnerClient()
@@ -195,7 +220,7 @@ async def review_queue() -> dict[str, Any]:
     return {"waiting": queue, "count": len(queue)}
 
 
-@server.tool()
+@server.tool(meta=_ASK_EVERY_TIME)
 async def approve_application(
     application_id: str, answers: dict[str, Any] | None = None, note: str | None = None
 ) -> dict[str, Any]:
@@ -222,7 +247,7 @@ async def reject_application(application_id: str, note: str | None = None) -> di
     )
 
 
-@server.tool()
+@server.tool(meta=_ASK_EVERY_TIME)
 async def submit_otp(application_id: str, code: str) -> dict[str, Any]:
     """Supply a verification code to an application parked at needs_otp."""
     return await _call("POST", f"/applications/{application_id}/otp", json={"code": code})
