@@ -207,6 +207,14 @@ Ollama's stream carries the same numbers. A few lines in `stream`, once both
 have merged. The daemon's refusal reason (`_ollama_reason`) needs the same
 wiring there.
 
+One more for the same sitting. For a prompt too long for the local model,
+`/chat` now shows the right reason inside the wrong advice: "The local model
+is not answering (the prompt is 6,076 tokens and the model's context is
+4,096 ...). Start Ollama with `ollama serve`, or pull the configured model".
+The advice is `did_not_answer` in `chat.py`, which #128 moves, so it was left
+out of #129. It should say what to do about a long prompt when that is the
+reason.
+
 ### S6. Decide on the 8-bit cache for your Ollama (open, the owner's call)
 
 At the shipped context it held 0.28 GB less and gave the same answers. It is a
