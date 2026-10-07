@@ -521,6 +521,7 @@ Which ATS platforms are supported?
 Is https://example.com/jobs/123 a supported application URL?
 List my candidates and profiles.
 Search indexed postings for backend Python roles in California.
+Show my top ten matches that say sponsorship is available.
 Apply to this URL using my Primary profile: https://example.com/jobs/123
 What is in my review queue?
 Show the unanswered questions for application APPLICATION_ID.
@@ -585,6 +586,7 @@ check.
 | `detect_ats` | Detect an ATS from a posting URL |
 | `supported_ats` | List ATS adapters Job Runner can drive |
 | `search_postings` | Search locally indexed postings |
+| `my_matches` | Your scored feed, best first, with the matches page's filters |
 | `apply_to_url` | Queue an application; it does not immediately submit |
 | `application_status` | Get one application's current status and review data |
 | `application_history` | Read its append-only event history |

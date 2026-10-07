@@ -3582,6 +3582,27 @@ agent answers a question `rubric.py` does not have — nothing here generates a
 match explanation, so there is nothing to verify. What the post was worth was
 the sentence: it asked the feed something the feed could not be asked.
 
+**An assistant could not ask it either** (2026-10-07). The MCP tools reached
+applications, résumés and the posting search, and nothing reached `/matches`,
+so that sentence put to Claude Code had no tool to call. `my_matches` is the
+feed over MCP. Three things about it:
+
+- **It sends only what it was given.** Several of the feed's defaults are the
+  owner's standing preferences (the search area is one), and a tool that sent
+  its own default for each would overrule them without anyone having asked.
+- **Its filters are held to the route's signature**
+  (`test_every_filter_the_tool_takes_is_one_the_feed_reads`). FastAPI ignores
+  a query parameter it does not know, so a filter spelt wrong in the tool
+  would be sent, dropped, and read as no preference.
+- **A match is cut to fifteen fields.** The feed's row carries the rubric, the
+  legitimacy findings and the parsed requirements; ten of those would be most
+  of a model's context. The tool's description also says the score is low by
+  construction and not a percentage, which §15 found the dashboard getting
+  wrong.
+
+It reads and never writes: recording a decision on a match is still the
+owner's, on `/matches` or `/swipe`.
+
 ---
 
 ## 19. Hybrid retrieval, and a number that could not be read

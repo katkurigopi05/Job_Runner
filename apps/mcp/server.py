@@ -128,6 +128,108 @@ async def search_postings(
     return await _call("GET", "/postings", params=params)
 
 
+#: What a match is cut down to. The feed's own row also carries the rubric, the
+#: legitimacy findings and the parsed requirements, several thousand characters
+#: a posting, and a model listing ten matches would be handed a page for each.
+_MATCH_FIELDS = (
+    "id",
+    "posting_id",
+    "title",
+    "location",
+    "url",
+    "score",
+    "personalized_score",
+    "decision",
+    "closed",
+    "first_seen_at",
+    "matched_terms",
+    "missing_terms",
+    "excluded_by",
+    "eligibility",
+    "compensation",
+)
+
+
+@server.tool()
+async def my_matches(
+    profile_id: str | None = None,
+    role: str | None = None,
+    keywords: str = "",
+    locations: str = "",
+    remote: bool | None = None,
+    posted_within_days: int | None = None,
+    min_salary: float | None = None,
+    wanted_skills: str = "",
+    sponsorship: str | None = None,
+    include_unknown_sponsorship: bool = False,
+    exclude_citizenship_restricted: bool = False,
+    include_applied: bool | None = None,
+    undecided_only: bool = False,
+    rank: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """The owner's scored feed: postings matched to their profile, best first.
+
+    Not `search_postings`, which searches everything crawled. This is what the
+    dashboard's matches page shows, with the same filters. A filter narrows
+    what is listed and is never typed onto an application.
+
+    `keywords`, `locations` and `wanted_skills` are comma-separated. `role` is
+    one of the feed's role names and a misspelt one is refused. `sponsorship`
+    takes `available`, which keeps only postings that state it; add
+    `include_unknown_sponsorship` to drop only the ones that refuse it.
+    `rank` is `base` or `personalized`. Leave a filter out to keep the owner's
+    standing preference for it, such as their search area.
+
+    `score` is a similarity and is low by construction: a strong match can be
+    under 0.1. Say where a posting ranks, not a percentage. `eligibility` is
+    what the posting itself states about sponsorship and citizenship;
+    "unstated" means it said nothing, not that it is available.
+    """
+    asked: dict[str, Any] = {"limit": limit}
+    # Only what was given. Several of the feed's defaults are the owner's
+    # standing preferences, and sending this tool's own default for each would
+    # overrule them without anyone having asked.
+    when_set = {
+        "profile_id": profile_id,
+        "role": role,
+        "keywords": keywords,
+        "locations": locations,
+        "posted_within_days": posted_within_days,
+        "min_salary": min_salary,
+        "wanted_skills": wanted_skills,
+        "sponsorship": sponsorship,
+        "rank": rank,
+        # These two can be given as false, which is an answer.
+        "remote": remote,
+        "include_applied": include_applied,
+    }
+    asked.update({name: value for name, value in when_set.items() if value not in (None, "")})
+    switches = {
+        "include_unknown_sponsorship": include_unknown_sponsorship,
+        "exclude_citizenship_restricted": exclude_citizenship_restricted,
+        "undecided_only": undecided_only,
+    }
+    asked.update({name: True for name, on in switches.items() if on})
+
+    rows = await _call("GET", "/matches", params=asked)
+    if not isinstance(rows, list):
+        return rows
+
+    listed: dict[str, Any] = {
+        "matches": [{field: row.get(field) for field in _MATCH_FIELDS} for row in rows],
+        "count": len(rows),
+        "asked": asked,
+    }
+    if not rows:
+        listed["note"] = (
+            "Nothing in the feed fits. Either no posting passes these filters, or nothing "
+            "has been scored yet: matches are written when a crawl finishes. A filter on "
+            "something a posting does not state hides that posting."
+        )
+    return listed
+
+
 # --------------------------------------------------------------------------
 # Applying
 # --------------------------------------------------------------------------
