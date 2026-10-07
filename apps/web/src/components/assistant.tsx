@@ -418,6 +418,11 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
 
   const chosen = PROVIDERS.find((entry) => entry.value === provider) ?? PROVIDERS[0];
   const endRef = useRef<HTMLDivElement>(null);
+  // The question that is out, so it can be withdrawn. Leaving the page while
+  // an answer is being written must also stop the model writing it.
+  const asked = useRef<AbortController | null>(null);
+
+  useEffect(() => () => asked.current?.abort(), []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -432,9 +437,13 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
     setBusy(true);
     setStatus(chosen.local ? "thinking on this machine…" : `sending to ${chosen.label}…`);
 
+    const controller = new AbortController();
+    asked.current = controller;
+
     try {
       const response = await fetch("/api/chat/stream", {
         method: "POST",
+        signal: controller.signal,
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           message: question,
@@ -493,6 +502,8 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
       } catch {
         // The response broke off, or a line of it could not be read.
       }
+      // Withdrawn by leaving the page: there is nobody to tell.
+      if (controller.signal.aborted) return;
       if (!finished) {
         setTurns((held) => [
           ...held,
@@ -506,6 +517,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
         setStatus("answer cut off");
       }
     } catch {
+      if (controller.signal.aborted) return;
       setTurns((held) => [
         ...held,
         { role: "assistant", text: "Could not reach the API. Is `make api` running?" },

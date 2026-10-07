@@ -28,6 +28,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
+import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
@@ -332,15 +333,61 @@ async def test_a_dock_that_closes_stops_the_model(live_api: AsyncClient, monkeyp
         assert (await _Frames(response).next())["type"] == "delta"
 
     await asyncio.wait_for(writer.stopped.wait(), FRAME_TIMEOUT_S)
-    for _ in range(3):
-        assert (await live_api.get("/applications")).status_code == 200
+    assert (await live_api.get("/applications")).status_code == 200
+
+
+async def test_a_cancelled_request_still_finishes_reading(
+    committing_sessionmaker, monkeypatch
+) -> None:
+    """What the shield is for, shown by cancelling the route itself (§17).
+
+    A cancel that lands while the context is being read must not interrupt
+    the read or the session's return to the pool: a connection abandoned
+    part-way through that is broken for whoever checks it out next. The read
+    is made to wait, the request is cancelled, and the read is then let go.
+    Without the shield the cancel reaches the read and it never finishes.
+    """
+    from sqlalchemy import text
+
+    import packages.core.db as core_db
+    from packages.core.schemas import ChatRequest
+
+    monkeypatch.setattr(core_db, "get_sessionmaker", lambda: committing_sessionmaker)
+    reading, go_on, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def slow(session: Any, question: str) -> Retrieval:
+        reading.set()
+        await go_on.wait()
+        finished.set()
+        return Retrieval(attempted=False)
+
+    monkeypatch.setattr(chat_module, "retrieve", slow)
+    _answered_by(monkeypatch, _Writer(PIECES))
+
+    request = asyncio.create_task(
+        stream_module.chat_stream(ChatRequest(message=QUESTION["message"]))
+    )
+    await asyncio.wait_for(reading.wait(), FRAME_TIMEOUT_S)
+    request.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    assert not finished.is_set(), "the read was still waiting when the request was cancelled"
+
+    go_on.set()
+    await asyncio.wait_for(finished.wait(), FRAME_TIMEOUT_S)
+    # Let the read's own task close its session before the pool is used again.
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+    async with committing_sessionmaker() as session:
+        assert (await session.execute(text("select 1"))).scalar_one() == 1
 
 
 def test_the_stream_holds_no_request_session() -> None:
     """§17, held in the source. A session that belongs to the request is closed
     when the request is, and a streaming request is closed by the reader leaving.
     Everything the answer needs is read, on a session of its own, before the
-    first piece is sent."""
+    first piece is sent. What the shield does is shown by the test above; this
+    one holds that the route is still written that way."""
     route = inspect.signature(stream_module.chat_stream)
     assert "session" not in route.parameters
     assert "SessionDep" not in inspect.getsource(stream_module)

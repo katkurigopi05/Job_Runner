@@ -3450,6 +3450,16 @@ Everything above about streams applied again, and four things are new:
   session: everything is read first, on a session opened and closed inside
   one shielded awaitable, for the reason the status stream shields its read.
 
+  Two holes in that were found by review the same day, and both had passing
+  tests around them. `stream_text` iterated the provider's stream without
+  closing it, and closing a generator does not close the one it is reading
+  from, so the connection stayed open until the garbage collector reached it;
+  the test that existed closed the provider's stream directly. And the dock's
+  fetch had nothing to abort it, so leaving the page left the browser reading
+  and the model writing. The wrapper closes what it wraps now, and the dock
+  withdraws its question when it unmounts. The second is held in source only:
+  it was not watched in a browser.
+
 Only the two Ollama providers stream. Gemini, Anthropic, OpenRouter and the
 stub have no `stream` method, and `stream_text` sends their answer as one
 piece, so a cloud answer still arrives all at once.

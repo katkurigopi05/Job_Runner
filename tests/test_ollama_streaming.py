@@ -187,6 +187,43 @@ async def test_a_reader_that_stops_closes_the_connection(daemon) -> None:
     assert fake.response.closed
 
 
+async def test_closing_the_wrapper_closes_the_connection_too(daemon) -> None:
+    """Found in review. The route reads through `stream_text`, and closing a
+    generator that is iterating another one does not close the inner one: the
+    connection stayed open until the garbage collector reached it, and the
+    model kept writing for that long."""
+    fake = daemon(ANSWER)
+    local = OllamaProvider("http://test", model="some-model")
+    pieces = stream_text(local, "sys", "usr", max_tokens=600)
+
+    assert await anext(pieces) == "Two"
+    assert fake.response is not None and not fake.response.closed
+    await pieces.aclose()
+
+    assert fake.response.closed
+
+
+async def test_an_answer_nobody_reads_is_closed_when_it_is_let_go(daemon) -> None:
+    """The route waits for the first piece before it answers. If the reader has
+    gone by then, nothing ever iterates the rest, so nothing closes it by hand:
+    it is closed when the last reference to it is dropped. That is the only
+    closer this case has, so it is held here."""
+    import asyncio
+    import gc
+
+    fake = daemon(ANSWER)
+    pieces = stream_text(OllamaProvider("http://test", model="some-model"), "sys", "usr")
+    assert await anext(pieces) == "Two"
+    assert fake.response is not None and not fake.response.closed
+
+    del pieces
+    gc.collect()
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert fake.response.closed
+
+
 async def test_an_error_line_is_an_error(daemon) -> None:
     daemon([_line("Two"), json.dumps({"error": "model runner has unexpectedly stopped"})])
     stream = OllamaProvider("http://test", model="some-model").stream("sys", "usr")
