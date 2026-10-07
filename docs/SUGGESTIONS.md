@@ -254,3 +254,52 @@ Recorded so nobody evaluates them twice.
   separate prefill and decode pools, multi-GPU parallelism, goodput and fleet
   monitoring all assume many users on GPU servers. Speculative decoding needs
   a second model loaded, which the 16 GB machine does not allow.
+
+---
+
+## MCP: where else an assistant could reach
+
+Added 2026-10-07. The MCP server reached applications, résumés, projects,
+profiles and the posting search. The API has more than that. In the order
+they were proposed:
+
+### M1. The owner types the missing answers and the code (in review, #132)
+
+`approve_application` took the answers as an argument and `submit_otp` took
+the code, so a model typed what went on the employer's form. Both are now
+asked for in a form the client shows the person. Neither is an argument any
+more.
+
+### M2. The matches feed (in review, #133)
+
+`my_matches`: the scored feed with the matches page's filters. Read only.
+
+### M3. Tracker and follow-ups (open)
+
+"What needs a follow-up this week?" The tracking API has 11 routes and no
+tool. Start read-only.
+
+### M4. Status questions (open)
+
+The audit trail ("what left my machine this week"), setup health, the weekly
+digest, starting a crawl. Read-only except the crawl.
+
+### M5. Grading postings by conversation (open)
+
+The labeling loop needs 100 or more of the owner's grades and has none. The
+grade has to be typed by the owner, with the form M1 uses, and never chosen
+by the model, or the benchmark grades itself.
+
+### Set aside, to think about later
+
+The owner's words on 2026-10-07: "later we will think about" these. They were
+listed as places not to use MCP, with the reason for each.
+
+- **Recruiter mail text.** Over MCP the assistant is a remote model, so the
+  mail would leave the machine; §14 gates that.
+- **Finishing captcha-blocked forms with a browser MCP.** §2.5 says the owner
+  finishes those by hand.
+- **Data API Builder's MCP endpoint.** It would be anonymous, so it stays off.
+- **Outside connectors such as Gmail for the Gate 6 emails.** `make
+  import-mail` does the same job without the mail passing through a remote
+  model.

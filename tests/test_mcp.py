@@ -176,6 +176,148 @@ async def test_search_postings_explains_an_empty_index() -> None:
     assert "Phase 5" in result["note"]
 
 
+# The feed. `search_postings` searches everything that was crawled;
+# `my_matches` is the owner's scored feed with its filters, which no tool
+# reached. "Show my top matches that offer sponsorship" had nothing to call.
+
+
+class _Feed:
+    """Stands in for the API's feed: what was asked of it, and the rows it gives back."""
+
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+        self.asked: list[dict[str, Any]] = []
+
+    async def request(self, method: str, path: str, **kwargs: Any) -> Any:
+        assert (method, path) == ("GET", "/matches")
+        self.asked.append(kwargs.get("params") or {})
+        return self.rows
+
+
+#: One row as the feed sends it: far more than a list of matches needs.
+FEED_ROW = {
+    "id": "m-1",
+    "profile_id": "p-1",
+    "posting_id": "post-1",
+    "score": 0.071,
+    "personalized_score": 0.074,
+    "decision": None,
+    "decided_at": None,
+    "title": "Staff Platform Engineer",
+    "location": "San Francisco, CA",
+    "url": "https://example.test/jobs/1",
+    "ats_type": "greenhouse",
+    "first_seen_at": "2026-10-06T10:00:00Z",
+    "published_at": None,
+    "lag_hours": None,
+    "closed": False,
+    "title_similarity": 0.4,
+    "body_similarity": 0.2,
+    "matched_terms": ["python", "aws"],
+    "missing_terms": ["go"],
+    "legitimacy": {"tier": "ok", "findings": ["a long table"] * 20},
+    "rubric": {"dimensions": ["a long breakdown"] * 20},
+    "excluded_by": [],
+    "eligibility": {"sponsorship": "unstated"},
+    "experience": {"demands": []},
+    "compensation": {"min": 180000, "currency": "USD", "period": "year"},
+    "requirements": {"skills": ["a long list"] * 40},
+    "sources": [],
+    "adjustments": [],
+}
+
+
+@pytest.fixture
+def feed(monkeypatch):
+    def install(*rows: dict[str, Any]) -> _Feed:
+        fake = _Feed(list(rows))
+        monkeypatch.setattr(mcp_server, "_client", fake)
+        return fake
+
+    return install
+
+
+async def test_my_matches_passes_on_the_filters_it_was_given(feed) -> None:
+    api = feed(FEED_ROW)
+
+    await call(
+        "my_matches",
+        role="software engineer",
+        locations="California, Remote",
+        sponsorship="available",
+        include_unknown_sponsorship=True,
+        remote=False,
+        limit=5,
+    )
+
+    assert api.asked == [
+        {
+            "limit": 5,
+            "role": "software engineer",
+            "locations": "California, Remote",
+            "sponsorship": "available",
+            "include_unknown_sponsorship": True,
+            # Given as false, which is an answer and not the absence of one.
+            "remote": False,
+        }
+    ]
+
+
+async def test_a_filter_that_was_not_given_is_left_to_the_feed(feed) -> None:
+    """The feed has standing preferences behind several of its defaults (the
+    search area is one). A tool that sent its own default for each would
+    overrule them without anyone having asked."""
+    api = feed(FEED_ROW)
+
+    await call("my_matches")
+
+    assert api.asked == [{"limit": 10}]
+
+
+async def test_a_match_is_trimmed_to_what_a_list_needs(feed) -> None:
+    feed(FEED_ROW)
+
+    listed = await call("my_matches")
+
+    assert listed["count"] == 1
+    [match] = listed["matches"]
+    assert match["title"] == "Staff Platform Engineer"
+    assert match["matched_terms"] == ["python", "aws"]
+    assert match["eligibility"] == {"sponsorship": "unstated"}
+    assert not {"rubric", "legitimacy", "requirements", "adjustments"} & set(match)
+    assert len(json.dumps(match)) < 700, "one posting should not cost a model a page"
+
+
+def test_every_filter_the_tool_takes_is_one_the_feed_reads() -> None:
+    """Held against the route's own signature. FastAPI ignores a query
+    parameter it does not know, so a filter spelt wrong here would be sent,
+    dropped, and read as no preference: the feed would look filtered and not be."""
+    import inspect
+
+    from apps.api.routers import matches as feed_route
+
+    read_by_the_feed = set(inspect.signature(feed_route.list_matches).parameters)
+    taken_by_the_tool = set(inspect.signature(mcp_server.my_matches).parameters)
+
+    assert taken_by_the_tool <= read_by_the_feed, taken_by_the_tool - read_by_the_feed
+
+
+async def test_an_empty_feed_says_what_empty_can_mean() -> None:
+    """Against the real API and an empty database."""
+    listed = await call("my_matches")
+
+    assert listed["matches"] == [] and listed["count"] == 0
+    assert "crawl" in listed["note"]
+
+
+async def test_a_role_the_feed_does_not_know_is_refused_not_ignored() -> None:
+    """The feed's own rule (§18), reaching the tool: a typo is an error."""
+    listed = await call("my_matches", role="sofware enginer")
+
+    assert listed["code"] == "invalid_request"
+    assert "role" in listed["error"]
+
+
 # --------------------------------------------------------------------------
 # Applying and the approval gate
 # --------------------------------------------------------------------------
