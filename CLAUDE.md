@@ -982,9 +982,51 @@ Four things to keep in mind about that table:
 What was *not* measured: tailoring and the cover letter. The local model also
 answers those when `LLM_TASK_TAILOR=ollama` or `LLM_FALLBACK_LOCAL` sends them
 there, and in the local column of **Compare models**. Qwen3 at 3 bits has not
-been run on them, and a prompt longer than the context cap is cut by Ollama
-without an error. `llama3.1` and the 4-bit `qwen3:8b` were deleted from the
+been run on them. `llama3.1` and the 4-bit `qwen3:8b` were deleted from the
 owner's machine the same day, at their request.
+
+**That paragraph used to end** "a prompt longer than the context cap is cut by
+Ollama without an error". Nobody had sent one. Sent on 2026-10-07 to Ollama
+0.40.0, a 6,076-token prompt at a context of 4,096 was refused: HTTP 400,
+"request (6076 tokens) exceeds the available context size (4096 tokens)". What
+is silent is the other case, a prompt that fits with an answer that does not:
+3,796 tokens read and 600 written came back as an ordinary reply.
+
+**A smaller cache and a larger context, tried and not adopted** (2026-10-07).
+Ollama can keep its attention cache at 8 bits (`OLLAMA_KV_CACHE_TYPE=q8_0`,
+which needs `OLLAMA_FLASH_ATTENTION=1`). The cache grows in step with the
+context, so the question was whether 8,192 tokens could be had for what 4,096
+costs. Run on a second daemon on its own port, so the owner's settings were
+not touched; the twelve prompts saved from the comparison above, the same
+request, one load at a time.
+
+| cache, context | held | lowest free | all 12 | writes | reads a 1,300-token prompt | same words as the first row |
+|---|---|---|---|---|---|---|
+| 16-bit, 4,096 (shipped) | 4.82 GB | 22% | 146 s | 11.7 tok/s | 5.9 s | |
+| 8-bit, 4,096 | 4.54 GB | 28% | 134 s | 13.5 tok/s | 5.9 s | 7 of 12 |
+| 8-bit, 8,192 | 4.98 GB | 22% | 192 s | 8.7 tok/s | 9.3 s | 6 of 12 |
+
+- **The 8-bit cache did not change the answers.** Seven of twelve are word for
+  word the 16-bit ones, and the five that differ were read against their
+  prompts and differ in wording only. Two 16-bit runs a day apart differ on
+  four. At 8,192, eleven of twelve are word for word the 8-bit answers at
+  4,096.
+- **It saves 0.28 GB at the same context.** The daemon's log gives the cache
+  as 306 MiB against 612.
+- **8,192 was not free.** 0.16 GB more than is held today, and about a third
+  slower at reading and at writing. Why it is slower was not established.
+- **It does what it is for.** At 8,192 the 6,076-token prompt was read whole
+  and answered correctly, in 84 s, 78 of them reading.
+
+`OLLAMA_NUM_CTX` stays 4,096. The assistant's longest prompt is about 1,400
+tokens with 600 to answer, so nothing it sends needs the room. The case for
+more is tailoring and the cover letter on the local model, which is still
+unmeasured, and a prompt too long for it is refused, not cut. The 8-bit cache
+at 4,096 is a setting of the owner's Ollama and not of this repository:
+`docs/USAGE.md` says how, and it was not applied to their daemon.
+
+One run each. Tests and type checks were running on the machine during all
+three, so the times are loose; what was held and what was answered are not.
 
 Found on the way and not fixed: with no recruiter replies stored the context
 has no replies section at all, so no model can answer "Any replies?" with
