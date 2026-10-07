@@ -524,7 +524,7 @@ Search indexed postings for backend Python roles in California.
 Apply to this URL using my Primary profile: https://example.com/jobs/123
 What is in my review queue?
 Show the unanswered questions for application APPLICATION_ID.
-Approve APPLICATION_ID with these answers: ...
+Approve APPLICATION_ID.
 Reject APPLICATION_ID and note that the role is no longer relevant.
 Show the complete history for APPLICATION_ID.
 Inspect my latest résumé as the parser sees it.
@@ -550,6 +550,22 @@ still the gate: nothing is sent until an application is approved, and an
 assistant approving on its own is what these prompts are for.
 
 `reject_application` does not ask. It is permanent, but it sends nothing.
+
+### You type the missing answers and the code yourself
+
+If an application was parked with questions the agent could not answer,
+approving it shows you a form with each question in the employer's own words.
+A question with choices offers those choices. What you type is what goes on
+the application. A field you leave empty stays an open question.
+
+`submit_otp` works the same way: the form asks for the code.
+
+The assistant cannot pass either one. They are not arguments of the tools, so
+it has nowhere to put an answer it made up, and that includes a
+work-authorization answer. Closing the form approves nothing and sends nothing.
+
+A client that cannot show a form gets an error pointing at `/review` in the
+dashboard, where the same questions can be answered.
 
 ### Use GitHub skills that are missing from your base résumé
 
@@ -590,9 +606,9 @@ check.
 | `application_history` | Read its append-only event history |
 | `list_applications` | List applications, optionally filtered by status |
 | `review_queue` | List applications parked at `needs_review` |
-| `approve_application` | Record approval and optional answers, then resume work |
+| `approve_application` | Approve and resume work; you type any missing answers into a form |
 | `reject_application` | Reject a parked application permanently |
-| `submit_otp` | Supply a requested one-time verification code |
+| `submit_otp` | Resume after a verification code, which you type into a form |
 | `compare_tailoring` | Tailor a parked application both locally and in the cloud, and return both |
 | `select_tailoring` | Choose which compared résumé that application will upload |
 | `inspect_application_resume` | Show the résumé a parked application will actually upload, line by line |

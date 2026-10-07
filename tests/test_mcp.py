@@ -149,6 +149,222 @@ def test_the_project_settings_ask_too() -> None:
 
 
 # --------------------------------------------------------------------------
+# The owner's own answers
+# --------------------------------------------------------------------------
+#
+# `approve_application` took the missing answers, and `submit_otp` the code, as
+# arguments of the call. The caller is a model, so a model typed what went on
+# the form, and a question the pipeline could not map can be a
+# work-authorization one. §2.2 says those are never model-written; the server's
+# instructions asked for that, and an instruction is a request.
+#
+# Both values are now filled by asking the person: the server shows a form and
+# the tool receives what was typed into it. They are not in either tool's input
+# schema, so there is nothing for a model to fill in.
+
+
+def _fills_in_every_field(schema: dict[str, Any]) -> dict[str, Any]:
+    """An owner who answers everything: the first choice where there are choices."""
+    return {
+        name: (field["enum"][0] if "enum" in field else "I admire the work.")
+        for name, field in schema["properties"].items()
+    }
+
+
+class _Owner:
+    """The person at the keyboard, for a client that can show them a form."""
+
+    def __init__(self, typed: Any = None, *, action: str = "accept", mode: str = "auto") -> None:
+        self._typed, self._action, self._mode = typed, action, mode
+        #: Every form the server showed, as its schema, and the message above it.
+        self.shown: list[dict[str, Any]] = []
+        self.messages: list[str] = []
+
+    async def _answer(self, context: Any, params: Any) -> Any:
+        from mcp import types
+
+        asked = params.model_dump(by_alias=True, exclude_none=True)
+        self.shown.append(asked["requestedSchema"])
+        self.messages.append(asked["message"])
+        if self._action != "accept":
+            return types.ElicitResult(action=self._action)
+        return types.ElicitResult(action="accept", content=self._typed(asked["requestedSchema"]))
+
+    async def result(self, name: str, **arguments: Any) -> Any:
+        from mcp.client import Client
+
+        async with Client(
+            mcp_server.server, elicitation_callback=self._answer, mode=self._mode
+        ) as client:
+            return await client.call_tool(name, arguments)
+
+    async def calls(self, name: str, **arguments: Any) -> Any:
+        result = await self.result(name, **arguments)
+        assert not result.is_error, result.content
+        if result.structured_content and "result" in result.structured_content:
+            return result.structured_content["result"]
+        return json.loads(result.content[0].text)
+
+
+class _Api:
+    """Stands in for the API: one parked application, and what was posted about it."""
+
+    def __init__(self, unanswered: list[dict[str, Any]]) -> None:
+        self.application = {
+            "id": "app-1",
+            "status": "needs_review",
+            "review": {"unanswered": unanswered},
+        }
+        self.posted: list[tuple[str, Any]] = []
+
+    async def request(self, method: str, path: str, **kwargs: Any) -> Any:
+        if method == "GET":
+            return self.application
+        self.posted.append((path, kwargs.get("json")))
+        return {"id": "app-1", "status": "running"}
+
+
+WHY = {"key": "question_31", "question": "Why do you want to work at Acme?", "kind": "textarea"}
+AUTHORIZED = {
+    "key": "question_32",
+    "question": "Are you legally authorized to work in the United States?",
+    "kind": "single_select",
+    "options": [{"label": "Yes", "value": "1"}, {"label": "No", "value": "0"}],
+}
+
+BOTH_PROTOCOLS = pytest.mark.parametrize("mode", ["legacy", "auto"])
+
+
+@pytest.fixture
+def parked(monkeypatch):
+    def install(*unanswered: dict[str, Any]) -> _Api:
+        api = _Api(list(unanswered))
+        monkeypatch.setattr(mcp_server, "_client", api)
+        return api
+
+    return install
+
+
+async def test_a_model_has_nowhere_to_put_an_answer_or_a_code() -> None:
+    """Read from the wire entry: what a client is told it may pass."""
+    tools = {t.name: _wire(t) for t in await mcp_server.server.list_tools()}
+
+    assert set(tools["approve_application"]["inputSchema"]["properties"]) == {
+        "application_id",
+        "note",
+    }
+    assert set(tools["submit_otp"]["inputSchema"]["properties"]) == {"application_id"}
+
+
+@BOTH_PROTOCOLS
+async def test_open_questions_are_put_to_the_owner_in_the_employers_words(parked, mode) -> None:
+    api = parked(WHY, AUTHORIZED)
+    owner = _Owner(lambda schema: {"q1": "I admire the work.", "q2": "Yes"}, mode=mode)
+
+    approved = await owner.calls("approve_application", application_id="app-1")
+
+    assert approved["status"] == "running"
+    [form] = owner.shown
+    assert [field["title"] for field in form["properties"].values()] == [
+        "Why do you want to work at Acme?",
+        "Are you legally authorized to work in the United States?",
+    ]
+    # The employer's own choices, and no others: an answer off the menu is
+    # refused at the form, long before it could be typed into a dropdown.
+    assert form["properties"]["q2"]["enum"] == ["Yes", "No"]
+    assert "enum" not in form["properties"]["q1"]
+    # Posted under the employer's keys, as typed.
+    assert api.posted == [
+        (
+            "/applications/app-1/review",
+            {
+                "approve": True,
+                "answers": {"question_31": "I admire the work.", "question_32": "Yes"},
+                "note": None,
+            },
+        )
+    ]
+
+
+@BOTH_PROTOCOLS
+async def test_an_application_with_nothing_open_asks_nothing(parked, mode) -> None:
+    api = parked()
+    owner = _Owner(mode=mode)
+
+    approved = await owner.calls("approve_application", application_id="app-1", note="go")
+
+    assert approved["status"] == "running"
+    assert owner.shown == []
+    assert api.posted == [
+        ("/applications/app-1/review", {"approve": True, "answers": {}, "note": "go"})
+    ]
+
+
+@BOTH_PROTOCOLS
+@pytest.mark.parametrize("action", ["decline", "cancel"])
+async def test_an_owner_who_closes_the_form_has_approved_nothing(parked, mode, action) -> None:
+    """§2.3. Putting the form away is not a yes, and §2.4: nothing is guessed in its place."""
+    api = parked(WHY)
+    owner = _Owner(action=action, mode=mode)
+
+    answered = await owner.calls("approve_application", application_id="app-1")
+
+    assert api.posted == []
+    assert answered["approved"] is False
+    assert "/review" in answered["error"], "somewhere for the owner to go and answer"
+
+
+@BOTH_PROTOCOLS
+async def test_a_blank_answer_is_not_sent_as_an_answer(parked, mode) -> None:
+    """§2.4: never leave blank. A field left empty stays an open question."""
+    api = parked(WHY, AUTHORIZED)
+    owner = _Owner(lambda schema: {"q1": "   ", "q2": "No"}, mode=mode)
+
+    await owner.calls("approve_application", application_id="app-1")
+
+    [(_, posted)] = api.posted
+    assert posted["answers"] == {"question_32": "No"}
+
+
+async def test_a_client_that_cannot_show_a_form_is_sent_to_the_dashboard(parked) -> None:
+    """Another MCP client, or this one with forms off. The questions are not
+    handed to the model to answer in their place."""
+    from mcp.client import Client
+
+    api = parked(WHY)
+
+    async with Client(mcp_server.server) as client:
+        result = await client.call_tool("approve_application", {"application_id": "app-1"})
+
+    assert result.is_error
+    assert "/review" in result.content[0].text
+    assert api.posted == []
+
+
+@BOTH_PROTOCOLS
+async def test_the_code_is_typed_by_the_owner(parked, mode) -> None:
+    api = parked()
+    owner = _Owner(lambda schema: {"code": "481 516"}, mode=mode)
+
+    resumed = await owner.calls("submit_otp", application_id="app-1")
+
+    assert resumed["status"] == "running"
+    assert len(owner.shown) == 1
+    assert api.posted == [("/applications/app-1/otp", {"code": "481 516"})]
+
+
+@BOTH_PROTOCOLS
+async def test_no_code_is_sent_when_the_owner_closes_the_form(parked, mode) -> None:
+    api = parked()
+    owner = _Owner(action="decline", mode=mode)
+
+    answered = await owner.calls("submit_otp", application_id="app-1")
+
+    assert api.posted == []
+    assert answered["submitted"] is False
+
+
+# --------------------------------------------------------------------------
 # Discovery
 # --------------------------------------------------------------------------
 
@@ -358,13 +574,13 @@ async def test_full_cycle_through_tools_only(complete_candidate, monkeypatch, tm
     # The résumé came from the profile, so it is not among the open questions.
     assert "resume" not in {q["key"] for q in parked["unanswered"]}
 
-    # 5. Answer them in the employer's own keys and approve.
-    answers = {
-        q["key"]: ("1" if q["kind"] == "single_select" else "I admire the work.")
-        for q in parked["unanswered"]
-    }
-    approved = await call("approve_application", application_id=application_id, answers=answers)
+    # 5. Approve. The open questions are put to the owner in a form; the call
+    #    itself carries no answers.
+    owner = _Owner(_fills_in_every_field)
+    approved = await owner.calls("approve_application", application_id=application_id)
     assert approved["status"] == "running"
+    [form] = owner.shown
+    assert "Why do you want to work at Acme?" in {f["title"] for f in form["properties"].values()}
 
     # 6. The queue is clear.
     assert (await call("review_queue"))["count"] == 0

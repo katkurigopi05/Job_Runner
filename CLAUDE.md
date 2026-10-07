@@ -621,6 +621,33 @@ This came out of looking at Sentience Governor, which records what an agent
 did against what it declared and reports afterwards. A record of an approval
 is no use once the form has gone.
 
+**What the owner must supply, the owner types** (2026-10-07, the same day).
+`approve_application` took the missing answers as an argument and `submit_otp`
+took the code. The caller is a model, so a model typed what went on the
+employer's form. A question the pipeline could not map can be a
+work-authorization one, which §2.2 says is never model-written; the server's
+instructions asked for that, and an instruction is a request.
+
+Both are now filled by a resolver that asks the person
+(`_owners_answers`, `_owners_code`): the client shows a form, each field
+titled with the employer's exact wording, a question with choices offering
+those choices and no others. Neither value is in its tool's input schema, so
+there is no argument for a model to fill. Four things to keep:
+
+- **A closed form approves nothing.** Decline and cancel post nothing and say
+  so; nothing is guessed in the form's place (§2.4).
+- **An empty field is not an answer.** It is left out, the question stays
+  open, and the pipeline parks again.
+- **A client that cannot show a form is refused**, with `/review` to go to.
+  The questions are not handed to the model as a fallback.
+- **Written through the library's resolver, not `ctx.elicit`.** Calling
+  `ctx.elicit` inside the tool works on protocol 2025-11-25 and raises
+  `NoBackChannelError` on 2026-07-28, in process and over stdio; the resolver
+  form is carried by both. `tests/test_mcp.py` runs every case under both.
+
+Not seen: Claude Code's own dialog. The server is switched off on this machine,
+so what was run is the library's client answering the form in both protocols.
+
 ### Phase 5 — Discovery
 
 Build: company registry (hand-picked, seeded from a YAML file). Crawler with

@@ -21,13 +21,23 @@ Two things to know about the tool surface:
   and `submit_otp` are marked so that Claude Code prompts on every call (see
   `ASKS_THE_OWNER`). Their docstrings ask a model to wait for the owner; the
   mark is what makes the client wait.
+- **What the owner must supply, the owner types.** The answers an application
+  was parked for, and a verification code, are asked for in a form the client
+  shows the person (`_owners_answers`, `_owners_code`). Neither is an argument
+  of its tool, so a model has nowhere to put one. §2.2 says a model never
+  writes a work-authorization answer, and a question the pipeline could not
+  map can be exactly that.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
+from mcp.server.elicitation import AcceptedElicitation, ElicitationResult
+from mcp.server.mcpserver import Context, Elicit, Resolve
+from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import BaseModel, Field, create_model
 
 from apps.mcp.client import ApiCallFailed, ApiUnavailable, JobrunnerClient
 
@@ -36,9 +46,9 @@ Jobrunner is a local, single-user job-application agent.
 
 Applications never submit without explicit approval. Use `review_queue` to see
 what is waiting, and `approve_application` to release one. An application with
-unanswered questions carries the employer's exact wording — answer those
-verbatim rather than paraphrasing, and never invent an answer to a
-work-authorization question.
+unanswered questions carries the employer's exact wording. You do not answer
+them: approving shows the owner a form and they type the answers themselves.
+The same goes for a verification code.
 """.strip()
 
 server = MCPServer(name="jobrunner", instructions=INSTRUCTIONS)
@@ -220,20 +230,120 @@ async def review_queue() -> dict[str, Any]:
     return {"waiting": queue, "count": len(queue)}
 
 
+#: The dashboard to send the owner to when a form cannot reach them.
+_REVIEW_PAGE = "http://127.0.0.1:3001/review"
+
+
+class _NothingOpen(BaseModel):
+    """What the answers resolver hands on when no question is open. No form is shown."""
+
+
+class _Code(BaseModel):
+    code: str = Field(title="Verification code", description="The code the site sent you.")
+
+
+def _must_reach_the_owner(ctx: Context, what: str) -> None:
+    """Refuse, with somewhere to go, when this client cannot show a form.
+
+    The library would refuse too, with a message about capabilities. This one
+    says what to do. The check is the library's own: a bare `elicitation` is
+    form support, and one that offers only links is not.
+    """
+    capabilities = ctx.client_capabilities
+    elicitation = capabilities.elicitation if capabilities is not None else None
+    if elicitation is not None and (elicitation.form is not None or elicitation.url is None):
+        return
+    raise ToolError(
+        f"This client cannot show the owner a form, and {what} must be typed by them. "
+        f"Nothing was approved or sent. The owner can do this at {_REVIEW_PAGE}."
+    )
+
+
+def _form_for(questions: list[dict[str, Any]]) -> type[BaseModel]:
+    """One field to a question, titled with the employer's exact wording.
+
+    A question with choices offers those choices and no others: §8's rule that
+    a dropdown answer must match an option the employer gave, applied before
+    the answer exists. A multi-select stays free text, as it is on `/review`,
+    because a form field here holds one value.
+
+    Each field writes itself out under the employer's key, so what the owner
+    typed is posted as the review endpoint expects it without a second lookup.
+    """
+    fields: dict[str, Any] = {}
+    for number, question in enumerate(questions, start=1):
+        labels = [option["label"] for option in question.get("options") or []]
+        one_of_them = bool(labels) and question.get("kind") != "multi_select"
+        fields[f"q{number}"] = (
+            Literal[tuple(labels)] if one_of_them else str,  # type: ignore[valid-type]
+            Field(
+                title=question["question"],
+                description=None if one_of_them or not labels else "Choices: " + "; ".join(labels),
+                serialization_alias=question["key"],
+            ),
+        )
+    return create_model("Answers", **fields)
+
+
+async def _owners_answers(application_id: str, ctx: Context) -> Elicit[BaseModel] | _NothingOpen:
+    """Ask the owner the questions this application was parked for.
+
+    Runs before the tool, in place of an argument a model could fill. With
+    nothing open there is nothing to ask and no form.
+    """
+    application = await _call("GET", f"/applications/{application_id}")
+    if not isinstance(application, dict) or "error" in application:
+        raise ToolError(
+            str(application.get("error") if isinstance(application, dict) else application)
+        )
+    questions = (application.get("review") or {}).get("unanswered") or []
+    if not questions:
+        return _NothingOpen()
+    _must_reach_the_owner(ctx, "the answers to an employer's questions")
+    return Elicit(
+        f"This application was left with {len(questions)} question(s) for you. "
+        "What you type goes on the employer's form as you typed it.",
+        _form_for(questions),
+    )
+
+
+async def _owners_code(ctx: Context) -> Elicit[_Code]:
+    _must_reach_the_owner(ctx, "a verification code")
+    return Elicit("The site sent you a verification code. Type it here.", _Code)
+
+
 @server.tool(meta=_ASK_EVERY_TIME)
 async def approve_application(
-    application_id: str, answers: dict[str, Any] | None = None, note: str | None = None
+    application_id: str,
+    answers: Annotated[ElicitationResult[BaseModel], Resolve(_owners_answers)],
+    note: str | None = None,
 ) -> dict[str, Any]:
-    """Approve a parked application, optionally supplying missing answers.
+    """Approve a parked application. The owner supplies any missing answers.
 
-    `answers` is keyed by the `key` field from `review_queue`. This is the
-    human approval gate — only call it when the owner has actually decided.
+    If the application was left with unanswered questions, the owner is shown
+    a form carrying the employer's wording and types the answers. You do not
+    pass them, and there is no argument to pass them in. This is the human
+    approval gate — only call it when the owner has actually decided.
     Approving resumes the run; it does not itself submit anything.
     """
+    if not isinstance(answers, AcceptedElicitation):
+        return {
+            "approved": False,
+            "error": (
+                "Not approved: the owner closed the form without answering. Nothing was "
+                f"guessed in its place. They can answer at {_REVIEW_PAGE}."
+            ),
+        }
+    typed = answers.data.model_dump(by_alias=True)
     return await _call(
         "POST",
         f"/applications/{application_id}/review",
-        json={"approve": True, "answers": answers or {}, "note": note},
+        json={
+            "approve": True,
+            # A field left empty is still an open question, not an answer.
+            "answers": {key: value for key, value in typed.items() if str(value).strip()},
+            "note": note,
+        },
     )
 
 
@@ -248,9 +358,20 @@ async def reject_application(application_id: str, note: str | None = None) -> di
 
 
 @server.tool(meta=_ASK_EVERY_TIME)
-async def submit_otp(application_id: str, code: str) -> dict[str, Any]:
-    """Supply a verification code to an application parked at needs_otp."""
-    return await _call("POST", f"/applications/{application_id}/otp", json={"code": code})
+async def submit_otp(
+    application_id: str,
+    code: Annotated[ElicitationResult[_Code], Resolve(_owners_code)],
+) -> dict[str, Any]:
+    """Resume an application parked at needs_otp. The owner types the code.
+
+    The code is asked for in a form; you do not pass it.
+    """
+    if not isinstance(code, AcceptedElicitation):
+        return {
+            "submitted": False,
+            "error": "No code was sent: the owner closed the form without typing one.",
+        }
+    return await _call("POST", f"/applications/{application_id}/otp", json={"code": code.data.code})
 
 
 @server.tool()
