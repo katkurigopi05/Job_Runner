@@ -44,9 +44,11 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import APIRouter
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
@@ -586,9 +588,31 @@ def asks_for_a_protected_answer(question: str) -> bool:
     return any(topic in text for topic in _PROTECTED_TOPICS)
 
 
-@router.post("", response_model=ChatReply)
-async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
-    """Answer a question about the owner's own job search."""
+# The assistant answers from context it was handed and is told to say
+# when it does not know. Inventing an application status is the exact
+# failure §14 names, so this is the low end deliberately.
+ANSWER_TOKENS = 600
+ANSWER_TEMPERATURE = 0.2
+
+
+@dataclass(frozen=True)
+class Ready:
+    """A question with its context read. All that is left is to ask a model."""
+
+    selected: str
+    #: What actually went into the context, which is not always what was asked.
+    include_mail: bool
+    prompt: str
+    found: Retrieval
+
+
+async def prepare(body: ChatRequest, session: AsyncSession) -> ChatReply | Ready:
+    """Everything that happens before a model is asked, for both routes.
+
+    The refusals and the crawl command answer here, with no model. Anything
+    else comes back with its context built and nothing left to read from the
+    database.
+    """
     question = body.message.strip()
     if not question:
         raise ApiError(ErrorCode.INVALID_REQUEST, "message is empty")
@@ -642,56 +666,63 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     if gaps is not None:
         sections.append(_gaps_section(gaps))
     prompt = "CONTEXT:\n" + "\n".join(sections) + f"\n\nQUESTION:\n{question}"
+    return Ready(selected=selected, include_mail=include_mail, prompt=prompt, found=found)
 
-    try:
-        provider = llm_router.build_provider(selected)
-        model = getattr(provider, "model", None)
-        # Kept even though remote providers are now permitted, because this
-        # check was never only about where the answer came from — it is about
-        # the label matching. Ollama serves cloud-hosted models over the same
-        # localhost API: `kimi-k2.6:cloud` and `qwen3-coder:480b-cloud` are
-        # both in this owner's model list, neither runs on this machine, and
-        # nothing in the URL says so.
-        #
-        # Choosing Gemini is an informed decision and is allowed. Asking for
-        # the local model and silently getting a third party is not a decision
-        # at all, so that one still refuses.
-        if selected == LOCAL_PROVIDER and not is_local(selected, model):
-            raise ApiError(
-                ErrorCode.INVALID_REQUEST,
-                f"OLLAMA_MODEL is set to {model!r}, which Ollama serves from its own "
-                "servers rather than this machine — so this would not be the local "
-                "answer it claims to be. Set OLLAMA_MODEL to a model you have pulled "
-                f"({Settings.model_fields['ollama_model'].default} is the default), "
-                "or pick a cloud provider explicitly.",
-            )
-        # The assistant answers from context it was handed and is told to say
-        # when it does not know. Inventing an application status is the exact
-        # failure §14 names, so this is the low end deliberately.
-        answer = await provider.complete(SYSTEM, prompt, max_tokens=600, temperature=0.2)
-    except LLMError as exc:
-        # Still no automatic fallback, in either direction. A local model that
-        # is down must not silently promote the question to a cloud provider —
-        # that would send the context off the machine without anyone choosing
-        # it, which is the one thing the per-request switch exists to prevent.
-        # A remote provider that fails does not quietly drop to the local one
-        # either: the answer would come from a different model than the one
-        # asked for, and `LLM_FALLBACK_LOCAL` deliberately does not reach here.
-        if selected == LOCAL_PROVIDER:
-            raise ApiError(
-                ErrorCode.INTERNAL_ERROR,
-                f"The local model is not answering ({exc}). Start Ollama with "
-                f"`ollama serve`, or pull the configured model with "
-                f"`ollama pull {get_settings().ollama_model}`. "
-                "Nothing was sent anywhere else — pick a cloud provider explicitly "
-                "if you want one.",
-            ) from exc
+
+def provider_for(selected: str) -> tuple[Any, str | None]:
+    """The provider that was asked for, refused if it is not what its name says."""
+    provider = llm_router.build_provider(selected)
+    model = getattr(provider, "model", None)
+    # Kept even though remote providers are now permitted, because this
+    # check was never only about where the answer came from — it is about
+    # the label matching. Ollama serves cloud-hosted models over the same
+    # localhost API: `kimi-k2.6:cloud` and `qwen3-coder:480b-cloud` are
+    # both in this owner's model list, neither runs on this machine, and
+    # nothing in the URL says so.
+    #
+    # Choosing Gemini is an informed decision and is allowed. Asking for
+    # the local model and silently getting a third party is not a decision
+    # at all, so that one still refuses.
+    if selected == LOCAL_PROVIDER and not is_local(selected, model):
         raise ApiError(
-            ErrorCode.INTERNAL_ERROR,
-            f"{selected} did not answer ({exc}). Nothing fell back to another model — "
-            "ask again, or switch to the local one.",
-        ) from exc
+            ErrorCode.INVALID_REQUEST,
+            f"OLLAMA_MODEL is set to {model!r}, which Ollama serves from its own "
+            "servers rather than this machine — so this would not be the local "
+            "answer it claims to be. Set OLLAMA_MODEL to a model you have pulled "
+            f"({Settings.model_fields['ollama_model'].default} is the default), "
+            "or pick a cloud provider explicitly.",
+        )
+    return provider, model
 
+
+def did_not_answer(selected: str, exc: LLMError) -> ApiError:
+    """What the owner is told when the model they asked for fails."""
+    # Still no automatic fallback, in either direction. A local model that
+    # is down must not silently promote the question to a cloud provider —
+    # that would send the context off the machine without anyone choosing
+    # it, which is the one thing the per-request switch exists to prevent.
+    # A remote provider that fails does not quietly drop to the local one
+    # either: the answer would come from a different model than the one
+    # asked for, and `LLM_FALLBACK_LOCAL` deliberately does not reach here.
+    if selected == LOCAL_PROVIDER:
+        return ApiError(
+            ErrorCode.INTERNAL_ERROR,
+            f"The local model is not answering ({exc}). Start Ollama with "
+            f"`ollama serve`, or pull the configured model with "
+            f"`ollama pull {get_settings().ollama_model}`. "
+            "Nothing was sent anywhere else — pick a cloud provider explicitly "
+            "if you want one.",
+        )
+    return ApiError(
+        ErrorCode.INTERNAL_ERROR,
+        f"{selected} did not answer ({exc}). Nothing fell back to another model — "
+        "ask again, or switch to the local one.",
+    )
+
+
+def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
+    """The finished answer and everything the dock lists under it."""
+    selected, include_mail, found = ready.selected, ready.include_mail, ready.found
     cited = cited_labels(answer)
     return ChatReply(
         reply=answer,
@@ -743,3 +774,19 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
         matched_title_words=list(found.title_words),
         matched_role_filter=found.role_keys[0] if len(found.role_keys) == 1 else None,
     )
+
+
+@router.post("", response_model=ChatReply)
+async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
+    """Answer a question about the owner's own job search."""
+    ready = await prepare(body, session)
+    if isinstance(ready, ChatReply):
+        return ready
+    try:
+        provider, model = provider_for(ready.selected)
+        answer = await provider.complete(
+            SYSTEM, ready.prompt, max_tokens=ANSWER_TOKENS, temperature=ANSWER_TEMPERATURE
+        )
+    except LLMError as exc:
+        raise did_not_answer(ready.selected, exc) from exc
+    return reply_for(ready, model, answer)
