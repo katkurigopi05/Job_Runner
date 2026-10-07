@@ -108,6 +108,7 @@ async def claim_task(
     *,
     worker_id: str,
     kinds: list[str] | None = None,
+    after_others: list[str] | None = None,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
 ) -> ClaimedTask | None:
     """Atomically claim one runnable task, or return None if there are none.
@@ -115,9 +116,20 @@ async def claim_task(
     Runnable means pending and due, or running with an expired lease. The
     inner SELECT takes a row lock with SKIP LOCKED so concurrent workers step
     over each other's in-flight rows instead of blocking.
+
+    Oldest `run_after` first, except that a kind in `after_others` is taken
+    only when nothing else is runnable. Time alone let one tick's 3,234
+    discovery tasks go ahead of the 682 board polls queued with them: no
+    posting would have arrived for three hours, and an application approved
+    in that time would have waited behind them as well. Only runnable work is
+    yielded to, so a task scheduled for later holds nothing back.
     """
     kind_filter = ""
-    params: dict[str, Any] = {"worker_id": worker_id, "lease_seconds": lease_seconds}
+    params: dict[str, Any] = {
+        "worker_id": worker_id,
+        "lease_seconds": lease_seconds,
+        "after_others": after_others or [],
+    }
     if kinds:
         kind_filter = "AND kind = ANY(:kinds)"
         params["kinds"] = kinds
@@ -134,7 +146,7 @@ async def claim_task(
                     AND lease_expires_at < clock_timestamp())
             )
             {kind_filter}
-            ORDER BY run_after
+            ORDER BY (kind = ANY(:after_others)), run_after
             FOR UPDATE SKIP LOCKED
             LIMIT 1
         )

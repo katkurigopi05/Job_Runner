@@ -328,3 +328,78 @@ async def test_renewal_keeps_a_slow_task_unclaimable(db_session) -> None:
     await renew_lease(db_session, claimed.task.id, WORKER_A, lease_seconds=600)
 
     assert await claim_task(db_session, worker_id=WORKER_B) is None
+
+
+# --- kinds that wait for everything else -------------------------------------
+#
+# Found on 2026-10-06 by starting a crawl. One tick queued 3,234 discovery
+# tasks and 682 board polls with the same `run_after`, and `claim_task` ordered
+# by `run_after` alone. Five workers took discovery, about 17 a minute, and
+# after two minutes no board had been polled and no posting had arrived: at
+# that rate the polls, which are what bring postings in, were three hours away.
+# An application the owner approved would have queued behind them too.
+
+BULK = "discover_company"
+
+
+async def test_a_yielding_kind_waits_for_everything_else(db_session) -> None:
+    long_ago = datetime.now(UTC) - timedelta(hours=1)
+    await enqueue(db_session, BULK, {"company_id": "a"}, run_after=long_ago)
+    await enqueue(db_session, "crawl_company", {"company_id": "b"})
+
+    first = await claim_task(db_session, worker_id=WORKER_A, after_others=[BULK])
+    second = await claim_task(db_session, worker_id=WORKER_B, after_others=[BULK])
+
+    assert first is not None and first.task.kind == "crawl_company"
+    # And it is not held back once nothing else is runnable.
+    assert second is not None and second.task.kind == BULK
+
+
+async def test_work_that_is_not_due_does_not_hold_a_yielding_kind_back(db_session) -> None:
+    """Yielding to a task scheduled for tomorrow would be idling, not yielding."""
+    await enqueue(db_session, BULK, {"company_id": "a"})
+    await enqueue(
+        db_session, "crawl", {"dispatch": True}, run_after=datetime.now(UTC) + timedelta(hours=1)
+    )
+
+    claimed = await claim_task(db_session, worker_id=WORKER_A, after_others=[BULK])
+
+    assert claimed is not None and claimed.task.kind == BULK
+
+
+async def test_among_themselves_yielding_tasks_keep_their_order(db_session) -> None:
+    """`defer_task` moves a task's `run_after` to hand it back; that still has to count."""
+    now = datetime.now(UTC)
+    await enqueue(db_session, BULK, {"company_id": "later"}, run_after=now - timedelta(minutes=1))
+    await enqueue(db_session, BULK, {"company_id": "earlier"}, run_after=now - timedelta(minutes=9))
+
+    claimed = await claim_task(db_session, worker_id=WORKER_A, after_others=[BULK])
+
+    assert claimed is not None and claimed.task.payload_json == {"company_id": "earlier"}
+
+
+async def test_with_no_yielding_kinds_the_order_is_by_time_alone(db_session) -> None:
+    long_ago = datetime.now(UTC) - timedelta(hours=1)
+    await enqueue(db_session, BULK, {"company_id": "a"}, run_after=long_ago)
+    await enqueue(db_session, "crawl_company", {"company_id": "b"})
+
+    claimed = await claim_task(db_session, worker_id=WORKER_A)
+
+    assert claimed is not None and claimed.task.kind == BULK
+
+
+async def test_the_worker_makes_discovery_yield(db_session, monkeypatch) -> None:
+    """The rule is only real if the worker's own claim carries it."""
+    from apps.worker import run as worker_run
+    from apps.worker.discover_company_job import DISCOVER_COMPANY_TASK_KIND
+
+    seen: dict[str, object] = {}
+
+    async def recording_claim(session, **kwargs):
+        seen.update(kwargs)
+        return None
+
+    monkeypatch.setattr(worker_run, "claim_task", recording_claim)
+
+    assert await worker_run.run_once(worker_id="test-worker") is False
+    assert seen["after_others"] == [DISCOVER_COMPANY_TASK_KIND]

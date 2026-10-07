@@ -3996,3 +3996,34 @@ Not done: nothing in the dashboard or the assistant calls it, CI does not
 have the tool installed and so never starts it, and the course's deployment
 half (a container registry, Container Apps, Azure monitoring) is paid hosting
 that §11 rules out.
+
+---
+
+## 24. Discovery waits for everything else
+
+Found on 2026-10-06 by starting a crawl and watching it. One tick queued 3,234
+`discover_company` tasks and 682 `crawl_company` tasks with the same
+`run_after`, and `claim_task` ordered by `run_after` alone. Five workers took
+discovery, about 17 tasks a minute, and after two minutes no board had been
+polled and no posting had arrived. At that rate the board polls, which are
+what bring postings in, were three hours away.
+
+`claim_task` takes `after_others`: kinds claimed only when nothing else is
+runnable. The worker passes `YIELDING_KINDS`, which is `discover_company`.
+After the restart, 134 boards were polled in the first 75 seconds and 227 new
+postings stored.
+
+Three things to keep:
+
+- **It is not only about the crawl.** An approved application and the inbox
+  poll are queue tasks too, and both would have waited behind the discovery
+  backlog. Nothing was waiting that day, which is why it had not been seen.
+- **Only runnable work is yielded to.** The next tick is always pending with a
+  `run_after` a few minutes ahead. Yielding to that would leave discovery
+  idle with nothing to wait for. `tests/test_queue.py` holds it.
+- **Among discovery tasks the order is still `run_after`**, which is what
+  `defer_task` moves when it hands a task back for a busy host.
+
+Not fixed, and seen the same day: `make workers` ignored both an interrupt and
+a terminate for 20 seconds and had to be killed. The five tasks it was running
+kept their leases for the five minutes those last.

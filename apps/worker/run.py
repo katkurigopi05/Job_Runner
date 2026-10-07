@@ -58,6 +58,12 @@ HANDLERS = {
     INBOX_TASK_KIND: handle_inbox,
 }
 
+#: Taken only when nothing else is runnable (`claim_task`). Discovery looks for
+#: boards nobody has confirmed yet, thousands of companies at a time and about
+#: a minute each. Polling the boards already known, an approved application
+#: and the inbox are all owed sooner than that.
+YIELDING_KINDS = (DISCOVER_COMPANY_TASK_KIND,)
+
 
 async def run_once(
     *,
@@ -71,6 +77,7 @@ async def run_once(
             session,
             worker_id=worker_id,
             kinds=list(HANDLERS),
+            after_others=list(YIELDING_KINDS),
             lease_seconds=lease_seconds,
         )
         if claimed is None:
