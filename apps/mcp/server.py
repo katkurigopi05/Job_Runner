@@ -646,6 +646,126 @@ async def edit_application_resume(
 
 
 # --------------------------------------------------------------------------
+# The tracker
+# --------------------------------------------------------------------------
+#
+# Read only. Adding a task, ticking one off and linking a contact stay on the
+# dashboard: the record of who the owner is in touch with is theirs to keep.
+
+#: What a task is cut down to in a list. Its notes and its meeting link come
+#: with `application_tracking`, which is one application's and not everyone's.
+_TASK_FIELDS = (
+    "id",
+    "application_id",
+    "application_url",
+    "kind",
+    "title",
+    "due_at",
+    "overdue",
+    "source",
+)
+
+#: A contact is somebody else. Over MCP the reader is a model that is not on
+#: this machine, and they never chose that; §14 says the same of their mail.
+#: Who they are is sent. How to reach them, and what the owner wrote about
+#: them, is not.
+_CONTACT_FIELDS = ("name", "company", "role")
+
+_SILENT_FIELDS = ("application_id", "url", "days_since", "has_follow_up_task")
+
+
+def _listed_task(task: dict[str, Any]) -> dict[str, Any]:
+    left = [item["text"] for item in task.get("checklist") or [] if not item.get("done")]
+    return {**{field: task.get(field) for field in _TASK_FIELDS}, "checklist_left": left}
+
+
+@server.tool()
+async def follow_ups(within_days: int = 7, silent_after_days: int | None = None) -> dict[str, Any]:
+    """What is waiting on the owner in the tracker: tasks, and unanswered applications.
+
+    Open tasks come in groups: `overdue`, `due` in the next `within_days`,
+    `undated`, and a count of the ones due `later`. An undated task is not a
+    low priority. An interview or assessment task made from a recruiter's
+    reply has no date until the owner reads it out of the message and sets it.
+
+    `silent` is the submitted applications no employer has answered, longest
+    wait first. `has_follow_up_task` means the owner already has it in hand.
+    `stale` counts the ones too old for a follow-up to be worth sending.
+    `silent_after_days` moves how long an application waits before it is
+    listed; leave it out for the report's own. `suggested_silent_after_days`
+    is that wait worked out from the owner's own history, and is null until
+    enough employers have answered.
+
+    Reports only. Jobrunner sends nothing to an employer: a follow-up is the
+    owner's to write and to send.
+    """
+    # The window is the route's to draw, so this has no clock of its own: what
+    # the windowed list holds is due or overdue, and the rest is told apart by
+    # whether it has a date at all.
+    windowed = await _call("GET", "/tasks", params={"due_within_days": within_days})
+    if not isinstance(windowed, list):
+        return windowed
+    every_open = await _call("GET", "/tasks")
+    if not isinstance(every_open, list):
+        return every_open
+    # Only when given. The report's default is its own to hold.
+    asked = {} if silent_after_days is None else {"silent_after_days": silent_after_days}
+    report = await _call("GET", "/analytics/cadence", params=asked or None)
+    if "silent" not in report:
+        return report
+
+    in_window = {task["id"] for task in windowed}
+    beyond = [task for task in every_open if task["id"] not in in_window]
+    waiting: dict[str, Any] = {
+        "overdue": [_listed_task(task) for task in windowed if task.get("overdue")],
+        "due": [_listed_task(task) for task in windowed if not task.get("overdue")],
+        "undated": [_listed_task(task) for task in beyond if task.get("due_at") is None],
+        "later": sum(1 for task in beyond if task.get("due_at") is not None),
+        "silent": [
+            {field: item.get(field) for field in _SILENT_FIELDS}
+            for item in report["silent"]
+            if not item.get("stale")
+        ],
+        "stale": report.get("stale", 0),
+        "suggested_silent_after_days": (report.get("latency") or {}).get(
+            "suggested_silent_after_days"
+        ),
+        "within_days": within_days,
+    }
+    if not any(waiting[group] for group in ("overdue", "due", "undated", "silent")):
+        waiting["note"] = (
+            "Nothing is waiting. A task exists once the owner adds one or a recruiter's "
+            "reply is routed to its application, and an application is listed as unanswered "
+            "only once it has been submitted and has waited the full time."
+        )
+    return waiting
+
+
+@server.tool()
+async def application_tracking(application_id: str) -> dict[str, Any]:
+    """One application's tasks, and the people the owner is in touch with about it.
+
+    A task comes whole: its checklist, its notes, where the interview is. A
+    contact is cut to name, relationship, company and role. Their email,
+    phone and profile link, and the owner's notes on them, are on the
+    dashboard and are not sent here.
+    """
+    tracking = await _call("GET", f"/applications/{application_id}/tracking")
+    if "contacts" not in tracking:
+        return tracking
+    return {
+        "contacts": [
+            {
+                **{field: linked["contact"].get(field) for field in _CONTACT_FIELDS},
+                "relationship": linked.get("relationship"),
+            }
+            for linked in tracking["contacts"]
+        ],
+        "tasks": tracking["tasks"],
+    }
+
+
+# --------------------------------------------------------------------------
 # Profile, résumé, projects
 # --------------------------------------------------------------------------
 

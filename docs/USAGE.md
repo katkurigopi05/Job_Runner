@@ -528,6 +528,8 @@ Show the unanswered questions for application APPLICATION_ID.
 Approve APPLICATION_ID.
 Reject APPLICATION_ID and note that the role is no longer relevant.
 Show the complete history for APPLICATION_ID.
+What needs a follow-up this week?
+Who am I in touch with about APPLICATION_ID, and what is left to prepare?
 Inspect my latest résumé as the parser sees it.
 Sync my GitHub projects and preview which four fit this job description.
 ```
@@ -623,6 +625,8 @@ check.
 | `sync_github_projects` | Import or refresh GitHub repositories |
 | `list_projects` | List imported projects |
 | `preview_projects` | Rank projects against job text and return matched GitHub evidence terms |
+| `follow_ups` | Open tasks (overdue, due soon, undated) and submitted applications nobody has answered. Read only |
+| `application_tracking` | One application's tasks, and its contacts by name and role. Read only |
 | `curate_project` | Pin a project or exclude it from future selection |
 
 There is deliberately no `submit_now` tool. Approval releases an application to
@@ -643,6 +647,18 @@ per provider.
 `select_tailoring` and `approve_application` are separate on purpose. Choosing
 which document goes is not the same act as deciding to send it, and the approval
 gate has to stay its own deliberate step.
+
+`follow_ups` and `application_tracking` read the tracker and change nothing in
+it. You add a task, tick one off and link a contact on the dashboard. Two
+things about what they send:
+
+- A task with no date is listed, under `undated`. An interview or assessment
+  task made from a recruiter's reply has no date until you set it.
+- A contact is sent as name, relationship, company and role. Their email,
+  phone and profile link, and your notes on them, are not sent to the
+  assistant.
+
+Nothing here writes to an employer. A follow-up is yours to write and send.
 
 ## 7. Typical application workflow
 

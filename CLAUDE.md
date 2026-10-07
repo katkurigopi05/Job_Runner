@@ -648,6 +648,36 @@ there is no argument for a model to fill. Four things to keep:
 Not seen: Claude Code's own dialog. The server is switched off on this machine,
 so what was run is the library's client answering the form in both protocols.
 
+**The tracker over MCP reads and does not write** (2026-10-07). "What needs a
+follow-up this week?" had no tool. The tracking API has eleven routes and the
+cadence report is a twelfth, and an assistant reached none of them.
+`follow_ups` lists open tasks and the submitted applications nobody has
+answered; `application_tracking` is one application's tasks and contacts.
+`tests/test_mcp_tracking.py` holds four things:
+
+- **A task with no date is listed.** A recruiter's reply that says
+  "interview" creates a task with no date on purpose
+  (`packages/tracking/tasks.py`), and a list of what is due inside a window
+  leaves it out. It is returned under `undated`.
+- **The tool has no clock.** It asks `/tasks` once with the window and once
+  without. What the windowed list holds is due or overdue by the route's own
+  rule, and the rest is told apart by whether it has a date at all.
+- **A contact is sent as name, relationship, company and role.** Their email,
+  phone and profile link, and the owner's notes on them, are not. A contact is
+  somebody else, and over MCP the reader is a model that is not on this
+  machine; §14 says the same of their mail, and the calendar export already
+  carries no contact's details. The test asserts the exact keys.
+- **Only GET.** Adding a task, ticking one off and linking a contact stay on
+  the dashboard. Every parameter sent is held to its route's signature, as
+  `my_matches` holds its filters (§18).
+
+Seen on the way and not fixed: `/tracker` asks for tasks due within 14 days,
+so the same undated task is missing from its upcoming list. It shows on the
+application's own page.
+
+Not done: a task names its application by URL. No tracking route carries the
+company or the role.
+
 ### Phase 5 — Discovery
 
 Build: company registry (hand-picked, seeded from a YAML file). Crawler with
