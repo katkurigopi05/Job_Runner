@@ -493,6 +493,26 @@ Inspect my latest résumé as the parser sees it.
 Sync my GitHub projects and preview which four fit this job description.
 ```
 
+### Approving and entering a code always ask you first
+
+`approve_application` and `submit_otp` are the two tools that move a parked
+application forward. In Claude Code each call to either one stops at a
+permission prompt, whatever permission mode the session is in, and there is no
+"don't ask again" for them. In the mode that never prompts, the call is refused.
+
+Two things make that happen, and both name the same two tools:
+
+- The server marks them in its tool list (`ASKS_THE_OWNER` in
+  `apps/mcp/server.py`). This needs Claude Code 2.1.214 or later.
+- `.claude/settings.json`, shared through git, holds an ask rule for each. An
+  older Claude Code that does not read the mark still asks because of the rule.
+
+Another MCP client reads neither. There the review queue in the dashboard is
+still the gate: nothing is sent until an application is approved, and an
+assistant approving on its own is what these prompts are for.
+
+`reject_application` does not ask. It is permanent, but it sends nothing.
+
 ### Use GitHub skills that are missing from your base résumé
 
 First set `GITHUB_USERNAME` in `.env`. A read-only `GITHUB_TOKEN` is optional for public repositories and required when you choose to include private repositories. Then ask your MCP-enabled assistant:

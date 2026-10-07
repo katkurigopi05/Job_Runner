@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "ask": [
+      "mcp__jobrunner__approve_application",
+      "mcp__jobrunner__submit_otp"
+    ]
+  }
+}

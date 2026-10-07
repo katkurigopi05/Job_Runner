@@ -98,6 +98,56 @@ async def test_choosing_a_tailoring_is_not_approving_one() -> None:
     assert "not approving" in description or "stays parked" in description
 
 
+def _wire(tool: Any) -> dict[str, Any]:
+    """The tool as its `tools/list` entry, which is what a client reads."""
+    return tool.model_dump(by_alias=True, exclude_none=True)
+
+
+async def test_the_owners_decisions_ask_the_owner_every_time() -> None:
+    """§2.3 — over MCP the one approving is a model, so the client must ask.
+
+    `approve_application` releases a real application and `submit_otp` resumes
+    one. Their docstrings say to call them only when the owner has decided,
+    and a docstring is a request. Claude Code shows a permission prompt on
+    every call to a tool whose `tools/list` entry carries this flag, in every
+    permission mode and past any allow rule; in the mode that never prompts it
+    refuses the call.
+
+    Asserted on the wire entry, with `is True`: Claude Code ignores any value
+    that is not the JSON boolean.
+    """
+    tools = {t.name: _wire(t) for t in await mcp_server.server.list_tools()}
+    asking = {
+        name for name, tool in tools.items() if (tool.get("_meta") or {}).get(mcp_server.ASK_FLAG)
+    }
+
+    # The exact set, so adding or removing one is a deliberate act.
+    assert asking == set(mcp_server.ASKS_THE_OWNER) == {"approve_application", "submit_otp"}
+    for name in asking:
+        assert tools[name]["_meta"][mcp_server.ASK_FLAG] is True, name
+
+
+def test_the_project_settings_ask_too() -> None:
+    """The same two tools, as a rule for a client that does not read the flag.
+
+    `.claude/settings.json` is the project's shared Claude Code settings. An
+    ask rule there prompts in every mode and wins over an allow rule. It names
+    a tool as `mcp__<server>__<tool>`, so the server's name in `.mcp.json` is
+    part of what has to agree: renaming the server would leave two rules that
+    match nothing, and a rule that matches nothing asks nobody.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    servers = json.loads((root / ".mcp.json").read_text())["mcpServers"]
+    assert list(servers) == [mcp_server.server.name]
+
+    permissions = json.loads((root / ".claude" / "settings.json").read_text())["permissions"]
+    expected = {f"mcp__{mcp_server.server.name}__{tool}" for tool in mcp_server.ASKS_THE_OWNER}
+    assert set(permissions["ask"]) == expected
+    assert not expected & set(permissions.get("allow", []))
+
+
 # --------------------------------------------------------------------------
 # Discovery
 # --------------------------------------------------------------------------

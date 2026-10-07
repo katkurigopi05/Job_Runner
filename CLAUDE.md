@@ -594,6 +594,33 @@ Build: `apps/mcp/` exposing `search_postings`, `tailor_resume`, `detect_ats`,
 conversationally. Do this phase early even though it looks like polish — it makes every
 later phase testable by conversation instead of by curl.
 
+**The two tools that decide a parked application make the client ask**
+(2026-10-07). Over MCP the one calling `approve_application` or `submit_otp`
+is a model, and "only call it when the owner has actually decided" was a
+sentence in a docstring. Two things hold it now, and `tests/test_mcp.py` keeps
+them naming the same tools:
+
+- **The server marks them.** Their `tools/list` entries carry
+  `_meta["anthropic/requiresUserInteraction"]: true` (`ASKS_THE_OWNER` in
+  `apps/mcp/server.py`). Claude Code 2.1.214 and later prompts on every call
+  to such a tool in every permission mode, past any allow rule, with no
+  "don't ask again"; the mode that never prompts refuses the call.
+- **`.claude/settings.json` asks too**, for a build that does not read the
+  mark. An ask rule prompts in every mode and wins over an allow rule. It
+  names a tool as `mcp__jobrunner__<tool>`, so renaming the server in
+  `.mcp.json` would leave rules that match nothing; the test reads both files.
+
+What this does not cover: another MCP client reads neither, and
+`reject_application` is not marked. It is terminal but sends nothing, and a
+prompt on every tool the review gate has would be read past. Not seen live:
+the server is switched off in this machine's `settings.local.json`, so the
+prompt itself has not been watched appearing. The mark is asserted on the
+wire entry, which is what the client reads.
+
+This came out of looking at Sentience Governor, which records what an agent
+did against what it declared and reports afterwards. A record of an approval
+is no use once the form has gone.
+
 ### Phase 5 — Discovery
 
 Build: company registry (hand-picked, seeded from a YAML file). Crawler with
