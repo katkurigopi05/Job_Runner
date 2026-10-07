@@ -69,7 +69,7 @@ from packages.core.schemas import (
 from packages.llm import router as llm_router
 from packages.llm.audit import is_local
 from packages.llm.prompts import CHAT_SYSTEM
-from packages.llm.provider import LLMError
+from packages.llm.provider import LLMError, PromptTooLong
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
 from packages.matching.retrieve import Retrieval, retrieve
 from packages.matching.roles import display_name
@@ -697,6 +697,14 @@ def provider_for(selected: str) -> tuple[Any, str | None]:
 
 def did_not_answer(selected: str, exc: LLMError) -> ApiError:
     """What the owner is told when the model they asked for fails."""
+    # Ollama is running and refused: the advice for a model that is down is wrong here.
+    if isinstance(exc, PromptTooLong):
+        return ApiError(
+            ErrorCode.INVALID_REQUEST,
+            f"That question, with what was found for it, is too long for the model "
+            f"that was asked ({exc}). Ask something narrower, or raise OLLAMA_NUM_CTX "
+            "for the local model. Nothing fell back to another model.",
+        )
     # Still no automatic fallback, in either direction. A local model that
     # is down must not silently promote the question to a cloud provider —
     # that would send the context off the machine without anyone choosing

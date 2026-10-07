@@ -1084,8 +1084,22 @@ local model at a context of 4,096:
   `CallTiming.context_full` is that sum reaching the cap, logged as
   `llm_context_full`.
 
-Not in it: a streamed answer, and any provider other than the two Ollama
-ones. Nothing reads the file yet except `timing.read_timings`.
+Not in it: any provider other than the two Ollama ones. Nothing reads the
+file yet except `timing.read_timings`.
+
+**This used to say a streamed answer was not in it either**, and once the
+stream (§17) had merged that was every answer in the dock. The two were
+written as separate changes, so with both on `main` the assistant's calls
+were the one kind that kept no numbers, and a refusal over the stream read
+"400 Bad Request" again: a streamed body is not read until it is asked for,
+and the reason is in the body. The closing line of Ollama's stream
+carries the same measurements as a plain reply, so `OllamaProvider.stream`
+records them there, and reads a refused body before raising. A stream closed
+early records nothing; the numbers are on the line it never read.
+
+A prompt too long for the model is raised as `PromptTooLong`, so `/chat` can
+tell it from a model that is down. It had been showing the right reason
+inside the advice for the wrong one ("Start Ollama with `ollama serve`").
 
 ---
 

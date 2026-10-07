@@ -56,6 +56,14 @@ class LLMError(Exception):
     """The provider could not produce a usable answer."""
 
 
+class PromptTooLong(LLMError):
+    """The model refused the prompt as longer than its context.
+
+    Its own kind so a caller can tell it from a model that is down: the advice
+    for one is to start the model, and for the other it is to send less.
+    """
+
+
 class LLMProvider(Protocol):
     name: str
 
@@ -291,7 +299,7 @@ class OllamaProvider:
                 payload = resp.json()
                 content = str(payload["message"]["content"])
             except Exception as exc:
-                raise LLMError(f"Ollama call failed: {_ollama_reason(exc)}") from exc
+                raise _ollama_failure("Ollama call failed", exc) from exc
         self._measured(payload, user, options)
         return content
 
@@ -319,7 +327,7 @@ class OllamaProvider:
                 payload = resp.json()
                 parsed = schema.model_validate_json(payload["message"]["content"])
             except Exception as exc:
-                raise LLMError(f"Ollama JSON call failed: {_ollama_reason(exc)}") from exc
+                raise _ollama_failure("Ollama JSON call failed", exc) from exc
         self._measured(payload, user, options)
         return parsed
 
@@ -344,13 +352,14 @@ class OllamaProvider:
         record(self.name, system, user, model=getattr(self, "model", None))
         async with httpx.AsyncClient() as client:
             try:
+                options = self._options(max_tokens, temperature)
                 body = await self._request(
                     client,
                     [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
-                    options=self._options(max_tokens, temperature),
+                    options=options,
                     stream=True,
                 )
                 async with client.stream(
@@ -361,22 +370,29 @@ class OllamaProvider:
                     # Between pieces, not for the whole answer.
                     timeout=120.0,
                 ) as resp:
+                    if resp.status_code >= 400:
+                        # A streamed body is not read until it is asked for,
+                        # and the daemon's reason for refusing is in it.
+                        await resp.aread()
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():
                         if not line:
                             continue
                         part = json.loads(line)
                         if part.get("error"):
-                            raise LLMError(f"Ollama call failed: {part['error']}")
+                            raise LLMError(f"Ollama call failed: {_quoted(str(part['error']))}")
                         piece = (part.get("message") or {}).get("content") or ""
                         if piece:
                             yield piece
                         if part.get("done"):
+                            # The closing line carries what the call cost, as a
+                            # plain reply does. A reader who left never gets here.
+                            self._measured(part, user, options)
                             return
             except LLMError:
                 raise
             except Exception as exc:
-                raise LLMError(f"Ollama call failed: {_scrubbed(exc)}") from exc
+                raise _ollama_failure("Ollama call failed", exc) from exc
 
 
 #: Gemini authenticates with the key as a *query parameter*, so the key is part
@@ -420,8 +436,16 @@ _TOO_LONG = "exceed_context_size_error"
 _REASON_QUOTED_CHARS = 300
 
 
-def _ollama_reason(exc: Exception) -> str:
-    """Why Ollama refused a call, in its own words when it gave any.
+def _quoted(said: str) -> str:
+    """The daemon's own words, scrubbed, and no more of them than a reason runs to."""
+    reason = _scrub(said)
+    if len(reason) > _REASON_QUOTED_CHARS:
+        return reason[:_REASON_QUOTED_CHARS].rstrip() + "…"
+    return reason
+
+
+def _ollama_failure(what: str, exc: Exception) -> LLMError:
+    """The error for a failed Ollama call, saying why in the daemon's words.
 
     `raise_for_status` knows the status and the URL. The reason is in the
     body, and the body used to be thrown away, so every refusal read as
@@ -430,11 +454,39 @@ def _ollama_reason(exc: Exception) -> str:
     The one refusal with numbers in it is a prompt longer than the context
     (measured on 0.40.0, 2026-10-07): the daemon does not cut it, it refuses
     it. Both numbers and the setting are named, because the owner can act on
-    that and cannot act on a status code.
+    that and cannot act on a status code, and it is raised as `PromptTooLong`.
     """
     response = getattr(exc, "response", None)
     if response is None:
-        return _scrubbed(exc)
+        return LLMError(f"{what}: {_scrubbed(exc)}")
+    try:
+        said = response.json().get("error")
+    except Exception:  # noqa: BLE001 - a body that is not JSON carries no reason
+        return LLMError(f"{what}: {_scrubbed(exc)}")
+    if isinstance(said, str):
+        # The daemon passes its runner's error on as a string of JSON.
+        try:
+            inner = json.loads(said)
+        except ValueError:
+            inner = None
+        if isinstance(inner, dict) and isinstance(inner.get("error"), dict):
+            said = inner["error"]
+    if isinstance(said, dict):
+        prompt_tokens, context = said.get("n_prompt_tokens"), said.get("n_ctx")
+        if (
+            said.get("type") == _TOO_LONG
+            and isinstance(prompt_tokens, int)
+            and isinstance(context, int)
+        ):
+            return PromptTooLong(
+                f"{what}: the prompt is {prompt_tokens:,} tokens and the model's context "
+                f"is {context:,}, so Ollama refused it. OLLAMA_NUM_CTX sets a local "
+                "model's context"
+            )
+        said = said.get("message")
+    if isinstance(said, str) and said.strip():
+        return LLMError(f"{what}: {_quoted(said)}")
+    return LLMError(f"{what}: {_scrubbed(exc)}")
     try:
         said = response.json().get("error")
     except Exception:  # noqa: BLE001 - a body that is not JSON carries no reason

@@ -20,7 +20,7 @@ import httpx
 import pytest
 
 from packages.core.config import get_settings
-from packages.llm import audit
+from packages.llm import audit, timing
 from packages.llm import provider as provider_module
 from packages.llm.provider import (
     LLMError,
@@ -58,6 +58,9 @@ class _Streamed:
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise httpx.HTTPStatusError("model not found", request=None, response=None)  # type: ignore[arg-type]
+
+    async def aread(self) -> bytes:
+        return b""
 
     async def aiter_lines(self):  # noqa: ANN201
         for line in self._lines:
@@ -277,3 +280,55 @@ async def test_a_provider_that_can_stream_is_streamed(daemon) -> None:
     pieces = [piece async for piece in stream_text(local, "sys", "usr", max_tokens=600)]
 
     assert pieces == ["Two", " are", " waiting."]
+
+
+#: The closing line as the daemon sends it: no text, and what the call cost.
+CLOSING = json.dumps(
+    {
+        "message": {"content": ""},
+        "done": True,
+        "done_reason": "stop",
+        "total_duration": 17_400_000_000,
+        "load_duration": 120_000_000,
+        "prompt_eval_count": 1_312,
+        "prompt_eval_duration": 5_050_000_000,
+        "eval_count": 146,
+        "eval_duration": 12_100_000_000,
+    }
+)
+
+
+async def test_a_streamed_answer_is_measured_like_a_plain_one(daemon) -> None:
+    """Every answer in the dock is streamed. The stream and the timings were
+    written apart, so once both had merged the assistant's calls were the one
+    kind that kept no numbers. The closing line carries the same ones."""
+    daemon([_line("Two"), _line(" are waiting."), CLOSING])
+
+    await _pieces(OllamaProvider("http://test", model="some-model"))
+
+    [kept] = timing.read_timings()
+    assert (kept.prompt_tokens, kept.answer_tokens) == (1_312, 146)
+    assert (kept.prompt_ms, kept.answer_ms) == (5_050.0, 12_100.0)
+    assert kept.context_limit == get_settings().ollama_num_ctx
+    assert kept.user_sha256 == audit.digest_of("usr")
+
+
+async def test_a_stream_closed_early_has_nothing_to_measure(daemon) -> None:
+    """The numbers are on the last line, and a reader who left never read it."""
+    daemon([_line("Two"), _line(" are waiting."), CLOSING])
+    stream = OllamaProvider("http://test", model="some-model").stream("sys", "usr")
+
+    await anext(stream)
+    await stream.aclose()
+
+    assert timing.read_timings() == []
+
+
+async def test_an_error_line_is_quoted_no_further_than_a_reason_runs(daemon) -> None:
+    daemon([json.dumps({"error": "runner stopped: " + "the prompt, repeated back " * 60})])
+
+    with pytest.raises(LLMError) as failed:
+        await _pieces(OllamaProvider("http://test", model="some-model"))
+
+    assert "runner stopped" in str(failed.value)
+    assert len(str(failed.value)) < 400
