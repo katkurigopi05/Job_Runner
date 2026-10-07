@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from packages.llm.provider import LLMError, StubProvider
+from packages.llm.provider import LLMError, PromptTooLong, StubProvider
 
 
 @pytest.mark.parametrize(
@@ -505,3 +505,44 @@ async def test_asking_for_local_still_refuses_the_same_model(
 
     assert answered.status_code == 400
     assert "local answer it claims to be" in answered.json()["error"]["message"].lower()
+
+
+TOO_LONG_FOR_IT = PromptTooLong(
+    "Ollama call failed: the prompt is 6,076 tokens and the model's context is 4,096, "
+    "so Ollama refused it. OLLAMA_NUM_CTX sets a local model's context"
+)
+
+
+class _RefusesAsTooLong:
+    name = "ollama"
+    model = "some-local-model"
+
+    async def complete(self, system: str, user: str, *, max_tokens: int, temperature: float) -> str:
+        raise TOO_LONG_FOR_IT
+
+    async def stream(self, system: str, user: str, *, max_tokens: int, temperature: float):  # noqa: ANN201
+        raise TOO_LONG_FOR_IT
+        yield ""  # pragma: no cover - makes this an async generator
+
+
+@pytest.mark.parametrize("route", ["/chat", "/chat/stream"])
+async def test_a_prompt_too_long_for_the_model_is_not_a_model_that_is_down(
+    client: AsyncClient, monkeypatch, route: str
+) -> None:
+    """The reason was right and the advice round it was wrong: "The local model
+    is not answering (the prompt is 6,076 tokens ...). Start Ollama with
+    `ollama serve`". Ollama is running. The question is too long for it."""
+    import apps.api.routers.chat as chat_module
+
+    monkeypatch.setattr(
+        chat_module.llm_router, "build_provider", lambda name=None: _RefusesAsTooLong()
+    )
+
+    answered = await client.post(route, json={"message": "how many are waiting on me?"})
+
+    assert answered.status_code == 400
+    message = answered.json()["error"]["message"]
+    assert "6,076 tokens" in message and "4,096" in message
+    assert "OLLAMA_NUM_CTX" in message
+    assert "ollama serve" not in message and "ollama pull" not in message
+    assert "Nothing fell back to another model" in message

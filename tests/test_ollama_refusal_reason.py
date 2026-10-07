@@ -14,6 +14,7 @@ appears to do nothing.
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -22,7 +23,7 @@ from pydantic import BaseModel
 
 from packages.llm import audit, timing
 from packages.llm import provider as provider_module
-from packages.llm.provider import LLMError, OllamaProvider
+from packages.llm.provider import LLMError, OllamaProvider, PromptTooLong
 
 #: The body 0.40.0 sent, byte for byte: the daemon wraps its runner's JSON
 #: error in a string.
@@ -61,7 +62,16 @@ def refusing(monkeypatch):
                 return httpx.Response(status, text=text, request=request)
             return httpx.Response(status, json=body, request=request)
 
+        @asynccontextmanager
+        async def stream(self, method, url, *, json=None, headers=None, timeout=None):  # noqa: ANN001
+            request = httpx.Request(method, url)
+            if text is not None:
+                yield httpx.Response(status, text=text, request=request)
+            else:
+                yield httpx.Response(status, json=body, request=request)
+
         monkeypatch.setattr(httpx.AsyncClient, "post", post)
+        monkeypatch.setattr(httpx.AsyncClient, "stream", stream)
 
     provider_module._THINKING_MODELS.clear()
     yield install
@@ -118,6 +128,22 @@ async def test_a_key_in_the_daemons_words_is_not_repeated(refusing) -> None:
     assert "unauthorized" in str(refused.value)
 
 
+async def test_only_the_start_of_a_long_reason_is_quoted(refusing) -> None:
+    """Found in review. The daemon's words go into an exception that is logged
+    and shown, and nothing promises they never repeat what they were sent. A
+    reason is a sentence; whatever runs on past that is left behind (§10)."""
+    echoed = "could not parse the request: " + "the whole of a résumé, repeated back " * 40
+    refusing(400, body={"error": echoed})
+
+    with pytest.raises(LLMError) as refused:
+        await _local().complete("sys", "usr")
+
+    message = str(refused.value)
+    assert "could not parse the request" in message
+    assert len(message) < 400
+    assert message.endswith("…")
+
+
 async def test_a_refused_call_is_in_the_audit_trail_and_has_no_timing(refusing) -> None:
     """The prompt was sent, so the trail has its line. Nothing was measured."""
     refusing(400, body=TOO_LONG)
@@ -127,3 +153,35 @@ async def test_a_refused_call_is_in_the_audit_trail_and_has_no_timing(refusing) 
 
     assert len(audit.read_trail()) == 1
     assert timing.read_timings() == []
+
+
+async def test_a_prompt_that_is_too_long_is_its_own_kind_of_failure(refusing) -> None:
+    """So a caller can tell it from a model that is down. The advice for one is
+    to start Ollama, and for the other it is to ask for less."""
+    refusing(400, body=TOO_LONG)
+
+    with pytest.raises(PromptTooLong):
+        await _local().complete("sys", "a very long prompt")
+    assert issubclass(PromptTooLong, LLMError), "every existing handler still catches it"
+
+
+async def test_any_other_refusal_is_not_that_kind(refusing) -> None:
+    refusing(404, body={"error": "model 'some-local-model' not found"})
+
+    with pytest.raises(LLMError) as refused:
+        await _local().complete("sys", "usr")
+    assert not isinstance(refused.value, PromptTooLong)
+
+
+async def test_a_refused_stream_says_why_too(refusing) -> None:
+    """A streamed body is not read until it is asked for, and the reason is in
+    the body. The dock asks through the stream, so without this every refusal
+    there read "400 Bad Request" again."""
+    refusing(400, body=TOO_LONG)
+
+    with pytest.raises(PromptTooLong) as refused:
+        async for _ in _local().stream("sys", "a very long prompt"):
+            pass
+
+    assert "6,076 tokens" in str(refused.value)
+    assert "4,096" in str(refused.value)

@@ -198,7 +198,7 @@ Job Runner MCP server is switched off in this machine's
 
 ## Open, from the work above
 
-### S5. Record a streamed answer's timings (open)
+### S5. Record a streamed answer's timings (in review)
 
 #128 adds `OllamaProvider.stream` and #129 records `complete` and
 `complete_json`. They were written apart, so a streamed answer, which is now
@@ -206,6 +206,20 @@ every answer in the dock, is not in `llm-timings.jsonl`. The closing line of
 Ollama's stream carries the same numbers. A few lines in `stream`, once both
 have merged. The daemon's refusal reason (`_ollama_reason`) needs the same
 wiring there.
+
+One more for the same sitting. For a prompt too long for the local model,
+`/chat` now shows the right reason inside the wrong advice: "The local model
+is not answering (the prompt is 6,076 tokens and the model's context is
+4,096 ...). Start Ollama with `ollama serve`, or pull the configured model".
+The advice is `did_not_answer` in `chat.py`, which #128 moves, so it was left
+out of #129. It should say what to do about a long prompt when that is the
+reason.
+
+**What happened.** #128 and #129 merged within a minute of each other, so all
+three were done in one pull request off `main`, with the review fixes that
+had been pushed to those two branches after they merged. The stream records
+its closing line's numbers and reads a refused body before raising; a prompt
+too long for the model is its own error, `PromptTooLong`, with its own advice.
 
 ### S6. Decide on the 8-bit cache for your Ollama (open, the owner's call)
 

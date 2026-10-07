@@ -1111,8 +1111,22 @@ local model at a context of 4,096:
   `CallTiming.context_full` is that sum reaching the cap, logged as
   `llm_context_full`.
 
-Not in it: a streamed answer, and any provider other than the two Ollama
-ones. Nothing reads the file yet except `timing.read_timings`.
+Not in it: any provider other than the two Ollama ones. Nothing reads the
+file yet except `timing.read_timings`.
+
+**This used to say a streamed answer was not in it either**, and once the
+stream (§17) had merged that was every answer in the dock. The two were
+written as separate changes, so with both on `main` the assistant's calls
+were the one kind that kept no numbers, and a refusal over the stream read
+"400 Bad Request" again: a streamed body is not read until it is asked for,
+and the reason is in the body. The closing line of Ollama's stream
+carries the same measurements as a plain reply, so `OllamaProvider.stream`
+records them there, and reads a refused body before raising. A stream closed
+early records nothing; the numbers are on the line it never read.
+
+A prompt too long for the model is raised as `PromptTooLong`, so `/chat` can
+tell it from a model that is down. It had been showing the right reason
+inside the advice for the wrong one ("Start Ollama with `ollama serve`").
 
 ---
 
@@ -3476,6 +3490,16 @@ Everything above about streams applied again, and four things are new:
   connection to Ollama, which stops writing. The route takes no request
   session: everything is read first, on a session opened and closed inside
   one shielded awaitable, for the reason the status stream shields its read.
+
+  Two holes in that were found by review the same day, and both had passing
+  tests around them. `stream_text` iterated the provider's stream without
+  closing it, and closing a generator does not close the one it is reading
+  from, so the connection stayed open until the garbage collector reached it;
+  the test that existed closed the provider's stream directly. And the dock's
+  fetch had nothing to abort it, so leaving the page left the browser reading
+  and the model writing. The wrapper closes what it wraps now, and the dock
+  withdraws its question when it unmounts. The second is held in source only:
+  it was not watched in a browser.
 
 Only the two Ollama providers stream. Gemini, Anthropic, OpenRouter and the
 stub have no `stream` method, and `stream_text` sends their answer as one
