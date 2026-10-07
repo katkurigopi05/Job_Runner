@@ -57,3 +57,25 @@ def test_a_chunk_is_not_assumed_to_be_a_line() -> None:
     assert 'buffer.split("\\n")' in READER
     assert "lines.pop()" in READER
     assert "stream: true" in READER, "a character split across two chunks must survive"
+
+
+def test_leaving_the_page_withdraws_the_question() -> None:
+    """Found in review. The API stops the model when its reader goes away, and
+    a fetch that nothing aborts goes on reading after the dock has gone, so the
+    model wrote the whole answer for nobody."""
+    assert "new AbortController()" in ASSISTANT
+    assert "signal: controller.signal" in ASSISTANT
+    assert "useEffect(() => () => asked.current?.abort(), [])" in ASSISTANT
+    assert ASSISTANT.count("if (controller.signal.aborted) return;") == 2, (
+        "a withdrawn question must not be reported as a failure, in either catch"
+    )
+
+
+def test_a_reader_that_stops_early_ends_the_response() -> None:
+    assert "await reader.cancel()" in READER
+
+
+def test_one_unreadable_line_does_not_take_the_good_ones_with_it() -> None:
+    """Lines are parsed as they are handed on, not all at once for a chunk."""
+    assert "for (const line of taken.lines) yield JSON.parse(line)" in READER
+    assert ".map((line) => JSON.parse(line)" not in READER

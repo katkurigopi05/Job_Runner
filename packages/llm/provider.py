@@ -87,8 +87,15 @@ async def stream_text(
     if streamer is None:
         yield await provider.complete(system, user, max_tokens=max_tokens, temperature=temperature)
         return
-    async for piece in streamer(system, user, max_tokens=max_tokens, temperature=temperature):
-        yield piece
+    pieces = streamer(system, user, max_tokens=max_tokens, temperature=temperature)
+    try:
+        async for piece in pieces:
+            yield piece
+    finally:
+        # Closing a generator does not close the one it is reading from. Left
+        # to the garbage collector, the connection to the model stays open,
+        # and the model goes on writing, until it gets there.
+        await pieces.aclose()
 
 
 class StubProvider:

@@ -15,21 +15,15 @@ export type ChatFrame<Reply> =
   | { type: "error"; message: string };
 
 /**
- * Whole frames out of what has arrived, and the unfinished rest.
+ * Whole lines out of what has arrived, and the unfinished rest.
  *
  * A network chunk is not a line: it can end in the middle of one or carry
- * several. Only text up to the last newline is parsed.
+ * several. Only text up to the last newline is handed on.
  */
-export function takeFrames<Reply>(buffer: string): {
-  frames: ChatFrame<Reply>[];
-  rest: string;
-} {
+export function takeLines(buffer: string): { lines: string[]; rest: string } {
   const lines = buffer.split("\n");
   const rest = lines.pop() ?? "";
-  const frames = lines
-    .filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line) as ChatFrame<Reply>);
-  return { frames, rest };
+  return { lines: lines.filter((line) => line.trim() !== ""), rest };
 }
 
 /** Each frame as it arrives, until the response ends. */
@@ -43,13 +37,20 @@ export async function* readFrames<Reply>(
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      const taken = takeFrames<Reply>(buffer + decoder.decode(value, { stream: true }));
+      const taken = takeLines(buffer + decoder.decode(value, { stream: true }));
       buffer = taken.rest;
-      yield* taken.frames;
+      // Parsed one at a time: a line that cannot be read must not take with
+      // it the good frames that arrived in the same chunk.
+      for (const line of taken.lines) yield JSON.parse(line) as ChatFrame<Reply>;
     }
     // A last line with no newline after it is still a frame.
-    yield* takeFrames<Reply>(`${buffer}${decoder.decode()}\n`).frames;
+    for (const line of takeLines(`${buffer}${decoder.decode()}\n`).lines) {
+      yield JSON.parse(line) as ChatFrame<Reply>;
+    }
   } finally {
+    // Stopping early, for whatever reason, also ends the response. The API
+    // stops the model writing when its reader goes away.
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
