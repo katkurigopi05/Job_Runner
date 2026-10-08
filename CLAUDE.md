@@ -4124,6 +4124,81 @@ in simulation, that is, which is the lesson of this section: §19 asked for a
 measurement before a ranking stage ships, and a measurement of something other
 than the shipped path did not count as one.
 
+### A cross-encoder, and the one place the keyword rule gives
+
+Added 2026-10-08, after a second forum reply suggested re-ranking bge-small's
+top 50 with a cross-encoder. `CHAT_RERANK_MODEL` may now name one: a model
+that reads the question and one passage together and scores whether the
+passage answers it. The model named says which kind it is
+(`rerank._is_cross_encoder`), so there is no second setting to disagree with
+the first. Off as shipped, and off on the owner's machine until they say.
+
+Measured in three steps, each on the 49 of the 56 benchmark postings still
+open. Natural questions, right posting in the five shown:
+
+| | in the five | first |
+|---|---|---|
+| bge-small's vector search alone, its top 5 / its top 50 | 23 / 37 | |
+| simulation: the search's list and the vector top 50, judged and fused | 45 | 30 |
+| the real `retrieve()`, no re-ranker | 37 | 22 |
+| the real `retrieve()`, the cross-encoder only re-ordering | 38 | 26 |
+| the real `retrieve()`, with candidates added | 40 | 26 |
+
+Live, the right posting ranked higher on 15 questions and lower on 1 (MRR
++0.089 [+0.043, +0.145]). The Qwen re-ranker above moved it down on 11 and up
+on 4. Questions that paraphrase a posting did not move: 2 of 49 to 3.
+`cross-encoder/ms-marco-MiniLM-L-12-v2` (33M parameters) and
+`BAAI/bge-reranker-base` (278M) gave the same counts in simulation, so the
+small one is what was run live. `docs/ML_EVALUATION.md` has the tables.
+
+A model of this kind is used differently from the one above, in three ways:
+
+- **It reads the title, company and place over the chunk.** With the chunk
+  alone, which is what the Qwen re-ranker read, it made the same questions
+  worse than no re-ranker: 24 to 28 of 49 in simulation. A chunk is 500
+  characters from the middle of a posting and almost never says what the job
+  is called.
+- **Its order is fused with the search's**, not put in its place, and its
+  rank is among everything it judged. The first build took the candidates it
+  rejected out before ranking. That was not what had been measured, and it
+  was one question of the 40.
+- **It is handed up to 50 postings the keywords did not find**
+  (`CHAT_RERANK_WIDEN`), the nearest by bge-small, and keeps one only when it
+  scores it above zero. That is its own line for "this answers the
+  question". A likeness has no such line, so the first kind is handed none.
+
+The third loosens §14, where keywords decide what is relevant, and §20 is why
+it is held narrowly. `tests/test_chat_cross_encoder.py` holds each of these;
+every one was broken in turn and caught, nine of nine:
+
+- **Added to what the keywords found, never in its place.** A question about
+  a word in no posting is still answered with nothing and the model is not
+  asked: 50 of 50 live with it on. For 40 words a few postings do contain,
+  126 postings were shown and one did not say the word.
+- **Never to a role's own list** (§22), **past the search area, or past a
+  named company.**
+- **A model that fails adds nothing.** An unjudged candidate is the
+  near-topic posting the rule exists to keep out.
+- **`CHAT_RERANK_WIDEN=0`** is the cross-encoder with §14 as it was. Most of
+  the gain is there: first place is 26 either way.
+
+Why 45 became 40: the simulation re-ordered everything, and the search puts a
+posting asked for by its title first (§14). In four questions five or more
+postings go first for their title alone and the one the question was written
+from is not among them. In two of those the model put it first of the rest.
+That rule is the owner's and was left alone.
+
+Not measured: the time on the GPU inside the API process. The live run was on
+the CPU. With the API and dashboard running the machine starts near 62% free,
+and a second process using the GPU went under the 55% floor the run was held
+to. There it added a median 1.2 to 1.6 s a question and held 0.97 GB; only
+re-ordering added 0.6 s. Offline on the GPU the model scored 246 pairs a
+second, and a question is about 80 pairs.
+
+Seen and not fixed: "…bare metal for AI-native firms?" is read as naming the
+company Native AI, which has nothing open, so that question is answered with
+nothing whatever the re-ranker.
+
 ---
 
 ## 22. A question that names a kind of job
