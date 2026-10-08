@@ -790,6 +790,36 @@ the process's, so after a restart a posting has to be offered again before
 it can be graded. Not seen: Claude Code's own form. The library's client
 answered it in both protocols.
 
+**An offer is for one profile, and was remembered by posting alone**
+(2026-10-08, found by review). Two profiles can be served the same posting,
+each from a stream of its own. The server kept what it had offered by posting
+id, so the second offer replaced the first, and a request that arrived while
+a form was open moved the grade:
+
+```text
+next_to_grade(profile_id=p-1)    offers post-1, stream unseen
+grade_posting(post-1)            the form opens
+next_to_grade(profile_id=p-2)    offers post-1, stream confident
+the form is answered             POST /labels: profile p-2, stream confident
+```
+
+Run on both protocols before the fix, with that result on each. What is
+remembered is keyed by profile and posting now, and `grade_posting` takes the
+`profile_id` that `next_to_grade` was given. Three things to keep:
+
+- **The profile is an argument and the grade still is not.** Which profile is
+  being graded for was already the caller's to say, in `next_to_grade`.
+- **Holding the offer for the length of one call would not have been
+  enough.** On protocol 2026-07-28 the library runs the resolver again once
+  the form is answered, so what was read before the form is read a second
+  time after it. The key is what makes both reads the same offer.
+- **A posting named for a profile it was not offered to is one nobody
+  offered**, and is refused before the owner is asked. Naming no profile
+  after offering under one is refused the same way: the tool does not pick.
+
+Not done: the form does not say which profile it is for. The server knows a
+profile by its id and not by its label.
+
 `apps/mcp/server.py` is past 1,200 lines with these. Splitting it means
 moving the shared `server` and `_client` into a module of their own, which
 every MCP test's monkeypatch touches, so it is a change of its own.
@@ -4389,6 +4419,35 @@ Three things to keep:
 Not fixed, and seen the same day: `make workers` ignored both an interrupt and
 a terminate for 20 seconds and had to be killed. The five tasks it was running
 kept their leases for the five minutes those last.
+
+### One crawl at a time was a count, and two requests are two transactions
+
+Found by review on 2026-10-08. `request_crawl` counted the crawl tasks
+waiting and enqueued when there were none. `POST /crawl`, the assistant's
+"run crawler" and `make crawl` are separate transactions, and a count cannot
+see a row another transaction has not committed. Run with the second request
+starting while the first was still uncommitted: two crawls queued. The
+sweep's own reschedule, `_schedule_next_tick`, is the same count and insert
+and did the same.
+
+Both take a transaction-level advisory lock first (`_one_guard_at_a_time`),
+so the second waits for the first to commit and then counts its row. Three
+things to keep:
+
+- **It rests on READ COMMITTED**, the engine's default, which gives the count
+  a fresh snapshot after the wait. Under REPEATABLE READ the count would
+  still not see the row.
+- **A caller ends its transaction straight after.** The lock is held until
+  then and the next request waits on it. All three callers commit or leave
+  their session on the next line, and the worker commits when the handler
+  returns.
+- **Not a unique index.** A running sweep and its pending successor are two
+  unfinished crawl tasks on purpose.
+
+`tests/test_crawl_command.py` holds both on two connections, and reads
+`pg_locks` to know the second is waiting where the inbox's race test sleeps.
+With the lock taken out of one guard, that guard's test fails and the other's
+passes.
 
 ---
 

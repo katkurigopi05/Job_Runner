@@ -12,8 +12,10 @@ job market from whenever someone last ran a crawl by hand.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from apps.worker.crawl_job import CRAWL_TASK_KIND
 from packages.core.enums import QueueTaskStatus
@@ -104,3 +106,79 @@ async def test_a_request_while_a_crawl_waits_queues_nothing(db_session) -> None:
     assert second.queued is None
     assert second.waiting == 1
     assert await _crawl_count(db_session, unfinished) == 1
+
+
+#: A lock somebody in this database is waiting for. Scoped to it: the owner's
+#: own database is on the same server and may be busy while the suite runs.
+_BLOCKED_HERE = text(
+    "SELECT count(*) FROM pg_locks WHERE NOT granted AND locktype = 'advisory' "
+    "AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+)
+
+
+async def _waiting_on_a_lock_or_done(maker, request: asyncio.Task) -> None:
+    """Return once `request` is blocked behind another transaction, or has finished.
+
+    Read from `pg_locks`, not slept for: the second request either stops at a
+    lock the first one holds or runs straight through, and which of the two it
+    did is the thing under test.
+    """
+    async with maker() as watcher:
+        for _ in range(500):
+            if request.done():
+                return
+            if await watcher.scalar(_BLOCKED_HERE):
+                return
+            await asyncio.sleep(0.01)
+    pytest.fail("the second request neither finished nor waited")
+
+
+async def test_two_requests_at_once_queue_one_crawl(committing_sessionmaker) -> None:
+    """The count and the insert are two statements, and two requests are two
+    transactions. `POST /crawl`, the assistant's "run crawler" and `make crawl`
+    can all ask in the same moment, and a count cannot see a row another
+    transaction has not committed: each found nothing waiting and each queued
+    a crawl.
+
+    The second request starts while the first is still uncommitted, which is
+    the interleaving that broke. It cannot use `db_session`: that is one
+    transaction, and the guard has always held inside one.
+    """
+    from apps.worker.crawl_job import request_crawl
+
+    unfinished = (QueueTaskStatus.PENDING.value, QueueTaskStatus.RUNNING.value)
+    async with committing_sessionmaker() as one, committing_sessionmaker() as two:
+        first = await request_crawl(one, trigger="manual")  # queued, not committed
+        asking = asyncio.create_task(request_crawl(two, trigger="manual"))
+        await _waiting_on_a_lock_or_done(committing_sessionmaker, asking)
+        await one.commit()
+        second = await asyncio.wait_for(asking, timeout=30)
+        await two.commit()
+
+    async with committing_sessionmaker() as reader:
+        queued = await _crawl_count(reader, unfinished)
+    assert queued == 1, f"{queued} crawls queued by two requests made at once"
+    assert first.queued is not None
+    assert second.queued is None and second.waiting == 1
+
+
+async def test_two_sweeps_finishing_at_once_schedule_one_successor(
+    committing_sessionmaker,
+) -> None:
+    """The same count-then-insert, on the sweep that reschedules itself. Its
+    guard is what keeps one pending sweep from becoming two, and delivery is
+    at-least-once, so two sweeps do finish together."""
+    from apps.worker.crawl_job import _schedule_next_tick
+
+    payload = {"dispatch": True}
+    async with committing_sessionmaker() as one, committing_sessionmaker() as two:
+        await _schedule_next_tick(one, payload, 300)  # queued, not committed
+        scheduling = asyncio.create_task(_schedule_next_tick(two, payload, 300))
+        await _waiting_on_a_lock_or_done(committing_sessionmaker, scheduling)
+        await one.commit()
+        await asyncio.wait_for(scheduling, timeout=30)
+        await two.commit()
+
+    async with committing_sessionmaker() as reader:
+        queued = await _crawl_count(reader, (QueueTaskStatus.PENDING.value,))
+    assert queued == 1, f"{queued} sweeps scheduled by two that finished at once"
