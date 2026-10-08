@@ -282,7 +282,7 @@ more.
 
 `my_matches`: the scored feed with the matches page's filters. Read only.
 
-### M3. Tracker and follow-ups (in review)
+### M3. Tracker and follow-ups (merged, #134)
 
 "What needs a follow-up this week?" The tracking API has 11 routes and no
 tool. Start read-only.
@@ -301,10 +301,21 @@ application's id read the recruiter mail, and `../resumes/<id>/edit?` sent the
 guarded résumé edit to the route that does not guard. Every id is checked now.
 `CLAUDE.md` §9, Phase 4, has what was measured.
 
-### M4. Status questions (open)
+### M4. Status questions (in review)
 
 The audit trail ("what left my machine this week"), setup health, the weekly
 digest, starting a crawl. Read-only except the crawl.
+
+**What happened.** Five tools. `audit_trail`, `setup_health`, `weekly_digest`
+and `crawl_status` read. `start_crawl` queues one crawl and is the third tool
+that makes Claude Code ask you on every call. Two things the API did not have
+were added for them: the audit summary takes a number of days and counts
+uploads by task, and `POST /crawl` starts a crawl through the same
+`request_crawl` that `make crawl` and the assistant's "run crawler" use.
+
+Left out on purpose: the setup page's registry repair, and the audit page's
+check of a pasted text against the trail. The first rewrites company rows.
+The second would mean handing the assistant the text to be checked.
 
 ### M5. Grading postings by conversation (open)
 

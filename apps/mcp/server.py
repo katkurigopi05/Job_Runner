@@ -75,7 +75,13 @@ ASK_FLAG = "anthropic/requiresUserInteraction"
 #: `reject_application` is left out. It is terminal, but it sends nothing to
 #: an employer, and a prompt on every tool the review gate has would be read
 #: past.
-ASKS_THE_OWNER: tuple[str, ...] = ("approve_application", "submit_otp")
+#:
+#: `start_crawl` is the third, for a different reason. A crawl makes real
+#: requests to every employer's board in the registry, and the assistant's
+#: "run crawler" is a typed command matched in code, never inferred from a
+#: question (§14). Here the one deciding is a model, and an empty feed is
+#: exactly what would make one decide to.
+ASKS_THE_OWNER: tuple[str, ...] = ("approve_application", "submit_otp", "start_crawl")
 
 _ASK_EVERY_TIME: dict[str, Any] = {ASK_FLAG: True}
 
@@ -797,6 +803,139 @@ async def application_tracking(application_id: str) -> dict[str, Any]:
         ],
         "tasks": tracking["tasks"],
     }
+
+
+# --------------------------------------------------------------------------
+# Status
+# --------------------------------------------------------------------------
+#
+# Four that read, and one that starts a crawl. The setup page's registry
+# repair is not here: it rewrites company rows, and the owner previews it
+# first on that page.
+
+#: What the audit summary is cut down to. The trail keeps digests so that the
+#: owner, holding the original, can prove what was sent; a digest is no use to
+#: an assistant, and the listing that carries them has no tool.
+_AUDIT_FIELDS = (
+    "total_calls",
+    "uploads",
+    "uploaded_chars",
+    "by_provider",
+    "by_task",
+    "first_at",
+    "last_at",
+)
+
+#: A setup item without its `facts` and its page `actions`.
+_SETUP_FIELDS = ("key", "title", "group", "state", "detail", "steps")
+
+
+@server.tool()
+async def audit_trail(days: int = 7) -> dict[str, Any]:
+    """What left this machine in the last `days`: how many calls, to whom, for what.
+
+    Every call to a model is recorded, local ones too. `uploads` are the ones
+    whose text went to a third party, `uploaded_chars` is how much, and
+    `by_provider` and `by_task` count those uploads. Tailoring a résumé is the
+    upload the owner agreed to; one under another task is worth pointing out.
+
+    Sizes and counts only. The trail holds no prompt text, so none can be
+    shown, and this cannot say what a call contained.
+    """
+    summary = await _call("GET", "/audit/summary", params={"days": days})
+    if "uploads" not in summary:
+        return summary
+    left: dict[str, Any] = {field: summary.get(field) for field in _AUDIT_FIELDS}
+    left["days"] = days
+    if not summary["uploads"]:
+        left["note"] = (
+            f"Nothing left this machine in the last {days} days. "
+            f"{summary.get('total_calls', 0)} call(s) were answered by a model on it."
+        )
+    return left
+
+
+@server.tool()
+async def setup_health() -> dict[str, Any]:
+    """Whether this installation is working, and what to do about what is not.
+
+    `overall` is the worst state of anything checked. `needs_attention` is
+    each thing that is not fine, with why and the steps to try in order; the
+    steps are for the owner to run. `ok` names what is fine. No check repeats
+    a password or a key.
+    """
+    status = await _call("GET", "/setup/status")
+    if "items" not in status:
+        return status
+    return {
+        "overall": status.get("overall"),
+        "needs_attention": [
+            {field: item.get(field) for field in _SETUP_FIELDS}
+            for item in status["items"]
+            if item.get("state") != "ok"
+        ],
+        "ok": [item.get("title") for item in status["items"] if item.get("state") == "ok"],
+    }
+
+
+@server.tool()
+async def weekly_digest(
+    window_days: int | None = None, profile_id: str | None = None
+) -> dict[str, Any]:
+    """The last week in numbers: postings seen, applications made, replies, what is waiting.
+
+    `window_days` changes the week to another length. `quiet_week` is true
+    when nothing happened at all, which more often means the crawler stopped
+    than that the market did: check `crawl_status`. A rate under `funnel` is
+    null until enough applications stand behind it.
+    """
+    # Only what was given. The report's week is its own to define.
+    asked = {
+        name: value
+        for name, value in (("window_days", window_days), ("profile_id", profile_id))
+        if value is not None
+    }
+    return await _call("GET", "/analytics/digest", params=asked or None)
+
+
+@server.tool()
+async def crawl_status() -> dict[str, Any]:
+    """Whether the crawler is working, and how fresh the postings are.
+
+    `stalled` means a crawl is waiting and no worker is running to do it: the
+    owner starts one with `make worker`. `newest_posting_at` is what answers
+    "are my postings current"; a crawl that ran and found nothing leaves it
+    unchanged.
+    """
+    return await _call("GET", "/crawl/status")
+
+
+@server.tool(meta=_ASK_EVERY_TIME)
+async def start_crawl() -> dict[str, Any]:
+    """Start a crawl of the company registry, so new postings reach the feed.
+
+    Only when the owner asks for one. Do not start one because a search or the
+    feed came back empty: say so and let them decide. A crawl makes real
+    requests to employers' sites, inside the rate limits, and takes a while.
+
+    One crawl runs at a time. If one is already waiting or running, nothing is
+    queued and `queued` is false.
+    """
+    started = await _call("POST", "/crawl")
+    if "queued" not in started:
+        return started
+    if not started["queued"]:
+        note = "A crawl is already queued or running, so another was not started."
+    elif started.get("worker_alive"):
+        note = (
+            "Crawl started. New postings reach the feed over the next few minutes, and "
+            "matching runs when the sweep finishes."
+        )
+    else:
+        note = "Crawl queued."
+    if not started.get("worker_alive"):
+        note += " No worker is running to do it: the owner starts one with `make worker`."
+    return {**started, "note": note}
 
 
 # --------------------------------------------------------------------------

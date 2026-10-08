@@ -70,3 +70,51 @@ async def test_posting_freshness_is_reported_alongside(client: AsyncClient) -> N
     status = (await client.get("/crawl/status")).json()
 
     assert "newest_posting_at" in status
+
+
+# --------------------------------------------------------------------------
+# Starting one
+# --------------------------------------------------------------------------
+#
+# `make crawl` and the assistant's "run crawler" both start a crawl, and
+# neither is a route. The MCP tools go through HTTP on purpose, so a tool that
+# starts one needs somewhere to ask.
+
+
+@pytest.mark.asyncio
+async def test_starting_a_crawl_queues_one_and_says_whether_anything_will_run_it(
+    client: AsyncClient,
+) -> None:
+    started = await client.post("/crawl")
+
+    assert started.status_code == 200, started.text
+    assert started.json() == {"queued": True, "already_waiting": 0, "worker_alive": False}
+    status = (await client.get("/crawl/status")).json()
+    assert status["pending"] == 1 and status["stalled"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_second_start_does_not_queue_a_second_crawl(client: AsyncClient) -> None:
+    """`request_crawl`'s guard, reaching the route: two crawls would poll the
+    same hosts minutes apart and spend the per-host limit §2.6 protects."""
+    await client.post("/crawl")
+    again = (await client.post("/crawl")).json()
+
+    assert again["queued"] is False and again["already_waiting"] == 1
+    assert (await client.get("/crawl/status")).json()["pending"] == 1
+
+
+def test_the_route_starts_a_crawl_through_the_one_door() -> None:
+    """Not by enqueueing for itself. `request_crawl` is where the
+    one-crawl-at-a-time rule lives, and a second way in would not have it."""
+    import ast
+    import inspect
+
+    from apps.api.routers import crawl
+
+    called = {
+        node.func.id
+        for node in ast.walk(ast.parse(inspect.getsource(crawl.start_crawl)))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "request_crawl" in called and "enqueue" not in called

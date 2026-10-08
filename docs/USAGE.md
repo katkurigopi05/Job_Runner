@@ -530,18 +530,24 @@ Reject APPLICATION_ID and note that the role is no longer relevant.
 Show the complete history for APPLICATION_ID.
 What needs a follow-up this week?
 Who am I in touch with about APPLICATION_ID, and what is left to prepare?
+What left my machine this week?
+Is my setup healthy?
+How did this week go?
+Is the crawler working? When did a new posting last arrive?
+Run a crawl.
 Inspect my latest résumé as the parser sees it.
 Sync my GitHub projects and preview which four fit this job description.
 ```
 
-### Approving and entering a code always ask you first
+### Approving, entering a code and starting a crawl always ask you first
 
 `approve_application` and `submit_otp` are the two tools that move a parked
-application forward. In Claude Code each call to either one stops at a
+application forward. `start_crawl` makes real requests to every employer's
+board in the registry. In Claude Code each call to any of the three stops at a
 permission prompt, whatever permission mode the session is in, and there is no
 "don't ask again" for them. In the mode that never prompts, the call is refused.
 
-Two things make that happen, and both name the same two tools:
+Two things make that happen, and both name the same three tools:
 
 - The server marks them in its tool list (`ASKS_THE_OWNER` in
   `apps/mcp/server.py`). This needs Claude Code 2.1.214 or later.
@@ -627,6 +633,11 @@ check.
 | `preview_projects` | Rank projects against job text and return matched GitHub evidence terms |
 | `follow_ups` | Open tasks (overdue, due soon, undated) and submitted applications nobody has answered. Read only |
 | `application_tracking` | One application's tasks, and its contacts by name and role. Read only |
+| `audit_trail` | What left this machine in the last N days: how many calls, to whom, for which task. Counts and sizes only |
+| `setup_health` | What is not working in this installation, with the steps to try |
+| `weekly_digest` | The week in numbers: postings seen, applications made, replies, what is waiting |
+| `crawl_status` | Whether the crawler is working and how fresh the postings are |
+| `start_crawl` | Queue one crawl of the registry. Asks you first, every time |
 | `curate_project` | Pin a project or exclude it from future selection |
 
 There is deliberately no `submit_now` tool. Approval releases an application to
@@ -659,6 +670,13 @@ things about what they send:
   assistant.
 
 Nothing here writes to an employer. A follow-up is yours to write and send.
+
+`audit_trail` cannot show what a call contained, because the trail does not
+hold it. To check that a particular text was sent, post it to `/audit/verify`
+on the local API, which compares its digest against the trail on this machine.
+No tool does that, because it would mean handing the assistant the text.
+`setup_health` reports and does not repair: the registry repair stays on
+`/setup`, where you preview it first.
 
 ## 7. Typical application workflow
 

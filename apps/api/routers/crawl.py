@@ -17,6 +17,13 @@ in code, never inferred from a question — still reachable only from this
 machine, and it still goes through `crawl_job.request_crawl`, so robots.txt,
 the per-host floors and the one-crawl-at-a-time guard are unchanged. This
 router stays read-only.
+
+**That last sentence is reversed too**, on 2026-10-08. The owner asked for the
+MCP server to be able to start a crawl, and its tools go through HTTP on
+purpose (`apps/mcp/client.py`), so there has to be a route to ask. `POST
+/crawl` is that and nothing more: `request_crawl`, a commit, and whether a
+worker is alive to run it. What keeps it deliberate over MCP is on that side:
+the tool is one of the ones that make the client ask the owner on every call.
 """
 
 from __future__ import annotations
@@ -25,10 +32,12 @@ from fastapi import APIRouter
 from sqlalchemy import desc, func, select
 
 from apps.api.deps import SessionDep
-from apps.worker.crawl_job import CRAWL_TASK_KIND
+from apps.worker.crawl_job import CRAWL_TASK_KIND, request_crawl
+from packages.core import heartbeat
 from packages.core.enums import QueueTaskStatus
+from packages.core.heartbeat import WorkerState
 from packages.core.models import Posting, QueueTask
-from packages.core.schemas import CrawlStatusOut
+from packages.core.schemas import CrawlStartOut, CrawlStatusOut
 
 router = APIRouter(prefix="/crawl", tags=["crawl"])
 
@@ -78,4 +87,18 @@ async def crawl_status(session: SessionDep) -> CrawlStatusOut:
         # The number that actually answers "are my postings current". A crawl
         # that ran and found nothing leaves this unchanged, which is the truth.
         newest_posting_at=await session.scalar(select(func.max(Posting.first_seen_at))),
+    )
+
+
+@router.post("", response_model=CrawlStartOut)
+async def start_crawl(session: SessionDep) -> CrawlStartOut:
+    """Queue one registry crawl, unless one is already waiting or running."""
+    requested = await request_crawl(session, trigger="manual")
+    await session.commit()
+    return CrawlStartOut(
+        queued=requested.queued is not None,
+        already_waiting=requested.waiting,
+        worker_alive=any(
+            worker.state is WorkerState.ALIVE for worker in await heartbeat.workers(session)
+        ),
     )
