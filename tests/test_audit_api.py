@@ -127,3 +127,66 @@ async def test_an_empty_trail_is_not_an_error(client: AsyncClient) -> None:
     summary = (await client.get("/audit/summary")).json()
     assert summary["total_calls"] == 0
     assert summary["first_at"] is None
+
+
+# --------------------------------------------------------------------------
+# A window
+# --------------------------------------------------------------------------
+#
+# "What left my machine this week?" could not be asked. The summary was the
+# whole trail or nothing.
+
+
+def _backdate(index: int, days: int) -> None:
+    """Rewrite one recorded entry as if it had been made `days` ago."""
+    import json
+    from datetime import UTC, datetime, timedelta
+
+    path = audit.audit_path()
+    lines = [json.loads(line) for line in path.read_text().splitlines() if line]
+    lines[index]["at"] = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+
+
+async def test_the_summary_can_be_narrowed_to_recent_days(client: AsyncClient) -> None:
+    _record_one()
+    _record_one()
+    _backdate(0, days=10)
+
+    week = (await client.get("/audit/summary", params={"days": 7})).json()
+    month = (await client.get("/audit/summary", params={"days": 30})).json()
+    whole = (await client.get("/audit/summary")).json()
+
+    assert (week["uploads"], month["uploads"], whole["uploads"]) == (1, 2, 2)
+    assert week["uploaded_chars"] == len(USER)
+
+
+async def test_the_summary_says_which_tasks_uploaded(client: AsyncClient) -> None:
+    """§2.8 permits one upload, the tailoring call. A count by provider cannot
+    show an upload made for something else."""
+    _record_one()
+    audit.record("gemini", SYSTEM, USER, task="assistant", model="gemini-2.0-flash")
+    audit.record("ollama", SYSTEM, USER, task="classify_inbound_email", model="llama3.1")
+
+    body = (await client.get("/audit/summary")).json()
+
+    assert body["by_task"] == {"tailor_resume": 1, "assistant": 1}
+
+
+async def test_an_entry_whose_time_cannot_be_read_is_still_counted(client: AsyncClient) -> None:
+    """Leaving an upload out of the answer is the worse of the two mistakes."""
+    import json
+
+    _record_one()
+    path = audit.audit_path()
+    entry = json.loads(path.read_text().splitlines()[0])
+    path.write_text(json.dumps({**entry, "at": "sometime"}) + "\n")
+
+    assert (await client.get("/audit/summary", params={"days": 7})).json()["uploads"] == 1
+
+
+async def test_the_window_is_bounded(client: AsyncClient) -> None:
+    for bad in (0, 99999):
+        response = await client.get("/audit/summary", params={"days": bad})
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_request"

@@ -599,6 +599,17 @@ class CrawlStatusOut(BaseModel):
     newest_posting_at: datetime | None = None
 
 
+class CrawlStartOut(BaseModel):
+    """What asking for a crawl did."""
+
+    #: False when one was already waiting or running, so no second was queued.
+    queued: bool
+    already_waiting: int
+    #: A crawl queued with no worker to run it looks exactly like a registry
+    #: with nothing new.
+    worker_alive: bool
+
+
 class ChatRequest(BaseModel):
     """A question about the owner's own job search."""
 
@@ -1095,6 +1106,9 @@ class AuditSummaryOut(BaseModel):
     uploaded_chars: int = 0
     #: "provider/model" -> call count, uploads only.
     by_provider: dict[str, int] = Field(default_factory=dict)
+    #: Task -> call count, uploads only. §2.8 permits one upload, tailoring,
+    #: and a count by provider cannot show one made for something else.
+    by_task: dict[str, int] = Field(default_factory=dict)
     first_at: str | None = None
     last_at: str | None = None
 

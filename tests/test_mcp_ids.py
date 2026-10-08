@@ -67,7 +67,11 @@ async def _accepts(context: Any, params: Any) -> types.ElicitResult:
     """An owner who fills in whatever form they are shown and sends it."""
     asked = params.model_dump(by_alias=True, exclude_none=True)["requestedSchema"]
     return types.ElicitResult(
-        action="accept", content=dict.fromkeys(asked.get("properties", {}), "123456")
+        action="accept",
+        content={
+            name: field["enum"][0] if "enum" in field else "123456"
+            for name, field in asked.get("properties", {}).items()
+        },
     )
 
 
@@ -110,6 +114,9 @@ async def test_the_tools_that_take_an_id_are_the_ones_being_checked() -> None:
 async def test_a_real_id_reaches_the_api(monkeypatch) -> None:
     """The control. A tool whose made-up arguments were refused before it ran
     would pass the next test without having been tried."""
+    # `grade_posting` takes only an id this server offered, so it is offered one.
+    offered = {"app-1": mcp_server._Offer("A posting", None, None, None)}
+    monkeypatch.setattr(mcp_server, "_OFFERED", offered)
     for tool, name, others in await _tools_that_take_an_id():
         paths = await _asked_for(tool, {**others, name: "app-1"}, monkeypatch)
 

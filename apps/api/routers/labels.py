@@ -201,9 +201,11 @@ async def _stream_for(
         # already gone. Reproduced: served `uncertain`, stored `unseen`.
         #
         # `unseen` is therefore claimed only when a serve attests it. Silence
-        # is not evidence: a caller that sends no hint — the MCP tools, curl, a
-        # future client — has told us nothing, and defaulting that to the
-        # strongest claim would put the hole straight back. `unknown` reads as
+        # is not evidence: a caller that sends no hint — curl, a future
+        # client — has told us nothing, and defaulting that to the strongest
+        # claim would put the hole straight back. (This list named the MCP
+        # tools until one existed: `grade_posting` sends back the stream it
+        # was served and takes none from the model.) `unknown` reads as
         # "not counted as unseen", which errs toward reporting more bias than
         # there is, the safe direction for a number whose whole job is to
         # certify the absence of bias.

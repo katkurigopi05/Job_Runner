@@ -21,6 +21,8 @@ prove what was sent; without it, an entry reveals nothing.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from fastapi import APIRouter, Query
 
 from packages.core.schemas import AuditEntryOut, AuditSummaryOut, AuditVerifyRequest
@@ -30,6 +32,17 @@ router = APIRouter(prefix="/audit", tags=["audit"])
 
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 2000
+MAX_WINDOW_DAYS = 365
+
+
+def _made_since(entry: audit.AuditEntry, since: datetime) -> bool:
+    """Whether the call was made after `since`. One whose time cannot be read
+    counts: leaving an upload out of the answer is the worse mistake."""
+    try:
+        at = datetime.fromisoformat(entry.at)
+    except ValueError:
+        return True
+    return (at if at.tzinfo else at.replace(tzinfo=UTC)) >= since
 
 
 def _out(entry: audit.AuditEntry) -> AuditEntryOut:
@@ -67,21 +80,33 @@ async def list_calls(
 
 
 @router.get("/summary", response_model=AuditSummaryOut)
-async def summary() -> AuditSummaryOut:
-    """The headline: how much has left this machine, and to whom."""
+async def summary(
+    days: int | None = Query(default=None, ge=1, le=MAX_WINDOW_DAYS),
+) -> AuditSummaryOut:
+    """The headline: how much has left this machine, to whom, and for what.
+
+    `days` keeps the calls made in that many days up to now. Left out, it is
+    the whole trail.
+    """
     entries = audit.read_trail()
+    if days is not None:
+        since = datetime.now(UTC) - timedelta(days=days)
+        entries = [entry for entry in entries if _made_since(entry, since)]
     uploads = audit.uploads_only(entries)
 
     by_provider: dict[str, int] = {}
+    by_task: dict[str, int] = {}
     for entry in uploads:
         key = f"{entry.provider}/{entry.model}" if entry.model else entry.provider
         by_provider[key] = by_provider.get(key, 0) + 1
+        by_task[entry.task] = by_task.get(entry.task, 0) + 1
 
     return AuditSummaryOut(
         total_calls=len(entries),
         uploads=len(uploads),
         uploaded_chars=sum(entry.user_chars for entry in uploads),
         by_provider=by_provider,
+        by_task=by_task,
         first_at=entries[0].at if entries else None,
         last_at=entries[-1].at if entries else None,
     )

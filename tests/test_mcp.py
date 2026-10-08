@@ -121,14 +121,21 @@ async def test_the_owners_decisions_ask_the_owner_every_time() -> None:
         name for name, tool in tools.items() if (tool.get("_meta") or {}).get(mcp_server.ASK_FLAG)
     }
 
-    # The exact set, so adding or removing one is a deliberate act.
-    assert asking == set(mcp_server.ASKS_THE_OWNER) == {"approve_application", "submit_otp"}
+    # The exact set, so adding or removing one is a deliberate act. `start_crawl`
+    # was added on 2026-10-08: it sends nothing to an employer's form, but it
+    # makes real requests to every board in the registry, and a model would
+    # otherwise be the one deciding to (`tests/test_mcp_status.py`).
+    assert (
+        asking
+        == set(mcp_server.ASKS_THE_OWNER)
+        == {"approve_application", "submit_otp", "start_crawl"}
+    )
     for name in asking:
         assert tools[name]["_meta"][mcp_server.ASK_FLAG] is True, name
 
 
 def test_the_project_settings_ask_too() -> None:
-    """The same two tools, as a rule for a client that does not read the flag.
+    """The same tools, as a rule for a client that does not read the flag.
 
     `.claude/settings.json` is the project's shared Claude Code settings. An
     ask rule there prompts in every mode and wins over an allow rule. It names

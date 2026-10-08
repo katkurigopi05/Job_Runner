@@ -722,6 +722,78 @@ not each tried. Not done: `ResumeEdit` still accepts a `guard` field it does
 not read, and nothing in the API tells an assistant's request from the
 dashboard's.
 
+**Status questions over MCP, and a third tool that asks** (2026-10-08).
+"What left my machine this week?", "is my setup healthy?", "how did the week
+go?" and "is the crawler working?" had no tool. `audit_trail`, `setup_health`,
+`weekly_digest` and `crawl_status` read; `start_crawl` queues one crawl.
+`tests/test_mcp_status.py` holds them. Five things to keep:
+
+- **The audit summary takes a number of days**, which it did not: it was the
+  whole trail or nothing, so "this week" could not be asked. An entry whose
+  time cannot be read is counted, because leaving an upload out of the answer
+  is the worse mistake.
+- **It counts uploads by task as well as by provider.** §2.8 permits one
+  upload, the tailoring call, and a count by provider cannot show one made
+  for something else.
+- **Counts and sizes, no digests.** The trail keeps digests so the owner,
+  holding the original, can prove what was sent. `/audit/verify` has no tool:
+  checking a text would mean handing it to the assistant.
+- **`POST /crawl` exists, and `routers/crawl.py` records its second
+  reversal.** That file said starting a crawl stays at a terminal, then that
+  the router stays read-only. The MCP tools go through HTTP on purpose, so a
+  tool that starts a crawl needs a route to ask. It calls `request_crawl`,
+  the one door, and a test reads the source to keep it from enqueueing for
+  itself.
+- **`start_crawl` makes the client ask**, as `approve_application` and
+  `submit_otp` do, in `ASKS_THE_OWNER` and in `.claude/settings.json`. §14
+  keeps "run crawler" a typed command matched in code and never inferred from
+  a question. Over MCP the one deciding is a model, and an empty feed is
+  exactly what would make one decide to. The tool takes no argument and
+  posts no body.
+
+Left out: the setup page's registry repair, which rewrites company rows and
+is previewed there first. Not seen: Claude Code's prompt for `start_crawl`.
+The mark is asserted on the tool's `tools/list` entry.
+
+**Grading postings in a conversation, with the model kept out of the grade**
+(2026-10-08). §15's labeling loop needs a hundred or more of the owner's
+grades and has none. `next_to_grade`, `grade_posting` and `grading_progress`
+are the same loop as `/label`, reached by talking. What is different here is
+who is calling: a grade a model chose would be the ranker marked by another
+model and exported as `Provenance.OWNER`, the provenance a benchmark trusts
+most. `tests/test_mcp_grading.py` holds four things:
+
+- **The owner picks the grade in a form.** It is not an argument of
+  `grade_posting`. The four choices are built from
+  `labels.RELEVANCE_SCALE`, the scale the metrics read. A closed form grades
+  nothing, and a client that cannot show a form is sent to `/label`.
+- **The model is not shown the score or the stream.** This differs from
+  `/label`, which shows the owner both on the card as its audit trail. There
+  they are two values beside the posting. In a conversation the model writes
+  everything the owner reads about the posting, and one that knows the
+  ranker's opinion can lean its description that way without quoting it. It
+  is one tuple to widen (`_GRADING_FIELDS`).
+- **The stream still goes back with the grade.** `routers/labels.py` records
+  `unseen` only when a serve attests it, and its comment named the MCP tools
+  among the callers that could never attest. The server remembers what
+  `/labels/next` told it about each posting it offered and sends that back
+  itself.
+- **A grade lands only on a posting this server offered.** The form says
+  which posting it is about, from the server's memory of the offer and not
+  from the conversation. An id it never offered has no name to show, so it
+  is refused before the owner is asked anything.
+
+What a tool cannot stop: the model saying in the conversation which grade it
+would give. The tool descriptions and the server's instructions ask it not
+to, and that is a request. Also not done: the memory of what was offered is
+the process's, so after a restart a posting has to be offered again before
+it can be graded. Not seen: Claude Code's own form. The library's client
+answered it in both protocols.
+
+`apps/mcp/server.py` is past 1,200 lines with these. Splitting it means
+moving the shared `server` and `_client` into a module of their own, which
+every MCP test's monkeypatch touches, so it is a change of its own.
+
 ### Phase 5 — Discovery
 
 Build: company registry (hand-picked, seeded from a YAML file). Crawler with

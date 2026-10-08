@@ -27,6 +27,9 @@ Two things to know about the tool surface:
   of its tool, so a model has nowhere to put one. §2.2 says a model never
   writes a work-authorization answer, and a question the pipeline could not
   map can be exactly that.
+- **A posting's grade is the owner's.** It is chosen in a form, the model is
+  not shown the ranker's score or which stream a posting was drawn from, and a
+  grade lands only on a posting this server offered, named in the form.
 - **An id is one part of a path.** Every id a tool is given goes through
   `_id` on its way into a request's path. Written bare, `../resumes/<id>/edit?`
   in place of an application's id sent the guarded résumé edit to the route
@@ -36,7 +39,7 @@ Two things to know about the tool surface:
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NamedTuple
 
 from mcp.server import MCPServer
 from mcp.server.elicitation import AcceptedElicitation, ElicitationResult
@@ -45,6 +48,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field, create_model
 
 from apps.mcp.client import ApiCallFailed, ApiUnavailable, JobrunnerClient
+from packages.matching.labels import RELEVANCE_SCALE
 
 INSTRUCTIONS = """
 Jobrunner is a local, single-user job-application agent.
@@ -53,7 +57,8 @@ Applications never submit without explicit approval. Use `review_queue` to see
 what is waiting, and `approve_application` to release one. An application with
 unanswered questions carries the employer's exact wording. You do not answer
 them: approving shows the owner a form and they type the answers themselves.
-The same goes for a verification code.
+The same goes for a verification code, and for a posting's grade: show the
+posting, do not say how well you think it fits, and let `grade_posting` ask.
 """.strip()
 
 server = MCPServer(name="jobrunner", instructions=INSTRUCTIONS)
@@ -75,7 +80,13 @@ ASK_FLAG = "anthropic/requiresUserInteraction"
 #: `reject_application` is left out. It is terminal, but it sends nothing to
 #: an employer, and a prompt on every tool the review gate has would be read
 #: past.
-ASKS_THE_OWNER: tuple[str, ...] = ("approve_application", "submit_otp")
+#:
+#: `start_crawl` is the third, for a different reason. A crawl makes real
+#: requests to every employer's board in the registry, and the assistant's
+#: "run crawler" is a typed command matched in code, never inferred from a
+#: question (§14). Here the one deciding is a model, and an empty feed is
+#: exactly what would make one decide to.
+ASKS_THE_OWNER: tuple[str, ...] = ("approve_application", "submit_otp", "start_crawl")
 
 _ASK_EVERY_TIME: dict[str, Any] = {ASK_FLAG: True}
 
@@ -374,7 +385,13 @@ class _Code(BaseModel):
     code: str = Field(title="Verification code", description="The code the site sent you.")
 
 
-def _must_reach_the_owner(ctx: Context, what: str) -> None:
+def _must_reach_the_owner(
+    ctx: Context,
+    what: str,
+    *,
+    nothing: str = "Nothing was approved or sent",
+    page: str = _REVIEW_PAGE,
+) -> None:
     """Refuse, with somewhere to go, when this client cannot show a form.
 
     The library would refuse too, with a message about capabilities. This one
@@ -387,7 +404,7 @@ def _must_reach_the_owner(ctx: Context, what: str) -> None:
         return
     raise ToolError(
         f"This client cannot show the owner a form, and {what} must be typed by them. "
-        f"Nothing was approved or sent. The owner can do this at {_REVIEW_PAGE}."
+        f"{nothing}. The owner can do this at {page}."
     )
 
 
@@ -797,6 +814,304 @@ async def application_tracking(application_id: str) -> dict[str, Any]:
         ],
         "tasks": tracking["tasks"],
     }
+
+
+# --------------------------------------------------------------------------
+# Status
+# --------------------------------------------------------------------------
+#
+# Four that read, and one that starts a crawl. The setup page's registry
+# repair is not here: it rewrites company rows, and the owner previews it
+# first on that page.
+
+#: What the audit summary is cut down to. The trail keeps digests so that the
+#: owner, holding the original, can prove what was sent; a digest is no use to
+#: an assistant, and the listing that carries them has no tool.
+_AUDIT_FIELDS = (
+    "total_calls",
+    "uploads",
+    "uploaded_chars",
+    "by_provider",
+    "by_task",
+    "first_at",
+    "last_at",
+)
+
+#: A setup item without its `facts` and its page `actions`.
+_SETUP_FIELDS = ("key", "title", "group", "state", "detail", "steps")
+
+
+@server.tool()
+async def audit_trail(days: int = 7) -> dict[str, Any]:
+    """What left this machine in the last `days`: how many calls, to whom, for what.
+
+    Every call to a model is recorded, local ones too. `uploads` are the ones
+    whose text went to a third party, `uploaded_chars` is how much, and
+    `by_provider` and `by_task` count those uploads. Tailoring a résumé is the
+    upload the owner agreed to; one under another task is worth pointing out.
+
+    Sizes and counts only. The trail holds no prompt text, so none can be
+    shown, and this cannot say what a call contained.
+    """
+    summary = await _call("GET", "/audit/summary", params={"days": days})
+    if "uploads" not in summary:
+        return summary
+    left: dict[str, Any] = {field: summary.get(field) for field in _AUDIT_FIELDS}
+    left["days"] = days
+    if not summary["uploads"]:
+        left["note"] = (
+            f"Nothing left this machine in the last {days} days. "
+            f"{summary.get('total_calls', 0)} call(s) were answered by a model on it."
+        )
+    return left
+
+
+@server.tool()
+async def setup_health() -> dict[str, Any]:
+    """Whether this installation is working, and what to do about what is not.
+
+    `overall` is the worst state of anything checked. `needs_attention` is
+    each thing that is not fine, with why and the steps to try in order; the
+    steps are for the owner to run. `ok` names what is fine. No check repeats
+    a password or a key.
+    """
+    status = await _call("GET", "/setup/status")
+    if "items" not in status:
+        return status
+    return {
+        "overall": status.get("overall"),
+        "needs_attention": [
+            {field: item.get(field) for field in _SETUP_FIELDS}
+            for item in status["items"]
+            if item.get("state") != "ok"
+        ],
+        "ok": [item.get("title") for item in status["items"] if item.get("state") == "ok"],
+    }
+
+
+@server.tool()
+async def weekly_digest(
+    window_days: int | None = None, profile_id: str | None = None
+) -> dict[str, Any]:
+    """The last week in numbers: postings seen, applications made, replies, what is waiting.
+
+    `window_days` changes the week to another length. `quiet_week` is true
+    when nothing happened at all, which more often means the crawler stopped
+    than that the market did: check `crawl_status`. A rate under `funnel` is
+    null until enough applications stand behind it.
+    """
+    # Only what was given. The report's week is its own to define.
+    asked = {
+        name: value
+        for name, value in (("window_days", window_days), ("profile_id", profile_id))
+        if value is not None
+    }
+    return await _call("GET", "/analytics/digest", params=asked or None)
+
+
+@server.tool()
+async def crawl_status() -> dict[str, Any]:
+    """Whether the crawler is working, and how fresh the postings are.
+
+    `stalled` means a crawl is waiting and no worker is running to do it: the
+    owner starts one with `make worker`. `newest_posting_at` is what answers
+    "are my postings current"; a crawl that ran and found nothing leaves it
+    unchanged.
+    """
+    return await _call("GET", "/crawl/status")
+
+
+@server.tool(meta=_ASK_EVERY_TIME)
+async def start_crawl() -> dict[str, Any]:
+    """Start a crawl of the company registry, so new postings reach the feed.
+
+    Only when the owner asks for one. Do not start one because a search or the
+    feed came back empty: say so and let them decide. A crawl makes real
+    requests to employers' sites, inside the rate limits, and takes a while.
+
+    One crawl runs at a time. If one is already waiting or running, nothing is
+    queued and `queued` is false.
+    """
+    started = await _call("POST", "/crawl")
+    if "queued" not in started:
+        return started
+    if not started["queued"]:
+        note = "A crawl is already queued or running, so another was not started."
+    elif started.get("worker_alive"):
+        note = (
+            "Crawl started. New postings reach the feed over the next few minutes, and "
+            "matching runs when the sweep finishes."
+        )
+    else:
+        note = "Crawl queued."
+    if not started.get("worker_alive"):
+        note += " No worker is running to do it: the owner starts one with `make worker`."
+    return {**started, "note": note}
+
+
+# --------------------------------------------------------------------------
+# Grading postings
+# --------------------------------------------------------------------------
+#
+# The owner's grades are what the ranker is measured against, so the grade is
+# theirs: chosen in a form, as an application's missing answers are. A grade a
+# model picked would be the ranker marked by another model and stamped `owner`.
+
+_LABEL_PAGE = "http://127.0.0.1:3001/label"
+
+#: What a posting to grade is cut down to. Its score and the stream it was
+#: drawn from are left out. `/label` shows the owner both, as two values
+#: beside the posting. Here the model writes everything the owner reads about
+#: it, and one that knows the ranker's opinion can lean that way unasked.
+_GRADING_FIELDS = ("posting_id", "title", "location", "url", "description", "first_seen_at")
+
+#: The form's choices, in the scale's own words. One definition: the ranking
+#: metrics read `RELEVANCE_SCALE`, and so does this.
+_GRADES: dict[str, int] = {
+    f"{grade}: {meaning}": grade for grade, meaning in sorted(RELEVANCE_SCALE.items())
+}
+
+_Grade = create_model(
+    "Grade",
+    grade=(
+        Literal[tuple(_GRADES)],  # type: ignore[valid-type]
+        Field(title="How well does this posting fit what you are looking for?"),
+    ),
+    note=(str, Field(default="", title="Why, in a few words (optional)")),
+)
+
+
+class _Offer(NamedTuple):
+    """A posting this server offered for grading, and what it was told about it."""
+
+    title: str
+    location: str | None
+    #: Which stream served it. Sent back with the grade and shown to nobody:
+    #: the API records `unseen` only when a serve attests it.
+    stream: str | None
+    profile_id: str | None
+
+
+#: What `next_to_grade` has offered in this process. `grade_posting` takes an
+#: id from here and from nowhere else, so the form can say which posting it is
+#: about in the server's words. Lost on a restart, and then the posting is
+#: offered again.
+_OFFERED: dict[str, _Offer] = {}
+
+
+@server.tool()
+async def next_to_grade(size: int = 3, profile_id: str | None = None) -> dict[str, Any]:
+    """The next postings for the owner to grade, a few at a time.
+
+    The owner's grades are how the ranker is checked, so they have to be the
+    owner's own. Show each posting as it is: title, place, link, what it asks
+    for. Do not say how well you think it fits and do not suggest a grade.
+    Then call `grade_posting`, which asks them.
+
+    The postings are drawn on purpose from ones the ranker rated high, ones it
+    was unsure of and ones it never rated, so a posting that looks off-target
+    belongs here as much as a good one. `profile_id` is only needed when there
+    is more than one profile.
+    """
+    asked: dict[str, Any] = {"size": size}
+    if profile_id is not None:
+        asked["profile_id"] = profile_id
+    rows = await _call("GET", "/labels/next", params=asked)
+    if not isinstance(rows, list):
+        return rows
+
+    for row in rows:
+        _OFFERED[str(row["posting_id"])] = _Offer(
+            title=row.get("title") or "an untitled posting",
+            location=row.get("location"),
+            stream=row.get("stream"),
+            profile_id=profile_id,
+        )
+    offered: dict[str, Any] = {
+        "postings": [{field: row.get(field) for field in _GRADING_FIELDS} for row in rows],
+        "count": len(rows),
+    }
+    if not rows:
+        offered["note"] = (
+            "Nothing to grade. Either every posting on hand has been graded, or none "
+            "has been crawled yet: a crawl is what brings postings in."
+        )
+    return offered
+
+
+async def _owners_grade(posting_id: str, ctx: Context) -> Elicit[BaseModel]:
+    """Ask the owner for the grade. Runs before the tool, in place of an
+    argument a model could fill."""
+    offer = _OFFERED.get(posting_id)
+    if offer is None:
+        raise ToolError(
+            "That posting has not been offered for grading here, so there is nothing to "
+            "show the owner about it. Nothing was graded. Ask `next_to_grade` first."
+        )
+    _must_reach_the_owner(ctx, "a grade", nothing="Nothing was graded", page=_LABEL_PAGE)
+    where = f", {offer.location}" if offer.location else ""
+    return Elicit(
+        f"Grade this posting for your own search: {offer.title}{where}. "
+        "It is recorded as you give it.",
+        _Grade,
+    )
+
+
+@server.tool()
+async def grade_posting(
+    posting_id: str,
+    grade: Annotated[ElicitationResult[BaseModel], Resolve(_owners_grade)],
+) -> dict[str, Any]:
+    """Record the owner's grade for a posting `next_to_grade` offered.
+
+    The owner is shown a form with the four grades and picks one. You do not
+    pass a grade, and there is no argument to pass one in. Show them the
+    posting first, and do not tell them which grade you would choose.
+
+    Grading applies to nothing: no application is made and no match is decided.
+    Asking again for the same posting replaces its grade.
+    """
+    if not isinstance(grade, AcceptedElicitation):
+        return {
+            "graded": False,
+            "error": (
+                "Not graded: the owner closed the form without choosing. Nothing was "
+                "recorded in its place."
+            ),
+        }
+    offer = _OFFERED[posting_id]
+    typed = grade.data.model_dump()
+    recorded = await _call(
+        "POST",
+        "/labels",
+        json={
+            "posting_id": posting_id,
+            "profile_id": offer.profile_id,
+            "relevance": _GRADES[typed["grade"]],
+            "note": typed.get("note", "").strip() or None,
+            "served_stream": offer.stream,
+        },
+    )
+    if "relevance" not in recorded:
+        return recorded
+    return {
+        "graded": True,
+        "posting_id": posting_id,
+        "relevance": recorded["relevance"],
+        "note": recorded.get("note"),
+    }
+
+
+@server.tool()
+async def grading_progress(profile_id: str | None = None) -> dict[str, Any]:
+    """How many postings the owner has graded, and what the set still lacks.
+
+    `usable` is true once the grades can support a ranking measurement: enough
+    of them, more than one grade used, and at least one posting the ranker
+    never rated. `notes` says which of those is missing.
+    """
+    asked = {"profile_id": profile_id} if profile_id is not None else None
+    return await _call("GET", "/labels/summary", params=asked)
 
 
 # --------------------------------------------------------------------------
