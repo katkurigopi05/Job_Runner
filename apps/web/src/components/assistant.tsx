@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 
+import { historyFrom } from "@/lib/chat-history";
 import { readFrames } from "@/lib/chat-stream";
 
 /* Styling cues borrowed from the photo-editor: an emoji-prefixed toolbar row,
@@ -54,6 +55,8 @@ interface Turn {
   local?: boolean;
   /** Whether recruiter mail was actually in that turn's context. */
   sharedMail?: boolean;
+  /** Whether any was read into it. Sent back with the exchange as history. */
+  mailInContext?: boolean;
   sources?: Source[];
   /** Matches after `sources`, in order: found, listed, never shown to the model. */
   more?: Source[];
@@ -358,6 +361,10 @@ interface Reply {
   model?: string;
   local?: boolean;
   shared_mail?: boolean;
+  mail_in_context?: boolean;
+  /** Earlier exchanges the model was given with this question, and ones it was not. */
+  history_used?: number;
+  history_withheld?: number;
   sources?: Source[];
   more_sources?: Source[];
   matched_role?: string | null;
@@ -378,6 +385,7 @@ function turnFrom(body: Reply): Turn {
     model: body.model,
     local: body.local,
     sharedMail: body.shared_mail,
+    mailInContext: body.mail_in_context,
     sources: body.sources,
     more: body.more_sources,
     matchedRole: body.matched_role,
@@ -391,6 +399,19 @@ function turnFrom(body: Reply): Turn {
   };
 }
 
+/** What of the conversation went with the question, in the status line's words. */
+function remembered(body: Reply): string {
+  const used = body.history_used ?? 0;
+  const withheld = body.history_withheld ?? 0;
+  if (!used && !withheld) return "";
+  // Withheld is said: an earlier exchange that did not go is why "those" may
+  // have meant nothing to the model.
+  return (
+    ` · with ${used} earlier ${used === 1 ? "exchange" : "exchanges"}` +
+    (withheld ? `, ${withheld} held back` : "")
+  );
+}
+
 /** What the status line says once an answer is complete. */
 function answeredBy(body: Reply): string {
   if (body.provider === "refused") return "refused · this one comes from your profile";
@@ -398,9 +419,8 @@ function answeredBy(body: Reply): string {
   // `body.local` is computed server-side from the model, not inferred from the
   // provider name: an Ollama-served `:cloud` model is not local, and the
   // status line must not say otherwise.
-  return body.local
-    ? `answered by ${body.model ?? body.provider} · on this machine`
-    : `answered by ${body.model ?? body.provider} · this left your machine`;
+  const where = body.local ? "on this machine" : "this left your machine";
+  return `answered by ${body.model ?? body.provider} · ${where}${remembered(body)}`;
 }
 
 export function Assistant({ applicationId }: { applicationId?: string }) {
@@ -450,6 +470,9 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           application_id: applicationId ?? null,
           provider,
           share_mail: shareMail,
+          // The conversation up to this question. `turns` is this render's:
+          // the question just added above is not in it yet.
+          history: historyFrom(turns),
         }),
       });
 
@@ -687,13 +710,27 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
         </button>
       </form>
 
-      {/* Status line, bottom-left — the photo-editor's. */}
-      <p
-        role="status"
-        className="border-t border-rule px-3 py-1.5 text-left text-xs text-ink-faint"
-      >
-        {status}
-      </p>
+      {/* Status line, bottom-left — the photo-editor's. Beside it, the one
+          control memory needs: the conversation is remembered until this is
+          pressed or the page is left, and it is kept nowhere else. */}
+      <div className="flex items-center gap-3 border-t border-rule px-3 py-1.5">
+        <p role="status" className="min-w-0 flex-1 text-left text-xs text-ink-faint">
+          {status}
+        </p>
+        {turns.length > 0 ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setTurns([]);
+              setStatus("new conversation · nothing remembered");
+            }}
+            className="shrink-0 text-xs text-ink-soft underline decoration-rule underline-offset-4 transition-colors hover:text-ink hover:decoration-attn disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+          >
+            New conversation
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

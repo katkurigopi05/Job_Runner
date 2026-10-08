@@ -1495,6 +1495,71 @@ terms against 0.8s this way. There is no vector index on
 `description_embedding`, so the vector half is an exact scan — if an ivfflat
 index is added, the per-space filter makes it approximate.
 
+### Remembering a conversation
+
+Added 2026-10-08, at the owner's asking. `/chat` took one message, so "which
+of those are remote?" referred to nothing. The dock now sends the last few
+exchanges with each question (`ChatRequest.history`), and
+`apps/api/chat_history.py` decides what of them a model sees. Three rules in
+this section were written for one message at a time, and each had a way round
+it once there were two. `tests/test_chat_memory.py` holds them.
+
+- **Recruiter mail.** The local model always reads it, so its answer can
+  quote it. Sent on as history, that is the mail reaching a remote model with
+  the box unticked. An exchange written with mail in its context goes to a
+  remote model only when the owner shares mail for that question. The reply
+  says whether mail was read into it (`mail_in_context`), which is narrower
+  than `shared_mail`: mail is only read for an application, so a local answer
+  on the chat page holds none. An exchange that does not say is treated as
+  holding it.
+- **§2.2.** "What salary does this posting list?" is answered, and "what
+  should I ask for?" names no protected topic. Together they are the question
+  the rule refuses. A first-person question is asked without any earlier
+  exchange that touched one of those topics, and a question the rule refuses
+  outright is never remembered. "Which roles offer sponsorship?" followed by
+  "which of those are in California?" still works: the second is not about
+  the owner.
+- **Grounded, not freehand.** An earlier answer is the model's own prose. The
+  postings it cited are read again from the database and given as `POSTINGS
+  FROM EARLIER ANSWERS`, labelled after the ones found for this question.
+  Citation labels are taken out of the remembered text, because `[P1]` named
+  another posting then. A carried-over posting is listed under an answer only
+  when the answer cites it.
+
+Whatever is held back is said in the prompt, as withheld mail is: an absent
+exchange would read as nothing having been said.
+
+Three exchanges are given, a question cut to 300 characters and an answer to
+500, about 600 tokens against the local model's 4,096. The system prompt is
+`assistant.system` v5. The protected-topic checks moved to
+`apps/api/protected_questions.py`, so the refusal and the memory read a
+question the same way; `routers/chat.py` was at 800 lines.
+
+Seen on 2026-10-08:
+
+- **In a browser**, with the model's answer stubbed at the network. The
+  second question carried the first exchange and the posting it cited, a
+  refused question was not sent as history, and "New conversation" cleared
+  it.
+- **Through the API on the owner's data**, Nemotron on OpenRouter, two calls.
+  "Which open roles use Kafka?" listed five postings. "which of those are
+  remote?" answered that only the Senior Software Engineer, Data Platform
+  role at Human Interest is, and cited it by the label it had in that
+  message. It is the one of the five located "United States, Remote".
+
+Not done:
+
+- **The memory is the open page's.** The conversation is in the dock's state
+  and is gone on a reload. Nothing is stored, in the browser or the database,
+  so nothing is remembered from one day to the next.
+- **A follow-up is still searched as it is written.** "which of those are
+  remote?" is not a postings question to the search, so it was answered from
+  the carried-over postings alone. "which of those use Python?" also runs a
+  fresh search for Python, and what that finds is listed beside them.
+- **The local model was not asked.** One run, one model.
+- **The two-message rule reads topics from the refusal's own word list**, so
+  it misses what that misses.
+
 ## 15. What the gates do and do not prove
 
 Every gate in §9 passes. Two of them pass against fixtures rather than the real
