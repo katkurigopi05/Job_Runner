@@ -648,6 +648,80 @@ there is no argument for a model to fill. Four things to keep:
 Not seen: Claude Code's own dialog. The server is switched off on this machine,
 so what was run is the library's client answering the form in both protocols.
 
+**The tracker over MCP reads and does not write** (2026-10-07). "What needs a
+follow-up this week?" had no tool. The tracking API has eleven routes and the
+cadence report is a twelfth, and an assistant reached none of them.
+`follow_ups` lists open tasks and the submitted applications nobody has
+answered; `application_tracking` is one application's tasks and contacts.
+`tests/test_mcp_tracking.py` holds four things:
+
+- **A task with no date is listed.** A recruiter's reply that says
+  "interview" creates a task with no date on purpose
+  (`packages/tracking/tasks.py`), and a list of what is due inside a window
+  leaves it out. It is returned under `undated`.
+- **The tool has no clock.** It asks `/tasks` once with the window and once
+  without. What the windowed list holds is due or overdue by the route's own
+  rule, and the rest is told apart by whether it has a date at all.
+- **A contact is sent as name, relationship, company and role.** Their email,
+  phone and profile link, and the owner's notes on them, are not. A contact is
+  somebody else, and over MCP the reader is a model that is not on this
+  machine; §14 says the same of their mail, and the calendar export already
+  carries no contact's details. The test asserts the exact keys.
+- **Only GET.** Adding a task, ticking one off and linking a contact stay on
+  the dashboard. Every parameter sent is held to its route's signature, as
+  `my_matches` holds its filters (§18).
+
+Seen on the way and not fixed: `/tracker` asks for tasks due within 14 days,
+so the same undated task is missing from its upcoming list. It shows on the
+application's own page.
+
+Not done: a task names its application by URL. No tracking route carries the
+company or the role.
+
+Seen on the owner's data the same day, over stdio with the API up: nothing
+waiting, and no task or contact on the one application tried. The grouping
+and the contact cut have been seen on test rows only.
+
+**An id handed to a tool could name another route** (2026-10-07, found beside
+the tracker tools). Every tool that takes an id wrote it bare into the path it
+asked the API for, and httpx resolves `..` before it sends. The one calling is
+a model, and a posting or a reply it has read can tell it what to pass.
+Measured against the real app, before the fix:
+
+```text
+application_history(application_id="../candidates?")
+    asked for GET /candidates, returned the candidate list under "events"
+edit_application_resume(application_id="../resumes/<id>/edit?", sections=...)
+    asked for POST /resumes/<id>/edit, stored an invented line as version 2
+```
+
+The second is §2.1. `edit_application_resume` runs the fabrication guard
+because a model is typing; the résumés page's route does not, because there
+the owner is; and the two take the same body (§15, *Editing the résumé on the
+review screen*). `test_the_tool_cannot_turn_the_guard_off` held the tool's
+arguments and was green throughout. The same shape read `/inbox` and
+`/contacts`: the recruiter mail the server has no tool for, and the contact
+details the tracker tool above had just been written to leave out.
+
+Every id now goes through `_id` on its way into a path
+(`apps/mcp/server.py`). `tests/test_mcp_ids.py` holds three things:
+
+- **An id is letters, digits, hyphens and underscores.** One part of a path,
+  so it cannot climb, add a part, or turn the rest into a query. Whether it
+  is anybody's id is still the API's to say, with its own error.
+- **Nothing is formatted into a path without it.** Read from the source. The
+  tracker tool above was written without it, and no list of tools holds one
+  that does not exist yet.
+- **A refused id is not repeated back**, and for `submit_otp` it is refused
+  before the owner is asked to type a code.
+
+The approval gate was not reachable this way: `/review` needs `approve: true`
+in the body, a tool's body is its own, and the only tool that sends it is the
+one that asks the owner. Other routes that write were reachable, and they were
+not each tried. Not done: `ResumeEdit` still accepts a `guard` field it does
+not read, and nothing in the API tells an assistant's request from the
+dashboard's.
+
 ### Phase 5 — Discovery
 
 Build: company registry (hand-picked, seeded from a YAML file). Crawler with

@@ -237,6 +237,14 @@ run: requests 1.886 s apart against a 2.0 s floor with 5% allowed. #126 does
 not touch the crawler. The job was re-run. The allowance, or the clock the
 test reads, is what to look at.
 
+### S8. The tracker's upcoming list leaves out a task with no date (open)
+
+Found while building M3. `/tracker` asks for tasks due within 14 days, and a
+task with no date is not in that list. The interview or assessment task a
+recruiter's reply creates has no date until the owner sets it, so it is
+missing from the one list meant to show what is coming. It does show on the
+application's own page.
+
 ---
 
 ## Looked at and not taken
@@ -263,21 +271,35 @@ Added 2026-10-07. The MCP server reached applications, résumés, projects,
 profiles and the posting search. The API has more than that. In the order
 they were proposed:
 
-### M1. The owner types the missing answers and the code (in review, #132)
+### M1. The owner types the missing answers and the code (merged, #132)
 
 `approve_application` took the answers as an argument and `submit_otp` took
 the code, so a model typed what went on the employer's form. Both are now
 asked for in a form the client shows the person. Neither is an argument any
 more.
 
-### M2. The matches feed (in review, #133)
+### M2. The matches feed (merged, #133)
 
 `my_matches`: the scored feed with the matches page's filters. Read only.
 
-### M3. Tracker and follow-ups (open)
+### M3. Tracker and follow-ups (in review)
 
 "What needs a follow-up this week?" The tracking API has 11 routes and no
 tool. Start read-only.
+
+**What happened.** Two tools, both read only. `follow_ups` lists open tasks
+(overdue, due in the next week, undated, and a count of later ones) and the
+submitted applications no employer has answered. `application_tracking` is
+one application's tasks and contacts. A contact is sent as name, relationship,
+company and role; their email, phone, profile link and the owner's notes on
+them are not. Adding or changing a task over MCP was left out, and is the
+next step if it is wanted.
+
+Found on the way and fixed in the same pull request: an id given to any tool
+went bare into the path it asked the API for, so `../inbox?` in place of an
+application's id read the recruiter mail, and `../resumes/<id>/edit?` sent the
+guarded résumé edit to the route that does not guard. Every id is checked now.
+`CLAUDE.md` §9, Phase 4, has what was measured.
 
 ### M4. Status questions (open)
 
