@@ -1099,7 +1099,10 @@ export const api = {
   ) =>
     request<ApplicationTask>(`/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteTask: (taskId: string) => request<void>(`/tasks/${taskId}`, { method: "DELETE" }),
-  upcomingTasks: (days = 14) => request<UpcomingTask[]>(`/tasks?due_within_days=${days}`),
+  // With the undated ones: a task with no date is due within nothing, and the
+  // interview task a recruiter's reply creates has none until it is set.
+  upcomingTasks: (days = 14) =>
+    request<UpcomingTask[]>(`/tasks?due_within_days=${days}&include_undated=true`),
   decideWithReason: (matchId: string, decision: Decision, reason?: string, note?: string) =>
     request<{ id: string; decision: Decision | null; skip_reason: string | null }>(
       `/matches/${matchId}/decision`,
