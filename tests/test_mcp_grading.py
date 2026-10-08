@@ -69,7 +69,8 @@ async def test_a_model_has_nowhere_to_put_a_grade() -> None:
     """Read from the wire entry: what a client is told it may pass."""
     tools = {t.name: _wire(t) for t in await mcp_server.server.list_tools()}
 
-    assert set(tools["grade_posting"]["inputSchema"]["properties"]) == {"posting_id"}
+    # Which offer is being graded, and nothing about how.
+    assert set(tools["grade_posting"]["inputSchema"]["properties"]) == {"posting_id", "profile_id"}
 
 
 async def test_a_posting_comes_without_the_rankers_opinion_of_it(corpus) -> None:
@@ -222,10 +223,48 @@ async def test_a_grade_goes_to_the_profile_the_posting_was_offered_for(monkeypat
     monkeypatch.setattr(mcp_server, "_client", api)
 
     await call("next_to_grade", profile_id="p-2")
-    await _Owner(_picks(2)).calls("grade_posting", posting_id="post-1")
+    await _Owner(_picks(2)).calls("grade_posting", posting_id="post-1", profile_id="p-2")
 
     [(_, _, _, body)] = [asked for asked in api.asked if asked[0] == "POST"]
     assert body["profile_id"] == "p-2"
+
+
+async def test_an_offer_to_one_profile_is_not_an_offer_to_another(monkeypatch) -> None:
+    """An offer is a posting served to one profile. The same posting named for
+    a profile it was not offered to is one this server never offered, and is
+    refused before the owner is asked anything."""
+    api = _Recording([OFFER])
+    monkeypatch.setattr(mcp_server, "_client", api)
+    await call("next_to_grade", profile_id="p-2")
+
+    for other in ({}, {"profile_id": "p-1"}):
+        owner = _Owner(_picks(3))
+        result = await owner.result("grade_posting", posting_id="post-1", **other)
+
+        assert result.is_error and "profile_id" in result.content[0].text
+        assert owner.shown == []
+    assert [asked for asked in api.asked if asked[0] == "POST"] == []
+
+
+@BOTH_PROTOCOLS
+async def test_a_request_made_while_the_form_is_open_does_not_move_the_grade(
+    monkeypatch, mode
+) -> None:
+    """Two profiles can be served one posting. What the server remembered was
+    kept by posting alone, so the second offer replaced the first: a form
+    opened for one profile was recorded under the other, with the other's
+    stream. Both protocols, because the newer one reads the offer again after
+    the form is answered."""
+    api = _ServedByProfile([OFFER])
+    monkeypatch.setattr(mcp_server, "_client", api)
+    await call("next_to_grade", profile_id="p-1")
+
+    await _Interrupted(_picks(2), mode=mode).calls(
+        "grade_posting", posting_id="post-1", profile_id="p-1"
+    )
+
+    [body] = [body for method, _, _, body in api.asked if method == "POST"]
+    assert (body["profile_id"], body["served_stream"]) == ("p-1", "unseen")
 
 
 # --------------------------------------------------------------------------
@@ -274,6 +313,26 @@ class _Recording:
         if method == "POST":
             return {"id": "l-1", **kwargs["json"]}
         return {"total": 0}
+
+
+class _ServedByProfile(_Recording):
+    """The same posting for either profile, each from a stream of its own."""
+
+    STREAMS = {"p-1": "unseen", "p-2": "confident"}
+
+    async def request(self, method: str, path: str, **kwargs: Any) -> Any:
+        if path != "/labels/next":
+            return await super().request(method, path, **kwargs)
+        self.asked.append((method, path, kwargs["params"], None))
+        return [{**OFFER, "stream": self.STREAMS[kwargs["params"]["profile_id"]]}]
+
+
+class _Interrupted(_Owner):
+    """An owner with the form open while another request reaches the server."""
+
+    async def _answer(self, context: Any, params: Any) -> Any:
+        await call("next_to_grade", profile_id="p-2")
+        return await super()._answer(context, params)
 
 
 async def test_grading_writes_one_label_and_touches_nothing_else(monkeypatch) -> None:
