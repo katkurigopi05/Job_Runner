@@ -245,6 +245,46 @@ recruiter's reply creates has no date until the owner sets it, so it is
 missing from the one list meant to show what is coming. It does show on the
 application's own page.
 
+### S9. Memory for the assistant (the first half in review, #136)
+
+The owner's suggestion on 2026-10-08, with cognee named as the way to do it.
+There were two things to remember, and they got different answers.
+
+**Within a conversation: built.** `/chat` kept nothing, not even the previous
+question. The dock now sends the last few exchanges and the API decides what
+of them a model sees. `CLAUDE.md` §14, *Remembering a conversation*, has the
+rules and what was seen.
+
+**From one day to the next: open, and not with cognee.** It was tried before
+deciding. Ten made-up things a person might tell the assistant ("I turned
+down the Elastic role because of its on-call rotation"), ten questions asked
+in other words ("Why did I say no to Elastic?"), scored by whether the right
+fact came back. Cognee 1.6.3 in local mode, no key of any kind in its
+environment, against the embedding model this project already loads:
+
+| | right fact first | in the first three | to store ten | to recall, median | memory held | to install |
+|---|---|---|---|---|---|---|
+| cognee, local mode | 9 of 10 | 10 of 10 | 26.5 s | 0.06 s | 3.2 GB | 174 packages, 1.5 GB, and 0.75 GB of models |
+| bge-small, already here | 9 of 10 | 10 of 10 | 0.5 s | 0.02 s | 0.6 GB | nothing |
+| word overlap, no model | 3 of 10 | 5 of 10 | none | none | none | nothing |
+
+The same question was the one missed by both. Without an LLM, what cognee
+returned was the stored sentences ranked by vector, which is what bge-small
+and pgvector do here already. Its graph would need an LLM to build: the local
+one, on a machine where one model at a time is the rule, or a provider, which
+means uploading what the owner told the assistant.
+
+One run, ten facts, written by the same hand as the questions. It shows the
+two are level on recalling a sentence. It does not show what a graph does
+with questions that join several facts.
+
+So if memory across days is wanted, the plan is a small table of things the
+owner asked to be remembered, with bge-small vectors beside them, a page to
+read and delete them, and nothing about pay, sponsorship, work authorization
+or employment history ever stored. What is still the owner's to say: whether
+it remembers only when told ("remember that I do not want fintech") or picks
+things up on its own.
+
 ---
 
 ## Looked at and not taken
@@ -258,6 +298,12 @@ Recorded so nobody evaluates them twice.
   trail already record more and also enforce. Its traces would hold tool
   arguments in `~/.sentience/`, a second copy of résumé text outside
   `storage/`. S4 is the one idea kept.
+- **cognee** (topoteretes/cognee, Apache 2.0), for the assistant's memory
+  and as a memory plugin for Claude Code. S9 has the measurement for the
+  first. The plugin was not installed: it stores every prompt, tool call and
+  tool output, which in this repository includes résumé text and recruiter
+  mail, as a second copy outside `storage/`, and it builds its graph by
+  sending that to an LLM provider or by spending the owner's Claude usage.
 - **The rest of the cheat sheet.** Continuous batching, chunked prefill,
   separate prefill and decode pools, multi-GPU parallelism, goodput and fleet
   monitoring all assume many users on GPU servers. Speculative decoding needs
