@@ -675,6 +675,15 @@ Seen on the way and not fixed: `/tracker` asks for tasks due within 14 days,
 so the same undated task is missing from its upcoming list. It shows on the
 application's own page.
 
+**Fixed on 2026-10-08.** `GET /tasks` takes `include_undated`, the tracker
+asks with it, and a task with no date is listed first as "no date yet": one
+nobody has dated may be sooner than everything under it, and no calendar will
+ever remind anyone of it. The markup had always handled a missing date. The
+request never let one through. Without the flag the route answers as before,
+which `follow_ups` relies on. Seen in a browser against the test database: the
+interview task a recruiter's reply creates, then the overdue one, then the
+one due in three days.
+
 Not done: a task names its application by URL. No tracking route carries the
 company or the role.
 
@@ -3320,6 +3329,63 @@ Four details:
 `tests/test_one_run_per_database.py` asserts the claim is held *while the suite
 is running* — from inside the run, on a second connection — rather than that it
 was taken once at startup.
+
+### Two tests were reserving in the owner's live database
+
+Found on 2026-10-08 while fixing a flaky test, by a mutation that changed
+nothing. With the shared limiter's floor halved in code, four fetchers in
+`tests/test_shared_ratelimit.py` were still two seconds apart.
+
+Most code is handed its session by a fixture. A limiter built the ordinary
+way, by `build_fetcher()`, takes one for itself from `packages.core.db`, and
+that is bound to `DATABASE_URL`. Only the `client` fixture replaced it. The
+two tests that go through `build_fetcher` used neither, so they reserved in
+the owner's real `crawler_host_budgets` (in CI, in the migrated database)
+while the fixture beside them cleared the test one:
+
+```text
+limiter's database : localhost:5433/jobrunner
+fixture's database : localhost:5433/jobrunner_test
+```
+
+The live row for `boards-api.greenhouse.io` already held a 2s delay, and the
+statement takes the greater of the stored delay and the one it is given. So
+those two tests could not see the floor change, and every run of the suite
+pushed the live crawler's next Greenhouse slot out by a few seconds.
+
+How far it went was measured, not assumed: with `DATABASE_URL` pointed at a
+database that does not exist, 3,575 tests passed and those two failed.
+
+Two changes:
+
+- **`tests/conftest.py` names the test database as the configured one**,
+  before anything reads the settings. Whatever takes a session for itself now
+  gets the test database, in every test. `alembic check` and the app are
+  other processes and still read the real variable.
+  `tests/test_the_suite_owns_its_database.py` holds it, with the case that
+  leaked run unpatched.
+- **The two tests bind the limiter's sessions to the test database by
+  name**, so they do not rest on an engine cached across tests.
+
+The flake itself was a second thing. The four-fetcher test asserted the gap
+between each pair of wake-ups, and a gap between two wake-ups is the floor
+plus how late the second was, less how late the first was. One request
+leaving 114ms late on a CI runner read as the next leaving early (1.886s
+against 2.0s with 5% allowed). It now asserts when each request went, counted
+from the start: the second no sooner than one floor, the third two, the
+fourth three. Being late only moves a request later, and every fault the test
+is for moves one earlier. Simulated with one request held 300ms: gaps of
+2.307, 1.691 and 2.0, the old check fails and the new one passes. With the
+floor halved, the new one fails, which it could not do before either change.
+
+What that leaves true of the limiter: it spaces the slots by the floor, and a
+request that leaves late lands closer to the next one than the floor by
+however late it was.
+
+Not cleaned up: the live table holds eleven rows for made-up hosts
+(`h0.example`, `acme.example`, `careers.slowsite.test` and others) dated
+2026-09-14, from an earlier version of the suite with the same leak. They
+are no host the crawler asks, and they are the owner's table to tidy.
 
 ### A posting could demand ten years and nothing would notice
 

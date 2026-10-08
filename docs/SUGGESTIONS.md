@@ -229,7 +229,7 @@ setting of the Ollama app, not of the repository, so it was not applied.
 the Mac restarts, and they were measured through `ollama serve`, not through
 the app.
 
-### S7. A timing test that fails on a slow CI runner (open)
+### S7. A timing test that fails on a slow CI runner (fixed)
 
 `tests/test_shared_ratelimit.py::test_four_concurrent_fetchers_are_spaced_by_the_floor`
 failed once on #126, in the gate-5 step, after passing in gate-0 of the same
@@ -237,7 +237,15 @@ run: requests 1.886 s apart against a 2.0 s floor with 5% allowed. #126 does
 not touch the crawler. The job was re-run. The allowance, or the clock the
 test reads, is what to look at.
 
-### S8. The tracker's upcoming list leaves out a task with no date (open)
+**What happened.** It was the clock: the test timed the gap between two
+wake-ups, so one request leaving late read as the next leaving early. It now
+counts each request from the start, which lateness cannot shorten. Looking
+at it turned up something worse. That test and the one above it were
+reserving in the live database, not the test one, on every run. The suite
+now names the test database as its only database. `CLAUDE.md` §15, *Two
+tests were reserving in the owner's live database*.
+
+### S8. The tracker's upcoming list leaves out a task with no date (fixed)
 
 Found while building M3. `/tracker` asks for tasks due within 14 days, and a
 task with no date is not in that list. The interview or assessment task a
