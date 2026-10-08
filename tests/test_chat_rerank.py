@@ -17,6 +17,9 @@ So the re-ranker only ever re-orders. It never adds a posting the search did
 not find, which keeps §14's rule that keywords decide relevance, and it is off
 unless a model is named, so a machine without it searches exactly as before.
 
+That is the kind of re-ranker whose score is a likeness. A cross-encoder, which
+judges a passage, is used differently and held in `test_chat_cross_encoder.py`.
+
 No test here loads a model: the re-ranker is a fake that scores by a word.
 """
 
@@ -43,6 +46,7 @@ class WordReranker:
     """Scores a passage by how often it says one word. Records what it was asked."""
 
     name = "fake-reranker"
+    judges = False
 
     def __init__(self, word: str) -> None:
         self.word = word
@@ -55,6 +59,7 @@ class WordReranker:
 
 class BrokenReranker:
     name = "broken"
+    judges = False
 
     def scores(self, question: str, passages: list[str]) -> list[float]:
         raise RuntimeError("model fell over")
