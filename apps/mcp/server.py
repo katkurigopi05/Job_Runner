@@ -27,6 +27,9 @@ Two things to know about the tool surface:
   of its tool, so a model has nowhere to put one. §2.2 says a model never
   writes a work-authorization answer, and a question the pipeline could not
   map can be exactly that.
+- **A posting's grade is the owner's.** It is chosen in a form, the model is
+  not shown the ranker's score or which stream a posting was drawn from, and a
+  grade lands only on a posting this server offered, named in the form.
 - **An id is one part of a path.** Every id a tool is given goes through
   `_id` on its way into a request's path. Written bare, `../resumes/<id>/edit?`
   in place of an application's id sent the guarded résumé edit to the route
@@ -36,7 +39,7 @@ Two things to know about the tool surface:
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NamedTuple
 
 from mcp.server import MCPServer
 from mcp.server.elicitation import AcceptedElicitation, ElicitationResult
@@ -45,6 +48,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field, create_model
 
 from apps.mcp.client import ApiCallFailed, ApiUnavailable, JobrunnerClient
+from packages.matching.labels import RELEVANCE_SCALE
 
 INSTRUCTIONS = """
 Jobrunner is a local, single-user job-application agent.
@@ -53,7 +57,8 @@ Applications never submit without explicit approval. Use `review_queue` to see
 what is waiting, and `approve_application` to release one. An application with
 unanswered questions carries the employer's exact wording. You do not answer
 them: approving shows the owner a form and they type the answers themselves.
-The same goes for a verification code.
+The same goes for a verification code, and for a posting's grade: show the
+posting, do not say how well you think it fits, and let `grade_posting` ask.
 """.strip()
 
 server = MCPServer(name="jobrunner", instructions=INSTRUCTIONS)
@@ -380,7 +385,13 @@ class _Code(BaseModel):
     code: str = Field(title="Verification code", description="The code the site sent you.")
 
 
-def _must_reach_the_owner(ctx: Context, what: str) -> None:
+def _must_reach_the_owner(
+    ctx: Context,
+    what: str,
+    *,
+    nothing: str = "Nothing was approved or sent",
+    page: str = _REVIEW_PAGE,
+) -> None:
     """Refuse, with somewhere to go, when this client cannot show a form.
 
     The library would refuse too, with a message about capabilities. This one
@@ -393,7 +404,7 @@ def _must_reach_the_owner(ctx: Context, what: str) -> None:
         return
     raise ToolError(
         f"This client cannot show the owner a form, and {what} must be typed by them. "
-        f"Nothing was approved or sent. The owner can do this at {_REVIEW_PAGE}."
+        f"{nothing}. The owner can do this at {page}."
     )
 
 
@@ -936,6 +947,171 @@ async def start_crawl() -> dict[str, Any]:
     if not started.get("worker_alive"):
         note += " No worker is running to do it: the owner starts one with `make worker`."
     return {**started, "note": note}
+
+
+# --------------------------------------------------------------------------
+# Grading postings
+# --------------------------------------------------------------------------
+#
+# The owner's grades are what the ranker is measured against, so the grade is
+# theirs: chosen in a form, as an application's missing answers are. A grade a
+# model picked would be the ranker marked by another model and stamped `owner`.
+
+_LABEL_PAGE = "http://127.0.0.1:3001/label"
+
+#: What a posting to grade is cut down to. Its score and the stream it was
+#: drawn from are left out. `/label` shows the owner both, as two values
+#: beside the posting. Here the model writes everything the owner reads about
+#: it, and one that knows the ranker's opinion can lean that way unasked.
+_GRADING_FIELDS = ("posting_id", "title", "location", "url", "description", "first_seen_at")
+
+#: The form's choices, in the scale's own words. One definition: the ranking
+#: metrics read `RELEVANCE_SCALE`, and so does this.
+_GRADES: dict[str, int] = {
+    f"{grade}: {meaning}": grade for grade, meaning in sorted(RELEVANCE_SCALE.items())
+}
+
+_Grade = create_model(
+    "Grade",
+    grade=(
+        Literal[tuple(_GRADES)],  # type: ignore[valid-type]
+        Field(title="How well does this posting fit what you are looking for?"),
+    ),
+    note=(str, Field(default="", title="Why, in a few words (optional)")),
+)
+
+
+class _Offer(NamedTuple):
+    """A posting this server offered for grading, and what it was told about it."""
+
+    title: str
+    location: str | None
+    #: Which stream served it. Sent back with the grade and shown to nobody:
+    #: the API records `unseen` only when a serve attests it.
+    stream: str | None
+    profile_id: str | None
+
+
+#: What `next_to_grade` has offered in this process. `grade_posting` takes an
+#: id from here and from nowhere else, so the form can say which posting it is
+#: about in the server's words. Lost on a restart, and then the posting is
+#: offered again.
+_OFFERED: dict[str, _Offer] = {}
+
+
+@server.tool()
+async def next_to_grade(size: int = 3, profile_id: str | None = None) -> dict[str, Any]:
+    """The next postings for the owner to grade, a few at a time.
+
+    The owner's grades are how the ranker is checked, so they have to be the
+    owner's own. Show each posting as it is: title, place, link, what it asks
+    for. Do not say how well you think it fits and do not suggest a grade.
+    Then call `grade_posting`, which asks them.
+
+    The postings are drawn on purpose from ones the ranker rated high, ones it
+    was unsure of and ones it never rated, so a posting that looks off-target
+    belongs here as much as a good one. `profile_id` is only needed when there
+    is more than one profile.
+    """
+    asked: dict[str, Any] = {"size": size}
+    if profile_id is not None:
+        asked["profile_id"] = profile_id
+    rows = await _call("GET", "/labels/next", params=asked)
+    if not isinstance(rows, list):
+        return rows
+
+    for row in rows:
+        _OFFERED[str(row["posting_id"])] = _Offer(
+            title=row.get("title") or "an untitled posting",
+            location=row.get("location"),
+            stream=row.get("stream"),
+            profile_id=profile_id,
+        )
+    offered: dict[str, Any] = {
+        "postings": [{field: row.get(field) for field in _GRADING_FIELDS} for row in rows],
+        "count": len(rows),
+    }
+    if not rows:
+        offered["note"] = (
+            "Nothing to grade. Either every posting on hand has been graded, or none "
+            "has been crawled yet: a crawl is what brings postings in."
+        )
+    return offered
+
+
+async def _owners_grade(posting_id: str, ctx: Context) -> Elicit[BaseModel]:
+    """Ask the owner for the grade. Runs before the tool, in place of an
+    argument a model could fill."""
+    offer = _OFFERED.get(posting_id)
+    if offer is None:
+        raise ToolError(
+            "That posting has not been offered for grading here, so there is nothing to "
+            "show the owner about it. Nothing was graded. Ask `next_to_grade` first."
+        )
+    _must_reach_the_owner(ctx, "a grade", nothing="Nothing was graded", page=_LABEL_PAGE)
+    where = f", {offer.location}" if offer.location else ""
+    return Elicit(
+        f"Grade this posting for your own search: {offer.title}{where}. "
+        "It is recorded as you give it.",
+        _Grade,
+    )
+
+
+@server.tool()
+async def grade_posting(
+    posting_id: str,
+    grade: Annotated[ElicitationResult[BaseModel], Resolve(_owners_grade)],
+) -> dict[str, Any]:
+    """Record the owner's grade for a posting `next_to_grade` offered.
+
+    The owner is shown a form with the four grades and picks one. You do not
+    pass a grade, and there is no argument to pass one in. Show them the
+    posting first, and do not tell them which grade you would choose.
+
+    Grading applies to nothing: no application is made and no match is decided.
+    Asking again for the same posting replaces its grade.
+    """
+    if not isinstance(grade, AcceptedElicitation):
+        return {
+            "graded": False,
+            "error": (
+                "Not graded: the owner closed the form without choosing. Nothing was "
+                "recorded in its place."
+            ),
+        }
+    offer = _OFFERED[posting_id]
+    typed = grade.data.model_dump()
+    recorded = await _call(
+        "POST",
+        "/labels",
+        json={
+            "posting_id": posting_id,
+            "profile_id": offer.profile_id,
+            "relevance": _GRADES[typed["grade"]],
+            "note": typed.get("note", "").strip() or None,
+            "served_stream": offer.stream,
+        },
+    )
+    if "relevance" not in recorded:
+        return recorded
+    return {
+        "graded": True,
+        "posting_id": posting_id,
+        "relevance": recorded["relevance"],
+        "note": recorded.get("note"),
+    }
+
+
+@server.tool()
+async def grading_progress(profile_id: str | None = None) -> dict[str, Any]:
+    """How many postings the owner has graded, and what the set still lacks.
+
+    `usable` is true once the grades can support a ranking measurement: enough
+    of them, more than one grade used, and at least one posting the ranker
+    never rated. `notes` says which of those is missing.
+    """
+    asked = {"profile_id": profile_id} if profile_id is not None else None
+    return await _call("GET", "/labels/summary", params=asked)
 
 
 # --------------------------------------------------------------------------

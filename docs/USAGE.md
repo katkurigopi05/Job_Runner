@@ -535,6 +535,8 @@ Is my setup healthy?
 How did this week go?
 Is the crawler working? When did a new posting last arrive?
 Run a crawl.
+Let me grade some postings. Show me three.
+How many postings have I graded, and is that enough yet?
 Inspect my latest résumé as the parser sees it.
 Sync my GitHub projects and preview which four fit this job description.
 ```
@@ -638,6 +640,9 @@ check.
 | `weekly_digest` | The week in numbers: postings seen, applications made, replies, what is waiting |
 | `crawl_status` | Whether the crawler is working and how fresh the postings are |
 | `start_crawl` | Queue one crawl of the registry. Asks you first, every time |
+| `next_to_grade` | The next few postings for you to grade, without the ranker's opinion of them |
+| `grade_posting` | Record your grade for one of them; you pick it in a form |
+| `grading_progress` | How many you have graded and what the set still lacks |
 | `curate_project` | Pin a project or exclude it from future selection |
 
 There is deliberately no `submit_now` tool. Approval releases an application to
@@ -677,6 +682,19 @@ on the local API, which compares its digest against the trail on this machine.
 No tool does that, because it would mean handing the assistant the text.
 `setup_health` reports and does not repair: the registry repair stays on
 `/setup`, where you preview it first.
+
+Grading in a conversation is the same loop as `/label`. Your grades are what
+the ranker gets measured against, so the assistant is kept out of them:
+
+- You pick the grade in a form. The assistant cannot pass one.
+- The assistant is not shown the ranker's score or which stream a posting was
+  drawn from. `/label` shows you both; here they are held back so the
+  assistant cannot lean its description of a posting toward the ranker's view.
+- The form names the posting it is about. If that is not the posting you were
+  just shown, close the form.
+
+The assistant is asked not to say which grade it would give. That part is a
+request, and if it does offer an opinion, ignore it.
 
 ## 7. Typical application workflow
 

@@ -317,11 +317,21 @@ Left out on purpose: the setup page's registry repair, and the audit page's
 check of a pasted text against the trail. The first rewrites company rows.
 The second would mean handing the assistant the text to be checked.
 
-### M5. Grading postings by conversation (open)
+### M5. Grading postings by conversation (in review)
 
 The labeling loop needs 100 or more of the owner's grades and has none. The
 grade has to be typed by the owner, with the form M1 uses, and never chosen
 by the model, or the benchmark grades itself.
+
+**What happened.** Three tools. `next_to_grade` offers a few postings,
+`grade_posting` shows you a form with the four grades and records the one you
+pick, and `grading_progress` says how far the set has got. Beyond the grade
+itself, three things are kept from the assistant: the ranker's score, the
+stream a posting was drawn from, and the choice of which posting a grade
+lands on. The form names the posting from what the server offered.
+
+What a tool cannot stop: the assistant saying in the conversation which grade
+it would give. The tool descriptions ask it not to.
 
 ### Set aside, to think about later
 

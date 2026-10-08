@@ -755,6 +755,45 @@ Left out: the setup page's registry repair, which rewrites company rows and
 is previewed there first. Not seen: Claude Code's prompt for `start_crawl`.
 The mark is asserted on the tool's `tools/list` entry.
 
+**Grading postings in a conversation, with the model kept out of the grade**
+(2026-10-08). §15's labeling loop needs a hundred or more of the owner's
+grades and has none. `next_to_grade`, `grade_posting` and `grading_progress`
+are the same loop as `/label`, reached by talking. What is different here is
+who is calling: a grade a model chose would be the ranker marked by another
+model and exported as `Provenance.OWNER`, the provenance a benchmark trusts
+most. `tests/test_mcp_grading.py` holds four things:
+
+- **The owner picks the grade in a form.** It is not an argument of
+  `grade_posting`. The four choices are built from
+  `labels.RELEVANCE_SCALE`, the scale the metrics read. A closed form grades
+  nothing, and a client that cannot show a form is sent to `/label`.
+- **The model is not shown the score or the stream.** This differs from
+  `/label`, which shows the owner both on the card as its audit trail. There
+  they are two values beside the posting. In a conversation the model writes
+  everything the owner reads about the posting, and one that knows the
+  ranker's opinion can lean its description that way without quoting it. It
+  is one tuple to widen (`_GRADING_FIELDS`).
+- **The stream still goes back with the grade.** `routers/labels.py` records
+  `unseen` only when a serve attests it, and its comment named the MCP tools
+  among the callers that could never attest. The server remembers what
+  `/labels/next` told it about each posting it offered and sends that back
+  itself.
+- **A grade lands only on a posting this server offered.** The form says
+  which posting it is about, from the server's memory of the offer and not
+  from the conversation. An id it never offered has no name to show, so it
+  is refused before the owner is asked anything.
+
+What a tool cannot stop: the model saying in the conversation which grade it
+would give. The tool descriptions and the server's instructions ask it not
+to, and that is a request. Also not done: the memory of what was offered is
+the process's, so after a restart a posting has to be offered again before
+it can be graded. Not seen: Claude Code's own form. The library's client
+answered it in both protocols.
+
+`apps/mcp/server.py` is past 1,200 lines with these. Splitting it means
+moving the shared `server` and `_client` into a module of their own, which
+every MCP test's monkeypatch touches, so it is a change of its own.
+
 ### Phase 5 — Discovery
 
 Build: company registry (hand-picked, seeded from a YAML file). Crawler with

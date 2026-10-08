@@ -521,9 +521,8 @@ async def test_silence_is_not_evidence_of_never_being_scored(
     client: AsyncClient, worker_session: AsyncSession, corpus
 ) -> None:
     """A caller that sends no hint has told us nothing, and defaulting that to
-    the strongest claim would put the hole straight back — the MCP tools, curl
-    and any future client all reach this path. `unseen` is claimed only when a
-    serve attests it.
+    the strongest claim would put the hole straight back — curl and any future
+    client reach this path. `unseen` is claimed only when a serve attests it.
 
     The cost is real and deliberate: such a caller cannot contribute unseen
     coverage. That is the honest outcome, because it genuinely cannot say where
