@@ -36,6 +36,12 @@ SHARED = "boards-api.greenhouse.io"
 OTHER_SHARED = "api.lever.co"
 COMPANY = "careers.acme.example"
 
+#: How far the database's clock and this process's may disagree over the few
+#: seconds a test runs. The limiter counts a wait on the first and sleeps it on
+#: the second. It is the only allowance the timed checks below need: they are
+#: written so that a slow machine can make a request later and never earlier.
+CLOCKS_AGREE_WITHIN = 0.05
+
 
 class Recorder:
     """A sleeper that records rather than waits.
@@ -127,10 +133,15 @@ async def test_two_workers_on_one_host_do_not_both_go_at_once(worker_sessions) -
     """
     first, second = worker_sessions(), worker_sessions()
 
+    started = time.monotonic()
     assert await first.acquire(SHARED) == 0.0, "nobody has touched it; go now"
     waited = await second.acquire(SHARED)
+    between = time.monotonic() - started
 
-    assert waited >= MIN_SHARED_API_DELAY_SECONDS * 0.9, (
+    # What the second is told to wait is the floor less whatever passed between
+    # the two reservations, so a slow machine shortens it. Adding that time
+    # back leaves the floor, however slow the machine was.
+    assert waited + between >= MIN_SHARED_API_DELAY_SECONDS - CLOCKS_AGREE_WITHIN, (
         f"a second worker was let through after {waited:.3f}s — "
         "the floor is being counted per process"
     )
@@ -301,7 +312,21 @@ async def test_waiting_happens_outside_a_transaction(worker_sessions) -> None:
 # --------------------------------------------------------------------------
 
 
-async def test_build_fetcher_shares_the_counter_by_default(engine) -> None:
+@pytest.fixture
+def default_sessions(committing_sessionmaker, monkeypatch) -> None:
+    """Where a limiter built the ordinary way gets its sessions from.
+
+    `build_fetcher()` gives the limiter none, so it asks `packages.core.db`,
+    and these two tests were reserving in whatever database that named: the
+    owner's live one on their machine, the migrated one in CI. Neither is the
+    table `_clear_budgets` empties, so what the tests measured depended on
+    rows they never wrote. Bound to the test database here, by name, so it
+    does not rest on a cached engine shared across tests either.
+    """
+    monkeypatch.setattr("packages.core.db.get_sessionmaker", lambda: committing_sessionmaker)
+
+
+async def test_build_fetcher_shares_the_counter_by_default(default_sessions) -> None:
     """Two fetchers built the ordinary way must not hold two counters.
 
     This is the defect, not a refinement of it. `build_fetcher()` constructs a
@@ -328,47 +353,60 @@ async def test_build_fetcher_shares_the_counter_by_default(engine) -> None:
             "separate objects is the point — they have to agree through the table"
         )
 
+        started = time.monotonic()
         assert await first.rate_limiter.acquire(SHARED) == 0.0
-        waited = await second.rate_limiter.acquire(SHARED)
+        await second.rate_limiter.acquire(SHARED)
+        apart = time.monotonic() - started
 
-        # The reservation hands back "time from now until your slot", so a few
-        # elapsed milliseconds put it just under the floor. The spacing between
-        # the two requests is the full floor, which is what §2.6 is about.
-        assert waited >= MIN_SHARED_API_DELAY_SECONDS * 0.95, (
-            f"a second fetcher built the same way waited only {waited:.3f}s"
+        # Timed from before the first to after the second, which is the floor
+        # or more whatever the machine was doing. What the second was *told*
+        # to wait is the floor less the time between the two reservations, and
+        # asserting on that failed whenever the runner paused between them.
+        assert apart >= MIN_SHARED_API_DELAY_SECONDS - CLOCKS_AGREE_WITHIN, (
+            f"a second fetcher built the same way went {apart:.3f}s after the first"
         )
     finally:
         await first.aclose()
         await second.aclose()
 
 
-async def test_four_concurrent_fetchers_are_spaced_by_the_floor(engine) -> None:
+async def test_four_concurrent_fetchers_are_spaced_by_the_floor(default_sessions) -> None:
     """`make workers n=4`, measured end to end rather than per-call.
 
-    Asserts the gaps between requests, because that is the quantity §2.6
-    names. Four tasks that each waited and then fired together have waited and
-    still breached it.
-    """
-    import asyncio
-    import time
+    Four tasks that each waited and then fired together have waited and still
+    breached §2.6, so what is asserted is when each request went: the second
+    no sooner than one floor after the start, the third two, the fourth three.
 
+    **This asserted the gap between each pair, and failed on a slow runner**
+    (#126, gate-5: requests 1.886s apart against 2.0s with 5% allowed). The
+    limiter spaces the slots by the floor. A task then wakes at its slot or
+    later, never before, and a gap measured between two wake-ups is the floor
+    plus how late the second was *less how late the first was*. One request
+    leaving 114ms late was read as the next one leaving early.
+
+    Counting from the start has no such term. Being late only moves a request
+    later, and every fault this test is for moves one earlier: no wait at all,
+    a wait counted per process, or two fetchers handed the same slot.
+    """
     from packages.crawler.fetch import build_fetcher
 
     fetchers = [build_fetcher() for _ in range(4)]
-    stamps: list[float] = []
+    went: list[float] = []
 
     async def hit(fetcher) -> None:
         await fetcher.rate_limiter.acquire(SHARED)
-        stamps.append(time.monotonic())
+        went.append(time.monotonic())
 
     try:
+        started = time.monotonic()
         await asyncio.gather(*(hit(fetcher) for fetcher in fetchers))
-        stamps.sort()
-        gaps = [later - earlier for earlier, later in zip(stamps, stamps[1:], strict=False)]
-        assert len(gaps) == 3
-        for gap in gaps:
-            assert gap >= MIN_SHARED_API_DELAY_SECONDS * 0.95, (
-                f"requests were {gap:.3f}s apart, under the {MIN_SHARED_API_DELAY_SECONDS}s floor"
+        went.sort()
+        assert len(went) == 4
+        for place, at in enumerate(went):
+            earliest = place * MIN_SHARED_API_DELAY_SECONDS - CLOCKS_AGREE_WITHIN
+            assert at - started >= earliest, (
+                f"request {place + 1} of 4 went {at - started:.3f}s after the start, "
+                f"sooner than {place} floor(s) of {MIN_SHARED_API_DELAY_SECONDS}s"
             )
     finally:
         for fetcher in fetchers:
