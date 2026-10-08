@@ -38,6 +38,27 @@ VALID_TRIGGERS = frozenset({"scheduled", "manual"})
 
 _UNFINISHED = (QueueTaskStatus.PENDING.value, QueueTaskStatus.RUNNING.value)
 
+#: Arbitrary but fixed, and not the key the test suite claims its database with.
+_QUEUE_GUARD_LOCK_KEY = 4_917_205
+
+
+async def _one_guard_at_a_time(session: AsyncSession) -> None:
+    """Hold the crawl queue's guard for the rest of the caller's transaction.
+
+    Both guards below count the crawl tasks waiting and enqueue when there are
+    none. A count cannot see a row another transaction has not committed, so
+    two callers counting in the same moment each found nothing and each
+    enqueued. With this held, the second waits for the first to commit and
+    then counts its row: READ COMMITTED, the engine's default, gives the count
+    a fresh snapshot.
+
+    Transaction-level, so the caller's commit or rollback releases it and a
+    dropped connection leaves nothing to clear by hand. A unique index is the
+    other way to make this true and does not fit: a running sweep and its
+    pending successor are two unfinished crawl tasks on purpose.
+    """
+    await session.execute(select(func.pg_advisory_xact_lock(_QUEUE_GUARD_LOCK_KEY)))
+
 
 @dataclass(frozen=True)
 class CrawlRequest:
@@ -57,8 +78,11 @@ async def request_crawl(
     pointless — they would poll the same hosts minutes apart, the later one
     would emit nothing, and it would spend the per-host limit §2.6 protects.
 
-    Does not commit; the caller owns the transaction, as with `enqueue`.
+    Does not commit; the caller owns the transaction, as with `enqueue`. The
+    guard is held until that transaction ends, so a caller commits or leaves
+    its session straight after: another request is waiting on it until then.
     """
+    await _one_guard_at_a_time(session)
     waiting = (
         await session.scalar(
             select(func.count())
@@ -85,6 +109,7 @@ async def _schedule_next_tick(session: AsyncSession, payload: dict, seconds: int
     ever ran at once — and at-least-once delivery means two eventually will.
     A single pending sweep is all this ever needs.
     """
+    await _one_guard_at_a_time(session)
     waiting = await session.scalar(
         select(func.count())
         .select_from(QueueTask)
