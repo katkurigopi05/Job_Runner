@@ -276,7 +276,8 @@ means uploading what the owner told the assistant.
 
 One run, ten facts, written by the same hand as the questions. It shows the
 two are level on recalling a sentence. It does not show what a graph does
-with questions that join several facts.
+with questions that join several facts. The owner said to skip cognee the
+same day, so that was not run.
 
 So if memory across days is wanted, the plan is a small table of things the
 owner asked to be remembered, with bge-small vectors beside them, a page to
@@ -304,6 +305,8 @@ Recorded so nobody evaluates them twice.
   tool output, which in this repository includes résumé text and recruiter
   mail, as a second copy outside `storage/`, and it builds its graph by
   sending that to an LLM provider or by spending the owner's Claude usage.
+  The owner read the numbers and said to skip it, 2026-10-08. Its graph with
+  an LLM, on questions that join several facts, was never tried.
 - **The rest of the cheat sheet.** Continuous batching, chunked prefill,
   separate prefill and decode pools, multi-GPU parallelism, goodput and fleet
   monitoring all assume many users on GPU servers. Speculative decoding needs
