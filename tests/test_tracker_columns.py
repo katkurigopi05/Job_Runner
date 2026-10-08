@@ -86,3 +86,29 @@ def test_sent_and_silent_shares_the_waiting_column() -> None:
     means the same thing."""
     assert '"awaiting"' in SOURCE
     assert re.search(r'return application\.status === "submitted" \? "awaiting"', SOURCE)
+
+
+# --------------------------------------------------------------------------
+# What is coming
+# --------------------------------------------------------------------------
+
+API_CLIENT = (TRACKER.parents[2] / "lib" / "api.ts").read_text(encoding="utf-8")
+
+
+def test_the_list_of_what_is_coming_asks_for_tasks_with_no_date() -> None:
+    """Found building the MCP tracker tools. The page asked for tasks due
+    within two weeks, so the interview task a recruiter's reply creates, which
+    has no date until the owner sets one, was missing from the one list meant
+    to show what is coming. The markup already handled a missing date; the
+    request never let one through."""
+    [asked] = re.findall(r"upcomingTasks:[^\n]*\n?[^\n]*`(/tasks\?[^`]*)`", API_CLIENT)
+
+    assert "due_within_days=" in asked
+    assert "include_undated=true" in asked
+
+
+def test_a_task_with_no_date_says_so_and_is_listed_first() -> None:
+    """An empty space where the date goes reads as a rendering fault. And an
+    interview nobody has dated yet may be sooner than everything below it."""
+    assert "no date yet" in SOURCE
+    assert "byDateKnown(upcoming)" in SOURCE
