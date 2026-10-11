@@ -11,7 +11,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query, Response
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
@@ -211,8 +211,16 @@ async def upcoming_tasks(
     session: SessionDep,
     open_only: bool = True,
     due_within_days: int | None = Query(default=None, ge=0, le=365),
+    include_undated: bool = False,
 ) -> list[UpcomingTaskOut]:
-    """Tasks across applications, soonest first; overdue ones flagged."""
+    """Tasks across applications, soonest first; overdue ones flagged.
+
+    A window keeps the tasks due inside it, and a task with no date is due
+    inside nothing. `include_undated` lets those through as well. The task a
+    recruiter's reply creates has no date until the owner sets one, so a list
+    of what is coming that leaves it out is missing the one most likely to be
+    forgotten.
+    """
     now = datetime.now(UTC)
     query = select(ApplicationTask, Application.url).join(
         Application, Application.id == ApplicationTask.application_id
@@ -220,10 +228,11 @@ async def upcoming_tasks(
     if open_only:
         query = query.where(ApplicationTask.completed_at.is_(None))
     if due_within_days is not None:
-        query = query.where(
+        due = and_(
             ApplicationTask.due_at.is_not(None),
             ApplicationTask.due_at <= now + timedelta(days=due_within_days),
         )
+        query = query.where(or_(due, ApplicationTask.due_at.is_(None)) if include_undated else due)
     rows = (await session.execute(query.order_by(ApplicationTask.due_at.asc().nullslast()))).all()
     return [
         UpcomingTaskOut(

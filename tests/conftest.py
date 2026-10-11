@@ -79,6 +79,20 @@ TEST_DATABASE_URL = (
     or "postgresql+asyncpg://jobrunner:jobrunner@localhost:5432/jobrunner_test"
 )
 
+#: The suite's only database is the test database, whatever `.env` names.
+#:
+#: Most code is handed a session by a fixture. Some takes one for itself from
+#: `packages.core.db`, which is bound to `DATABASE_URL`, and a test that runs
+#: such code without the `client` fixture was talking to the developer's live
+#: database. Two did until 2026-10-08: they built a rate limiter the ordinary
+#: way and reserved slots in the owner's real `crawler_host_budgets`, while
+#: the fixture beside them cleared the test one. Found when halving the floor
+#: in code changed nothing, because the live row already held it.
+#:
+#: Set here, before anything has read the settings. `alembic check` and the
+#: app itself are other processes and still read the real variable.
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+
 #: Truncated between committing tests, children first is handled by CASCADE.
 _ALL_TABLES = (
     "application_tasks",

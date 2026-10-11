@@ -127,6 +127,53 @@ async def test_upcoming_is_soonest_first_flags_overdue_and_skips_done(client, ap
     assert {late["id"], soon["id"]} == {task["id"] for task in upcoming}
 
 
+async def test_a_task_with_no_date_can_be_asked_for_with_the_ones_due(client, app_id) -> None:
+    """The tracker's list of what is coming asked for tasks due within two
+    weeks, and a task with no date is not due within anything. So it showed
+    every deadline but the one nobody had written down yet."""
+    now = datetime.now(UTC)
+    await _task(client, app_id, title="Late", due_at=(now - timedelta(days=1)).isoformat())
+    await _task(client, app_id, title="Soon", due_at=(now + timedelta(days=2)).isoformat())
+    await _task(client, app_id, title="Far", due_at=(now + timedelta(days=30)).isoformat())
+    await _task(client, app_id, title="Undated")
+
+    window = {"due_within_days": 14}
+    with_undated = (await client.get("/tasks", params={**window, "include_undated": True})).json()
+    without = (await client.get("/tasks", params=window)).json()
+
+    assert [task["title"] for task in with_undated] == ["Late", "Soon", "Undated"]
+    # Left as it was for a caller that did not ask: the MCP tool reads this
+    # list as "due or overdue" and finds the undated ones for itself.
+    assert [task["title"] for task in without] == ["Late", "Soon"]
+
+
+async def test_the_task_a_recruiters_reply_creates_is_one_of_them(
+    client, app_id, worker_session
+) -> None:
+    """It has no date on purpose (`packages/tracking/tasks.py`): the date is
+    in the recruiter's message, and reading it out of prose would be a guess."""
+    application = await worker_session.get(Application, uuid.UUID(app_id))
+    await ensure_task_for_outcome(worker_session, application, "interview")
+    await worker_session.commit()
+
+    coming = (
+        await client.get("/tasks", params={"due_within_days": 14, "include_undated": True})
+    ).json()
+
+    assert [(task["kind"], task["source"], task["due_at"]) for task in coming] == [
+        ("interview", "inbox", None)
+    ]
+
+
+async def test_a_finished_task_with_no_date_is_not_brought_back(client, app_id) -> None:
+    done = await _task(client, app_id, title="Done")
+    await client.patch(f"/tasks/{done['id']}", json={"completed": True})
+
+    coming = await client.get("/tasks", params={"due_within_days": 14, "include_undated": True})
+
+    assert coming.json() == []
+
+
 # --------------------------------------------------------------------------
 # Contacts
 # --------------------------------------------------------------------------

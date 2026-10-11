@@ -116,6 +116,15 @@ function columnFor(application: Application): string | null {
   return application.status === "submitted" ? "awaiting" : null;
 }
 
+/**
+ * Tasks with no date first, the rest in the order they came (soonest first).
+ * One nobody has dated yet may be sooner than everything else on the list,
+ * and it is the one a calendar will never remind anyone of.
+ */
+function byDateKnown(tasks: UpcomingTask[]): UpcomingTask[] {
+  return [...tasks.filter((task) => !task.due_at), ...tasks.filter((task) => task.due_at)];
+}
+
 export default async function TrackerPage() {
   let applications: Application[];
   let messages: InboundMessage[];
@@ -173,13 +182,15 @@ export default async function TrackerPage() {
           </p>
         ) : (
           <ul className="divide-y divide-rule">
-            {upcoming.map((task) => (
+            {byDateKnown(upcoming).map((task) => (
               <li key={task.id} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-3">
                 <span
-                  className={`font-mono text-xs tabular-nums ${task.overdue ? "text-stop" : "text-ink-soft"}`}
+                  className={`font-mono text-xs tabular-nums ${
+                    task.overdue ? "text-stop" : task.due_at ? "text-ink-soft" : "text-attn"
+                  }`}
                 >
                   {task.overdue ? "overdue · " : ""}
-                  {task.due_at ? new Date(task.due_at).toLocaleString() : ""}
+                  {task.due_at ? new Date(task.due_at).toLocaleString() : "no date yet"}
                 </span>
                 <span className="font-mono text-xs uppercase tracking-widest text-ink-faint">
                   {task.kind.replace("_", " ")}
