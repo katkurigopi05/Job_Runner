@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.config import get_settings
 from packages.core.enums import QueueTaskStatus
 from packages.core.models import QueueTask
-from packages.core.queue import ClaimedTask, enqueue
+from packages.core.queue import ClaimedTask, decide_alone, enqueue
 from packages.crawler.crawl import CrawlReport, crawl_all
 from packages.crawler.dispatch import tick
 from packages.crawler.extract import load_seed
@@ -57,8 +57,14 @@ async def request_crawl(
     pointless — they would poll the same hosts minutes apart, the later one
     would emit nothing, and it would spend the per-host limit §2.6 protects.
 
-    Does not commit; the caller owns the transaction, as with `enqueue`.
+    Two requests at once are two transactions, and each used to count before
+    the other had committed: both found nothing waiting and both queued.
+    `decide_alone` makes the second wait for the first and count after it.
+
+    Does not commit; the caller owns the transaction, as with `enqueue`, and
+    should commit promptly, since the next request waits for it.
     """
+    await decide_alone(session, CRAWL_TASK_KIND)
     waiting = (
         await session.scalar(
             select(func.count())
@@ -84,7 +90,13 @@ async def _schedule_next_tick(session: AsyncSession, payload: dict, seconds: int
     successor unconditionally would double the number of ticks each time two
     ever ran at once — and at-least-once delivery means two eventually will.
     A single pending sweep is all this ever needs.
+
+    The guard was a look and then an enqueue, so two ticks ending together
+    each found no successor and each scheduled one: the doubling it was
+    written to stop. They decide one at a time now, on the lock a requested
+    crawl takes.
     """
+    await decide_alone(session, CRAWL_TASK_KIND)
     waiting = await session.scalar(
         select(func.count())
         .select_from(QueueTask)

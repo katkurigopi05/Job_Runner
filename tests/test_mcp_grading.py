@@ -316,3 +316,63 @@ async def test_every_parameter_sent_is_one_its_route_reads(monkeypatch) -> None:
     }
     for _, path, params, _ in api.asked:
         assert params and params.keys() <= reads[path], (path, params.keys() - reads[path])
+
+
+# --------------------------------------------------------------------------
+# A form that is open while the same posting is offered again
+# --------------------------------------------------------------------------
+#
+# What the server remembers offering was keyed by posting alone, and
+# `grade_posting` read it twice: once to build the form and again, after the
+# owner had answered, to decide which profile the grade was for. A second
+# `next_to_grade` for another profile, arriving while the form was open,
+# replaced the entry in between. The owner answered a form built for one
+# profile and the grade was recorded against the other.
+
+
+class _OfferedAgainWhileOpen(_Owner):
+    """An owner whose form is open when the posting is offered for another profile."""
+
+    def __init__(self, typed: Any, api: _Recording, *, mode: str) -> None:
+        super().__init__(typed, mode=mode)
+        self._api = api
+        #: The profile each form was built for, read when the form was shown.
+        self.built_for: list[str | None] = []
+
+    async def _answer(self, context: Any, params: Any) -> Any:
+        self.built_for.append(mcp_server._OFFERED["post-1"].profile_id)
+        if len(self.built_for) == 1:
+            self._api.offers = [{**OFFER, "stream": "confident"}]
+            await call("next_to_grade", profile_id="p-B")
+        return await super()._answer(context, params)
+
+
+@BOTH_PROTOCOLS
+async def test_a_grade_is_recorded_for_the_profile_its_form_was_about(monkeypatch, mode) -> None:
+    """Under 2025-11-25 the form is answered inside the call, so the grade
+    goes to the profile it was built for. Under 2026-07-28 the call is made
+    again with the answer; the form no longer matches what is on offer, so
+    the answer is dropped and the owner is asked about what is."""
+    api = _Recording([OFFER])
+    monkeypatch.setattr(mcp_server, "_client", api)
+    await call("next_to_grade", profile_id="p-A")
+    owner = _OfferedAgainWhileOpen(_picks(2), api, mode=mode)
+
+    await owner.calls("grade_posting", posting_id="post-1")
+
+    [body] = [body for method, _, _, body in api.asked if method == "POST"]
+    assert body["profile_id"] == owner.built_for[-1]
+    # And the owner was told which, in the server's words.
+    assert f"profile {body['profile_id']}" in owner.messages[-1]
+
+
+async def test_a_form_says_nothing_of_a_profile_nobody_named(monkeypatch) -> None:
+    """With one profile there is nothing to tell apart, and an id is noise."""
+    api = _Recording([OFFER])
+    monkeypatch.setattr(mcp_server, "_client", api)
+    await call("next_to_grade")
+    owner = _Owner(_picks(1))
+
+    await owner.calls("grade_posting", posting_id="post-1")
+
+    assert "profile" not in owner.messages[-1]

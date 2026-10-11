@@ -64,6 +64,37 @@ class PromptTooLong(LLMError):
     """
 
 
+class ModelUnreachable(LLMError):
+    """Nothing took the connection at the provider's address.
+
+    The remedy is to start the server. Kept apart from `ModelMissing` because
+    the two used to share one sentence carrying both remedies, and each sent
+    the owner to fix the thing that was not broken.
+    """
+
+    def __init__(self, message: str, *, base_url: str | None = None) -> None:
+        super().__init__(message)
+        #: The address that was tried, so the advice can name it.
+        self.base_url = base_url
+
+
+class ModelMissing(LLMError):
+    """The server answered, and it does not have the model that was asked for."""
+
+    def __init__(self, message: str, *, model: str | None = None) -> None:
+        super().__init__(message)
+        #: The tag that was asked for, which is the one to pull.
+        self.model = model
+
+
+class ModelTimedOut(LLMError):
+    """The server took the connection and did not reply in time.
+
+    It is running, so neither remedy above applies: it may still be loading
+    the model, or the machine is short of memory.
+    """
+
+
 class LLMProvider(Protocol):
     name: str
 
@@ -212,6 +243,10 @@ class OllamaProvider:
         ).rstrip("/")
         self.model = model or os.environ.get("OLLAMA_MODEL") or settings.ollama_model
 
+    def _failure(self, what: str, exc: Exception) -> LLMError:
+        """`_ollama_failure`, with the address and the model this call used."""
+        return _ollama_failure(what, exc, base_url=self.base_url, model=self.model)
+
     def _options(self, max_tokens: int, temperature: float) -> dict[str, Any]:
         options: dict[str, Any] = {"num_predict": max_tokens, "temperature": temperature}
         if self.shapes_for_this_machine:
@@ -299,7 +334,7 @@ class OllamaProvider:
                 payload = resp.json()
                 content = str(payload["message"]["content"])
             except Exception as exc:
-                raise _ollama_failure("Ollama call failed", exc) from exc
+                raise self._failure("Ollama call failed", exc) from exc
         self._measured(payload, user, options)
         return content
 
@@ -327,7 +362,7 @@ class OllamaProvider:
                 payload = resp.json()
                 parsed = schema.model_validate_json(payload["message"]["content"])
             except Exception as exc:
-                raise _ollama_failure("Ollama JSON call failed", exc) from exc
+                raise self._failure("Ollama JSON call failed", exc) from exc
         self._measured(payload, user, options)
         return parsed
 
@@ -392,7 +427,7 @@ class OllamaProvider:
             except LLMError:
                 raise
             except Exception as exc:
-                raise _ollama_failure("Ollama call failed", exc) from exc
+                raise self._failure("Ollama call failed", exc) from exc
 
 
 #: Gemini authenticates with the key as a *query parameter*, so the key is part
@@ -436,6 +471,10 @@ _TOO_LONG = "exceed_context_size_error"
 _REASON_QUOTED_CHARS = 300
 
 
+#: How the daemon says it does not have a model: "model '<tag>' not found".
+_MODEL_NOT_FOUND = re.compile(r"\bmodel\b.*\bnot found\b", re.IGNORECASE)
+
+
 def _quoted(said: str) -> str:
     """The daemon's own words, scrubbed, and no more of them than a reason runs to."""
     reason = _scrub(said)
@@ -444,7 +483,9 @@ def _quoted(said: str) -> str:
     return reason
 
 
-def _ollama_failure(what: str, exc: Exception) -> LLMError:
+def _ollama_failure(
+    what: str, exc: Exception, *, base_url: str | None = None, model: str | None = None
+) -> LLMError:
     """The error for a failed Ollama call, saying why in the daemon's words.
 
     `raise_for_status` knows the status and the URL. The reason is in the
@@ -455,7 +496,19 @@ def _ollama_failure(what: str, exc: Exception) -> LLMError:
     (measured on 0.40.0, 2026-10-07): the daemon does not cut it, it refuses
     it. Both numbers and the setting are named, because the owner can act on
     that and cannot act on a status code, and it is raised as `PromptTooLong`.
+
+    Three more are told apart, because each has a different remedy and they
+    used to share one: nothing listening (`ModelUnreachable`), a reply that
+    did not come in time (`ModelTimedOut`), and a daemon that answered that
+    it does not have the model (`ModelMissing`; on 0.40.0, HTTP 404 and
+    "model '<tag>' not found").
     """
+    # A connection that timed out was never taken, so it is the first kind
+    # and not the second, whatever httpx's class tree says.
+    if isinstance(exc, httpx.ConnectError | httpx.ConnectTimeout):
+        return ModelUnreachable(f"{what}: {_scrubbed(exc)}", base_url=base_url)
+    if isinstance(exc, httpx.TimeoutException):
+        return ModelTimedOut(f"{what}: {_scrubbed(exc)}")
     response = getattr(exc, "response", None)
     if response is None:
         return LLMError(f"{what}: {_scrubbed(exc)}")
@@ -485,39 +538,12 @@ def _ollama_failure(what: str, exc: Exception) -> LLMError:
             )
         said = said.get("message")
     if isinstance(said, str) and said.strip():
+        # By its words as well as its status: a wrong address answers 404 too,
+        # and pulling a model would not fix that.
+        if response.status_code == 404 and _MODEL_NOT_FOUND.search(said):
+            return ModelMissing(f"{what}: {_quoted(said)}", model=model)
         return LLMError(f"{what}: {_quoted(said)}")
     return LLMError(f"{what}: {_scrubbed(exc)}")
-    try:
-        said = response.json().get("error")
-    except Exception:  # noqa: BLE001 - a body that is not JSON carries no reason
-        return _scrubbed(exc)
-    if isinstance(said, str):
-        # The daemon passes its runner's error on as a string of JSON.
-        try:
-            inner = json.loads(said)
-        except ValueError:
-            inner = None
-        if isinstance(inner, dict) and isinstance(inner.get("error"), dict):
-            said = inner["error"]
-    if isinstance(said, dict):
-        prompt_tokens, context = said.get("n_prompt_tokens"), said.get("n_ctx")
-        if (
-            said.get("type") == _TOO_LONG
-            and isinstance(prompt_tokens, int)
-            and isinstance(context, int)
-        ):
-            return (
-                f"the prompt is {prompt_tokens:,} tokens and the model's context is "
-                f"{context:,}, so Ollama refused it. OLLAMA_NUM_CTX sets a local "
-                "model's context"
-            )
-        said = said.get("message")
-    if isinstance(said, str) and said.strip():
-        reason = _scrub(said)
-        if len(reason) > _REASON_QUOTED_CHARS:
-            return reason[:_REASON_QUOTED_CHARS].rstrip() + "…"
-        return reason
-    return _scrubbed(exc)
 
 
 class OllamaCloudProvider(OllamaProvider):

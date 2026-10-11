@@ -103,6 +103,38 @@ async def enqueue(
     return task
 
 
+#: The first of the two numbers an enqueue-deciding lock is taken on. Fixed and
+#: arbitrary. Postgres keeps the two-number locks apart from the one-number
+#: ones, so this cannot meet the test suite's claim on its database.
+_DECIDING_LOCK_SPACE = 4_917_205
+
+
+async def decide_alone(session: AsyncSession, kind: str) -> None:
+    """Make this transaction the only one deciding whether to enqueue `kind`.
+
+    For a producer that looks before it enqueues: "is one already waiting?
+    then do not add another". Two producers are two transactions, and neither
+    sees a row the other has not committed, so both looked, both found
+    nothing, and both enqueued. Measured on `request_crawl` with two sessions:
+    two crawls queued where the guard promised one.
+
+    Taken before the look. A second caller waits here until the first commits
+    or rolls back, and then looks: at the first one's row if it committed, at
+    nothing if it did not. The lock is the database's and ends with the
+    transaction, so it holds across processes (the API, `make crawl`, the
+    worker) and a caller that dies leaves nothing to clear. Hold the
+    transaction no longer than the look and the enqueue.
+
+    It needs each statement to see what has been committed since the last one,
+    which is Postgres's default (READ COMMITTED) and what the engine uses.
+    """
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:space, hashtext(:kind))").bindparams(
+            space=_DECIDING_LOCK_SPACE, kind=kind
+        )
+    )
+
+
 async def claim_task(
     session: AsyncSession,
     *,

@@ -562,3 +562,1016 @@ Scripts are in `storage/embed_rank_bench/` (`er_gemma_dump.py`,
 vectors and questions in `gemma_today/`. The comparison reads the vectors from
 that file now. When this table was made it searched the column in Postgres,
 with the same ranking: nearest by cosine, ties by id.
+
+## Semantic candidate expansion through the assistant (2026-10-10)
+
+> Kept as it was written. Its union was replaced the same night, and the
+> section after this one has why, the numbers for what replaced it, and a
+> check on questions nothing was fitted to. The decision below did not
+> change.
+
+**Decision: keep the experiment disabled.** Adding semantic candidates improves
+discovery of paraphrased targets, but too few reach the five passages given to
+the assistant. Natural-question hit rate also falls. This change is available
+behind `CHAT_SEMANTIC_CANDIDATES=false`; the local `.env` was not changed.
+
+### How the assistant uses the database
+
+```mermaid
+flowchart LR
+    UI[Assistant chat] --> API[Chat API and context builder]
+    API --> SQL[Structured SQL: applications and counts]
+    API --> Retrieval[Posting retrieval]
+    Retrieval --> Keywords[Keyword and title candidates]
+    Retrieval -. Experiment: add candidates .-> Semantic[BGE chunk semantic search]
+    Keywords --> Rank[Fuse ranks and optionally rerank]
+    Semantic --> Rank
+    Rank --> Context[Top five posting excerpts and source IDs]
+    SQL --> Context
+    Context --> Ollama[Local Ollama model]
+    Ollama --> UI
+```
+
+The model receives retrieved context; it does not query the database itself.
+The dashboard path uses application code and database queries. The existing
+MCP server forwards to HTTP endpoints and is not part of this chat retrieval
+path. Changing the transport to MCP would not fix candidate selection or ranking.
+
+At inspection, the database held 11,147 open postings and 142,577 current neural
+chunks covering 10,676 of them. The remaining 471 had no current neural chunks.
+Whole-posting vectors used `lexical-idf@2`; semantic chunk search used
+`BAAI/bge-small-en-v1.5` (384 dimensions, 500-character chunks, 25-character
+overlap) in pgvector. The normal keyword branch uses vectors to rank an already
+selected pool, so a semantically relevant posting with no keyword overlap may
+never become a candidate.
+
+### What changed
+
+- The opt-in branch adds up to 30 neural candidates to the keyword pool, using
+  the complete question for semantic discovery. It searches up to 200 nearest
+  chunks before deduplicating postings and applying the candidate limit.
+- Company, search-area, open-posting, model, and chunk-freshness filters still
+  apply. Explicit role/title pools remain constrained; company-only queries
+  retain their existing path. This is not semantic expansion of every intent.
+- Independent keyword and semantic lists are combined with reciprocal rank
+  fusion. A candidate absent from a list receives no contribution from it.
+  New semantic matches retain the excerpt that justified their retrieval.
+- The existing optional reranker can reorder the combined pool's first 30
+  candidates. The experiment adds no model dependency or automatic download.
+- With the flag off, or without an available semantic encoder, the existing
+  keyword behavior remains.
+
+Implementation: `packages/matching/retrieve.py`, `packages/core/config.py`, and
+`.env.example`. Regression coverage: `tests/test_chat_semantic_candidates.py`.
+
+### Evaluation and results
+
+The existing generated benchmark contained 56 target postings, each with a
+natural and a paraphrased question. Four targets were closed or missing, leaving
+52 targets and **104 questions searched against all 11,147 open postings**.
+Each question ran through `retrieve()` in three modes (312 retrievals): baseline,
+combined keyword/semantic candidates, and combined candidates with the cached
+`Qwen/Qwen3-Embedding-0.6B` embedding reranker. An additional five example
+questions ran in all three modes.
+
+The runner used a read-only database transaction and local models in offline
+mode. Settings were changed only inside the benchmark process and restored
+afterward. This comparison made no answer-generation or cloud calls.
+
+“Top five” means the known target posting appeared in the five returned
+passages. “Anywhere” includes the returned `more` list; it is not evidence that
+the target was in the model's five passages. MRR is mean reciprocal target rank,
+with absent targets scored zero. Latency covers retrieval, not answer generation.
+
+| Question type | Mode | Target in top five | Target anywhere | MRR | Median retrieval |
+|---|---|---:|---:|---:|---:|
+| Natural | Baseline | 39/52 (75.0%) | 45/52 | 0.552 | 0.681 s |
+| Natural | Combined | 36/52 (69.2%) | 49/52 | 0.572 | 0.699 s |
+| Natural | Combined + reranker | 37/52 (71.2%) | 49/52 | 0.596 | 2.481 s |
+| Paraphrased | Baseline | 2/52 (3.8%) | 6/52 | 0.030 | 1.009 s |
+| Paraphrased | Combined | 3/52 (5.8%) | 14/52 | 0.025 | 1.038 s |
+| Paraphrased | Combined + reranker | 4/52 (7.7%) | 14/52 | 0.062 | 2.667 s |
+
+Candidate expansion brings eight additional paraphrased targets into the
+returned list. With reranking, only four total reach the top five; ten of the
+fourteen discovered targets remain below that cutoff. Another 38 targets are
+still absent. Both discovery and ranking therefore need work. The combined
+reranked mode loses two natural-question top-five hits overall and adds roughly
+1.7–1.8 seconds to median retrieval time compared with baseline.
+
+Concrete changes from baseline to combined + reranker:
+
+| Question | Known target | Before → after |
+|---|---|---|
+| jobs leading teams that build and maintain payment processing platforms for corporate clients | Engineering Manager, Bill Pay | Absent → rank 4 |
+| jobs overseeing efforts to streamline or automate hiring processes while improving candidate experience | Recruiting Operations and Transformation Lead | Absent → rank 1 |
+| What Primary Care Nurse Practitioner jobs are available for adult patient care? | Primary Care Nurse Practitioner or Physician Assistant (Adults 14+) | Rank 3 → rank 20 |
+| What Support Engineer I weekend shift roles are open? | Support Engineer I (FC, Weekend Shift) | Rank 2 → rank 12 |
+
+### Five assistant-style examples
+
+These are retrieval observations, not human relevance grades or proof that
+every returned posting satisfies the question.
+
+| Question | Observation |
+|---|---|
+| Which jobs use Kafka? | Baseline returned Human Interest, New Relic, Commure, Elastic, and Celonis postings. Combined + reranker returned Notion, Fanatics, Chime, Human Interest, and Cloudflare postings. Exact skill evidence still needs grading. |
+| Which jobs involve processing continuous streams of events? | Combined + reranker returned two Celonis postings plus Roblox, Life360, and Vercel. The phrasing changes the candidate set substantially. |
+| Which jobs involve RAG? | Combined + reranker returned Sierra, two Striveworks postings, Oura, and NerdWallet. Acronym matching and broader semantic relevance need separate labels. |
+| Which jobs involve grounding language model answers in retrieved documents? | Baseline included two Datavant healthcare postings. Combined + reranker surfaced Roku AI Tooling, Ironclad Agentic Search, and Starburst Agent, but also Lilt Project Manager and Reflection Multilingual Data roles whose relevance needs review. |
+| How many applications need my review? | All three modes retrieved no job postings for this wording. The separate structured-count path remains responsible; an earlier live assistant check returned 1. |
+
+### Verification and limits
+
+All **267 tests passed** in the chat, assistant source/stream, and posting-chunk
+suites. The 11 new tests cover expansion without keyword overlap, the default-off
+path, an empty keyword pool, company/area/closed/stale filters, explicit roles,
+deduplication, missing encoders, application-status routing, the candidate bound,
+and exact-title ordering. Ruff lint/format checks, targeted mypy checks, and
+`git diff --check` passed.
+
+This is a small, reused, model-generated benchmark, not a held-out evaluation
+with owner-graded relevance. A missing target does not prove all five results
+are irrelevant, and a target hit does not establish precision across the five.
+The current comparison isolates retrieval; it does not test generated-answer
+correctness. Database changes and embedding coverage can change rerun results.
+
+Local artifacts are archived under the git-ignored directory
+`storage/embed_rank_bench/candidate_union_2026-10-10/`: `results.json` contains
+the complete rows, summaries, and example retrievals; `original_examples.json`
+preserves the preceding live checks; `evaluate.py` repeats the comparison and
+writes `rerun_results.json` without overwriting the recorded result. It also
+requires the existing `storage/embed_rank_bench/embed_rank/pool.json` and cached
+local models. Run from the repository root with the development database running:
+
+```sh
+HF_HUB_OFFLINE=1 TOKENIZERS_PARALLELISM=false PYTHONPATH=. .venv/bin/python storage/embed_rank_bench/candidate_union_2026-10-10/evaluate.py
+```
+
+### Follow-up report prompt
+
+```text
+Continue the Job_Runner assistant RAG investigation using the 2026-10-10
+section of docs/ML_EVALUATION.md and its archived evaluation artifacts.
+Keep CHAT_SEMANTIC_CANDIDATES disabled by default and do not change .env.
+
+Diagnose why 38 of 52 paraphrased targets remain absent and why 10 of the
+14 discovered targets remain below the top five. Separate intent/role routing,
+missing or stale embeddings, semantic candidate limits, fusion order, and
+reranker cutoff failures. Inspect concrete examples before proposing changes.
+Preserve company, location, explicit-role, open-posting, and freshness rules.
+
+Make only an evidence-supported, narrowly scoped improvement with regression
+tests. Compare baseline, combined candidates, and combined plus reranker on
+the same 104 questions and the five example questions. Add a separate held-out
+set if suitable labels are available; otherwise report that limitation.
+Use local models and a read-only live database for evaluation.
+
+Produce a report with the actual retrieval architecture, changes, target
+hit@5, target coverage anywhere, MRR, median latency, concrete wins and
+regressions, test results, and remaining gaps. Distinguish retrieval quality
+from answer correctness and known-target hits from top-five precision.
+Do not recommend enabling the experiment unless natural-question quality is
+preserved and paraphrase improvements hold on independent labeled examples.
+```
+
+## The assistant's retrieval, routing and tool paths, traced (2026-10-10 and 10-11)
+
+This follows *Semantic candidate expansion through the assistant*, above, and
+replaces its implementation of the union. Everything here was reproduced
+before it was changed, and the retrieval work was then checked on questions
+nothing had been fitted to.
+
+**In short.**
+
+- **Fixed, each with a test that failed first**: three races (a doubled
+  approval, a grade recorded for the wrong profile, two crawls from two
+  requests); questions read as naming a company they do not name; four pairs
+  of paraphrases that took different paths; the gap table's counts given as
+  counts of the whole corpus; a second model that demoted the job a question
+  named; local-model failures that all gave one piece of advice; three MCP
+  reporting gaps. 471 postings with stale chunks were re-chunked.
+- **Not fixed**: paraphrased questions mostly do not find their posting, and
+  the first-stage embedding model is why. A retried `apply` task can send a
+  form twice. One-word company names are still read from ordinary words.
+- **The semantic experiment stays off.** On the questions its ordering was
+  chosen on, it now finds more and costs nothing. On 80 other questions that
+  gain did not repeat: natural questions were unchanged, and paraphrased ones
+  moved down more often than up. There are no relevance grades to say whether
+  what it adds to the five shown is any good.
+
+What every retrieval number below measures is where one known posting lands.
+That is not answer accuracy and it is not relevance. A cited label is not a
+supported claim.
+
+### The architecture as the code has it
+
+Three paths, read from the code on 2026-10-10. Solid arrows are code; the two
+dashed ones are the only places a language model is in the loop.
+
+```mermaid
+flowchart TB
+    subgraph Dash["Dashboard assistant: no tool loop"]
+        UI["assistant.tsx / assistant-dock.tsx"] -->|"POST /chat/stream or /chat"| Prep["chat.prepare()"]
+        Prep --> Rules{"rules, in code"}
+        Rules -->|"§2.2 topic"| Refuse["refusal, no model"]
+        Rules -->|"typed crawl command"| Crawl["request_crawl(): enqueues a task"]
+        Rules -->|"anything else"| Ctx["_context(): SQL counts by status and reason, profiles"]
+        Ctx --> Gate{"retrieve(): is it about postings?"}
+        Gate -->|"no, or names nothing"| NotSearched["POSTINGS: not searched"]
+        Gate -->|"yes"| Cand["candidates: company filter, role table, title words, keyword regex scan over every open posting"]
+        Cand --> Area["search-area rule, open postings only"]
+        Area --> Order["order: keyword rank fused with vector rank among the candidates"]
+        Sem["bge-small chunk search, opt-in"] -.->|"CHAT_SEMANTIC_CANDIDATES"| Order
+        Order --> Rerank["second embedding model, opt-in: CHAT_RERANK_MODEL"]
+        Rerank --> Five["5 passages P1..P5 with excerpts, up to 100 more listed"]
+        Ctx --> Gaps["gap question: target_gaps(), SQL over the top 100 matches"]
+        Five --> Evid["how each posting asks for a named skill, from requirements_json"]
+        NotSearched --> Prompt["CONTEXT + QUESTION"]
+        Evid --> Prompt
+        Gaps --> Prompt
+        Prompt -.->|"one completion"| LLM["local Ollama model, or a provider picked for this question"]
+        LLM --> Post["cited_labels(), unsupported citations, the counts"]
+        Post --> UI
+    end
+    subgraph Mcp["MCP: the client's model picks tools"]
+        Client["Claude Code"] -.->|"tools/call"| Server["apps/mcp/server.py"]
+        Server -->|"owner forms: answers, code, grade"| Owner["the owner"]
+        Server -->|"HTTP"| Api["FastAPI routes"]
+    end
+    subgraph Work["Worker"]
+        Queue[("queue_tasks: leases, SKIP LOCKED")] --> Run["apps/worker/run.py"]
+        Run --> Apply["apply: browser, ATS form"]
+        Run --> CrawlJob["crawl, crawl_company, discover: polite fetcher"]
+        Run --> Inbox["inbox: IMAP"]
+        CrawlJob --> Match["matching pass: embed, score, chunk"]
+    end
+    Api --> DB[("Postgres + pgvector")]
+    Crawl --> Queue
+    Api -->|"POST /crawl, POST /applications"| Queue
+    Cand --> DB
+    Ctx --> DB
+    Match --> DB
+```
+
+What decides what:
+
+| Decision | Made by | Side effect |
+|---|---|---|
+| Refuse a §2.2 question | regex and word lists in `chat.py` | none |
+| Start a crawl from chat | a regex anchored to an imperative, in `chat.py` | enqueues one `crawl` task |
+| Whether postings are searched at all | words of the question, the company registry, open titles (`retrieve()`) | none |
+| Which postings are candidates | Postgres regex scan weighted by corpus rarity; the role alias table; title words | none |
+| Search area, open or closed, chunk freshness | rules and SQL filters | none |
+| Order of the candidates | reciprocal rank fusion of the keyword rank with vector ranks: `lexical-idf@2` per posting, bge-small per chunk | none |
+| Semantic candidates, when the flag is on | bge-small, nearest chunks over the corpus | none |
+| Re-ordering, when a model is named | Qwen3-Embedding-0.6B, a second embedding model, not a cross-encoder | none |
+| Application counts, the gap table, how a posting asks for a skill | SQL and the stored `requirements_json` | none |
+| The answer's words | **one** language-model completion over the context | an audit line and a timing line |
+| Which postings the answer cited | a regex over the finished text | none |
+
+The dashboard assistant is not an agent. The model is called once, is handed
+text, and returns text: it has no tools, cannot run a query, and cannot start
+anything. Everything it is told about the database was read by application
+code before it was asked. "Run crawler" is matched on the owner's own message
+before any provider is chosen, never on what a model wrote.
+
+The tool loop is on the MCP side, and it is the client's: Claude Code's model
+decides which tool to call. The server forwards each call to the HTTP API
+(`apps/mcp/client.py`), so the approval gate, the state machine and the
+one-crawl guard are the API's own code and there is one copy of each. MCP is
+a way to reach those routes. It is not retrieval: no MCP tool embeds, ranks or
+runs SQL, and moving the dashboard chat onto MCP would change none of the
+numbers below.
+
+### What was found, most consequential first
+
+"Confirmed" means reproduced: a failing test or a measurement on the owner's
+database, before any fix. "Code-level risk" means read from the code and not
+reproduced. Every confirmed row has a regression test that failed first.
+
+| # | What | Status | Where | Cause | What was done |
+|---|---|---|---|---|---|
+| 1 | Two approvals at once queue two runs of one application; an approval and a rejection at once are both accepted | Confirmed. Fixed | `apps/api/routers/applications.py`, `review_application`, `submit_otp` | The row was read without a lock, so each request saw `needs_review` before the other committed. With `make workers n=4`, two runs of one application is the form sent twice | The row is locked while it is decided. `tests/test_review_is_decided_once.py` |
+| 2 | A grade given on a form built for one profile is recorded against another | Confirmed, both MCP protocol revisions. Fixed | `apps/mcp/server.py`, `grade_posting` | `_OFFERED` is keyed by posting, and was read once for the form and again after the owner answered. A `next_to_grade` for another profile in between replaced the entry | One read, by a resolver the form and the grade share; the form names the profile. `tests/test_mcp_grading.py` |
+| 3 | Two crawl requests at once queue two crawls; two ticks ending at once schedule two successors | Confirmed with separate transactions. Fixed | `apps/worker/crawl_job.py`, `request_crawl`, `_schedule_next_tick` | A count and then an enqueue, in two statements | A transaction-scoped Postgres advisory lock taken before the count (`queue.decide_alone`). `tests/test_crawl_command.py` |
+| 4 | A question that names no company is answered "no open postings at Native AI" | Confirmed on 3 of 104 benchmark questions. Fixed for two causes; one-word names remain (#17) | `packages/matching/retrieve.py`, `_named_companies` | A two-word name matched as a bag of words ("AI-native" is not Native AI), and "at fast-growing firms" matched the company Fast | Names match in order; a common word after "at" is a name only where a name would stand. `tests/test_retrieval_names.py` |
+| 5 | Two ways of asking one thing take two paths | Confirmed on all four pairs. Fixed | `retrieve()`'s gate and terms | One word each: "intelligence" is rare enough to search for and "AI" is not; "review" is in a title; "target" is in 19% of descriptions | "artificial intelligence" is read as "AI"; a first-person question about applications is not a search for a title; "target" is framing; a question naming nothing is not searched. `tests/test_chat_intent_routing.py` |
+| 6 | Counts over the top 100 matches are given as counts over all 11,147 postings | Confirmed in the context the model was handed. Fixed in the context and the prompt; a model can still misstate it | `chat._gaps_section`, `CHAT_SYSTEM` | The gap table's heading did not say what it was counted over, and sat under "searched 11147 of 11147" | The heading states the cohort and both larger numbers; prompt v5; `gap_postings_counted` on the reply |
+| 7 | A question about postings carries the owner's résumé skills | Confirmed. Fixed | `chat.asks_about_gaps` | The gap words alone were the test, and "skills", "learn", "improve", "missing" are in questions about postings | The question must be about the owner, or about no posting |
+| 8 | Semantic candidates push a job named in the question out of the five shown | Confirmed (39 to 36 of 52). Replaced, still off | `retrieve()`, the union | The two lists were fused as equals, so a semantic candidate at rank 1 tied with the best keyword match | Keyword order is kept; a title the question names is held; the rest merge by rank below |
+| 9 | The second model demotes a job named in the question | Confirmed (rank 3 to 20, 2 to 12). Fixed for the cases measured | `retrieve._rerank_text` | It read a 500-character chunk, which never contains the title | It reads title, company and place above the chunk, and is not asked about a title the question names |
+| 10 | Containing a skill's name is taken for asking for it | Confirmed: of five postings shown for Kafka, one requires it | context built in `chat.py` | The excerpt shows the word and not how it is asked for | A line under each posting from `requirements_json`: required, preferred, named, or one of several options, with the posting's line. `packages/matching/evidence.py` |
+| 11 | `grounded: true` reads as "checked" | Confirmed by reading: it is set for every generated answer | `chat.reply_for`, `ChatReply` | It records that context was supplied | Documented in the schema. `unsupported_citations` reports a cited label that was never supplied, and the dock shows it. Five `postings_*` counts tell the numbers apart |
+| 12 | A missing model and a stopped server give one message with both remedies | Confirmed against Ollama 0.40.0. Fixed | `packages/llm/provider.py`, `chat.did_not_answer` | One error type for every failure | `ModelUnreachable`, `ModelMissing`, `ModelTimedOut`, each with its own remedy. `tests/test_local_model_diagnostics.py` |
+| 13 | MCP: a dead API under the name of a result; a request that got no answer fails with no words; the owner's form does not say which application | Confirmed, all three. Fixed | `apps/mcp/server.py`, `apps/mcp/client.py` | Six tools wrapped whatever came back; httpx's timeout has no message; the form showed the questions and not whose | `_under`; `ApiDidNotAnswer`, which says whether a write may have happened; the form carries the posting's address |
+| 14 | 471 open postings had no usable chunks | Confirmed: stale, not failed | `posting_chunks` | Their text changed in the crawl of 2026-10-07 and the worker stopped before a matching pass reached them | `make chunk-postings`: 471 postings, 6,460 chunks (about 0.62M tokens), 42 s. 11,147 of 11,147 covered |
+| 15 | "searched 0 of 11,147, 11,147 not searchable yet" for a question that named nothing | Confirmed. Fixed | `retrieve()` | An empty subject cannot be made into a vector, and was reported as a corpus that could not be read | `Retrieval.unnamed`, and a context line that says so |
+| 16 | A retried `apply` task can send a form twice | Code-level risk. Not reproduced, not fixed | `apps/worker/apply_job.py`, `_submit` | `adapter.submit()` sends the form, and the `submitted` status is committed after it. A worker that dies between the two leaves a `running` application, which the next claim resumes from the top | Left alone: it is the submission path, and reproducing it means submitting. See *What is still wrong* |
+| 17 | A one-word company name read from an ordinary use of the word | Confirmed on 4 of 80 held-out questions. Not fixed, on purpose | `retrieve._one_word_names_it` | "Front Desk", "sense surroundings", "managing Okta administration", "Marketo lead processing" | Left so the held-out set stays one nothing was fitted to |
+| 18 | Paraphrased questions do not find their posting | Measured. Not fixed | bge-small chunk search | See *Where a target is lost* | The limit of the first-stage model, and of the benchmark |
+
+**The chunk repair, and the section above this one.** *Embedding new
+postings*, written the same night by another session, describes the corpus as
+it stood before row 14: 10,676 postings with current chunks and 471 stale.
+Those 471 were re-chunked at 00:16 on 2026-10-11 by `make chunk-postings`,
+the existing backfill, and the count is now 11,147 of 11,147 with 149,037
+current chunks and none stale: about 14.3M tokens, at the 96 tokens a chunk
+measured on 2026-10-05 (13.6M over 141,603). Its timing samples are of the newest 100 and
+500 postings and are not affected. The backlog it lists as waiting is no
+longer there to be timed.
+
+### Where a target is lost
+
+Each of the 104 questions was put through `retrieve()` with the experiment on
+and no second model, and every list it built on the way was kept
+(`rag_trace_2026-10-10/trace.py`). Beside them, two ranks over the whole
+corpus that the search itself never computes: the target's place among all
+5,281 in-area postings by the keyword scan, and its place by bge-small's best
+chunk. The first stage that loses each target:
+
+| First stage that loses it | Natural | Paraphrased |
+|---|---:|---:|
+| Shown, in the five | 44 | 3 |
+| Routing: answered from a role's postings, and the target is not one | 1 | 0 |
+| Coverage: no current chunks, and outside the keyword pool | 0 | 2 |
+| Candidate limit: chunk rank 31 to 100 | 0 | 8 |
+| Chunk search: chunk rank 101 to 500 | 0 | 19 |
+| Chunk search: chunk rank over 500 | 0 | 9 |
+| Ordering: found, within a second model's 30, below the five | 7 | 7 |
+| Ordering: found, below a second model's 30 | 0 | 4 |
+
+Traced before the chunk repair, so the two coverage rows are the stale
+postings. One natural row is corrected for the one-term rule described in
+the next section, which was still in when the trace ran: thirty-eighth then,
+seventeenth without it. No target was lost to the search area, to a closed posting or to
+the 200-chunk read: every one of those is a filter doing what it says.
+
+The two ranks, which say how far out of reach the lost ones are:
+
+| Target's rank over the in-area corpus | Natural | Paraphrased |
+|---|---:|---:|
+| Keyword scan: median | 2 | 353 |
+| Keyword scan: within 5 / 30 / 120 | 37 / 42 / 45 | 3 / 6 / 13 |
+| Keyword scan: no search term in the posting at all | 4 | 9 |
+| bge-small best chunk: median | 8 | 176 |
+| bge-small best chunk: within 5 / 30 / 100 / 500 | 23 / 33 / 38 / 46 | 1 / 10 / 19 / 39 |
+
+Read together:
+
+- **For 28 of the 49 paraphrased misses the first-stage model is the limit.**
+  bge-small puts the target outside the top 100 of 5,281. No pool this search
+  could afford reaches rank 176, and nothing that only re-orders can bring
+  back what was never found. This is CLAUDE.md §21's finding again, with the
+  rank attached.
+- **8 more are a candidate limit.** They sit at chunk rank 31 to 100, so a
+  pool of 100 would hold them. They would still have to be read by a second
+  model to reach the five: about 100 chunks (some 9,600 tokens) at 19 chunks
+  a second on this machine is five seconds a question. Not built.
+- **11 were found and ordered below five**, which is the only group a better
+  ordering can help. That is what the next section is about.
+- **The one natural routing row is an accident of the role table.** "What are
+  the 2027 Summer Intern Software Engineer roles…" is answered from the
+  software-engineer role's postings. The target is titled "2027 Summer
+  Intern, MS/PhD, Software Engineer, Simulation Evaluation ML Model", and
+  `roles.canonical` reads a title up to its first comma: "2027 summer
+  intern", no role. The keyword scan had it first in the corpus. Not fixed:
+  one case, and the table also feeds scoring and Gate 5 (CLAUDE.md §22).
+
+And one thing about the benchmark itself. A paraphrased question was written
+to share no title word with its posting, and most of them describe a kind of
+job, not one job: "jobs focused on finding new clients and closing deals to
+grow revenue" was written from one account-executive posting and is answered
+by every one of several hundred. Where the target lands says how well one
+posting can be recovered from a description that fits many. It does not say
+whether the five shown answer the question, and with no relevance grades
+(`posting_labels` holds 0 rows) nothing here can.
+
+### The ordering that replaced the first union, and what it was chosen on
+
+The first union lost natural questions for two reasons, both visible in the
+trace:
+
+- **It fused the two lists as equals.** Reciprocal rank fusion gives rank 1 of
+  the semantic list the same score as rank 1 of the keyword list, so a
+  posting only the keywords found at rank 5 fell to about tenth. It also
+  dropped the baseline's own second signal: with the experiment on, the
+  vector rank among the keyword candidates was computed and not used.
+- **The second model never saw a title.** It read the chunk the first model
+  ranked the posting by, 500 characters from somewhere in the description. A
+  question that names the job was judged against text that does not.
+
+Before changing `retrieve()`, the orderings were compared without it. For 25
+of the 52 targets (50 questions) every candidate either mode produced was
+scored by Qwen3-Embedding-0.6B twice, on the chunk alone and on the chunk
+under the posting's title, company and place; `simulate.py` then re-orders
+the saved lists. A target in the five shown, of 25:
+
+| Ordering | Natural | Paraphrased |
+|---|---:|---:|
+| Baseline | 21 | 1 |
+| First union | 18 | 2 |
+| First union, second model on the chunk (what was recorded) | 18 | 2 |
+| First union, second model on title and chunk | 21 | 4 |
+| Titles holding 1 search term held, then union | 21 | 3 |
+| Titles holding 2 held, then union | 22 | 3 |
+| Titles holding 3 held, then union | 20 | 2 |
+| Titles holding 2 held, then union, second model on title and chunk | **23** | **5** |
+| Titles holding 2 held, then union, second model on the chunk | 23 | 3 |
+| Second model as one voter of three (three-way fusion) | 20 | 2 |
+
+So two changes, and one number that was chosen:
+
+- **A posting the question names by its title keeps its keyword place.** When
+  the title holds two of the question's search terms as whole words
+  (`ANCHOR_TITLE_TERMS`, `_named_by_its_title`), the posting stays where the
+  keyword order put it. Semantic candidates are merged by rank with the rest,
+  below it, and the second model is not asked about it. "What Support
+  Engineer I weekend shift roles are open?" names "Support Engineer I (FC,
+  Weekend Shift)" this way. Held only when something could move it: with the
+  experiment off and no second model the order is the keyword order,
+  unchanged.
+- **The second model reads the title above the chunk** (`_rerank_text`), with
+  the experiment on or off.
+- **Two, of 1, 2 and 3.** At 1 a paraphrase holds whatever shares one word
+  with it by chance. At 3 a short title the question spells out is not held.
+  This is a number fitted to 50 questions, which is why it was then run on
+  80 others that had never been through `retrieve()`.
+- **Two always, even when the question has one search term.** Letting the
+  only term be enough was built first, on an argument, and then measured.
+  Three dev questions have one term, and in each it is incidental: "Customer
+  Experience Manager roles at a global network security and performance
+  company" has "network", every other word being too common to search for,
+  and thirty Network Engineer titles were held ahead of the job asked for
+  (thirty-first with both on; first without the special case). The other two
+  were equal or better without it, none was worse, and the three held-out
+  questions with one term came out the same either way. It was removed, the
+  six questions were re-run (`rerun_one_term.py`), and the tables below are
+  after that. The files as first written are kept as
+  `results_<set>_one_term_held.json`.
+
+What this does not use: a similarity cut-off. Dropping a weak fifth result
+needs a score below which a posting is not an answer, and there is no graded
+set to find that score on. An invented one would be a number that looks like
+a decision.
+
+### Before and after, on the questions the ordering was chosen on
+
+52 postings, a natural and a paraphrased question each: 104 questions over
+11,147 open postings, 5,281 of them in the search area. "Recorded" is the
+code before any of this, from `candidate_union_2026-10-10/results.json`; it
+was re-run on 2026-10-10 before anything was changed and all 312 target ranks
+came back the same. "Now" is `rag_trace_2026-10-10/results_dev.json`, after
+the chunk repair. The posting a question was written from:
+
+| Question | Mode | In the five shown | Anywhere in the list | MRR | Median retrieval |
+|---|---|---:|---:|---:|---:|
+| Natural | Recorded: baseline | 39/52 (75.0%) | 45 | 0.552 | 0.68 s |
+| Natural | Recorded: first union | 36/52 (69.2%) | 49 | 0.572 | 0.70 s |
+| Natural | Recorded: first union, second model | 37/52 (71.2%) | 49 | 0.596 | 2.48 s |
+| Natural | **Now: experiment off (what ships)** | **40/52 (76.9%)** | 47 | 0.586 | 1.30 s |
+| Natural | Now: off, with the second model | 42/52 (80.8%) | 47 | 0.639 | 4.31 s |
+| Natural | Now: experiment on | 43/52 (82.7%) | 51 | 0.622 | 1.34 s |
+| Natural | Now: on, with the second model | 46/52 (88.5%) | 51 | 0.689 | 4.58 s |
+| Paraphrased | Recorded: baseline | 2/52 (3.8%) | 6 | 0.030 | 1.01 s |
+| Paraphrased | Recorded: first union | 3/52 (5.8%) | 14 | 0.025 | 1.04 s |
+| Paraphrased | Recorded: first union, second model | 4/52 (7.7%) | 14 | 0.062 | 2.67 s |
+| Paraphrased | **Now: experiment off (what ships)** | **3/52 (5.8%)** | 6 | 0.034 | 1.96 s |
+| Paraphrased | Now: off, with the second model | 3/52 (5.8%) | 6 | 0.034 | 5.14 s |
+| Paraphrased | Now: experiment on | 3/52 (5.8%) | 14 | 0.032 | 2.07 s |
+| Paraphrased | Now: on, with the second model | 5/52 (9.6%) | 14 | 0.060 | 5.25 s |
+
+Per question, against "experiment off" in the same run (up / down / same):
+
+| | Natural | Paraphrased |
+|---|---|---|
+| Off, with the second model | 7 / 0 / 45 | 4 / 2 / 46 |
+| Experiment on | 7 / 2 / 43 | 10 / 4 / 38 |
+| On, with the second model | 11 / 0 / 41 | 11 / 3 / 38 |
+
+What moved, and why:
+
+- **What ships gained one of each.** Natural: the two questions read as
+  naming Native AI went from no result to first, and one target slipped from
+  fifth to seventh when the chunk repair re-ordered its neighbours. Three
+  others moved a place. Paraphrased: one target came into the five (16 to 4)
+  once its posting had chunks again.
+- **The second model no longer costs a question that names its job.** With
+  it on and the experiment off, 7 natural questions moved up and none down
+  (42 of 52, against 40 without it). Recorded, the same model took 39 to 37.
+  The two regressions this work was asked about: the Primary Care Nurse
+  Practitioner question is third with or without it, where it had gone to
+  twentieth, and the Support Engineer I weekend-shift question is first,
+  where it had gone to twelfth.
+- **The experiment no longer costs natural questions on this set**: 43 of 52
+  against 36 for the first union.
+- **On paraphrased questions the experiment alone changes what is listed, not
+  what is shown.** 14 targets in the list against 6, and 3 in the five
+  either way. The second model takes that to 5.
+- **Two things got worse and are in the numbers above.** With the
+  experiment on, two natural targets moved down (first to fourth, and fourth
+  to seventh, out of the five), and four paraphrased targets the keywords
+  had found moved down as semantic candidates were merged in among them.
+  With the second model, "What jobs involve keeping a new workspace running
+  smoothly…" went from first to tenth: a paraphrase the keywords had right,
+  and no title to hold it by.
+
+Retrieval time is not comparable between the recorded run and this one, and
+the table should not be read across them: see *Checks*, where what ships
+takes 0.6 s on its own, on the committed code and the changed code alike.
+Within one run, the experiment adds 0.04 to 0.22 s and the second model
+about 3 s.
+
+Of everything shown, in every mode: no closed posting and none outside the
+search area, in 520 shown per mode here and 386 to 388 per mode on the
+held-out set (`constraints.py`, judged by the rule `retrieve()` uses, on each
+posting's full text).
+
+### The same four modes on questions nothing was fitted to
+
+`gemma_today/questions.json`: 40 postings first seen on 2026-10-06 and 10-07,
+a natural and a paraphrased question each, written by Gemini for the
+EmbeddingGemma comparison above. No posting is in both sets. None of these
+80 questions had been through `retrieve()`, and the ordering was fixed before
+they were. All 40 postings are still open.
+
+| Question | Mode | In the five shown | Anywhere in the list | MRR | Median retrieval |
+|---|---|---:|---:|---:|---:|
+| Natural | Experiment off (what ships) | 22/40 (55.0%) | 24 | 0.477 | 0.84 s |
+| Natural | Off, with the second model | 22/40 (55.0%) | 24 | 0.478 | 3.72 s |
+| Natural | Experiment on | 22/40 (55.0%) | 25 | 0.475 | 0.90 s |
+| Natural | On, with the second model | 22/40 (55.0%) | 25 | 0.480 | 3.70 s |
+| Paraphrased | Experiment off (what ships) | 5/40 (12.5%) | 12 | 0.148 | 1.59 s |
+| Paraphrased | Off, with the second model | 8/40 (20.0%) | 12 | 0.134 | 4.90 s |
+| Paraphrased | Experiment on | 7/40 (17.5%) | 12 | 0.128 | 1.81 s |
+| Paraphrased | On, with the second model | 7/40 (17.5%) | 12 | 0.101 | 4.93 s |
+
+Per question, against "experiment off" (up / down / same):
+
+| | Natural | Paraphrased |
+|---|---|---|
+| Off, with the second model | 1 / 1 / 38 | 5 / 4 / 31 |
+| Experiment on | 1 / 1 / 38 | 2 / 8 / 30 |
+| On, with the second model | 2 / 1 / 37 | 5 / 5 / 30 |
+
+**The gains did not repeat.**
+
+- **Natural questions are preserved and not improved**: 22 of 40 in every
+  mode. On the questions the ordering was chosen on it was 40, 43 and 46 of
+  52. Part of that gain was the fit.
+- **On paraphrased questions the experiment found nothing new.** 12 targets
+  in the list with it and 12 without, where the dev set went from 6 to 14.
+  Two more reached the five and eight moved down, and the mean reciprocal
+  rank fell in every mode that is not the baseline, lowest with both on
+  (0.148 to 0.101).
+- **Why it differs**: Gemini's paraphrases keep more of a posting's own words
+  than Nemotron's, so the keyword order is already better here (12.5% in the
+  five against 5.8%), and merging semantic candidates into a list that was
+  right moves the right posting down.
+
+Four of the 80 were read as naming a company and were answered from that
+company's postings (#17), which is part of why the natural row is 55% and
+not higher. They were left, so that this set had nothing fitted to it.
+
+Both sets are small, both were written by a model, and each question has one
+target. 22 against 22 is a tie. 2 up and 8 down is 10 questions.
+
+### Paraphrases, routed and answered
+
+Each question was put through the real `prepare()` before and after, on the
+owner's database, read-only. The route is decided in code before any model is
+asked, so it is the same every time:
+
+| Question | Before | After |
+|---|---|---|
+| Show me AI engineer jobs. | role table, 66 titles | the same |
+| Are there any openings for engineers working in artificial intelligence? | keyword scan on "intelligence": Governance Intelligence, Regional Intelligence Analyst, Intelligence Systems | title search for "engineers" and "AI", 118 titles; the five shown are AI Engineer postings |
+| Any jobs based on AI? | title search for "AI", 240 titles | the same |
+| Which roles focus on artificial intelligence? | keyword scan: Customer Intelligence, Governance Intelligence, a marketing manager | title search for "AI", 240 titles: the same five as the line above |
+| What am I lagging on? | not searched; gap table | the same |
+| Which skills am I missing for my target jobs? | keyword scan on "target": two growth-marketing managers, three sales and compliance roles, each with a gap line of its own; and the gap table | not searched; gap table |
+| How many applications are waiting for my review? | not searched | the same |
+| Do I have any applications that need me to review them? | keyword scan on "review": a Clinical Review Nurse, a Code Review product manager, three others | not searched |
+
+The first pair still takes two paths, and that is left. "AI engineer" is an
+alias in the role table and "engineers working in artificial intelligence" is
+not; making it one by matching an alias's words in any order would also turn
+"data engineering roles" into the data-engineer role, which
+`tests/test_chat_title_words.py` holds apart. Both now lead with the same
+kind of posting, and the totals say what each counted: 66 titles the role
+table reads as AI or ML engineer, 118 titles holding both words.
+
+Then all thirteen (these eight and the five examples) were asked of the
+running API through `/chat/stream`, with the local model, and two of them
+through `/chat` as well (`ask_live.py`, `live_answers.json`).
+
+| | |
+|---|---|
+| Answered | 13 of 13, by `hf.co/unsloth/Qwen3-8B-GGUF:Q3_K_M`, `local: true` |
+| First piece of the answer | median 4.9 s, longest 7.5 s, with the model in memory; 17.9 s for the one question that had to load it |
+| Whole answer | median 14.0 s, longest 21.0 s |
+| `/chat` against `/chat/stream`, two questions | every field but the words themselves identical |
+| Citations of a posting never supplied | none in 13 |
+| Largest prompt | 1,794 tokens of a 4,096 context ("Which jobs use Kafka?", with the evidence lines). The largest the changes can build, a gap question about named jobs, is about 2,570 by the same ratio. No call reached the limit |
+
+Counts, against SQL run in the same minute:
+
+| Asked | Answered | SQL |
+|---|---|---|
+| How many applications are waiting for my review? | 1 | `status = 'needs_review'`: 1 |
+| Do I have any applications that need me to review them? | one | 1 |
+| How many applications need my review? | 1 | 1 |
+| What needs me? | 1 to review, 3 to finish by hand | 1, and 3 with `failure_reason = 'manual_completion_required'` |
+| Show me AI engineer jobs. | 66: 19, 43, 2, 1, 1 by kind | 66 open in-area titles of that role, by `retrieve()` |
+| Which skills am I missing for my target jobs? | "across the top 100 open matches" | 100 counted, of 4,893 open postings matched, of 11,147 open |
+
+How the answers read against the context each was given. This is one reader
+checking thirteen answers, not a metric:
+
+- **Scope held.** Neither gap answer gave its counts as counts of all
+  postings. "Which jobs use Kafka?" cited two of the five and said why: one
+  prefers it ("e.g. Kafka or Kinesis"), one requires it, and "these are the
+  only postings where Kafka is explicitly mentioned as a required or
+  preferred skill". Before, all five were postings that "use Kafka".
+  "…grounding language model answers in retrieved documents" cited the two
+  Starburst postings and Snowflake's search role, and left the two
+  health-records postings alone.
+- **One application was counted twice, and the context was why.** The first
+  run answered "you have one application that needs your review.
+  Additionally, there is one in the review category under WAITING ON YOU".
+  It is the same application, listed by status and again by what it needs.
+  The second list now says it is part of the first, and asked again the
+  answer is one.
+- **A place was miscopied**: "San City, CA" for "San Francisco, CA", in one
+  answer.
+- **Three of eight quotations were not word for word.** "shipping agentic
+  features" for "You will ship agentic features", and two like it. Each is in
+  the excerpt in other words. Nothing checks a quotation.
+- **"You are missing the following skills".** The prompt asks for "not on
+  your résumé" and the model used the question's word, then added "not
+  listed on any of your résumés".
+- **One answer repeated a line written for the model**: "The owner sees the
+  rest listed by kind under your answer."
+
+The answers before these changes were not regenerated. What is reproduced for
+"before" is the context each question was handed, which is deterministic, and
+which is where each of the failures above came from.
+
+### How a posting asks for a skill
+
+"Which jobs use Kafka?" returns five postings whose excerpts all say Kafka,
+in every mode. By `requirements_json`, how the five ask for it:
+
+| Mode | Required | Preferred | Named, under no requirements heading |
+|---|---:|---:|---:|
+| Experiment off (what ships) | 1 | 1, as one of several options | 3, two of them as an option |
+| Off, with the second model | 0 | 2, both as an option | 3 |
+| Experiment on | 1 | 2, one as an option | 2, one as an option |
+| On, with the second model | 0 | 2, both as an option | 3 |
+
+One of five requires it, and with the second model none does: it prefers the
+postings that talk about streaming most, which is not the ones that ask for
+Kafka. Nothing ranks by this. What changed is that each posting now carries
+the reading and the posting's own line, and the prompt tells the model to call
+a skill required only where that line does.
+
+An option is read from the quoted line by rule (`evidence.is_option`):
+"Kafka or Kinesis", "Kafka, Kinesis, or Pub/Sub", "Kafka/Kinesis", "such as
+Kafka", "e.g. Kafka". It is a rule over one line and it will miss some; the
+line is always quoted beside it so a reader can check.
+
+### The five examples
+
+What was shown, by mode (`results_dev.json`, `examples`). Not graded. The
+four in bold were read: the events posting plans conferences, the Etched one
+says nothing of RAG, retrieval or a language model, and the Datavant ones
+retrieve medical records. The rest were not read, and Blue Owl's security
+role, which looks out of place for RAG, is about securing RAG pipelines.
+
+| Question | What ships | Experiment on | On, with the second model |
+|---|---|---|---|
+| Which jobs use Kafka? | Human Interest, New Relic, Commure, Elastic, Celonis | Elastic, Life360, Notion, LiveRamp, Commure | Fanatics twice, Celonis twice, Notion |
+| Which jobs involve processing continuous streams of events? | Anthropic, Commure, Shield AI, MaxInsights, Vercel | Anthropic, Shield AI, Celonis twice, and **Snowflake's Strategic Events Specialist** | Life360, Roblox, Elastic's Sr. Director of Enterprise Data, Celonis twice |
+| Which jobs involve RAG? | Oura, Rescale, MaintainX, Elastic, Ironclad | Oura, Elastic, Rescale, Snowflake, and **Etched's New Media, Experiences** | Oura, Striveworks twice, Riot Games, Blue Owl's Staff Security Engineer |
+| Which jobs involve grounding language model answers in retrieved documents? | Starburst twice, Snowflake, and **two Datavant Health Information Specialists** | Roku AI Tooling, Starburst twice, Abridge, Fivetran | Abridge, Reflection AI, Roku, Starburst, Tavus |
+| How many applications need my review? | not searched, in every mode | | |
+
+The fourth row is the experiment at its best: the two health-records
+postings, there for the words "retrieved" and "documents", are gone. The
+second and third are it at its worst: an events planner for "streams of
+events", and a posting with nothing of RAG in it. Both are the same
+mechanism, and without grades there is no way to count which happens more.
+
+### MCP, the queue and the approval gate
+
+Each of these was reproduced before it was changed. The reproductions use two
+or more real database transactions, or the MCP library's own client answering
+the owner's form: a single rolled-back test transaction has no second caller
+in it, and a mock of the form would test the mock.
+
+| What was tried | Before | After |
+|---|---|---|
+| Three approvals of one application at once (`asyncio.gather`, three sessions) | 3 accepted, 3 `apply` tasks queued | 1 accepted, 2 told `invalid_state`, 1 task |
+| An approval and a rejection at once | both accepted | one accepted, the other told `invalid_state`; a run is queued only if the approval won |
+| A verification code sent three times at once | 3 accepted, 3 tasks | 1 accepted, 2 `invalid_state`, 1 task |
+| A crawl requested while another request has queued one and not committed | 2 crawls queued | the second waits, then is told one is waiting; 1 queued |
+| The same, and the first request rolls back | (not a failure before) | the second goes through; 1 queued |
+| Five crawl requests at once | 2 or more queued | 1 queued |
+| Two dispatch ticks ending at once | 2 successors scheduled | 1 |
+| A crawl being retried (pending, one attempt used), then asked for again | refused, as it should be | refused; one that failed for good no longer holds the place |
+| A posting offered for profile A, its form open, offered again for profile B, then graded | recorded for B, stream B, in both protocol revisions | 2025-11-25: recorded for A, the form it was given on. 2026-07-28: the answer to A's form is dropped and the owner is asked about B |
+| A grade when the form is closed | nothing written | nothing written |
+| `list_candidates` and five other listing tools with the API down | `{"candidates": {"error": …}}` | `{"error": …}` |
+| A tool call the API takes and never answers | "Error executing tool review_queue:" and nothing after the colon | `code: no_answer`; a read says it can be asked again, a write says it may have been carried out and to look first |
+| The owner's form for answers, and for a code | the employer's questions, no word of which application | the posting's address is in the form's own text |
+
+How each is held:
+
+- **The approval gate locks the row it decides** (`session.get(...,
+  with_for_update=True)`). The second caller waits, reads what the first
+  left, and is refused by the check that was always there. Nothing about
+  what may be approved has changed.
+- **A producer that looks before it enqueues takes a lock first**
+  (`queue.decide_alone`): `pg_advisory_xact_lock`, keyed by task kind. It is
+  the database's, so it holds across the API, `make crawl` and the worker,
+  and it ends with the transaction, so a caller that dies leaves nothing to
+  clear. A partial unique index was the other pattern in this repository
+  (`uq_companies_verified_board`, `uq_inbound_messages_candidate_message`)
+  and does not fit: a running tick and its pending successor are two
+  unfinished crawl tasks on purpose, and it would need a migration. An
+  in-process lock would hold for one process of three.
+- **The grade is bound by the library's resolver, not by a second lookup.**
+  A resolver runs once a call and its result is handed to everything that
+  asks, so the form and the grade hold one offer. Under 2026-07-28 the call
+  is made again with the answer and the offer is read again; the library
+  takes an answer only for the wording it was given to, and the form now
+  names the profile, so an answer to a form about another profile is dropped
+  and asked again. A restart empties what was offered, and the grade is then
+  refused before any form with "ask `next_to_grade` first", as before.
+- **The stream a grade was served from** follows the offer. A second offer of
+  the same posting for the same profile can carry a newer stream. The API
+  recomputes the stream and lets a client's value only weaken it
+  (`routers/labels.py`), so that cannot record `unseen` for a posting the
+  ranker has since scored.
+
+Inspected and left as they are:
+
+- **Tool errors are a result, not `isError`.** A failed API call comes back
+  as `{"error": …, "code": …}` in a successful tool result. That is this
+  server's convention and its tests hold it (`test_unreachable_api_is_reported_not_swallowed`),
+  and the six tools that hid it under another name are fixed. A client that
+  reads only `isError` would take a failure for a success: not changed,
+  because it changes every tool at once.
+- **Untrusted text.** A posting's description reaches the calling model
+  through `next_to_grade`, `search_postings` and `my_matches`, and it can say
+  anything. What stands between that and an action: the three tools that
+  move something on the owner's say-so make the client ask every time, the
+  answers, the code and the grade are typed by the owner into a form and are
+  not arguments, every id is checked on its way into a path, and nothing
+  submits. In the dashboard chat the model has no tools at all; prompt v5
+  also tells it that an excerpt or a subject line is text to read.
+- **Retries.** Queue handlers are written to be repeatable and the crawl is
+  (change detection, upserts). The one that is not is #16.
+
+### The local model
+
+Checked on 2026-10-10 and 10-11, Ollama 0.40.0:
+
+| Check | Result |
+|---|---|
+| Executable, server | `/usr/local/bin/ollama`; `ollama serve` listening on 127.0.0.1:11434 |
+| Address the API process uses | `http://localhost:11434`. No `OLLAMA_*` variable is set in the process or in `.env`, so it is the default in `core/config.py` |
+| Configured model | `hf.co/unsloth/Qwen3-8B-GGUF:Q3_K_M`, installed, 4.12 GB. `/api/ps` showed nothing loaded before the first question |
+| A model Ollama does not have | HTTP 404, `{"error": "model '<tag>' not found"}`, streamed or not |
+| Nothing listening | httpx: "All connection attempts failed" |
+
+"Ollama call failed: All connection attempts failed", the error this work
+started from, is the second row: the daemon was not running when that
+question was asked. It is running now and the model is there.
+
+Before, both failures produced one sentence: "The local model is not
+answering (…). Start Ollama with `ollama serve`, or pull the configured model
+with `ollama pull …`." A model that was not pulled told the owner to start a
+daemon that had just answered them. Now, on both routes:
+
+| Failure | Raised as | What the owner is told |
+|---|---|---|
+| Connection refused, or timed out connecting | `ModelUnreachable` | nothing is listening at the address, which is named; start it with `ollama serve` |
+| 404 and "model … not found" | `ModelMissing` | Ollama is running and does not have that model; `ollama pull <the model asked for>` |
+| No reply in time | `ModelTimedOut` | it was reached and did not reply; it may be loading the model, or short of memory; ask again |
+| The prompt is longer than the context | `PromptTooLong` (unchanged) | both numbers, and `OLLAMA_NUM_CTX` |
+| Anything else | `LLMError` (unchanged) | the daemon's own words, and both remedies |
+| The model stops part way through a stream | an `error` frame (unchanged) | it stopped part way; no closing reply, so no half answer with sources under it |
+
+Every one of them ends "Nothing was sent anywhere else". A test builds a
+recording stand-in for `build_provider` and asserts the only provider asked
+for was `ollama`: no failure reaches for a cloud provider, on `/chat` or
+`/chat/stream`. The per-question provider choice and the separate consent for
+recruiter mail are untouched. A 404 that is not about the model (a wrong base
+URL answers 404 too) is deliberately not read as a missing model.
+
+### What is still wrong
+
+Passing tests say the changes do what their tests say. They do not say the
+assistant's answers are right, and several things here are known not to be.
+
+- **Paraphrased questions mostly do not find their posting.** See the tables
+  above. The first-stage model is the limit for most of them, and the
+  second model can only order what it is given.
+- **Nothing measures whether the five shown are relevant.** There are no
+  relevance grades: `posting_labels` holds 0 rows. Every retrieval number
+  here is where one known posting landed. The semantic candidates add
+  postings to the five shown that nobody has judged, which is the whole
+  reason the experiment stays off.
+- **A retried `apply` task can send a form twice (#16).**
+  `apply_job._submit` calls `adapter.submit(page)`, and the move to
+  `submitted` is committed by the worker afterwards. A worker that dies
+  between the two leaves the application `running`; the lease expires, the
+  task is claimed again, `begin_work` reads `running` as an abandoned run,
+  and the pipeline runs from the top. Read from the code, not reproduced:
+  reproducing it means submitting. What would close it is a record written
+  and committed *before* the click ("submit attempted"), and a resumed run
+  that finds one failing as `manual_completion_required` with "this may
+  already have been sent" in place of clicking again. It is a change to the
+  submission path and wants its own review.
+- **A one-word company name is still read from an ordinary use of the word
+  (#17).** On the held-out questions: "Front Desk roles" was a search of
+  Front's postings, "help vehicles sense surroundings" of Sense's, "managing
+  Okta administration" of Okta's own 162, and "Marketo lead processing" of a
+  company with nothing open. The rule that would fix them is an employer cue
+  ("at Okta", "Okta jobs"), and it would change what a bare "Stripe?" does,
+  which CLAUDE.md §14 records as deliberate. Left for the owner to decide,
+  and left so the held-out set had nothing fitted to it.
+- **"machine learning" and "ML" are still two different questions.** Both
+  are in titles (138 and 64) and "ml" is rare enough to be searched for in
+  descriptions, so rewriting one as the other would stop finding postings
+  that use the other. It needs both spellings matched on both sides.
+- **The role table reads a title up to its first comma**, so "2027 Summer
+  Intern, MS/PhD, Software Engineer, …" is not a software-engineer posting to
+  it, and a question that names that role does not find it.
+- **The model can still say the wrong thing about a right context.** The
+  context states what each count is over, the prompt says not to widen it,
+  and nothing checks the prose. `unsupported_citations` catches one kind of
+  error, a label that was never supplied. A label that exists can be cited
+  for something its posting does not say.
+- **MCP reports a failed call as a result with an `error` key**, not as
+  `isError`. A client that reads only the flag takes a failure for a success.
+- **Two rules here trade one mistake for another, knowingly.** A company
+  whose name is a common word is named after "at" only when it is typed with
+  a capital or ends what is said, so "jobs at based in berlin", all in lower
+  case, no longer means the company Based. And `evidence.is_option` reads
+  "Kafka, strong communication or leadership" as Kafka offered among
+  options, which understates a requirement; the line is quoted beside the
+  reading for that reason.
+- **"Jobs I applied to that are waiting on my review" is still searched for
+  "waiting" and "review".** The gate that stops that needs the noun,
+  "applications". With the verb counted too, "Which jobs can I apply to that
+  use a message queue?" was searched without "queue".
+- **`make lint` fails on this machine, and not on this change.** All 56
+  errors are in `.agents/skills/caveman-compress/scripts/`, an untracked
+  directory `ruff check .` walks into. The files changed here are clean.
+- **Three other paths use the local model and were not run**: tailoring, the
+  cover letter, and the local column of *Compare models*. Unchanged from
+  CLAUDE.md §14.
+
+### Whether to turn the experiment on
+
+No. `CHAT_SEMANTIC_CANDIDATES` stays `false`, and `.env` was not touched.
+
+- **For it**: on the 104 dev questions it now finds more targets (51 of 52
+  natural in the list, 14 of 52 paraphrased against 6) and takes none of the
+  natural ones out of the five on net (43 against 40). It breaks no rule:
+  nothing closed and nothing outside the area in 3,628 postings shown. It
+  costs 0.04 to 0.22 s a question.
+- **Against it**: on the 80 held-out questions none of that repeated.
+  Natural was 22 of 40 either way, it added no paraphrased target to the
+  list, and it moved eight paraphrased targets down for two up. And the
+  postings it adds to the five shown are unjudged: one of five examples
+  gained an events planner and another a posting with nothing of the
+  subject in it.
+- **What would change the answer** is relevance grades, not another
+  known-target run. The labeling loop (`/label`, or `next_to_grade` over
+  MCP) holds 0 grades. With the five shown for a few dozen real questions
+  graded in each mode, top-five precision can be compared, and a cut-off
+  for a weak fifth result can be chosen on something. Until then a better
+  number here is a better fit to two small sets.
+
+The second model is a separate setting (`CHAT_RERANK_MODEL`, empty on the
+owner's machine) and stays the owner's call. On the dev questions it moved
+seven natural targets up and none down, where it used to cost two of them.
+On the held-out set it moved one up and one down: "software engineer intern
+jobs…" is answered from a role's postings, which are sorted by kind and
+never held, and its target went from fifth to sixth. It costs about three
+seconds a question and 0.85 GB, and on the held-out set it helped
+paraphrased questions into the five (5 to 8) while lowering their mean
+reciprocal rank.
+
+### Checks
+
+Run on 2026-10-11, after the last change:
+
+| Check | Result |
+|---|---|
+| `REQUIRE_DB=1 pytest -q`, the whole suite | 3,740 passed, 2 skipped, in 299 s |
+| Tests added | 150: 109 in five new files and 41 in six existing ones. Each reproduction was run red before its fix |
+| `ruff check` and `ruff format --check`, every file changed or added | clean |
+| `make typecheck` (mypy, seven packages, 140 files) | clean |
+| `alembic check` | no new operations. No model or migration changed |
+| `tsc --noEmit`, the dashboard | clean |
+| `git diff --check` | clean |
+| A review of the source diff by the `code-reviewer` agent, read-only | no critical or high finding. Two medium ones, both reproduced as failing tests and fixed: the applications gate fired on the verb "apply" and set aside "queue", and the "at <word>" rule looked only at the first place the word followed "at". Two low ones recorded under *What is still wrong* |
+
+Two things about those that are not this change. `make lint` as written
+fails on this machine: `ruff check .` walks into
+`.agents/skills/caveman-compress/scripts/`, an untracked directory, and all
+56 errors and all 4 unformatted files are there. And the `apps/` files are
+outside `make typecheck`; mypy on the six touched there reports 40 errors,
+against 42 on the committed versions.
+
+**Retrieval is not slower.** The tables above show what ships at 1.3 s where
+the recorded run had 0.68 s, which reads as a regression and is not one. The
+evaluation process holds the second model on the same GPU and switches modes
+between questions. Measured on its own (`latency_ab.py`: experiment off, no
+second model, the committed code and the changed code alternating twice over
+the same 60 questions):
+
+| | Natural, median | Paraphrased, median |
+|---|---:|---:|
+| Committed code | 0.63 s, 0.60 s | 0.87 s, 0.83 s |
+| Changed code | 0.63 s, 0.61 s | 0.82 s, 0.85 s |
+
+### Files
+
+Changed:
+
+- `packages/matching/retrieve.py`: the routing fixes, company names in
+  order, `unnamed`, the counts, and the union's ordering.
+- `packages/matching/evidence.py` (new), `apps/api/routers/chat_evidence.py`
+  (new): how a posting asks for a skill; unsupported citations.
+- `packages/matching/gaps.py`: what the gap table was counted over.
+- `apps/api/routers/chat.py`: whose gaps, the context's scope lines, the
+  reply's counts, the local-model remedies.
+- `apps/api/routers/applications.py`: the row lock on review and on a code.
+- `packages/core/queue.py`, `apps/worker/crawl_job.py`: `decide_alone`.
+- `apps/mcp/server.py`, `apps/mcp/client.py`: the offer read once, the form
+  that names its application, failures at the top, a request that got no
+  answer.
+- `packages/llm/provider.py`: the three kinds of local-model failure, and an
+  unreachable second copy of `_ollama_failure`'s body removed.
+- `packages/llm/prompts.py`: `assistant.system` v5.
+- `packages/core/schemas.py`: `ChatReply`'s new fields, all with defaults, and
+  what `grounded` means. Nothing was removed or renamed.
+- `apps/web/src/components/assistant.tsx`: the notice for a citation of a
+  posting never supplied.
+- `packages/core/config.py`, `.env.example`, `CLAUDE.md` (§27).
+
+Tests, new: `test_chat_intent_routing.py`, `test_chat_grounding.py`,
+`test_skill_evidence.py`, `test_local_model_diagnostics.py`,
+`test_review_is_decided_once.py`. Added to: `test_chat_semantic_candidates.py`,
+`test_retrieval_names.py`, `test_crawl_command.py`, `test_mcp.py`,
+`test_mcp_grading.py`, `test_assistant_dock_sources.py`. Changed:
+`test_llm_prompts.py` (the v5 digest) and one assertion in
+`test_chat_retrieval.py`, where "job?" is now reported as naming nothing
+instead of as a corpus that could not be searched.
+
+Written to the owner's database: the 6,460 chunks of the repair (about
+0.62M tokens), by `make chunk-postings`. Nothing else. Every measurement ran in a read-only
+transaction. The thirteen live questions, and four one-character probes of
+the provider's error handling, each left a line in the local audit trail; all
+are local calls. No application was submitted, approved or rejected, no crawl
+was started, and no employer was contacted.
+
+### To reproduce
+
+From the repository root, with the development database up. Each of the
+scripts is read-only, and `storage/` is not in git.
+
+```sh
+B=storage/embed_rank_bench/rag_trace_2026-10-10
+export HF_HUB_OFFLINE=1 TOKENIZERS_PARALLELISM=false PYTHONPATH=.
+
+.venv/bin/python $B/trace.py dev --stages-only   # trace_dev.json: every stage's lists and ranks
+.venv/bin/python $B/stages.py dev                # the first stage that loses each target
+.venv/bin/python $B/simulate.py dev_scored       # orderings compared, from trace_dev_scored.json
+.venv/bin/python $B/evaluate.py dev              # results_dev.json: four modes through retrieve()
+.venv/bin/python $B/evaluate.py heldout          # results_heldout.json
+.venv/bin/python $B/rerun_one_term.py dev heldout  # only needed for the files as first written
+.venv/bin/python $B/latency_ab.py after          # what ships, timed on its own
+.venv/bin/python $B/tables.py                    # the tables above
+.venv/bin/python $B/constraints.py dev heldout   # closed, out of area, and the Kafka readings
+.venv/bin/python $B/ask_live.py                  # live_answers.json; needs `make api` and Ollama
+```
+
+`trace.py dev`, without the flag, also scores every candidate with the second
+model, both ways, which is what `simulate.py` compares; it takes about a
+minute a posting. `trace_dev_scored.json` is that run for 25 of the 52, made
+with the first union's code, and `simulation_dev_scored.txt` is its table.
+The recorded run is `candidate_union_2026-10-10/results.json`, and
+`rerun_results.json` beside it is the re-run that matched it.
+
+The races are in the test suite and need nothing but the test database:
+
+```sh
+.venv/bin/pytest tests/test_review_is_decided_once.py tests/test_crawl_command.py \
+    tests/test_mcp_grading.py -q
+```

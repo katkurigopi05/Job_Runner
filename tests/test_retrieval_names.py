@@ -13,6 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from httpx import AsyncClient
 
 from packages.core.models import Company, CorpusStats, Posting
@@ -220,3 +221,99 @@ async def test_a_rare_one_word_name_still_names_its_company(db_session) -> None:
 
     assert found.companies == ("Vanta",)
     assert found.passages == ()
+
+
+# --- words that are a company's name only in the right order and place -------------
+#
+# Found on 2026-10-10 by tracing why three benchmark questions returned
+# nothing at all. Each named no company, was read as naming one with no open
+# postings, and so was answered "no open postings at Native AI":
+#
+#     "... roles at an AI-native multimodal lakehouse company"   -> Native AI
+#     "... bare metal for AI-native firms?"                      -> Native AI
+#     "... governance teams at fast-growing tech firms"          -> Fast
+#
+# The first posting was second in the whole corpus by the keyword scan.
+
+
+async def test_a_two_word_name_is_its_words_in_order(db_session) -> None:
+    """ "AI-native" holds both words of Native AI and is not its name."""
+    await _company(db_session, "Native AI")
+    lance = await _company(db_session, "LanceDB")
+    ours = await _posting(
+        db_session, lance, "AI Research Engineer", "An AI-native multimodal lakehouse."
+    )
+
+    found = await retrieve(
+        db_session, "AI Research Engineer roles at an AI-native multimodal lakehouse company"
+    )
+
+    assert found.companies == ()
+    assert [p.posting_id for p in found.passages] == [ours.id]
+
+
+async def test_a_two_word_name_said_in_order_still_names_it(db_session) -> None:
+    native = await _company(db_session, "Native AI")
+    other = await _company(db_session, "Acme")
+    theirs = await _posting(db_session, native, "Founding Engineer")
+    await _posting(db_session, other, "Engineer", "An AI-native product.")
+
+    found = await retrieve(db_session, "engineer jobs at Native AI")
+
+    assert found.companies == ("Native AI",)
+    assert [p.posting_id for p in found.passages] == [theirs.id]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "jobs building governance teams at fast-growing tech firms",
+        "jobs building governance teams at fast‑growing tech firms",
+        "jobs building governance teams at fast growing tech firms",
+    ],
+)
+async def test_a_common_word_after_at_is_a_name_only_where_a_name_would_be(
+    db_session, question
+) -> None:
+    """ "Fast" is a company on the sheet, and "at fast-growing firms" is not it."""
+    await _company(db_session, "Fast")
+    other = await _company(db_session, "Acme")
+    ours = await _posting(db_session, other, "Head of Legal", "Build governance teams.")
+    await _stats(db_session, fast=50, governance=2)
+
+    found = await retrieve(db_session, question)
+
+    assert found.companies == (), question
+    assert ours.id in [p.posting_id for p in found.passages]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "founding engineer jobs at Fast",
+        "founding engineer jobs at fast?",
+        "founding jobs at Fast in SF",
+    ],
+)
+async def test_the_same_word_where_a_name_would_be_still_names_it(db_session, question) -> None:
+    fast = await _company(db_session, "Fast")
+    theirs = await _posting(db_session, fast, "Founding Engineer")
+    await _stats(db_session, fast=50, founding=1)
+
+    found = await retrieve(db_session, question)
+
+    assert found.companies == ("Fast",), question
+    assert theirs.id in [p.posting_id for p in found.passages]
+
+
+async def test_a_name_after_a_second_at_is_still_read(db_session) -> None:
+    """Only the first "at <word>" was looked at, so a question that says the
+    word once as a word and once as the name was not about the company."""
+    fast = await _company(db_session, "Fast")
+    theirs = await _posting(db_session, fast, "Founding Engineer")
+    await _stats(db_session, fast=50, founding=1)
+
+    found = await retrieve(db_session, "founding roles at fast growing startups, or at Fast")
+
+    assert found.companies == ("Fast",)
+    assert theirs.id in [p.posting_id for p in found.passages]

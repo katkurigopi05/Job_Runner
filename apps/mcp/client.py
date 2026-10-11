@@ -23,6 +23,17 @@ class ApiUnavailable(Exception):
     """The Jobrunner API is not reachable."""
 
 
+class ApiDidNotAnswer(Exception):
+    """The request was sent and no answer came back.
+
+    Not the same as unreachable. A connection that was refused sent nothing;
+    this one was taken, and then timed out or was dropped, which `make api`
+    does to every open request each time a file is saved. For a read that
+    costs nothing. For a write the caller cannot know whether it was carried
+    out, and asking again could carry it out twice.
+    """
+
+
 class ApiCallFailed(Exception):
     """The API returned an error envelope."""
 
@@ -63,9 +74,26 @@ class JobrunnerClient:
         try:
             async with self._client() as client:
                 response = await client.request(method, path, json=json, params=params)
-        except httpx.ConnectError as exc:
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             raise ApiUnavailable(
                 f"Cannot reach the Jobrunner API at {self.base_url}. Start it with `make api`."
+            ) from exc
+        except httpx.TransportError as exc:
+            # httpx's timeouts carry no message, so the tool failed with
+            # nothing after "Error executing tool approve_application:".
+            waited = (
+                f"within {self._timeout:g} s"
+                if isinstance(exc, httpx.TimeoutException)
+                else "before the connection closed"
+            )
+            outcome = (
+                "Nothing was changed: a read can be asked again."
+                if method.upper() == "GET"
+                else "The request was sent and may have been carried out. Look at what it "
+                "was meant to change before asking again, so it is not done twice."
+            )
+            raise ApiDidNotAnswer(
+                f"The Jobrunner API at {self.base_url} did not answer {waited}. {outcome}"
             ) from exc
 
         if response.status_code >= 400:
