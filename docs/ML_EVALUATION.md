@@ -562,3 +562,125 @@ Scripts are in `storage/embed_rank_bench/` (`er_gemma_dump.py`,
 vectors and questions in `gemma_today/`. The comparison reads the vectors from
 that file now. When this table was made it searched the column in Postgres,
 with the same ranking: nearest by cosine, ties by id.
+
+## A cross-encoder for the assistant's search (2026-10-08)
+
+A second forum reply to the comparison above suggested keeping bge-small,
+taking its top 50 postings by vector, and re-ranking those with a small
+cross-encoder. Its other points were already true here: every model's query
+prefix is applied in the benchmark and in the product, and the 12 hours for
+Qwen 4B is a one-off that the live test above made moot.
+
+Measured in three steps on the same benchmark. Of its 56 postings 49 were
+still open, all in the search area: 98 questions. The corpus that day was
+11,147 open postings and 142,577 current chunks (about 13.7M tokens at the
+ratio measured on 2026-10-05). "Of 49" throughout is the posting a question
+was written from.
+
+### How deep the first stage would have to go
+
+A re-ranker can only re-order what it is handed, so the ceiling came first.
+Every open posting ranked by its best bge-small chunk, the whole question
+with bge's search prefix:
+
+| in the top | 5 | 10 | 30 | 50 | 100 | 200 |
+|---|---|---|---|---|---|---|
+| natural, search area only | 23 | 27 | 33 | 37 | 38 | 45 |
+| natural, every open posting | 18 | 24 | 30 | 34 | 37 | 39 |
+| paraphrased, search area only | 1 | 2 | 10 | 15 | 19 | 25 |
+| paraphrased, every open posting | 1 | 1 | 4 | 9 | 15 | 19 |
+
+The shipped search the same day showed 37 natural and 2 paraphrased in its
+five, and had 42 and 5 anywhere in its list. Its list or the vector top 50
+together held 47 and 18. So vectors alone are worse than the shipped search
+on natural questions, and the two together are the pool worth judging.
+
+### In simulation
+
+Each question's candidates (the shipped list, and the vector top 100) were
+written out with bge-small in one process, and scored by one cross-encoder in
+another: 28,216 distinct question and passage pairs.
+
+| | parameters | pairs a second | tokens | time | held |
+|---|---|---|---|---|---|
+| `cross-encoder/ms-marco-MiniLM-L-12-v2` | 33M | 246 (GPU) | 3.37M | 115 s | 1.05 GB |
+| `BAAI/bge-reranker-base` | 278M | 39 (CPU) | 3.88M | 12 min | 2.06 GB |
+
+Right posting in the top five, natural / paraphrased, with each passage read
+as its best chunk under a line naming the title, company and place:
+
+| what is re-ranked | MiniLM | bge-reranker-base |
+|---|---|---|
+| nothing: the shipped order | 37 / 2 | 37 / 2 |
+| the shipped list | 39 / 3 | 39 / 4 |
+| the vector top 50 alone (the reply, as written) | 33 / 2 | 34 / 4 |
+| the shipped list and the vector top 50 | 43 / 3 | 43 / 3 |
+| the shipped list and the vector top 100 | 41 / 3 | 43 / 1 |
+| the list and the top 50, fused with the shipped order | 45 / 4 | 45 / 4 |
+| the list and the top 100, fused with the shipped order | 44 / 4 | 45 / 5 |
+
+- **The title line is what made it work.** With the chunk alone, natural
+  questions came out at 24 to 28 for the rows that are not fused and 33 to 34
+  for the two that are: every row under the shipped 37. That is the passage
+  the Qwen re-ranker read in the live test above.
+- **The model eight times the size bought nothing.**
+- **Paraphrased questions did not move**, though the right posting was in
+  the pool for 18 to 21 of them. bge-reranker-base scored those postings at a
+  median 0.046 (after squashing to 0..1). For a question about a word no
+  posting contains, the best of fifty passages scored at most 0.044.
+
+For the 50 questions about a dictionary word in no open posting, the shipped
+search returned nothing for all 50.
+
+### Through the real search
+
+Built on that (`packages/matching/rerank.py`, `retrieve.py`), then run
+through `retrieve()` as `/chat` calls it, over every open posting, three
+ways. MiniLM, on the CPU.
+
+| | no re-ranker | only re-ordering | candidates added |
+|---|---|---|---|
+| natural: first | 22 | 26 | 26 |
+| natural: in the five shown | 37 | 38 | 40 |
+| natural: anywhere in the list | 42 | 42 | 45 |
+| natural: MRR | 0.575 | 0.647 | 0.664 |
+| natural: MRR over no re-ranker | | +0.072 [+0.028, +0.127] | +0.089 [+0.043, +0.145] |
+| natural: ranked higher / lower | | 12 / 1 | 15 / 1 |
+| paraphrased: in the five shown | 2 | 3 | 3 |
+| paraphrased: anywhere in the list | 5 | 5 | 11 |
+| paraphrased: MRR over no re-ranker | | -0.002 [-0.044, +0.030] | +0.017 [-0.034, +0.068] |
+| a word in no posting (50): answered with nothing | 50 | 50 | 50 |
+| a word a few postings have (40): shown / not saying it | 125 / 0 | 125 / 0 | 126 / 1 |
+| median time, natural | 1.1 s | 1.7 s | 2.3 to 2.7 s |
+
+It ran twice. The first build left out the candidates the model rejected
+before ranking the rest, which is not what the simulation had done, and
+showed 39 with candidates added (+0.084 [+0.039, +0.139]). Ranked among
+everything it judged, 40. The middle column is from the first run; its code
+path is the same in both.
+
+Why not 45: the simulation re-ordered everything, and the search puts a
+posting asked for by its title first. In four questions five or more
+postings go first for their title alone and the one the question was written
+from is not among them. In two of the four the model put it first of the
+rest, at ranks 8 and 12.
+
+### What this does not establish
+
+- 49 postings, and one free model wrote every question. A natural question
+  mostly names the title or the company, which is what the title line adds.
+- The simulation compared seven pools, two passage forms and two models on
+  the same questions, and the live number was looked at twice. The best row
+  of any of these is partly picked.
+- The times are CPU times beside a running API and dashboard. Inside the API
+  process, on the GPU with bge-small, it has not been timed.
+- Nothing here helps a question worded unlike its posting. Some of the
+  paraphrased questions are worded unlike anything a person would type
+  ("increasing pace of creating handheld programs" for a mobile engineer),
+  so that split overstates the gap, and a set of realistic ones is what would
+  show how much is left.
+
+Scripts and results are in `storage/embed_rank_bench/`: `er_vector_recall.py`,
+`er_xenc_plan.py`, `er_xenc_score.py`, `er_xenc_report.py`, `er_live_xenc.py`,
+and `er_watch.py`, which kills a run when the machine's free memory falls
+under a floor.
