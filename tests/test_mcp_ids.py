@@ -114,8 +114,10 @@ async def test_the_tools_that_take_an_id_are_the_ones_being_checked() -> None:
 async def test_a_real_id_reaches_the_api(monkeypatch) -> None:
     """The control. A tool whose made-up arguments were refused before it ran
     would pass the next test without having been tried."""
-    # `grade_posting` takes only an id this server offered, so it is offered one.
-    offered = {"app-1": mcp_server._Offer("A posting", None, None, None)}
+    # `grade_posting` takes only what this server offered, so it is offered
+    # one: the posting under no profile, and the filler posting under the profile.
+    offer = mcp_server._Offer("A posting", None, None)
+    offered = {(None, "app-1"): offer, ("app-1", _filler({})): offer}
     monkeypatch.setattr(mcp_server, "_OFFERED", offered)
     for tool, name, others in await _tools_that_take_an_id():
         paths = await _asked_for(tool, {**others, name: "app-1"}, monkeypatch)
