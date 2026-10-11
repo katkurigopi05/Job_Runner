@@ -610,6 +610,30 @@ class CrawlStartOut(BaseModel):
     worker_alive: bool
 
 
+#: The most earlier exchanges a request may carry. The assistant is given
+#: fewer (`apps/api/chat_history.MAX_TURNS`); this only bounds what is read.
+MAX_HISTORY_SENT = 20
+
+
+class ChatTurn(BaseModel):
+    """One earlier exchange in a conversation: what was asked, what was answered.
+
+    The client's copy of it. `apps/api/chat_history.py` decides what of it a
+    model sees.
+    """
+
+    question: str = Field(min_length=1, max_length=4000)
+    answer: str = Field(max_length=20000)
+    #: Whether recruiter mail was in the context this answer was written from.
+    #: The reply said so (`ChatReply.mail_in_context`) and the client sends it
+    #: back. True when it does not say: an answer that may quote the mail is
+    #: treated as one that does.
+    mail_in_context: bool = True
+    #: The postings the answer cited. They are read again from the database;
+    #: nothing the answer said about them is taken as fact.
+    cited: list[uuid.UUID] = Field(default_factory=list, max_length=20)
+
+
 class ChatRequest(BaseModel):
     """A question about the owner's own job search."""
 
@@ -633,6 +657,9 @@ class ChatRequest(BaseModel):
     #: the most sensitive thing in the context and the only part written by
     #: people who never chose a provider.
     share_mail: bool = False
+    #: The conversation so far, oldest first, so a question can refer back to
+    #: an answer. Empty for a first question.
+    history: list[ChatTurn] = Field(default_factory=list, max_length=MAX_HISTORY_SENT)
 
 
 class ChatSource(BaseModel):
@@ -722,6 +749,14 @@ class ChatReply(BaseModel):
     #: when none of it was rare enough to look for in descriptions. Then
     #: `postings_matched_total` counts the titles and `matched_role` is None.
     matched_title_words: list[str] = Field(default_factory=list)
+    #: How many earlier exchanges the model was given, and how many it was not:
+    #: recruiter mail a remote model may not see, or a §2.2 topic.
+    history_used: int = 0
+    history_withheld: int = 0
+    #: Whether recruiter mail was read into this answer's context. Narrower
+    #: than `shared_mail`, which is true of every local answer: mail is only
+    #: read for an application. The client sends this back with the exchange.
+    mail_in_context: bool = False
 
 
 # --------------------------------------------------------------------------
