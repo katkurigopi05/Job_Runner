@@ -404,6 +404,11 @@ class Retrieval:
     #: Registry companies the question named, so "nothing found" can say
     #: "no open postings at Mistral AI" rather than leave the model to guess.
     companies: tuple[str, ...] = ()
+    #: Registry companies whose one-word name the question says and was not
+    #: taken to be about: they have nothing open, and other employers'
+    #: postings say the word (`_only_others_say_it`). "any posting on postman"
+    #: is a search for the word; the context still says Postman is not hiring.
+    not_hiring: tuple[str, ...] = ()
     #: The owner's search area in words, when it was applied.
     area: str | None = None
     #: The area is on, but the question named a place outside it.
@@ -656,8 +661,12 @@ async def _named_companies(
     words: set[str],
     frequencies: idf.DocumentFrequencies,
     question: str = "",
-) -> tuple[list[uuid.UUID], set[str], list[str]]:
+) -> tuple[list[uuid.UUID], set[str], list[str], list[str]]:
     """Registry companies the question names, the words that named them, and their names.
+
+    And, last, the names of companies it says without being about them: ones
+    with nothing open whose word other employers' postings say
+    (`_only_others_say_it`).
 
     A company counts when every word of one of its aliases is in the question
     (`_company_aliases`). Measured on the owner's questions: "jobs at Weights &
@@ -695,15 +704,19 @@ async def _named_companies(
     named: list[uuid.UUID] = []
     naming: set[str] = set()
     names: list[str] = []
+    not_hiring: list[str] = []
     for company_id, name, hits in matched:
+        open_here = own.get(company_id, 0)
         if all(len(a) == 1 for a in hits) and not any(
-            _one_word_names_it(a[0], own.get(company_id, 0), frequencies, question) for a in hits
+            _one_word_names_it(a[0], open_here, frequencies, question) for a in hits
         ):
+            if any(_only_others_say_it(a[0], open_here, frequencies) for a in hits):
+                not_hiring.append(name)
             continue
         named.append(company_id)
         naming |= set(tokenize(name or ""))
         names.append(name)
-    return named, naming, names
+    return named, naming, names, not_hiring
 
 
 #: What ends a sentence, for `_nothing_follows`.
@@ -727,6 +740,21 @@ def _nothing_follows(question: str, index: int) -> bool:
     return index == len(question) or question[index] in _SENTENCE_END
 
 
+def _only_others_say_it(word: str, own_postings: int, frequencies: idf.DocumentFrequencies) -> bool:
+    """A rare word that names a company with nothing open, and that others' postings say.
+
+    "postman" on 2026-10-12: a company on the owner's sheet with no board and
+    no posting, and a tool 32 open postings at 20 other employers ask for.
+    The word is in 0.12% of postings, so it read as the company's name, and
+    "any posting mentioned postman" was answered "no open postings at
+    Postman". A company with nothing open has nothing to show for its name;
+    the postings that say the word are the only thing the question can find.
+    """
+    if not frequencies.usable or own_postings:
+        return False
+    return 0 < frequencies.document_share(word) <= _SHORT_NAME_MAX_SHARE
+
+
 def _one_word_names_it(
     word: str, own_postings: int, frequencies: idf.DocumentFrequencies, question: str
 ) -> bool:
@@ -735,7 +763,9 @@ def _one_word_names_it(
     Judged by how common the word is in *other* companies' postings, since a
     company's own postings all carry its name:
 
-    - rare elsewhere: it names the company ("Vanta", "Notion");
+    - rare elsewhere: it names the company ("Vanta", "Notion"), unless the
+      company has nothing open and those others are all that say the word
+      (`_only_others_say_it`). Then it is the company only after "at";
     - somewhat common: only for a company with open postings. "OpenAI" is in
       7.9% of postings and "Stripe" in 4.4%, mostly other employers naming a
       tool, and both are real employers here; `robotics` is in 7.4% and
@@ -751,7 +781,9 @@ def _one_word_names_it(
     if not frequencies.usable:
         return True
     elsewhere = frequencies.document_share(word) - own_postings / frequencies.total
-    if elsewhere <= _SHORT_NAME_MAX_SHARE:
+    if elsewhere <= _SHORT_NAME_MAX_SHARE and not _only_others_say_it(
+        word, own_postings, frequencies
+    ):
         return True
     if elsewhere <= _MENTIONED_NAME_MAX_SHARE and own_postings > 0:
         return True
@@ -1391,7 +1423,7 @@ async def retrieve(
     )
     aside = _APPLICATION_STATE if about_my_applications else frozenset()
     frequencies, active_revision = await idf.load_active(session)
-    companies, company_words, company_names = await _named_companies(
+    companies, company_words, company_names, not_hiring = await _named_companies(
         session, words, frequencies, question
     )
     subject_terms = [t for t in tokenize(question) if t not in _FRAMING_WORDS and t not in aside]
@@ -1801,6 +1833,7 @@ async def retrieve(
         searched=searched,
         unsearchable=unsearchable,
         companies=tuple(sorted(company_names)),
+        not_hiring=tuple(sorted(not_hiring)),
         area=area,
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,

@@ -223,6 +223,101 @@ async def test_a_rare_one_word_name_still_names_its_company(db_session) -> None:
     assert found.passages == ()
 
 
+# --- a tool that shares its name with a company that is not hiring -----------------
+#
+# The owner asked "any posting on postman" and "any posting mentioned postman"
+# on 2026-10-12 and was told each time that there were no open postings at
+# Postman. Postman is a company on the sheet with no board and nothing open,
+# and 32 open postings at 20 other employers name it as a tool. The word is
+# in 0.12% of postings, and a word that rare was taken for the company
+# whatever the question said about it.
+
+
+async def _postman_corpus(session) -> Posting:
+    """A company with nothing open, and another employer's posting that names the tool."""
+    await _company(session, "Postman")
+    employer = await _company(session, "Acme")
+    posting = await _posting(session, employer, "QA Engineer", "API testing with Postman.")
+    await _stats(session, postman=1, testing=5)
+    return posting
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["any posting on postman", "any posting mentioned postman", "which jobs use postman"],
+)
+async def test_a_word_others_say_is_searched_for_when_its_company_has_nothing_open(
+    db_session, question: str
+) -> None:
+    posting = await _postman_corpus(db_session)
+
+    found = await retrieve(db_session, question)
+
+    assert found.companies == ()
+    assert [p.posting_id for p in found.passages] == [posting.id]
+    assert found.not_hiring == ("Postman",), "and the answer can still say so"
+
+
+async def test_after_at_it_is_still_the_company_that_is_asked_about(db_session) -> None:
+    await _postman_corpus(db_session)
+
+    found = await retrieve(db_session, "jobs at Postman")
+
+    assert found.companies == ("Postman",)
+    assert found.passages == ()
+    assert found.not_hiring == ()
+
+
+async def test_a_company_with_something_open_is_still_named_by_its_word(db_session) -> None:
+    """Only a company with nothing to show gives way to the word."""
+    postman = await _company(db_session, "Postman")
+    theirs = await _posting(db_session, postman, "Developer Advocate")
+    employer = await _company(db_session, "Acme")
+    await _posting(db_session, employer, "QA Engineer", "API testing with Postman.")
+    await _stats(db_session, postman=2, testing=5)
+
+    found = await retrieve(db_session, "any posting on postman")
+
+    assert found.companies == ("Postman",)
+    assert [p.posting_id for p in found.passages] == [theirs.id]
+    assert found.not_hiring == ()
+
+
+async def test_a_common_word_is_not_reported_as_a_company_that_is_not_hiring(db_session) -> None:
+    """ "N Robotics" has nothing open either, and "robotics jobs" was never about it."""
+    await _robotics_corpus(db_session)
+
+    found = await retrieve(db_session, "robotics jobs")
+
+    assert found.not_hiring == ()
+
+
+async def test_the_context_says_the_company_of_that_name_has_nothing_open(
+    client: AsyncClient, worker_session, monkeypatch
+) -> None:
+    """Both readings of the question get their answer: the word, and the employer."""
+    import apps.api.routers.chat as chat_module
+
+    await _postman_corpus(worker_session)
+    await worker_session.commit()
+
+    seen: dict[str, str] = {}
+
+    class Recorder(StubProvider):
+        async def complete(self, system, user, *, max_tokens=1024, temperature=0.2) -> str:
+            seen["user"] = user
+            return "ok"
+
+    monkeypatch.setattr(chat_module.llm_router, "build_provider", lambda name=None: Recorder())
+
+    answered = await client.post("/chat", json={"message": "any posting on postman"})
+
+    assert answered.status_code == 200
+    assert "QA Engineer" in seen["user"]
+    assert "no open postings at Postman" not in seen["user"]
+    assert "Postman is also a company on the owner's list, with no open postings" in seen["user"]
+
+
 # --- words that are a company's name only in the right order and place -------------
 #
 # Found on 2026-10-10 by tracing why three benchmark questions returned
