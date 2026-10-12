@@ -293,6 +293,47 @@ async def test_a_posting_asked_for_by_title_still_goes_first(db_session, use) ->
     assert [p.posting_id for p in found.passages][:2] == [exact.id, other.id]
 
 
+async def test_a_model_that_judges_is_shown_a_title_the_question_names(db_session, use) -> None:
+    """A title holding two of the question's search terms is held in its
+    keyword place when a likeness model could move it. That was measured with
+    one (`ANCHOR_TITLE_TERMS`). The judge was measured being shown every
+    keyword match, its order fused with the search's, and the merge that put
+    the two side by side held the title from the judge as well: a third
+    arrangement, which nobody measured."""
+    company = await _company(db_session)
+    named = await _posting(
+        db_session, company, "Support Engineer I (FC, Weekend Shift)", "Answer tickets."
+    )
+    await _posting(db_session, company, "Reliability Lead", "Weekend shift support, incidents.")
+    judge = WordJudge("incident")
+    use(judge)
+
+    found = await retrieve(db_session, "What Support Engineer weekend shift roles are open?")
+
+    [(_, passages)] = judge.calls
+    assert any(passage.startswith("Support Engineer I") for passage in passages)
+    assert named.id in [p.posting_id for p in found.passages]
+    assert found.reranked == len(passages), "what the model read, counted as that"
+
+
+async def test_a_model_that_scores_likeness_is_still_not_asked_about_it(db_session, use) -> None:
+    """What was measured for that kind: the title keeps its place and is not read."""
+    company = await _company(db_session)
+    named = await _posting(
+        db_session, company, "Support Engineer I (FC, Weekend Shift)", "Answer tickets."
+    )
+    await _posting(db_session, company, "Reliability Lead", "Weekend shift support, incidents.")
+    await _posting(db_session, company, "Help Desk Agent", "Weekend shift, incidents, support.")
+    likeness = WordLikeness("incident")
+    use(likeness)
+
+    found = await retrieve(db_session, "What Support Engineer weekend shift roles are open?")
+
+    [(_, passages)] = likeness.calls
+    assert not any("Answer tickets" in passage for passage in passages)
+    assert found.passages[0].posting_id == named.id
+
+
 # --- what it reads -----------------------------------------------------------------
 
 
