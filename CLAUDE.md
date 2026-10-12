@@ -4888,3 +4888,21 @@ twice if a worker dies between the click and the commit; one-word company
 names read from ordinary words ("Front Desk"); paraphrased questions, where
 bge-small's chunk search is the limit; and the role table reading a title
 only up to its first comma.
+
+### Two things the merge with `main` left between its halves
+
+Found on 2026-10-12 by reading #140 after it landed. Each half was right
+where it was written. The fault was at the join, and no test spanned it.
+
+- **A posting read again from an earlier answer was supplied.** #136 gives
+  the model the postings its earlier answers cited, labelled after the ones
+  found now. The citation check knew only the ones found now, so "the one
+  from before [P6]" was reported as a source the model made up, and the dock
+  said so under the answer. `unsupported_citations` and `postings_supplied`
+  count both. `tests/test_chat_grounding.py`.
+- **A title is held from a likeness model, not from one that judges.**
+  Holding was measured with the embedding re-ranker. #139 measured the
+  cross-encoder being shown every keyword match under its title, its order
+  fused with the search's. Merged, the title was held from the judge too: a
+  third arrangement nobody ran. Each kind now does what it was measured
+  doing. `tests/test_chat_cross_encoder.py` holds both.
