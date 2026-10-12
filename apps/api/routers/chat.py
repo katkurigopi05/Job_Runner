@@ -58,6 +58,7 @@ from apps.api.protected_questions import (  # noqa: F401
     is_refused,
     names_a_protected_field,
 )
+from apps.api.routers.chat_evidence import skill_lines, skills_asked_about, unsupported_citations
 from apps.worker.crawl_job import request_crawl
 from packages.core import heartbeat
 from packages.core.config import Settings, get_settings
@@ -75,7 +76,13 @@ from packages.core.schemas import (
 from packages.llm import router as llm_router
 from packages.llm.audit import is_local
 from packages.llm.prompts import CHAT_SYSTEM
-from packages.llm.provider import LLMError, PromptTooLong
+from packages.llm.provider import (
+    LLMError,
+    ModelMissing,
+    ModelTimedOut,
+    ModelUnreachable,
+    PromptTooLong,
+)
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
 from packages.matching.retrieve import Passage, Retrieval, retrieve
 from packages.matching.roles import display_name
@@ -148,6 +155,14 @@ async def _context(
         "APPLICATIONS BY STATUS:",
         *(tally or ["  none yet"]),
         "WAITING ON YOU:",
+        # The same applications, listed again by what they need. Handed both
+        # lists bare, the local model answered "one needs your review.
+        # Additionally, there is one in the review category": one application.
+        *(
+            ["  (already counted above: these say which of them need you, not more applications)"]
+            if waiting
+            else []
+        ),
         *(waiting or ["  nothing"]),
     ]
 
@@ -209,6 +224,20 @@ async def _context(
 _ASKS_ABOUT_GAPS = re.compile(
     r"\b(?:lag(?:ging)?|lack(?:s|ing)?|missing|gaps?|weak(?:ness(?:es)?)?|improve|upskill"
     r"|learn|résumés?|resumes?|cv|skills?|strengths?|qualif\w*)\b",
+    re.IGNORECASE,
+)
+
+#: What makes one of those words a question about the owner: the first
+#: person, or their résumé. "me" is left out, as it is for protected answers
+#: below, and for the same sentence: "show me".
+_ABOUT_THE_OWNER = re.compile(
+    r"\b(?:i|i'm|im|i've|ive|my|mine|myself|we|our|résumés?|resumes?|cv)\b", re.IGNORECASE
+)
+
+#: And what makes it one about postings instead.
+_ABOUT_POSTINGS = re.compile(
+    r"\b(?:jobs?|roles?|postings?|positions?|openings?|vacanc(?:y|ies)|listings?"
+    r"|employers?|compan(?:y|ies))\b",
     re.IGNORECASE,
 )
 
@@ -274,7 +303,18 @@ async def _start_crawl(session: SessionDep) -> ChatReply:
 
 
 def asks_about_gaps(question: str) -> bool:
-    return bool(_ASKS_ABOUT_GAPS.search(question))
+    """Whether the owner is asking what they themselves are missing.
+
+    One of the gap words, and the question is about the owner or about no
+    posting at all. The words alone were the whole test, and "skills",
+    "learn", "improve" and "missing" are in questions about postings too:
+    "Which jobs require Python skills?" put the owner's résumé skills in the
+    context, and sent them to a remote provider when one was picked, for a
+    question that was not about the owner.
+    """
+    if not _ASKS_ABOUT_GAPS.search(question):
+        return False
+    return bool(_ABOUT_THE_OWNER.search(question)) or not _ABOUT_POSTINGS.search(question)
 
 
 def _gaps_section(report: GapReport) -> str:
@@ -294,9 +334,14 @@ def _gaps_section(report: GapReport) -> str:
     if not total:
         lines.append("SKILL GAPS: no open matches yet to compare against")
         return "\n".join(lines)
+    # What it was counted over, in the heading, with the two larger numbers
+    # it is not a count of. Handed "required by 12" under "searched 11,147
+    # postings", a model said twelve of eleven thousand.
     lines.append(
-        f"SKILL GAPS — what your top {total} open matches ask for, "
-        "read from each posting's requirements:"
+        f"SKILL GAPS — what your top {total} open match{'' if total == 1 else 'es'} "
+        f"ask{'s' if total == 1 else ''} for, read from each posting's requirements. "
+        f"Counted over those {total} only: the best-scoring of the {report.matched} open "
+        f"postings matched to you, not all {report.open_postings} open postings:"
     )
     if report.unread:
         lines.append(f"  {report.unread} have no requirements read yet and are not counted")
@@ -322,8 +367,22 @@ class _PostingGaps:
     across: str | None
 
 
-async def _unmet_by_posting(
-    session: SessionDep, found: Retrieval, report: GapReport
+async def _requirements_of(
+    session: AsyncSession, found: Retrieval
+) -> dict[uuid.UUID, dict[str, Any] | None]:
+    """What each retrieved posting was read as asking for, or None when it was not read."""
+    if not found.passages:
+        return {}
+    rows = await session.execute(
+        select(Posting.id, Posting.requirements_json).where(
+            Posting.id.in_([passage.posting_id for passage in found.passages])
+        )
+    )
+    return {posting_id: requirements for posting_id, requirements in rows.all()}
+
+
+def _unmet_by_posting(
+    found: Retrieval, report: GapReport, requirements_by_id: dict[uuid.UUID, dict[str, Any] | None]
 ) -> _PostingGaps:
     """What the retrieved postings ask for that no résumé lists, each and together.
 
@@ -337,12 +396,6 @@ async def _unmet_by_posting(
     if not found.passages or not report.resumes:
         return _PostingGaps({}, None)
     have = frozenset().union(*(resume.skills for resume in report.resumes))
-    rows = await session.execute(
-        select(Posting.id, Posting.requirements_json).where(
-            Posting.id.in_([passage.posting_id for passage in found.passages])
-        )
-    )
-    requirements_by_id = dict(rows.all())
     lines: dict[uuid.UUID, str] = {}
     where: dict[str, list[str]] = {}
     for passage in found.passages:
@@ -365,7 +418,11 @@ async def _unmet_by_posting(
     return _PostingGaps(lines, across)
 
 
-def _postings_section(found: Retrieval, gaps: _PostingGaps | None = None) -> str:
+def _postings_section(
+    found: Retrieval,
+    gaps: _PostingGaps | None = None,
+    evidence: dict[uuid.UUID, list[str]] | None = None,
+) -> str:
     """The retrieved postings, labelled for citation, with the search's reach.
 
     Coverage comes first and is stated even when nothing was found, because
@@ -377,6 +434,13 @@ def _postings_section(found: Retrieval, gaps: _PostingGaps | None = None) -> str
     "no postings matched", which is a different answer.
     """
     if not found.attempted:
+        if found.unnamed:
+            # Nothing was looked for, which is not the same as nothing being
+            # there. The owner can be told what to add.
+            return (
+                "POSTINGS: not searched — the question names no role, skill, company or "
+                "place to look for. Say so if asked which jobs, and ask what to look for."
+            )
         return "POSTINGS: not searched — the question does not ask about jobs or a company"
     total = found.searched + found.unsearchable
     lines = [f"POSTINGS: searched {found.searched} of {total} open postings"]
@@ -437,6 +501,14 @@ def _postings_section(found: Retrieval, gaps: _PostingGaps | None = None) -> str
                 else "  none shared anything with this question"
             )
         )
+    if found.passages and not (found.roles or found.title_words):
+        # A role or a title search states its total above. Any other search
+        # has none to state: the pool it ranks is cut off, so "the 5 below"
+        # must not become "5 postings" in the answer.
+        lines.append(
+            f"  below: the closest {len(found.passages)} of those found. More may match, "
+            "and how many do is not known: give no total."
+        )
     if gaps is not None and gaps.across:
         lines.append(gaps.across)
     for passage in found.passages:
@@ -445,6 +517,8 @@ def _postings_section(found: Retrieval, gaps: _PostingGaps | None = None) -> str
         if passage.application_status:
             lines.append(f"       you applied: {passage.application_status}")
         lines.append(f"       excerpt: {passage.excerpt}")
+        # Under the excerpt, which shows the word and not how it is asked for.
+        lines += [f"       {line}" for line in (evidence or {}).get(passage.posting_id, [])]
         if gaps is not None and passage.posting_id in gaps.lines:
             lines.append(f"       {gaps.lines[passage.posting_id]}")
     return "\n".join(lines)
@@ -499,6 +573,8 @@ class Ready:
     include_mail: bool
     prompt: str
     found: Retrieval
+    #: How many postings the skill-gap table was counted over, when there was one.
+    gap_counted: int | None = None
     #: What of the conversation went with the question, and the postings its
     #: earlier answers cited, read again.
     remembered: chat_history.Remembered = chat_history.Remembered()
@@ -562,8 +638,13 @@ async def prepare(body: ChatRequest, session: AsyncSession) -> ChatReply | Ready
     context = await _context(session, body.application_id, include_mail=include_mail)
     found = await retrieve(session, question)
     gaps = await target_gaps(session) if asks_about_gaps(question) else None
-    posting_gaps = await _unmet_by_posting(session, found, gaps) if gaps else None
-    sections = [context, _postings_section(found, posting_gaps)]
+    named_skills = skills_asked_about(question)
+    requirements = await _requirements_of(session, found) if (gaps or named_skills) else {}
+    posting_gaps = _unmet_by_posting(found, gaps, requirements) if gaps else None
+    sections = [
+        context,
+        _postings_section(found, posting_gaps, skill_lines(found, named_skills, requirements)),
+    ]
     if gaps is not None:
         sections.append(_gaps_section(gaps))
 
@@ -587,6 +668,7 @@ async def prepare(body: ChatRequest, session: AsyncSession) -> ChatReply | Ready
         include_mail=include_mail,
         prompt=prompt,
         found=found,
+        gap_counted=(gaps.read + gaps.unread) if gaps is not None and gaps.resumes else None,
         remembered=remembered,
         earlier=earlier,
         mail_in_context=include_mail and body.application_id is not None,
@@ -619,6 +701,37 @@ def provider_for(selected: str) -> tuple[Any, str | None]:
     return provider, model
 
 
+def _local_remedy(exc: LLMError) -> str:
+    """What to do about the local model, for the failure it actually was.
+
+    One sentence used to carry both remedies whatever had happened. A model
+    that was not pulled told the owner to start a daemon that had just
+    answered them, and a daemon that was not running told them to pull a
+    model they had.
+    """
+    settings = get_settings()
+    if isinstance(exc, ModelUnreachable):
+        return (
+            f"Nothing is listening at {exc.base_url or settings.ollama_base_url}. "
+            "Start Ollama with `ollama serve`."
+        )
+    if isinstance(exc, ModelMissing):
+        model = exc.model or settings.ollama_model
+        return (
+            f"Ollama is running and does not have that model. Get it with "
+            f"`ollama pull {model}`, or set OLLAMA_MODEL to one it has."
+        )
+    if isinstance(exc, ModelTimedOut):
+        return (
+            "Ollama was reached and did not reply in time: it may still be loading "
+            "the model, or this machine is short of memory. Ask again in a moment."
+        )
+    return (
+        "Start Ollama with `ollama serve`, or pull the configured model with "
+        f"`ollama pull {settings.ollama_model}`."
+    )
+
+
 def did_not_answer(selected: str, exc: LLMError) -> ApiError:
     """What the owner is told when the model they asked for fails."""
     # Ollama is running and refused: the advice for a model that is down is wrong here.
@@ -639,9 +752,7 @@ def did_not_answer(selected: str, exc: LLMError) -> ApiError:
     if selected == LOCAL_PROVIDER:
         return ApiError(
             ErrorCode.INTERNAL_ERROR,
-            f"The local model is not answering ({exc}). Start Ollama with "
-            f"`ollama serve`, or pull the configured model with "
-            f"`ollama pull {get_settings().ollama_model}`. "
+            f"The local model is not answering ({exc}). {_local_remedy(exc)} "
             "Nothing was sent anywhere else — pick a cloud provider explicitly "
             "if you want one.",
         )
@@ -711,6 +822,12 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
         ),
         matched_title_words=list(found.title_words),
         matched_role_filter=found.role_keys[0] if len(found.role_keys) == 1 else None,
+        unsupported_citations=unsupported_citations(cited, (p.label for p in found.passages)),
+        postings_open=found.searched + found.unsearchable,
+        postings_ranked=found.ranked,
+        postings_reranked=found.reranked,
+        postings_supplied=len(found.passages),
+        gap_postings_counted=ready.gap_counted,
     )
 
 

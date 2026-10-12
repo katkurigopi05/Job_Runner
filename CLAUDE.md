@@ -1570,7 +1570,7 @@ exchange would read as nothing having been said.
 
 Three exchanges are given, a question cut to 300 characters and an answer to
 500, about 600 tokens against the local model's 4,096. The system prompt is
-`assistant.system` v5. The protected-topic checks moved to
+`assistant.system` v6 (it was v5 until §27's paragraphs joined these in it). The protected-topic checks moved to
 `apps/api/protected_questions.py`, so the refusal and the memory read a
 question the same way; `routers/chat.py` was at 800 lines.
 
@@ -4776,3 +4776,115 @@ one line of `tests/test_data_api_builder.py`, the expected output of the
 connection-string builder, with a made-up username and password written out
 as one string. The test assembles them now, and this paragraph does not quote
 the line, since the scanner reads prose as well.
+
+---
+
+## 27. What tracing the assistant's paths found
+
+On 2026-10-10 the assistant's retrieval, its routing, the MCP tools and the
+queue's producers were each traced through the code and reproduced before
+anything was changed. `docs/ML_EVALUATION.md` has the report: the diagram,
+the issue table, every number and what is still wrong. This section is only
+what a later change could quietly undo.
+
+**The dashboard assistant is not an agent.** One completion over text that
+application code read first. The model has no tools and runs no query. The
+tool loop is the MCP client's, and its tools go through the HTTP API on
+purpose (`apps/mcp/client.py`).
+
+Races, each reproduced with real transactions and each held by a test that
+failed first:
+
+- **The approval gate locks the row it decides**
+  (`routers/applications.py`, `with_for_update=True`). Three approvals at once
+  were three runs queued, and an approval and a rejection at once were both
+  accepted. With `make workers n=4`, two runs of one application is the form
+  sent twice: `begin_work` takes a `running` row for an abandoned run.
+  `tests/test_review_is_decided_once.py`.
+- **A producer that looks before it enqueues takes a lock first.**
+  `request_crawl` and `_schedule_next_tick` counted and then enqueued, in two
+  statements. This was fixed twice, in parallel: here as `queue.decide_alone`,
+  keyed per task kind, and on `main` as `crawl_job._one_guard_at_a_time`
+  (§24). **`main`'s is the one in the tree** — one landed fix beats two, and
+  a second guard nothing calls is the dead code §15 keeps recording. Either
+  way it is a transaction-scoped advisory lock, so the caller must commit
+  promptly, and not a unique index: a running tick and its pending successor
+  are two unfinished crawl tasks on purpose.
+- **A grade's offer belongs to one profile.** It was kept by posting alone
+  and read twice — once for the form, once after the owner answered — so an
+  offer for another profile in between took the grade. Fixed twice in
+  parallel as well: here by reading the offer once (`_offered`), and on
+  `main` by keying what the server remembers on `(profile, posting)` (§9).
+  **`main`'s is the one in the tree**, and it is the stronger of the two:
+  under protocol 2026-07-28 the resolver runs again once the form is
+  answered, so reading once per call was never enough on its own. A
+  consequence of taking it: the form does not name the profile, and the two
+  tests here that pinned that wording are gone — `main`'s
+  `test_a_request_made_while_the_form_is_open_does_not_move_the_grade` covers
+  the race under both protocols.
+
+Routing, each from one word (`tests/test_chat_intent_routing.py`,
+`tests/test_retrieval_names.py`):
+
+- **"artificial intelligence" is read as "AI"** (`_SPELLED_OUT`). Only that
+  pair: no title spells it out and "AI" is never searched for in
+  descriptions, so nothing is lost one way round. "machine learning" and "ML"
+  are both in titles and are not in the table.
+- **A first-person question about applications is not a search for a
+  title.** "review" is in a title and "waiting" is in none, so one wording of
+  "what needs my review" was searched and the other was not. It needs the
+  noun ("applications", not "apply"), a word for where one stands, and the
+  first person: two of the three are in "Applications Engineer I", and with
+  the verb counted "jobs I can apply to that use a message queue" lost
+  "queue".
+- **"target" is a framing word**, and **a question that names nothing is not
+  searched** (`Retrieval.unnamed`). It used to be reported as "searched 0 of
+  11,147, 11,147 not searchable yet".
+- **A company's name is its words in order.** "AI-native" is not Native AI.
+  A common word after "at" is a name only where a name would stand: "at
+  fast-growing firms" is not Fast.
+- **A gap question is about the owner** (`chat.asks_about_gaps`). The gap
+  words alone put the résumé's skills into the context of "Which jobs require
+  Python skills?", and sent them to a remote provider when one was picked.
+
+What the model is handed, and what the reply says for itself:
+
+- **The gap table's heading says what it was counted over**, with the two
+  larger numbers it is not a count of. Prompt `assistant.system` is **v6**:
+  this and §14's conversation memory were written as two v5s, and the merge
+  is the version that carries both paragraphs.
+- **Under each posting, how it asks for a skill the question named**
+  (`matching/evidence.py`): required, preferred, named under no heading, or
+  one of several options, with the posting's own line. Of the five shown for
+  "Which jobs use Kafka?" one requires it.
+- **`grounded` says context was supplied, not that the answer was checked.**
+  `unsupported_citations` is the one check made, and the `postings_*` counts
+  keep five numbers apart. A cited label that exists is not a supported
+  claim.
+- **A local model that fails says which way**: `ModelUnreachable`,
+  `ModelMissing`, `ModelTimedOut`. None of them falls back.
+
+The semantic experiment, still off (`CHAT_SEMANTIC_CANDIDATES`):
+
+- **What the keywords found keeps its order.** A posting whose title holds
+  two of the question's search terms is held where it is
+  (`ANCHOR_TITLE_TERMS`, chosen on dev questions and then run on 80 others);
+  semantic candidates merge by rank below it. Held only when a second list
+  or a second model could move it, so with both off the order is the keyword
+  order. Two always: letting a question's only search term be enough held
+  thirty Network Engineer titles ahead of a Customer Experience Manager
+  role, because "network" was the one word rare enough to search for.
+- **The second model reads the title above the chunk.** A chunk never
+  contains it. `main` reached the same conclusion from its own measurement
+  and drew the line one step finer (§21): a model that *judges* reads the
+  title, company and place over the chunk, and a model that scores likeness
+  reads the chunk alone, which is the arrangement the 2026-10-05 numbers were
+  taken on. That is what is in the tree, and
+  `tests/test_chat_cross_encoder.py` holds both halves.
+- **No similarity cut-off.** There is no graded set to find one on.
+
+Not fixed, and each is in the report: a retried `apply` task can send a form
+twice if a worker dies between the click and the commit; one-word company
+names read from ordinary words ("Front Desk"); paraphrased questions, where
+bge-small's chunk search is the limit; and the role table reading a title
+only up to its first comma.

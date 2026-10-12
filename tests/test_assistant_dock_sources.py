@@ -44,3 +44,21 @@ def test_uncited_postings_are_listed_and_labelled_as_uncited() -> None:
     assert "not cited in the answer" in SOURCE, (
         "uncited postings must be labelled as such, or they read as the answer's evidence"
     )
+
+
+def test_a_citation_of_a_posting_never_supplied_is_said_under_the_answer() -> None:
+    """The API reports it (`unsupported_citations`). Unread, it is a field
+    nobody sees, and "[P7]" over five postings looks like any other source."""
+    assert "unsupported_citations" in SOURCE, "the reply's field is never read"
+    assert "<InventedCitations turn={turn} />" in SOURCE, "it is read and not shown"
+    assert "not\n      among the postings it was given" in SOURCE or (
+        "not among the postings it was given" in SOURCE.replace("\n      ", " ")
+    )
+
+
+def test_that_notice_does_not_wait_for_a_source_to_be_listed() -> None:
+    """An answer about applications is handed no posting at all, so any label
+    in it is invented, and the list of sources renders nothing then."""
+    notice = SOURCE.split("function InventedCitations", 1)[1].split("\nfunction ", 1)[0]
+
+    assert "turn.sources" not in notice

@@ -468,13 +468,18 @@ async def test_a_question_with_no_searchable_words_searches_nothing(db_session) 
 
     A zero vector has no direction, and pgvector returns NaN for its distance
     rather than "far".
+
+    This asserted `found.attempted` until 2026-10-10, and the context then
+    read "searched 0 of N open postings (N are not searchable yet)": a corpus
+    that could not be read, where it was the question that named nothing. It
+    is reported as that now (`unnamed`), and still searches nothing.
     """
     company = await _company(db_session)
     await _posting(db_session, company, *KAFKA)
 
     found = await retrieve(db_session, "job?")
 
-    assert found.attempted
+    assert not found.attempted and found.unnamed
     assert found.passages == ()
 
 

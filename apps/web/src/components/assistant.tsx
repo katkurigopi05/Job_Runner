@@ -74,6 +74,8 @@ interface Turn {
   /** Open postings the search covered, and the ones it could not reach. */
   searched?: number;
   unsearchable?: number;
+  /** Labels the answer cites that were never among its sources: "P7" over five. */
+  unsupportedCitations?: string[];
 }
 
 /** One retrieved posting, linked to its page. */
@@ -297,6 +299,25 @@ function RetrievedPostings({ turn }: { turn: Turn }) {
 }
 
 /**
+ * A citation of a posting the model was never shown.
+ *
+ * "[P7]" over five postings is a source the model made up, and the answer
+ * reads exactly like one that rests on something. This is the one check made
+ * on an answer, and it needs no reading to make: the label is in what was
+ * supplied or it is not. It says nothing for the labels that do exist.
+ */
+function InventedCitations({ turn }: { turn: Turn }) {
+  const invented = turn.unsupportedCitations ?? [];
+  if (invented.length === 0) return null;
+  return (
+    <p className="mt-1.5 max-w-[90%] text-left text-xs text-attn">
+      The answer cites {invented.join(", ")}, which {invented.length === 1 ? "is" : "are"} not
+      among the postings it was given. Treat what it says there as unsupported.
+    </p>
+  );
+}
+
+/**
  * Who may answer.
  *
  * The hint is not decoration. Chat context carries application URLs, profile
@@ -375,6 +396,7 @@ interface Reply {
   matched_title_words?: string[];
   postings_searched?: number;
   postings_unsearchable?: number;
+  unsupported_citations?: string[];
 }
 
 function turnFrom(body: Reply): Turn {
@@ -396,6 +418,7 @@ function turnFrom(body: Reply): Turn {
     titleWords: body.matched_title_words,
     searched: body.postings_searched,
     unsearchable: body.postings_unsearchable,
+    unsupportedCitations: body.unsupported_citations,
   };
 }
 
@@ -668,6 +691,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
               >
                 {turn.text}
               </div>
+              {turn.role === "assistant" ? <InventedCitations turn={turn} /> : null}
               {turn.role === "assistant" ? <RetrievedPostings turn={turn} /> : null}
             </div>
           ))

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -77,6 +77,13 @@ class GapReport:
     unread: int
     missing: tuple[SkillDemand, ...]
     covered: tuple[SkillDemand, ...]
+    #: Open postings matched to the owner and not skipped: what `read` and
+    #: `unread` are the best-scoring part of.
+    matched: int = 0
+    #: Every open posting, matched or not. Stated beside the counts so that
+    #: "required by 12" is not read as 12 of these: on 2026-10-10 the
+    #: assistant gave the top-100 counts as counts over all 11,147.
+    open_postings: int = 0
 
 
 def resume_skills(text: str) -> frozenset[str]:
@@ -193,7 +200,25 @@ async def target_gaps(session: AsyncSession, *, limit: int = TARGET_POSTINGS) ->
             .order_by(best.c.score.desc(), Posting.id)
         )
     ).all()
-    return gap_report(
+    wanted = (
+        select(Match.posting_id)
+        .join(Posting, Posting.id == Match.posting_id)
+        .where(
+            Posting.closed_at.is_(None),
+            or_(Match.decision.is_(None), Match.decision != "skipped"),
+        )
+        .distinct()
+        .subquery()
+    )
+    matched = await session.scalar(select(func.count()).select_from(wanted)) or 0
+    open_postings = (
+        await session.scalar(
+            select(func.count()).select_from(Posting).where(Posting.closed_at.is_(None))
+        )
+        or 0
+    )
+    report = gap_report(
         resumes,
         [TargetPosting(title or "(untitled)", requirements) for title, requirements in rows],
     )
+    return replace(report, matched=matched, open_postings=open_postings)

@@ -705,8 +705,17 @@ class ChatReply(BaseModel):
     #: The exact model, so "ollama" cannot stand in for a cloud-served one and
     #: a remote answer names the thing that produced it. None when refused.
     model: str | None = None
-    #: False when the answer came from a rule rather than the model.
-    grounded: bool
+    #: Where the answer came from, and no more than that. See the description.
+    grounded: bool = Field(
+        description=(
+            "True when the reply was written from context built out of the owner's own "
+            "data for this question (or, for the crawl command, by a rule that read it). "
+            "False when a rule refused before any context was built. It says what the "
+            "model was handed. The answer has not been checked against it: see "
+            "`unsupported_citations` for the one check that is made, and the `postings_*` "
+            "counts for what each number in an answer could be about."
+        )
+    )
     #: False when the context left this machine. The dashboard shows this, so
     #: an answer that cost privacy is never indistinguishable from one that did
     #: not.
@@ -749,6 +758,29 @@ class ChatReply(BaseModel):
     #: when none of it was rare enough to look for in descriptions. Then
     #: `postings_matched_total` counts the titles and `matched_role` is None.
     matched_title_words: list[str] = Field(default_factory=list)
+    #: Labels the answer cites that were not among `sources`: "P7" over five
+    #: postings. A source the model made up. Empty is not "every claim is
+    #: supported": a label that exists can still be cited for something its
+    #: posting does not say.
+    unsupported_citations: list[str] = Field(default_factory=list)
+    #: Five numbers an answer about postings can be confused between, each
+    #: under its own name. All zero when nothing was searched.
+    #:
+    #: Every open posting, searchable or not.
+    postings_open: int = 0
+    #: The ones the search found for this question and put in order. Not how
+    #: many match: the keyword pool is cut off, so this is a floor.
+    postings_ranked: int = 0
+    #: How many of those the second model re-ordered. 0 when none did.
+    postings_reranked: int = 0
+    #: How many the model was shown, which is `len(sources)`. An answer can be
+    #: about these and no others.
+    postings_supplied: int = 0
+    #: How many postings the skill-gap table was counted over: the owner's
+    #: best-scoring open matches. None when the answer had no such table.
+    #: Never `postings_open`: on 2026-10-10 an answer gave counts over the top
+    #: 100 matches as counts over all 11,147 open postings.
+    gap_postings_counted: int | None = None
     #: How many earlier exchanges the model was given, and how many it was not:
     #: recruiter mail a remote model may not see, or a §2.2 topic.
     history_used: int = 0

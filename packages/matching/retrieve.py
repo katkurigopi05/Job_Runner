@@ -20,6 +20,18 @@ openings or the like, or it names a company in the registry. Otherwise the
 context says the postings were not searched, rather than saying nothing, so
 the model cannot read the silence as "no matches".
 
+`CHAT_SEMANTIC_CANDIDATES` is an opt-in experiment: keyword searches also
+admit neural chunk candidates before ranking. It can recover paraphrases
+with no keyword overlap, and can also admit unrelated results. Company and
+area filters still apply; explicit role/title pools are not widened.
+
+What the keywords found keeps the order it has with the experiment off. A
+posting whose title holds two of the question's search terms keeps its place
+outright (`_named_by_its_title`), and the semantic candidates are merged by
+rank with the rest, below it. The first version merged the two whole lists as
+equals, and a question that named a job by its title lost that job from the
+five shown. `docs/ML_EVALUATION.md` has both measured.
+
 ## Keywords decide what is relevant; embeddings decide the order
 
 Measured on the owner's database on 2026-09-30, a pure vector search for
@@ -137,6 +149,21 @@ _AREA_WIDEN = 8
 #: one more regex over every open posting.
 MAX_TERMS = 8
 
+#: How many of the question's search terms a posting's title must hold for the
+#: posting to keep its keyword place when a second list or a second model
+#: could move it (`_named_by_its_title`). Chosen from 1, 2 and 3 on the 104
+#: benchmark questions and then checked on 80 others (`docs/ML_EVALUATION.md`,
+#: 2026-10-10): at 1 a paraphrase holds whatever shares a word with it by
+#: chance, and at 3 a short title that the question spells out is not held.
+#:
+#: Two always, including for a question with one search term. Letting the
+#: only term be enough was tried and measured on the three benchmark
+#: questions that have one: in each the lone term was incidental ("network"
+#: in "Customer Experience Manager roles at a global network security
+#: company", whose other words are all too common to search for), and it
+#: held thirty Network Engineer titles ahead of the job that was asked for.
+ANCHOR_TITLE_TERMS = 2
+
 #: The fusion constant from the RRF paper (Cormack et al., 2009), and the value
 #: the owner's own Attorney.AI uses. Borrowed, not tuned: there are no labels
 #: for chat retrieval to tune it on.
@@ -201,6 +228,12 @@ _POSTING_WORDS = frozenset(_POSTING_WORDS_TEXT.split())
 #: focused on security" lost "security" (36%) and found postings that say
 #: "focused". Left out on purpose: "field" (1.2% of titles, Field Engineer),
 #: "area" (Area Manager) and "level", which says something about the job.
+#:
+#: And "target": the owner's own matches, in their words. "Which skills am I
+#: missing for my target jobs?" was a search for "target" on 2026-10-10, the
+#: one word left, and came back as growth-marketing and sales postings that
+#: say "target audience". It is in 18.6% of descriptions and one title of
+#: 11,147.
 _FRAMING_WORDS_TEXT = """
 which what who where when how any anything there some open available
 current currently apply applied application applications
@@ -218,6 +251,7 @@ based base use uses used focus focused focuses focusing require requires
 required requiring include includes around within such relevant specific
 oriented centric driven
 skill skills skilled needs needed needing them
+target targets targeted targeting
 """
 _FRAMING_WORDS = _POSTING_WORDS | frozenset(_FRAMING_WORDS_TEXT.split())
 
@@ -257,6 +291,52 @@ _MENTIONED_NAME_MAX_SHARE = 0.10
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _HIRING_MANAGER = re.compile(r"\bhiring managers?\b")
+#: "My job applications" is about applications. "job" there says what kind,
+#: and alone it made the question one about postings.
+_JOB_APPLICATION = re.compile(r"\bjobs?\s+(applications?)\b")
+
+#: One thing under two spellings, each rewritten to the one titles use.
+#:
+#: Measured on the owner's 11,147 open postings on 2026-10-10: no title says
+#: "artificial intelligence" and 510 say "AI". So "Any jobs based on AI?" was
+#: a title search and listed 240, and "Which roles focus on artificial
+#: intelligence?" was a keyword search on two words rare enough to look for
+#: ("artificial" 8.3% of descriptions, "intelligence" 24.4%) and returned
+#: Governance Intelligence, Customer Intelligence and a marketing manager.
+#:
+#: Only this pair, because only this pair can be rewritten one way round and
+#: lose nothing: "AI" is in 81% of descriptions, so it is never searched for
+#: there, and no title spells it out. "machine learning" and "ML" are not
+#: here. Both are in titles (138 and 64) and "ml" is rare enough to be
+#: searched for in descriptions, so rewriting either would stop finding the
+#: postings that use the other.
+_SPELLED_OUT = ((re.compile(r"\bartificial[\s-]+intelligence\b", re.IGNORECASE), "AI"),)
+
+#: The owner asking about their own applications: the noun and a word for
+#: where one stands, said in the first person. "me" counts here, unlike in
+#: the chat route's rule for protected answers: "applications waiting on me"
+#: is the owner's queue. All three, because two are in a job title:
+#: "Applications Engineer I" has the word and the numeral.
+#:
+#: The noun and not the verb. "Which jobs can I apply to that use a message
+#: queue?" is about jobs, and with "apply" counted it was searched without
+#: "queue". The cost is "jobs I applied to that are waiting on my review",
+#: which is still searched for "waiting" and "review".
+_APPLICATION_NOUNS = frozenset({"application", "applications"})
+#: Not the "I" of "I/O".
+_FIRST_PERSON = re.compile(r"\b(?:i(?!/)|i'm|im|i've|ive|my|me|mine|myself)\b")
+
+#: What such a question says about an application, and not about a posting:
+#: where it stands. "How many applications need my review, and which jobs use
+#: Kafka?" is looking for Kafka. Left alone in any other question, where
+#: "code review" is something a job can involve. "queue" and "wait" are not
+#: here at all: a job uses one and involves the other, and neither is the
+#: name of a place an application stands (`queued` and `waiting` are).
+_APPLICATION_STATE_TEXT = """
+review reviews reviewed reviewing waiting pending queued status
+statuses approve approved approval parked submit submitted
+"""
+_APPLICATION_STATE = frozenset(_APPLICATION_STATE_TEXT.split())
 
 _RAW_WORD = re.compile(r"[a-z0-9+#.]+")
 _SENTENCE_START = re.compile(r"(?<=[.!?;])\s+")
@@ -310,7 +390,8 @@ class Listed:
 
 @dataclass(frozen=True)
 class Retrieval:
-    #: False when the question was not about postings and nothing was searched.
+    #: False when nothing was searched: the question was not about postings,
+    #: or (`unnamed`) it was and named nothing to look for.
     attempted: bool
     passages: tuple[Passage, ...] = ()
     #: Open postings the search could reach. The keyword scan reaches all of
@@ -334,6 +415,13 @@ class Retrieval:
     #: The model that re-ordered the top results, or None when none did: no
     #: model is configured, it failed, or there was nothing to re-order.
     reranked_by: str | None = None
+    #: How many postings were found and put in order: `passages`, `more`, and
+    #: any past `MORE_LIMIT`. Not how many match the question. The keyword
+    #: scan keeps a pool and stops, so this is a floor, and the count of a
+    #: role's or a title word's postings is `role_total` or `title_total`.
+    ranked: int = 0
+    #: How many of those the second model re-ordered.
+    reranked: int = 0
     #: The kinds of job the question named, in words ("machine learning
     #: engineer"), from the same table as the feed's role filter.
     roles: tuple[str, ...] = ()
@@ -357,6 +445,13 @@ class Retrieval:
     #: How many open postings in the search area have them in the title, or
     #: None when titles were not searched.
     title_total: int | None = None
+    #: The question asks about jobs and names no role, skill, company, place
+    #: or title: "any jobs?", "my target jobs". Nothing was searched. It used
+    #: to be searched with an empty subject, which no vector can be made
+    #: from, and reported as "searched 0 of 11,147, 11,147 not searchable
+    #: yet": a corpus that could not be read, where the question was what
+    #: had nothing in it.
+    unnamed: bool = False
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -514,8 +609,8 @@ def _search_terms(
     return sorted(terms, key=frequencies.idf, reverse=True)[:MAX_TERMS]
 
 
-def _company_aliases(name: str, frequencies: idf.DocumentFrequencies) -> list[set[str]]:
-    """The word sets that name a company, each enough on its own.
+def _company_aliases(name: str, frequencies: idf.DocumentFrequencies) -> list[tuple[str, ...]]:
+    """The words that name a company, in the order it says them, each enough on its own.
 
     The full name; a bracketed alias as a name of its own ("Weights & Biases
     (CoreWeave)" is also "CoreWeave", and "Weights & Biases" without it); and
@@ -523,13 +618,13 @@ def _company_aliases(name: str, frequencies: idf.DocumentFrequencies) -> list[se
     postings. Without corpus statistics nothing is shortened.
     """
     parts = [re.sub(r"\(.*?\)", " ", name), *re.findall(r"\((.*?)\)", name)]
-    aliases: list[set[str]] = []
+    aliases: list[tuple[str, ...]] = []
     for part in parts:
-        terms = set(tokenize(part))
+        terms = tuple(dict.fromkeys(tokenize(part)))
         if not terms:
             continue
         aliases.append(terms)
-        core = terms - _COMPANY_SUFFIXES
+        core = tuple(term for term in terms if term not in _COMPANY_SUFFIXES)
         if (
             core
             and core != terms
@@ -538,6 +633,22 @@ def _company_aliases(name: str, frequencies: idf.DocumentFrequencies) -> list[se
         ):
             aliases.append(core)
     return aliases
+
+
+def _says(alias: tuple[str, ...], words: set[str], said: list[str]) -> bool:
+    """Whether a question says a company's name: its words, side by side, in its order.
+
+    Every word being somewhere in the question used to be enough. "Roles at an
+    AI-native multimodal lakehouse company" holds both words of Native AI, so
+    it was a question about Native AI, which has nothing open, and the answer
+    was "no open postings at Native AI" over a posting second in the corpus
+    for it. `said` is the question through `tokenize`, as the name is, so
+    "Weights & Biases" and "Bank of America" still meet themselves.
+    """
+    if len(alias) == 1:
+        return alias[0] in words
+    width = len(alias)
+    return any(tuple(said[at : at + width]) == alias for at in range(len(said) - width + 1))
 
 
 async def _named_companies(
@@ -562,9 +673,10 @@ async def _named_companies(
     "postings at N Robotics" and found nothing over 103 that say robotics.
     """
     rows = (await session.execute(select(Company.id, Company.name))).all()
-    matched: list[tuple[uuid.UUID, str, list[set[str]]]] = []
+    said = tokenize(question)
+    matched: list[tuple[uuid.UUID, str, list[tuple[str, ...]]]] = []
     for company_id, name in rows:
-        hits = [a for a in _company_aliases(name or "", frequencies) if a <= words]
+        hits = [a for a in _company_aliases(name or "", frequencies) if _says(a, words, said)]
         if hits:
             matched.append((company_id, name, hits))
 
@@ -585,14 +697,34 @@ async def _named_companies(
     names: list[str] = []
     for company_id, name, hits in matched:
         if all(len(a) == 1 for a in hits) and not any(
-            _one_word_names_it(next(iter(a)), own.get(company_id, 0), frequencies, question)
-            for a in hits
+            _one_word_names_it(a[0], own.get(company_id, 0), frequencies, question) for a in hits
         ):
             continue
         named.append(company_id)
         naming |= set(tokenize(name or ""))
         names.append(name)
     return named, naming, names
+
+
+#: What ends a sentence, for `_nothing_follows`.
+_SENTENCE_END = frozenset("?.!,;:")
+
+
+def _nothing_follows(question: str, index: int) -> bool:
+    r"""Whether `index` is the end of what was said, bar punctuation.
+
+    This was `re.match(r"\s*(?:[?.!,;:]|$)", question[index:])`, and CodeQL
+    reads that as a polynomial pattern on text it cannot vouch for: the slice
+    copies the rest of the question for every "at" in it, and `\s*` is then
+    scanned over the copy. Measured on 36,000 characters of "at fast" it ran
+    in 2ms, so the quadratic was reachable only in theory — but a character
+    walk is linear by construction and needs no argument, which is worth more
+    here than the two lines it costs. Same answers: a run of space then
+    punctuation, or the end of the string, and nothing else.
+    """
+    while index < len(question) and question[index].isspace():
+        index += 1
+    return index == len(question) or question[index] in _SENTENCE_END
 
 
 def _one_word_names_it(
@@ -609,7 +741,9 @@ def _one_word_names_it(
       tool, and both are real employers here; `robotics` is in 7.4% and
       "N Robotics" has none;
     - common: only after "at" ("jobs at Based"), since "based", "fast" and
-      "join" are in half the corpus.
+      "join" are in half the corpus. And only where a name would stand: typed
+      with a capital, or ending what is said. "Governance teams at
+      fast-growing tech firms" was a question about a company called Fast.
 
     Without corpus statistics there is nothing to judge by, and the word counts
     as it always did.
@@ -621,7 +755,14 @@ def _one_word_names_it(
         return True
     if elsewhere <= _MENTIONED_NAME_MAX_SHARE and own_postings > 0:
         return True
-    return re.search(rf"(?:\bat|@)\s+{re.escape(word)}\b", question.lower()) is not None
+    # Every place it follows "at", not the first: "at fast growing startups,
+    # or at Fast" says the word once as a word and once as the name.
+    return any(
+        after_at.group(1)[:1].isupper() or _nothing_follows(question, after_at.end())
+        for after_at in re.finditer(
+            rf"(?:\bat|@)\s+({re.escape(word)})(?![\w\u2010-\u2015-])", question, re.IGNORECASE
+        )
+    )
 
 
 async def _names_a_title(session: AsyncSession, subject: list[str]) -> bool:
@@ -1159,24 +1300,112 @@ def _fuse(keyword: list[uuid.UUID], by_space: list[list[uuid.UUID]]) -> dict[uui
     }
 
 
+async def _semantic_candidates(
+    session: AsyncSession,
+    chunk_vectors: dict[str, list[float]],
+    companies: list[uuid.UUID],
+    area: str | None,
+) -> tuple[list[_Hit], dict[uuid.UUID, tuple[int, int]], set[uuid.UUID]]:
+    """Bounded neural candidates, sharing the search's company/area rules.
+
+    `_best_chunks` also excludes closed postings and stale chunks. Lexical
+    hashes cannot recover semantic paraphrases and are deliberately excluded.
+    """
+    model = SentenceTransformerEmbedder.name
+    vector = chunk_vectors.get(model)
+    if vector is None:
+        return [], {}, set()
+    best = await _best_chunks(session, model, vector, companies=companies)
+    hits = await _hits_for(session, [pid for pid, _, _ in best])
+    kept: list[_Hit] = []
+    spans: dict[uuid.UUID, tuple[int, int]] = {}
+    outside: set[uuid.UUID] = set()
+    for pid, start, length in best:
+        hit = hits.get(pid)
+        if hit is None:
+            continue
+        if area and _outside_area(hit):
+            outside.add(pid)
+            continue
+        kept.append(hit)
+        spans[pid] = (start, length)
+        if len(kept) == KEYWORD_POOL:
+            break
+    return kept, spans, outside
+
+
+def _named_by_its_title(hit: _Hit, terms: list[str]) -> bool:
+    """Whether the question's own search terms name this posting in its title.
+
+    Two of them, as whole words (`ANCHOR_TITLE_TERMS`). "What Support Engineer
+    I weekend shift roles are open?" names "Support Engineer I (FC, Weekend
+    Shift)" this way: `support`, `weekend`, `shift`. A posting named so keeps
+    the place the keyword scan gave it. Semantic candidates are merged in
+    below it, and the second model is not asked about it. A question with one
+    search term names nothing this way.
+
+    Not the same as `_titles_in_question`, which wants the whole title in the
+    question and puts it first of all. This is the looser thing a person does
+    when they describe a job by some of its title.
+    """
+    if len(terms) < ANCHOR_TITLE_TERMS:
+        return False
+    title = (hit.title or "").lower()
+    held = sum(
+        1 for term in terms if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", title)
+    )
+    return held >= ANCHOR_TITLE_TERMS
+
+
+def _fuse_candidates(*rankings: list[uuid.UUID]) -> dict[uuid.UUID, float]:
+    """Fuse independent candidate lists; a missing hit gets no invented rank."""
+    scores: dict[uuid.UUID, float] = {}
+    for ranking in rankings:
+        for rank, pid in enumerate(dict.fromkeys(ranking), start=1):
+            scores[pid] = scores.get(pid, 0.0) + 1.0 / (RRF_K + rank)
+    return scores
+
+
 async def retrieve(
     session: AsyncSession, question: str, *, limit: int = DEFAULT_LIMIT
 ) -> Retrieval:
     """The open postings `question` is about, and how much of the corpus was read."""
+    for spelled_out, as_titles_say_it in _SPELLED_OUT:
+        question = spelled_out.sub(as_titles_say_it, question)
     # Trailing dots off, as `tokenize` does: "Show me remote jobs." ends in
     # "jobs.", and "I applied to Stripe." in "stripe.".
     words = {word.rstrip(".") for word in _RAW_WORD.findall(question.lower())}
     # "Hiring manager" is a person who replies, not a posting. Without this,
     # "did the hiring manager reply?" counted as asking about jobs.
-    unframed = _HIRING_MANAGER.sub(" ", question.lower())
+    unframed = _JOB_APPLICATION.sub(r" \1 ", _HIRING_MANAGER.sub(" ", question.lower()))
     asks_about_jobs = bool({w.rstrip(".") for w in _RAW_WORD.findall(unframed)} & _POSTING_WORDS)
+    # "Do I have any applications that need me to review them?" is about the
+    # owner's applications. It named no job and no company, and was searched
+    # anyway: "review" is in a title, and a question whose words are all in
+    # one title is taken for the title (below). The same question worded
+    # "waiting for my review" was not searched, since no title says "waiting".
+    about_my_applications = (
+        bool(words & _APPLICATION_NOUNS)
+        and bool(words & _APPLICATION_STATE)
+        and bool(_FIRST_PERSON.search(question.lower()))
+    )
+    aside = _APPLICATION_STATE if about_my_applications else frozenset()
     frequencies, active_revision = await idf.load_active(session)
     companies, company_words, company_names = await _named_companies(
         session, words, frequencies, question
     )
-    subject_terms = [t for t in tokenize(question) if t not in _FRAMING_WORDS]
-    if not (asks_about_jobs or companies or await _names_a_title(session, subject_terms)):
+    subject_terms = [t for t in tokenize(question) if t not in _FRAMING_WORDS and t not in aside]
+    if not (
+        asks_about_jobs
+        or companies
+        or (not about_my_applications and await _names_a_title(session, subject_terms))
+    ):
         return Retrieval(attempted=False)
+    # Asked for by its whole title, whatever its words are: found before the
+    # check below, so a posting titled "Open Application" is still a subject.
+    titled = await _titles_in_question(session, question, companies)
+    if not (subject_terms or companies or titled):
+        return Retrieval(attempted=False, unnamed=True)
 
     open_total = (
         await session.scalar(
@@ -1225,13 +1454,13 @@ async def retrieve(
     chunk_vectors = await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, subject)
     chunk_spans: dict[uuid.UUID, tuple[int, int]] = {}
 
-    terms = _search_terms(question, frequencies)
+    terms = _search_terms(question, frequencies, exclude=aside)
     if companies:
         # The filter already says "Stripe". Searching for it as well matches
         # every one of its postings equally, so the ones that say "remote" get
         # padded out with ones that do not. Kept only when it is all the
         # question asks, so "jobs at Stripe" still reads every Stripe posting.
-        beyond_the_name = _search_terms(question, frequencies, exclude=company_words)
+        beyond_the_name = _search_terms(question, frequencies, exclude=company_words | aside)
         terms = beyond_the_name or terms
     else:
         beyond_the_name = terms
@@ -1245,7 +1474,7 @@ async def retrieve(
     if asked_roles:
         typed_aliases = set().union(*asked_roles.values())
         role_words = {word for alias in typed_aliases for word in alias.split()}
-        terms = _search_terms(question, frequencies, exclude=company_words | role_words)
+        terms = _search_terms(question, frequencies, exclude=company_words | role_words | aside)
 
     area = _search_area(question)
     outside = 0
@@ -1271,7 +1500,7 @@ async def retrieve(
         asked_words = [
             word
             for word in dict.fromkeys(tokenize(question))
-            if word not in _FRAMING_WORDS and word not in company_words
+            if word not in _FRAMING_WORDS and word not in company_words and word not in aside
         ]
         stems = {_stem(word) for word in asked_words}
         of_the_title = await _title_word_hits(session, stems, companies) if stems else []
@@ -1311,7 +1540,6 @@ async def retrieve(
     # Loading the model blocks for seconds the first time, so off the loop.
     reranker = None if only_names_a_company else await asyncio.to_thread(get_reranker)
     reranked_by: str | None = None
-    titled = await _titles_in_question(session, question, companies)
     more_hits: list[_Hit] = []
     if terms or titled or role_pool is not None:
         pool = _AREA_POOL if area else KEYWORD_POOL
@@ -1357,21 +1585,48 @@ async def retrieve(
             titled = kept_titled
             scanned = kept_scanned if role_pool is not None else kept_scanned[:KEYWORD_POOL]
         keyword = titled + scanned
-        among = [hit.posting_id for hit in keyword]
+        keyword_ids = [hit.posting_id for hit in keyword]
+        semantic: list[_Hit] = []
+        semantic_spans: dict[uuid.UUID, tuple[int, int]] = {}
+        if (
+            get_settings().chat_semantic_candidates
+            and role_pool is None
+            and not only_names_a_company
+        ):
+            # Unlike the lexical subject, sentence meaning includes the
+            # relationships between words. Preserve those for discovery.
+            semantic_vectors = await asyncio.to_thread(
+                _encode_chunk_queries, chunk_encoders, question
+            )
+            semantic, semantic_spans, excluded = await _semantic_candidates(
+                session, semantic_vectors, companies, area
+            )
+            left_out |= excluded
+            known = set(keyword_ids)
+            # Preserve the old excerpts for literal matches. A new semantic
+            # match needs the chunk that justified it, not a keyword excerpt
+            # cut from a posting that never contained that keyword.
+            chunk_spans.update(
+                {pid: span for pid, span in semantic_spans.items() if pid not in known}
+            )
+        # What the keywords found, in the order they are given with the
+        # experiment off: the keyword rank fused with each posting's vector
+        # rank among themselves. Semantic candidates are merged in below, and
+        # never into this.
         by_space = [
-            await _order_in_space(session, space, vector, among)
+            await _order_in_space(session, space, vector, keyword_ids)
             for space, vector in vectors.items()
-            if among
+            if keyword_ids
         ]
         # Last, so that in `_fuse` a posting with chunks is ranked by its best
         # chunk rather than by its one truncated vector.
         among_spans: dict[uuid.UUID, tuple[int, int]] = {}
         for model, vector in chunk_vectors.items():
-            if among:
-                best = await _best_chunks(session, model, vector, among=among)
+            if keyword_ids:
+                best = await _best_chunks(session, model, vector, among=keyword_ids)
                 by_space.append([posting_id for posting_id, _, _ in best])
                 among_spans.update({pid: (start, length) for pid, start, length in best})
-        fused = _fuse(among, by_space)
+        fused = _fuse(keyword_ids, by_space)
         # A posting asked for by its title goes first, longest title first.
         # Then the fused order; the sort is stable, so a tie keeps the keyword
         # order.
@@ -1392,16 +1647,45 @@ async def retrieve(
         # The re-ranker orders the rest. A posting named by its title was
         # asked for outright, and no model's opinion of its text outranks that.
         named = [hit for hit in ordered if hit.posting_id in by_title]
+        loose = [hit for hit in ordered if hit.posting_id not in by_title]
+        # Nor does it outrank a posting whose title the question describes
+        # (`_named_by_its_title`). Held only when something could move it: a
+        # second list, or a second model. With neither, this is the order
+        # above and nothing is taken out of it. A role's postings are sorted
+        # by kind and are not held either.
+        held: list[_Hit] = []
+        if role_pool is None and (semantic or reranker is not None):
+            held = [hit for hit in loose if _named_by_its_title(hit, terms)]
+            kept = {hit.posting_id for hit in held}
+            loose = [hit for hit in loose if hit.posting_id not in kept]
+        if semantic:
+            # The two lists know different things and are merged by rank. The
+            # first version merged the whole keyword list this way, so a
+            # semantic candidate at rank 1 tied with the best keyword match
+            # and the fifth keyword match fell to about tenth.
+            set_aside = {hit.posting_id for hit in named + held}
+            beside = [hit for hit in semantic if hit.posting_id not in set_aside]
+            merged = _fuse_candidates(
+                [hit.posting_id for hit in loose], [hit.posting_id for hit in beside]
+            )
+            seen = {hit.posting_id for hit in loose}
+            loose = sorted(
+                loose + [hit for hit in beside if hit.posting_id not in seen],
+                key=lambda hit: -merged[hit.posting_id],
+            )
+            # The chunk that found a semantic candidate is the one to read.
+            among_spans.update(semantic_spans)
         # A model that judges is also handed the postings nearest the
         # question that the keywords did not find: the same work under
-        # another name. Only where the keywords found something. A vector
-        # search cannot say "none" (§20), so candidates are added to what was
-        # found and never in its place. And never to a role's own list, which
-        # is that role's postings, counted and listed by kind.
+        # another name, and the one the owner's machine has measured. Only
+        # where the keywords found something. A vector search cannot say
+        # "none" (§20), so candidates are added to what was found and never
+        # in its place. And never to a role's own list, which is that role's
+        # postings, counted and listed by kind.
         added: list[_Hit] = []
         if reranker is not None and reranker.judges and role_pool is None and keyword:
             added, added_spans = await _nearest_unfound(
-                session, chunk_vectors, companies, in_area=bool(area), found=set(among)
+                session, chunk_vectors, companies, in_area=bool(area), found=set(keyword_ids)
             )
             among_spans.update(added_spans)
             # Quoted where it matched: it has none of the question's keywords,
@@ -1409,16 +1693,13 @@ async def retrieve(
             chunk_spans.update(added_spans)
         # By kind before the re-ranker, so its thirty places go to what was
         # typed, and again after it, so it orders within a kind and not across.
-        rest, reranked_by = await _reranked(
-            reranker,
-            question,
-            by_kind([hit for hit in ordered if hit.posting_id not in by_title]),
-            among_spans,
-            added,
-        )
-        rest = by_kind(rest)
+        rest, reranked_by = await _reranked(reranker, question, by_kind(loose), among_spans, added)
+        rest = held + by_kind(rest)
         chosen = (named + rest)[:limit]
         more_hits = (named + rest)[limit : limit + MORE_LIMIT]
+        ranked_total = len(named) + len(rest)
+        # What it was handed, which leaves out the postings held ahead of it.
+        reranked_total = min(_rerank_pool(), len(rest) - len(held)) if reranked_by else 0
         outside = len(left_out)
         searched, unsearchable = open_total, 0
     else:
@@ -1447,6 +1728,7 @@ async def retrieve(
                 if rank < len(hits) and hits[rank].posting_id not in taken:
                     taken.add(hits[rank].posting_id)
                     ranked.append(hits[rank])
+        reranked_total = 0
         if reranker is None:
             chosen = []
             for hit in ranked:
@@ -1463,12 +1745,15 @@ async def retrieve(
             outside += len(ranked) - len(eligible)
             eligible, reranked_by = await _reranked(reranker, question, eligible, chunk_spans)
             chosen = eligible[:limit]
+            reranked_total = min(_rerank_pool(), len(eligible)) if reranked_by else 0
         shown = {hit.posting_id for hit in chosen}
-        more_hits = [
+        in_area_rest = [
             hit
             for hit in ranked
             if hit.posting_id not in shown and not (area and _outside_area(hit))
-        ][:MORE_LIMIT]
+        ]
+        more_hits = in_area_rest[:MORE_LIMIT]
+        ranked_total = len(chosen) + len(in_area_rest)
         searched = await _reachable(session, list(chunk_vectors), list(vectors))
         unsearchable = max(0, open_total - searched)
 
@@ -1509,6 +1794,8 @@ async def retrieve(
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,
         reranked_by=reranked_by,
+        ranked=ranked_total,
+        reranked=reranked_total,
         roles=tuple(display_name(key) for key in sorted(asked_roles)),
         role_keys=tuple(sorted(asked_roles)),
         role_total=len(role_pool) if role_pool is not None and asked_roles else None,

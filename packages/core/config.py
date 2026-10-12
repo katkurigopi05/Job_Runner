@@ -346,6 +346,18 @@ class Settings(BaseSettings):
     #: relevant, as CLAUDE.md §14 has it, and the model only re-orders.
     chat_rerank_widen: int = 50
 
+    #: Experimental: merge neural chunk candidates into keyword searches
+    #: before ranking. Off until evaluated against the owner's questions;
+    #: semantic similarity can introduce near-topic noise. Existing explicit
+    #: role/title searches retain their constrained candidate sets.
+    #:
+    #: Measured on 2026-10-10 on known-target questions it no longer costs a
+    #: question that names its job, and it finds more paraphrased targets.
+    #: It is still off: what it adds to the five shown has no relevance
+    #: grades behind it, and `docs/ML_EVALUATION.md` says what would change
+    #: that.
+    chat_semantic_candidates: bool = False
+
     storage_root: str = "./storage"
     #: Where `make backup` writes. Outside storage_root so a backup never
     #: contains itself, and gitignored like it.

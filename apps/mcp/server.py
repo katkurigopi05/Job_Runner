@@ -47,7 +47,7 @@ from mcp.server.mcpserver import Context, Elicit, Resolve
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field, create_model
 
-from apps.mcp.client import ApiCallFailed, ApiUnavailable, JobrunnerClient
+from apps.mcp.client import ApiCallFailed, ApiDidNotAnswer, ApiUnavailable, JobrunnerClient
 from packages.matching.labels import RELEVANCE_SCALE
 
 INSTRUCTIONS = """
@@ -109,8 +109,22 @@ async def _call(method: str, path: str, **kwargs: Any) -> Any:
         return await _client.request(method, path, **kwargs)
     except ApiUnavailable as exc:
         return {"error": str(exc)}
+    except ApiDidNotAnswer as exc:
+        return {"error": str(exc), "code": "no_answer"}
     except ApiCallFailed as exc:
         return {"error": exc.message, "code": exc.code}
+
+
+def _under(name: str, result: Any) -> dict[str, Any]:
+    """What the API returned, under a name of its own, unless it failed.
+
+    A failure is `{"error": ...}` at the top, as every other tool gives it.
+    Wrapped like a result it read `{"candidates": {"error": ...}}`: a dead API
+    under the name of a list.
+    """
+    if isinstance(result, dict) and "error" in result:
+        return result
+    return {name: result}
 
 
 #: What an id is made of, as far as a path is concerned. Whether it is
@@ -157,7 +171,7 @@ async def detect_ats(url: str) -> dict[str, Any]:
 async def supported_ats() -> dict[str, Any]:
     """List the applicant tracking systems Jobrunner can drive."""
     result = await _call("GET", "/ats")
-    return {"supported": result}
+    return _under("supported", result)
 
 
 @server.tool()
@@ -434,33 +448,53 @@ def _form_for(questions: list[dict[str, Any]]) -> type[BaseModel]:
     return create_model("Answers", **fields)
 
 
+async def _application(application_id: str) -> dict[str, Any]:
+    """The application a form is about, read before the form is built."""
+    application = await _call("GET", f"/applications/{_id(application_id)}")
+    if not isinstance(application, dict) or "error" in application:
+        raise ToolError(
+            str(application.get("error") if isinstance(application, dict) else application)
+        )
+    return application
+
+
+def _which(application: dict[str, Any]) -> str:
+    """The application in the server's words: where it is being sent.
+
+    The id is the model's to choose, and a form that showed the employer's
+    questions without saying whose they were looked right for any of them. The
+    posting's address is what the owner recognises.
+    """
+    return f" ({application['url']})" if application.get("url") else ""
+
+
 async def _owners_answers(application_id: str, ctx: Context) -> Elicit[BaseModel] | _NothingOpen:
     """Ask the owner the questions this application was parked for.
 
     Runs before the tool, in place of an argument a model could fill. With
     nothing open there is nothing to ask and no form.
     """
-    application = await _call("GET", f"/applications/{_id(application_id)}")
-    if not isinstance(application, dict) or "error" in application:
-        raise ToolError(
-            str(application.get("error") if isinstance(application, dict) else application)
-        )
+    application = await _application(application_id)
     questions = (application.get("review") or {}).get("unanswered") or []
     if not questions:
         return _NothingOpen()
     _must_reach_the_owner(ctx, "the answers to an employer's questions")
     return Elicit(
-        f"This application was left with {len(questions)} question(s) for you. "
-        "What you type goes on the employer's form as you typed it.",
+        f"This application{_which(application)} was left with {len(questions)} question(s) "
+        "for you. What you type goes on the employer's form as you typed it.",
         _form_for(questions),
     )
 
 
 async def _owners_code(application_id: str, ctx: Context) -> Elicit[_Code]:
-    # Before the form: an id that will be refused is not worth a code typed for it.
-    _id(application_id)
+    # Before the form: an application that cannot be read is not worth a code typed for it.
+    application = await _application(application_id)
     _must_reach_the_owner(ctx, "a verification code")
-    return Elicit("The site sent you a verification code. Type it here.", _Code)
+    return Elicit(
+        f"The site sent you a verification code for this application{_which(application)}. "
+        "Type it here.",
+        _Code,
+    )
 
 
 @server.tool(meta=_ASK_EVERY_TIME)
@@ -1134,21 +1168,21 @@ async def grading_progress(profile_id: str | None = None) -> dict[str, Any]:
 async def list_candidates() -> dict[str, Any]:
     """List candidates. Most operations need a candidate_id from here."""
     result = await _call("GET", "/candidates")
-    return {"candidates": result}
+    return _under("candidates", result)
 
 
 @server.tool()
 async def list_profiles() -> dict[str, Any]:
     """List profiles — the reusable answer sets applications are made from."""
     result = await _call("GET", "/profiles")
-    return {"profiles": result}
+    return _under("profiles", result)
 
 
 @server.tool()
 async def list_resumes(candidate_id: str) -> dict[str, Any]:
     """List uploaded résumés for a candidate, newest version first."""
     result = await _call("GET", "/resumes", params={"candidate_id": candidate_id})
-    return {"resumes": result}
+    return _under("resumes", result)
 
 
 @server.tool()
@@ -1204,7 +1238,7 @@ async def sync_github_projects(
 async def list_projects(candidate_id: str) -> dict[str, Any]:
     """List imported projects for a candidate."""
     result = await _call("GET", "/projects", params={"candidate_id": candidate_id})
-    return {"projects": result}
+    return _under("projects", result)
 
 
 @server.tool()
@@ -1219,7 +1253,7 @@ async def preview_projects(candidate_id: str, job_text: str = "", limit: int = 4
         "/projects/preview",
         params={"candidate_id": candidate_id, "job_text": job_text, "limit": limit},
     )
-    return {"selected": result}
+    return _under("selected", result)
 
 
 @server.tool()

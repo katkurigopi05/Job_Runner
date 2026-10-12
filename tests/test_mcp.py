@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import httpx
 import pytest
 from httpx import ASGITransport
 
@@ -791,6 +792,111 @@ async def test_unreachable_api_is_reported_not_swallowed(monkeypatch) -> None:
     result = await call("review_queue")
     assert "Cannot reach" in result["error"]
     assert "make api" in result["error"]
+
+
+@BOTH_PROTOCOLS
+async def test_each_form_says_which_application_it_is_about(parked, mode) -> None:
+    """The model chooses the id. The form showed the employer's questions and
+    not whose they were, so an id for another application than the one being
+    talked about put the right-looking form in front of the owner."""
+    api = parked(WHY)
+    api.application["url"] = "https://boards.greenhouse.io/acme/jobs/41"
+
+    answering = _Owner(lambda schema: {"q1": "I admire the work."}, mode=mode)
+    await answering.calls("approve_application", application_id="app-1")
+    typing = _Owner(lambda schema: {"code": "123456"}, mode=mode)
+    await typing.calls("submit_otp", application_id="app-1")
+
+    assert "https://boards.greenhouse.io/acme/jobs/41" in answering.messages[-1]
+    assert "https://boards.greenhouse.io/acme/jobs/41" in typing.messages[-1]
+
+
+async def test_a_code_is_not_asked_for_an_application_that_cannot_be_read(monkeypatch) -> None:
+    """Refused before the form, as an id that is not one is: nothing is typed for it."""
+
+    class _Missing(JobrunnerClient):
+        async def request(self, method: str, path: str, **kwargs: Any) -> Any:
+            from apps.mcp.client import ApiCallFailed
+
+            raise ApiCallFailed("not_found", "application not found", 404)
+
+    monkeypatch.setattr(mcp_server, "_client", _Missing())
+    owner = _Owner(lambda schema: {"code": "123456"})
+
+    result = await owner.result("submit_otp", application_id="app-9")
+
+    assert result.is_error and "not found" in result.content[0].text
+    assert owner.shown == []
+
+
+class _Silent(httpx.AsyncBaseTransport):
+    """An API that takes the request and never answers it."""
+
+    def __init__(self, error: type[Exception]) -> None:
+        self._error = error
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        raise self._error("", request=request)
+
+
+@pytest.mark.parametrize("error", [httpx.ReadTimeout, httpx.ReadError, httpx.RemoteProtocolError])
+async def test_a_read_that_got_no_answer_says_so_and_can_be_asked_again(monkeypatch, error) -> None:
+    """httpx's timeout has no words in it. The tool failed with "Error
+    executing tool review_queue: " and nothing after the colon."""
+    monkeypatch.setattr(
+        mcp_server, "_client", JobrunnerClient(base_url="http://test", transport=_Silent(error))
+    )
+
+    result = await call("review_queue")
+
+    assert result["code"] == "no_answer"
+    assert "did not answer" in result["error"]
+    assert "Nothing was changed" in result["error"]
+
+
+@pytest.mark.parametrize("error", [httpx.ReadTimeout, httpx.ReadError])
+async def test_a_write_that_got_no_answer_may_have_happened(monkeypatch, error) -> None:
+    """The request was sent. Whether it was carried out is not known, and
+    asking again could do it twice: the caller is told to look first."""
+    monkeypatch.setattr(
+        mcp_server, "_client", JobrunnerClient(base_url="http://test", transport=_Silent(error))
+    )
+
+    result = await call("reject_application", application_id="app-1")
+
+    assert result["code"] == "no_answer"
+    assert "may have been carried out" in result["error"]
+    assert "before asking again" in result["error"]
+    assert "Nothing was changed" not in result["error"]
+
+
+#: The tools that put what the API returned under a name of their own.
+_LISTING_TOOLS = {
+    "supported_ats": {},
+    "list_candidates": {},
+    "list_profiles": {},
+    "list_resumes": {"candidate_id": "c-1"},
+    "list_projects": {"candidate_id": "c-1"},
+    "preview_projects": {"candidate_id": "c-1"},
+}
+
+
+@pytest.mark.parametrize("tool", sorted(_LISTING_TOOLS))
+async def test_a_failed_listing_is_an_error_and_not_a_list(monkeypatch, tool) -> None:
+    """These six wrapped whatever came back, so a dead API read
+    `{"candidates": {"error": ...}}`: a failure under the name of a result.
+    Every other tool puts `error` at the top, where a caller looks for it."""
+
+    class _Dead(JobrunnerClient):
+        async def request(self, *args: Any, **kwargs: Any) -> Any:
+            raise ApiUnavailable("Cannot reach the Jobrunner API at http://x.")
+
+    monkeypatch.setattr(mcp_server, "_client", _Dead())
+
+    result = await call(tool, **_LISTING_TOOLS[tool])
+
+    assert "Cannot reach" in result["error"]
+    assert set(result) == {"error"}
 
 
 async def test_not_found_surfaces_the_error_code() -> None:

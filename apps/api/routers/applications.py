@@ -181,8 +181,15 @@ async def review_application(
     This is the approval gate. Nothing reaches an employer without passing
     through here (or through an explicit per-profile auto-submit above
     threshold). CLAUDE.md §2.3.
+
+    The row is locked while it is decided. Read without a lock, two requests
+    at once each saw `needs_review` before the other committed, and both went
+    through: two runs queued for one application, or an approval and a
+    rejection both accepted. With more than one worker, two runs of one
+    application is the form sent twice. The second caller now waits, reads
+    what the first left, and is told the application has moved on.
     """
-    application = await session.get(Application, application_id)
+    application = await session.get(Application, application_id, with_for_update=True)
     if application is None:
         raise ApiError(ErrorCode.NOT_FOUND, "application not found")
 
@@ -546,8 +553,11 @@ async def submit_otp(
 
     The code is stored on the application for the worker to consume and is
     deliberately kept out of the event payload, which is append-only.
+
+    Locked while it is decided, as a review is: a code sent twice at once
+    queued two runs.
     """
-    application = await session.get(Application, application_id)
+    application = await session.get(Application, application_id, with_for_update=True)
     if application is None:
         raise ApiError(ErrorCode.NOT_FOUND, "application not found")
 
