@@ -1650,11 +1650,19 @@ async def retrieve(
         loose = [hit for hit in ordered if hit.posting_id not in by_title]
         # Nor does it outrank a posting whose title the question describes
         # (`_named_by_its_title`). Held only when something could move it: a
-        # second list, or a second model. With neither, this is the order
-        # above and nothing is taken out of it. A role's postings are sorted
-        # by kind and are not held either.
+        # second list, or a model that scores likeness. With neither, this is
+        # the order above and nothing is taken out of it. A role's postings
+        # are sorted by kind and are not held either.
+        #
+        # Not from a model that judges. Holding was measured with a likeness
+        # model, which re-orders outright and reads no title. The judge was
+        # measured the other way: shown every keyword match under its title,
+        # its order fused with the search's (`rerank.fuse`), which is its own
+        # answer to the same damage. When the two met in one merge the title
+        # was held from the judge as well, a third arrangement nobody ran.
+        judging = reranker is not None and reranker.judges
         held: list[_Hit] = []
-        if role_pool is None and (semantic or reranker is not None):
+        if role_pool is None and (semantic or (reranker is not None and not judging)):
             held = [hit for hit in loose if _named_by_its_title(hit, terms)]
             kept = {hit.posting_id for hit in held}
             loose = [hit for hit in loose if hit.posting_id not in kept]
@@ -1693,13 +1701,16 @@ async def retrieve(
             chunk_spans.update(added_spans)
         # By kind before the re-ranker, so its thirty places go to what was
         # typed, and again after it, so it orders within a kind and not across.
-        rest, reranked_by = await _reranked(reranker, question, by_kind(loose), among_spans, added)
+        handed = by_kind(loose)
+        rest, reranked_by = await _reranked(reranker, question, handed, among_spans, added)
         rest = held + by_kind(rest)
         chosen = (named + rest)[:limit]
         more_hits = (named + rest)[limit : limit + MORE_LIMIT]
         ranked_total = len(named) + len(rest)
-        # What it was handed, which leaves out the postings held ahead of it.
-        reranked_total = min(_rerank_pool(), len(rest) - len(held)) if reranked_by else 0
+        # What the second model read: the head of what it was handed, which
+        # leaves out the postings held ahead of it, and for one that judges,
+        # the unfound postings it was handed beside them.
+        reranked_total = min(_rerank_pool(), len(handed)) + len(added) if reranked_by else 0
         outside = len(left_out)
         searched, unsearchable = open_total, 0
     else:

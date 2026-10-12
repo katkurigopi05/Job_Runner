@@ -122,6 +122,55 @@ async def test_a_citation_where_nothing_was_searched_is_one_too(
     assert body["unsupported_citations"] == ["P1"]
 
 
+async def test_a_posting_read_again_from_an_earlier_answer_was_supplied(
+    client: AsyncClient, worker_session, monkeypatch
+) -> None:
+    """The conversation carries the postings its earlier answers cited, read
+    again and labelled after the ones found now (`chat_history`). Citing one
+    of those is citing something the model was given.
+
+    The check and the memory were written apart and met in one merge. The
+    check knew only the postings found for this question, so "the one from
+    before [P1]" was reported, and shown under the answer, as a source the
+    model had made up."""
+    posts = await _kafka_postings(worker_session)
+    _answers(monkeypatch, "The one from before still stands [P1].")
+    earlier = {
+        "question": "Which jobs use Kafka?",
+        "answer": "Stream Engineer [P1].",
+        "mail_in_context": False,
+        "cited": [str(posts["required"].id)],
+    }
+
+    body = (
+        await client.post("/chat", json={"message": "what needs me?", "history": [earlier]})
+    ).json()
+
+    assert body["unsupported_citations"] == []
+    assert body["postings_supplied"] == 1, "nothing was searched, and one was read again"
+    assert [s["title"] for s in body["sources"]] == ["Stream Engineer"]
+
+
+async def test_a_label_past_what_was_carried_over_is_still_invented(
+    client: AsyncClient, worker_session, monkeypatch
+) -> None:
+    """One posting was read again, as P1. "[P2]" is nothing the model was given."""
+    posts = await _kafka_postings(worker_session)
+    _answers(monkeypatch, "That one [P1], and another [P2].")
+    earlier = {
+        "question": "Which jobs use Kafka?",
+        "answer": "Stream Engineer [P1].",
+        "mail_in_context": False,
+        "cited": [str(posts["required"].id)],
+    }
+
+    body = (
+        await client.post("/chat", json={"message": "what needs me?", "history": [earlier]})
+    ).json()
+
+    assert body["unsupported_citations"] == ["P2"]
+
+
 # --------------------------------------------------------------------------
 # The counts, each under its own name
 # --------------------------------------------------------------------------
