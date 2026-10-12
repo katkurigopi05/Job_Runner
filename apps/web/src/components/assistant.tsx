@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 
+import { EditQuestion, TurnActions } from "@/components/assistant-turn-actions";
 import { historyFrom } from "@/lib/chat-history";
 import { readFrames } from "@/lib/chat-stream";
 
@@ -461,6 +462,9 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
 
   const chosen = PROVIDERS.find((entry) => entry.value === provider) ?? PROVIDERS[0];
   const endRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // The question open for editing, by its place in `turns`.
+  const [editing, setEditing] = useState<number | null>(null);
   // The question that is out, so it can be withdrawn. Leaving the page while
   // an answer is being written must also stop the model writing it.
   const asked = useRef<AbortController | null>(null);
@@ -471,11 +475,15 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [turns, busy]);
 
-  async function send(text: string) {
+  async function send(text: string, earlier: Turn[] = turns) {
     const question = text.trim();
     if (!question || busy) return;
 
-    setTurns((held) => [...held, { role: "you", text: question }]);
+    // `earlier` is the conversation this question continues. An edited
+    // question is asked again with only what came before it, so the answer it
+    // replaces is neither left on screen nor sent back as context.
+    setTurns([...earlier, { role: "you", text: question }]);
+    setEditing(null);
     setDraft("");
     setBusy(true);
     setStatus(chosen.local ? "thinking on this machine…" : `sending to ${chosen.label}…`);
@@ -493,9 +501,8 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           application_id: applicationId ?? null,
           provider,
           share_mail: shareMail,
-          // The conversation up to this question. `turns` is this render's:
-          // the question just added above is not in it yet.
-          history: historyFrom(turns),
+          // The conversation up to this question, without the question.
+          history: historyFrom(earlier),
         }),
       });
 
@@ -679,18 +686,44 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
                     {turn.sharedMail ? " · with recruiter mail" : " · mail withheld"}
                   </span>
                 ) : null}
+                <TurnActions
+                  role={turn.role}
+                  text={turn.text}
+                  canEdit={!busy}
+                  isEditing={editing === index}
+                  onEdit={() => setEditing(index)}
+                  onCopied={(succeeded) =>
+                    setStatus(
+                      succeeded
+                        ? `copied the ${turn.role === "you" ? "question" : "answer"}`
+                        : "could not copy · the browser allows it only on localhost or https",
+                    )
+                  }
+                />
               </p>
-              <div
-                className={`mt-1 inline-block max-w-[90%] rounded px-3 py-2 text-left text-sm leading-relaxed whitespace-pre-wrap ${
-                  turn.role === "you"
-                    ? "bg-ink text-paper"
-                    : turn.provider === "refused"
-                      ? "border border-attn/40 bg-attn-soft text-ink"
-                      : "border border-rule bg-paper"
-                }`}
-              >
-                {turn.text}
-              </div>
+              {editing === index ? (
+                <EditQuestion
+                  initial={turn.text}
+                  following={turns.length - index - 1}
+                  onSend={(text) => void send(text, turns.slice(0, index))}
+                  onCancel={() => {
+                    setEditing(null);
+                    inputRef.current?.focus();
+                  }}
+                />
+              ) : (
+                <div
+                  className={`mt-1 inline-block max-w-[90%] rounded px-3 py-2 text-left text-sm leading-relaxed whitespace-pre-wrap ${
+                    turn.role === "you"
+                      ? "bg-ink text-paper"
+                      : turn.provider === "refused"
+                        ? "border border-attn/40 bg-attn-soft text-ink"
+                        : "border border-rule bg-paper"
+                  }`}
+                >
+                  {turn.text}
+                </div>
+              )}
               {turn.role === "assistant" ? <InventedCitations turn={turn} /> : null}
               {turn.role === "assistant" ? <RetrievedPostings turn={turn} /> : null}
             </div>
@@ -719,6 +752,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
         </label>
         <input
           id="assistant-input"
+          ref={inputRef}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder="ask about your applications or open postings…"
@@ -747,6 +781,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
             disabled={busy}
             onClick={() => {
               setTurns([]);
+              setEditing(null);
               setStatus("new conversation · nothing remembered");
             }}
             className="shrink-0 text-xs text-ink-soft underline decoration-rule underline-offset-4 transition-colors hover:text-ink hover:decoration-attn disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
