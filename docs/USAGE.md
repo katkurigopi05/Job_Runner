@@ -487,6 +487,20 @@ Every remote answer is labelled in the transcript with the model, that it left
 the machine, and whether mail went with it. The choice is per question and is
 not remembered.
 
+**It remembers the conversation you are in.** The last few exchanges go with
+each question, so "which of those are remote?" refers to the answer above it.
+The postings an earlier answer cited are read again from the database, not
+taken from what the assistant said about them. Three limits:
+
+- An earlier answer written with recruiter mail in hand is not passed to a
+  cloud model unless the mail box is ticked for the new question. The status
+  line says when an exchange was held back.
+- A question about what *you* should put for salary, sponsorship, work
+  authorization or employment history is still refused, and asking it in two
+  parts does not get round that.
+- It lasts while the page is open. **New conversation**, beside the status
+  line, forgets it at once; so does reloading. Nothing is saved anywhere.
+
 **The answer appears as it is written.** The local model's words show up as it
 writes them, and the postings it cited are listed when it has finished. A cloud
 model's answer still arrives in one piece. If an answer stops part way the

@@ -799,6 +799,36 @@ the process's, so after a restart a posting has to be offered again before
 it can be graded. Not seen: Claude Code's own form. The library's client
 answered it in both protocols.
 
+**An offer is for one profile, and was remembered by posting alone**
+(2026-10-08, found by review). Two profiles can be served the same posting,
+each from a stream of its own. The server kept what it had offered by posting
+id, so the second offer replaced the first, and a request that arrived while
+a form was open moved the grade:
+
+```text
+next_to_grade(profile_id=p-1)    offers post-1, stream unseen
+grade_posting(post-1)            the form opens
+next_to_grade(profile_id=p-2)    offers post-1, stream confident
+the form is answered             POST /labels: profile p-2, stream confident
+```
+
+Run on both protocols before the fix, with that result on each. What is
+remembered is keyed by profile and posting now, and `grade_posting` takes the
+`profile_id` that `next_to_grade` was given. Three things to keep:
+
+- **The profile is an argument and the grade still is not.** Which profile is
+  being graded for was already the caller's to say, in `next_to_grade`.
+- **Holding the offer for the length of one call would not have been
+  enough.** On protocol 2026-07-28 the library runs the resolver again once
+  the form is answered, so what was read before the form is read a second
+  time after it. The key is what makes both reads the same offer.
+- **A posting named for a profile it was not offered to is one nobody
+  offered**, and is refused before the owner is asked. Naming no profile
+  after offering under one is refused the same way: the tool does not pick.
+
+Not done: the form does not say which profile it is for. The server knows a
+profile by its id and not by its label.
+
 `apps/mcp/server.py` is past 1,200 lines with these. Splitting it means
 moving the shared `server` and `_client` into a module of their own, which
 every MCP test's monkeypatch touches, so it is a change of its own.
@@ -1503,6 +1533,71 @@ matches — because one regex per term over every row took 3.1s for eight
 terms against 0.8s this way. There is no vector index on
 `description_embedding`, so the vector half is an exact scan — if an ivfflat
 index is added, the per-space filter makes it approximate.
+
+### Remembering a conversation
+
+Added 2026-10-08, at the owner's asking. `/chat` took one message, so "which
+of those are remote?" referred to nothing. The dock now sends the last few
+exchanges with each question (`ChatRequest.history`), and
+`apps/api/chat_history.py` decides what of them a model sees. Three rules in
+this section were written for one message at a time, and each had a way round
+it once there were two. `tests/test_chat_memory.py` holds them.
+
+- **Recruiter mail.** The local model always reads it, so its answer can
+  quote it. Sent on as history, that is the mail reaching a remote model with
+  the box unticked. An exchange written with mail in its context goes to a
+  remote model only when the owner shares mail for that question. The reply
+  says whether mail was read into it (`mail_in_context`), which is narrower
+  than `shared_mail`: mail is only read for an application, so a local answer
+  on the chat page holds none. An exchange that does not say is treated as
+  holding it.
+- **§2.2.** "What salary does this posting list?" is answered, and "what
+  should I ask for?" names no protected topic. Together they are the question
+  the rule refuses. A first-person question is asked without any earlier
+  exchange that touched one of those topics, and a question the rule refuses
+  outright is never remembered. "Which roles offer sponsorship?" followed by
+  "which of those are in California?" still works: the second is not about
+  the owner.
+- **Grounded, not freehand.** An earlier answer is the model's own prose. The
+  postings it cited are read again from the database and given as `POSTINGS
+  FROM EARLIER ANSWERS`, labelled after the ones found for this question.
+  Citation labels are taken out of the remembered text, because `[P1]` named
+  another posting then. A carried-over posting is listed under an answer only
+  when the answer cites it.
+
+Whatever is held back is said in the prompt, as withheld mail is: an absent
+exchange would read as nothing having been said.
+
+Three exchanges are given, a question cut to 300 characters and an answer to
+500, about 600 tokens against the local model's 4,096. The system prompt is
+`assistant.system` v6 (it was v5 until §27's paragraphs joined these in it). The protected-topic checks moved to
+`apps/api/protected_questions.py`, so the refusal and the memory read a
+question the same way; `routers/chat.py` was at 800 lines.
+
+Seen on 2026-10-08:
+
+- **In a browser**, with the model's answer stubbed at the network. The
+  second question carried the first exchange and the posting it cited, a
+  refused question was not sent as history, and "New conversation" cleared
+  it.
+- **Through the API on the owner's data**, Nemotron on OpenRouter, two calls.
+  "Which open roles use Kafka?" listed five postings. "which of those are
+  remote?" answered that only the Senior Software Engineer, Data Platform
+  role at Human Interest is, and cited it by the label it had in that
+  message. It is the one of the five located "United States, Remote".
+
+Not done:
+
+- **The memory is the open page's.** The conversation is in the dock's state
+  and is gone on a reload. Nothing is stored, in the browser or the database,
+  so nothing is remembered from one day to the next.
+- **A follow-up is still searched as it is written.** "which of those are
+  remote?" is not a postings question to the search, so it was answered from
+  the carried-over postings alone. "which of those use Python?" also runs a
+  fresh search for Python, and what that finds is listed beside them.
+- **The local model was not asked.** One run, one model.
+- **The two-message rule reads topics from the refusal's own word list**, so
+  it misses what that misses.
 
 ## 15. What the gates do and do not prove
 
@@ -4190,6 +4285,81 @@ in simulation, that is, which is the lesson of this section: §19 asked for a
 measurement before a ranking stage ships, and a measurement of something other
 than the shipped path did not count as one.
 
+### A cross-encoder, and the one place the keyword rule gives
+
+Added 2026-10-08, after a second forum reply suggested re-ranking bge-small's
+top 50 with a cross-encoder. `CHAT_RERANK_MODEL` may now name one: a model
+that reads the question and one passage together and scores whether the
+passage answers it. The model named says which kind it is
+(`rerank._is_cross_encoder`), so there is no second setting to disagree with
+the first. Off as shipped, and off on the owner's machine until they say.
+
+Measured in three steps, each on the 49 of the 56 benchmark postings still
+open. Natural questions, right posting in the five shown:
+
+| | in the five | first |
+|---|---|---|
+| bge-small's vector search alone, its top 5 / its top 50 | 23 / 37 | |
+| simulation: the search's list and the vector top 50, judged and fused | 45 | 30 |
+| the real `retrieve()`, no re-ranker | 37 | 22 |
+| the real `retrieve()`, the cross-encoder only re-ordering | 38 | 26 |
+| the real `retrieve()`, with candidates added | 40 | 26 |
+
+Live, the right posting ranked higher on 15 questions and lower on 1 (MRR
++0.089 [+0.043, +0.145]). The Qwen re-ranker above moved it down on 11 and up
+on 4. Questions that paraphrase a posting did not move: 2 of 49 to 3.
+`cross-encoder/ms-marco-MiniLM-L-12-v2` (33M parameters) and
+`BAAI/bge-reranker-base` (278M) gave the same counts in simulation, so the
+small one is what was run live. `docs/ML_EVALUATION.md` has the tables.
+
+A model of this kind is used differently from the one above, in three ways:
+
+- **It reads the title, company and place over the chunk.** With the chunk
+  alone, which is what the Qwen re-ranker read, it made the same questions
+  worse than no re-ranker: 24 to 28 of 49 in simulation. A chunk is 500
+  characters from the middle of a posting and almost never says what the job
+  is called.
+- **Its order is fused with the search's**, not put in its place, and its
+  rank is among everything it judged. The first build took the candidates it
+  rejected out before ranking. That was not what had been measured, and it
+  was one question of the 40.
+- **It is handed up to 50 postings the keywords did not find**
+  (`CHAT_RERANK_WIDEN`), the nearest by bge-small, and keeps one only when it
+  scores it above zero. That is its own line for "this answers the
+  question". A likeness has no such line, so the first kind is handed none.
+
+The third loosens §14, where keywords decide what is relevant, and §20 is why
+it is held narrowly. `tests/test_chat_cross_encoder.py` holds each of these;
+every one was broken in turn and caught, nine of nine:
+
+- **Added to what the keywords found, never in its place.** A question about
+  a word in no posting is still answered with nothing and the model is not
+  asked: 50 of 50 live with it on. For 40 words a few postings do contain,
+  126 postings were shown and one did not say the word.
+- **Never to a role's own list** (§22), **past the search area, or past a
+  named company.**
+- **A model that fails adds nothing.** An unjudged candidate is the
+  near-topic posting the rule exists to keep out.
+- **`CHAT_RERANK_WIDEN=0`** is the cross-encoder with §14 as it was. Most of
+  the gain is there: first place is 26 either way.
+
+Why 45 became 40: the simulation re-ordered everything, and the search puts a
+posting asked for by its title first (§14). In four questions five or more
+postings go first for their title alone and the one the question was written
+from is not among them. In two of those the model put it first of the rest.
+That rule is the owner's and was left alone.
+
+Not measured: the time on the GPU inside the API process. The live run was on
+the CPU. With the API and dashboard running the machine starts near 62% free,
+and a second process using the GPU went under the 55% floor the run was held
+to. There it added a median 1.2 to 1.6 s a question and held 0.97 GB; only
+re-ordering added 0.6 s. Offline on the GPU the model scored 246 pairs a
+second, and a question is about 80 pairs.
+
+Seen and not fixed: "…bare metal for AI-native firms?" is read as naming the
+company Native AI, which has nothing open, so that question is answered with
+nothing whatever the re-ranker.
+
 ---
 
 ## 22. A question that names a kind of job
@@ -4456,6 +4626,35 @@ Not fixed, and seen the same day: `make workers` ignored both an interrupt and
 a terminate for 20 seconds and had to be killed. The five tasks it was running
 kept their leases for the five minutes those last.
 
+### One crawl at a time was a count, and two requests are two transactions
+
+Found by review on 2026-10-08. `request_crawl` counted the crawl tasks
+waiting and enqueued when there were none. `POST /crawl`, the assistant's
+"run crawler" and `make crawl` are separate transactions, and a count cannot
+see a row another transaction has not committed. Run with the second request
+starting while the first was still uncommitted: two crawls queued. The
+sweep's own reschedule, `_schedule_next_tick`, is the same count and insert
+and did the same.
+
+Both take a transaction-level advisory lock first (`_one_guard_at_a_time`),
+so the second waits for the first to commit and then counts its row. Three
+things to keep:
+
+- **It rests on READ COMMITTED**, the engine's default, which gives the count
+  a fresh snapshot after the wait. Under REPEATABLE READ the count would
+  still not see the row.
+- **A caller ends its transaction straight after.** The lock is held until
+  then and the next request waits on it. All three callers commit or leave
+  their session on the next line, and the worker commits when the handler
+  returns.
+- **Not a unique index.** A running sweep and its pending successor are two
+  unfinished crawl tasks on purpose.
+
+`tests/test_crawl_command.py` holds both on two connections, and reads
+`pg_locks` to know the second is waiting where the inbox's race test sleeps.
+With the lock taken out of one guard, that guard's test fails and the other's
+passes.
+
 ---
 
 ## 25. One board is polled under one company row
@@ -4602,16 +4801,27 @@ failed first:
   accepted. With `make workers n=4`, two runs of one application is the form
   sent twice: `begin_work` takes a `running` row for an abandoned run.
   `tests/test_review_is_decided_once.py`.
-- **A producer that looks before it enqueues takes `queue.decide_alone`
-  first.** `request_crawl` and `_schedule_next_tick` counted and then
-  enqueued, in two statements. It is a transaction-scoped advisory lock, so
-  the caller must commit promptly. Not a unique index: a running tick and its
-  pending successor are two unfinished crawl tasks on purpose.
-- **A grade's offer is read once** (`mcp/server.py`, `_offered`). It was read
-  for the form and again after the owner answered, and an offer for another
-  profile in between took the grade. The form names the profile, which is
-  also what makes protocol 2026-07-28 drop an answer given to a form about a
-  different one.
+- **A producer that looks before it enqueues takes a lock first.**
+  `request_crawl` and `_schedule_next_tick` counted and then enqueued, in two
+  statements. This was fixed twice, in parallel: here as `queue.decide_alone`,
+  keyed per task kind, and on `main` as `crawl_job._one_guard_at_a_time`
+  (§24). **`main`'s is the one in the tree** — one landed fix beats two, and
+  a second guard nothing calls is the dead code §15 keeps recording. Either
+  way it is a transaction-scoped advisory lock, so the caller must commit
+  promptly, and not a unique index: a running tick and its pending successor
+  are two unfinished crawl tasks on purpose.
+- **A grade's offer belongs to one profile.** It was kept by posting alone
+  and read twice — once for the form, once after the owner answered — so an
+  offer for another profile in between took the grade. Fixed twice in
+  parallel as well: here by reading the offer once (`_offered`), and on
+  `main` by keying what the server remembers on `(profile, posting)` (§9).
+  **`main`'s is the one in the tree**, and it is the stronger of the two:
+  under protocol 2026-07-28 the resolver runs again once the form is
+  answered, so reading once per call was never enough on its own. A
+  consequence of taking it: the form does not name the profile, and the two
+  tests here that pinned that wording are gone — `main`'s
+  `test_a_request_made_while_the_form_is_open_does_not_move_the_grade` covers
+  the race under both protocols.
 
 Routing, each from one word (`tests/test_chat_intent_routing.py`,
 `tests/test_retrieval_names.py`):
@@ -4640,7 +4850,9 @@ Routing, each from one word (`tests/test_chat_intent_routing.py`,
 What the model is handed, and what the reply says for itself:
 
 - **The gap table's heading says what it was counted over**, with the two
-  larger numbers it is not a count of. Prompt `assistant.system` is v5.
+  larger numbers it is not a count of. Prompt `assistant.system` is **v6**:
+  this and §14's conversation memory were written as two v5s, and the merge
+  is the version that carries both paragraphs.
 - **Under each posting, how it asks for a skill the question named**
   (`matching/evidence.py`): required, preferred, named under no heading, or
   one of several options, with the posting's own line. Of the five shown for
@@ -4663,7 +4875,12 @@ The semantic experiment, still off (`CHAT_SEMANTIC_CANDIDATES`):
   thirty Network Engineer titles ahead of a Customer Experience Manager
   role, because "network" was the one word rare enough to search for.
 - **The second model reads the title above the chunk.** A chunk never
-  contains it.
+  contains it. `main` reached the same conclusion from its own measurement
+  and drew the line one step finer (§21): a model that *judges* reads the
+  title, company and place over the chunk, and a model that scores likeness
+  reads the chunk alone, which is the arrangement the 2026-10-05 numbers were
+  taken on. That is what is in the tree, and
+  `tests/test_chat_cross_encoder.py` holds both halves.
 - **No similarity cut-off.** There is no graded set to find one on.
 
 Not fixed, and each is in the report: a retried `apply` task can send a form

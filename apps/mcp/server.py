@@ -1023,17 +1023,20 @@ class _Offer(NamedTuple):
     #: Which stream served it. Sent back with the grade and shown to nobody:
     #: the API records `unseen` only when a serve attests it.
     stream: str | None
-    profile_id: str | None
 
 
-#: What `next_to_grade` has offered in this process. `grade_posting` takes an
-#: id from here and from nowhere else, so the form can say which posting it is
-#: about in the server's words. Lost on a restart, and then the posting is
-#: offered again.
+#: What `next_to_grade` has offered in this process, by the profile it was
+#: offered for and the posting. `grade_posting` takes an offer from here and
+#: from nowhere else, so the form can say which posting it is about in the
+#: server's words. Lost on a restart, and then the posting is offered again.
 #:
-#: Keyed by posting, so offering one again replaces what was here. Nothing
-#: below reads it twice for one grade: see `_offered`.
-_OFFERED: dict[str, _Offer] = {}
+#: The profile is in the key because an offer is for one profile: two can be
+#: served the same posting, each from a stream of its own. Kept by posting
+#: alone, the second offer replaced the first, and a form already open for
+#: one profile was recorded under the other. Holding the offer for the length
+#: of one call would not have been enough: on protocol 2026-07-28 the resolver
+#: runs again once the form is answered.
+_OFFERED: dict[tuple[str | None, str], _Offer] = {}
 
 
 @server.tool()
@@ -1058,11 +1061,10 @@ async def next_to_grade(size: int = 3, profile_id: str | None = None) -> dict[st
         return rows
 
     for row in rows:
-        _OFFERED[str(row["posting_id"])] = _Offer(
+        _OFFERED[profile_id, str(row["posting_id"])] = _Offer(
             title=row.get("title") or "an untitled posting",
             location=row.get("location"),
             stream=row.get("stream"),
-            profile_id=profile_id,
         )
     offered: dict[str, Any] = {
         "postings": [{field: row.get(field) for field in _GRADING_FIELDS} for row in rows],
@@ -1076,44 +1078,21 @@ async def next_to_grade(size: int = 3, profile_id: str | None = None) -> dict[st
     return offered
 
 
-async def _offered(posting_id: str) -> _Offer:
-    """The offer a grade is about, read once for the form and the grade both.
-
-    The form used to be built from one read of `_OFFERED` and the grade sent
-    from a second, after the owner had answered. A `next_to_grade` for another
-    profile that arrived while the form was open replaced the entry between
-    the two, and a grade given on a form built for one profile was recorded
-    against the other. The library runs a resolver once per call and hands the
-    same result to everything that asks for it, so the form and the grade now
-    hold one offer.
-    """
-    offer = _OFFERED.get(posting_id)
+async def _owners_grade(posting_id: str, profile_id: str | None, ctx: Context) -> Elicit[BaseModel]:
+    """Ask the owner for the grade. Runs before the tool, in place of an
+    argument a model could fill."""
+    offer = _OFFERED.get((profile_id, posting_id))
     if offer is None:
         raise ToolError(
-            "That posting has not been offered for grading here, so there is nothing to "
-            "show the owner about it. Nothing was graded. Ask `next_to_grade` first."
+            "That posting has not been offered for grading here for that profile, so "
+            "there is nothing to show the owner about it. Nothing was graded. Ask "
+            "`next_to_grade` first, and give `grade_posting` the same `profile_id` "
+            "you gave it, or none if you gave none."
         )
-    return offer
-
-
-async def _owners_grade(
-    offer: Annotated[_Offer, Resolve(_offered)], ctx: Context
-) -> Elicit[BaseModel]:
-    """Ask the owner for the grade. Runs before the tool, in place of an
-    argument a model could fill.
-
-    The profile is named when one was asked for. It is what tells two offers
-    of one posting apart, and under protocol 2026-07-28 it is what keeps an
-    answer with its form: the call is made again with the answer, the offer is
-    read again, and the library takes an answer only for the wording it was
-    given to. A form about another profile is a different wording, so the
-    answer is dropped and the owner is asked about what is on offer now.
-    """
     _must_reach_the_owner(ctx, "a grade", nothing="Nothing was graded", page=_LABEL_PAGE)
     where = f", {offer.location}" if offer.location else ""
-    whose = f" (profile {offer.profile_id})" if offer.profile_id else ""
     return Elicit(
-        f"Grade this posting for your own search{whose}: {offer.title}{where}. "
+        f"Grade this posting for your own search: {offer.title}{where}. "
         "It is recorded as you give it.",
         _Grade,
     )
@@ -1122,14 +1101,17 @@ async def _owners_grade(
 @server.tool()
 async def grade_posting(
     posting_id: str,
-    offer: Annotated[_Offer, Resolve(_offered)],
     grade: Annotated[ElicitationResult[BaseModel], Resolve(_owners_grade)],
+    profile_id: str | None = None,
 ) -> dict[str, Any]:
     """Record the owner's grade for a posting `next_to_grade` offered.
 
     The owner is shown a form with the four grades and picks one. You do not
     pass a grade, and there is no argument to pass one in. Show them the
     posting first, and do not tell them which grade you would choose.
+
+    A posting is offered for one profile. If you gave `next_to_grade` a
+    `profile_id`, give the same one here; if you gave none, give none.
 
     Grading applies to nothing: no application is made and no match is decided.
     Asking again for the same posting replaces its grade.
@@ -1142,13 +1124,14 @@ async def grade_posting(
                 "recorded in its place."
             ),
         }
+    offer = _OFFERED[profile_id, posting_id]
     typed = grade.data.model_dump()
     recorded = await _call(
         "POST",
         "/labels",
         json={
             "posting_id": posting_id,
-            "profile_id": offer.profile_id,
+            "profile_id": profile_id,
             "relevance": _GRADES[typed["grade"]],
             "note": typed.get("note", "").strip() or None,
             "served_stream": offer.stream,

@@ -1,4 +1,12 @@
-"""Opt-in semantic candidates can recover paraphrases outside the keyword pool."""
+"""Opt-in semantic candidates can recover paraphrases outside the keyword pool.
+
+The re-ranker here scores likeness (`judges = False`), which is the kind this
+experiment was written against. A model that judges is handed candidates of its
+own by `_nearest_unfound`, and `tests/test_chat_cross_encoder.py` holds that
+path — including what each kind of model reads, which is why the title-with-the-
+chunk test that used to sit in this file is not here: a likeness model reads the
+chunk alone, as it was measured on 2026-10-05.
+"""
 
 import pytest
 
@@ -16,6 +24,8 @@ class SemanticEncoder:
 
 class RecordingReranker:
     name = "test-semantic-reranker"
+    #: Likeness, not judgement: it only re-orders what it is handed.
+    judges = False
 
     def __init__(self):
         self.passages = []
@@ -210,6 +220,8 @@ class PrefersTheOther:
     """A second model that likes whatever says "incident" and nothing else."""
 
     name = "test-prefers-the-other"
+    #: Likeness, as above.
+    judges = False
 
     def __init__(self):
         self.passages: list[str] = []
@@ -290,28 +302,6 @@ async def test_one_word_shared_with_a_title_does_not_hold_a_place(
     found = await R.retrieve(db_session, "jobs giving support to people when things break")
 
     assert _ids(found) == [liked.id, chance.id]
-
-
-async def test_the_second_model_reads_the_title_with_the_chunk(db_session, experiment, monkeypatch):
-    """The chunk is 500 characters from somewhere in the posting, and the
-    title is in none of them. A question that names the job was being judged
-    against text that does not."""
-    company = await _company(db_session)
-    await _posting(db_session, company, "Records Clerk", "File documents.")
-    semantic = await _posting(
-        db_session, company, "Knowledge Engineer", "Build retrieval-augmented generation systems."
-    )
-    await _chunk(db_session, semantic)
-    reranker = RecordingReranker()
-    monkeypatch.setattr(R, "get_reranker", lambda: reranker)
-
-    await R.retrieve(db_session, "jobs grounding answers in documents")
-
-    assert any(
-        passage.startswith("Knowledge Engineer") and "retrieval-augmented" in passage
-        for passage in reranker.passages
-    )
-    assert any(passage.startswith("Records Clerk") for passage in reranker.passages)
 
 
 async def test_with_neither_on_the_order_is_the_keyword_order(db_session, experiment):

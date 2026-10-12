@@ -102,7 +102,7 @@ from packages.matching.embed import (
     tokenize,
 )
 from packages.matching.locality import Locality, area_exclusion, locality_of
-from packages.matching.rerank import Reranker, get_reranker, reorder
+from packages.matching.rerank import Reranker, fuse, get_reranker, reorder
 from packages.matching.roles import (
     alias_label,
     canonical,
@@ -263,6 +263,12 @@ _QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 #: Chunks read per chunk-level search before keeping the best per posting.
 #: A posting has about fourteen, so this leaves room for `limit` distinct ones.
 _CHUNK_POOL = 200
+
+#: Chunks read when a model that judges is handed the postings nearest the
+#: question (`_nearest_unfound`). Enough for a few hundred distinct postings:
+#: the area keeps about half of what is found, and the nearest are often the
+#: ones the keywords already have.
+_WIDEN_CHUNKS = 1500
 
 #: Words a company name may drop and still name it: "Mistral" for Mistral AI,
 #: "1X" for 1X Technologies.
@@ -1135,27 +1141,71 @@ def _rerank_pool() -> int:
     return max(0, get_settings().chat_rerank_pool)
 
 
-def _rerank_text(hit: _Hit, span: tuple[int, int] | None) -> str:
-    """What the re-ranker reads for a posting: what it is, then its best chunk.
+def _widen_pool() -> int:
+    return max(0, get_settings().chat_rerank_widen)
 
-    The chunk the first model ranked the posting by, or the posting's opening
-    when it has none, one chunk's worth.
 
-    Under the posting's title, company and place. The chunk alone was what was
-    measured on 2026-10-05, and it is 500 characters from somewhere in the
-    posting: the title is in none of them. A question that named the job was
-    judged against text that did not, and "What Primary Care Nurse
-    Practitioner jobs are available for adult patient care?" went from third
-    to twentieth. Scored both ways on the same candidates on 2026-10-10, the
-    title in front put more of the benchmark's postings in the five shown.
+def _rerank_text(hit: _Hit, span: tuple[int, int] | None, *, named: bool = False) -> str:
+    """What the re-ranker reads for a posting: its best chunk, or its opening.
+
+    The chunk the first model ranked the posting by, because that is the
+    arrangement that was measured. A posting with no chunks is read from the
+    top, one chunk's worth.
+
+    `named` puts the title, company and place on a line above it, for a model
+    that judges. A chunk is 500 characters from the middle of a posting and
+    almost never says what the job is called or who is hiring; a question
+    usually does. Read without that line, a cross-encoder made the measured
+    questions worse than no re-ranker (`rerank.py`).
     """
     from packages.matching.chunks import CHUNK_SIZE, normalize
 
     body = normalize(hit.description or "")
     start, length = span if span is not None else (0, CHUNK_SIZE)
-    head = " — ".join(part for part in (hit.title, hit.company, hit.location) if part)
-    text = body[start : start + length]
-    return f"{head}\n{text}" if head and text else (text or head)
+    text = body[start : start + length] or (hit.title or "")
+    if not named:
+        return text
+    heading = " | ".join(part for part in (hit.title, hit.company, hit.location) if part)
+    return f"{heading}\n{text}" if heading else text
+
+
+async def _nearest_unfound(
+    session: AsyncSession,
+    chunk_vectors: dict[str, list[float]],
+    companies: list[uuid.UUID] | None,
+    *,
+    in_area: bool,
+    found: set[uuid.UUID],
+) -> tuple[list[_Hit], dict[uuid.UUID, tuple[int, int]]]:
+    """The postings nearest the question that the keywords did not find, and
+    the chunk each is nearest by. For a model that will judge every one.
+
+    Held to what a keyword match is held to: a named company, and the owner's
+    search area. One the area leaves out is not counted as left out. That
+    count is of postings that matched what was asked, and these have not been
+    judged yet.
+    """
+    want = _widen_pool()
+    if want <= 0:
+        return [], {}
+    spans: dict[uuid.UUID, tuple[int, int]] = {}
+    for model, vector in chunk_vectors.items():
+        nearest = await _best_chunks(
+            session, model, vector, companies=companies, limit=_WIDEN_CHUNKS
+        )
+        for posting_id, start, length in nearest:
+            if posting_id not in found:
+                spans.setdefault(posting_id, (start, length))
+    # Read no more descriptions than could be wanted: the area keeps about
+    # half of what is found, as `_AREA_POOL` allows for.
+    read = list(spans)[: want * (4 if in_area else 1)]
+    hits = await _hits_for(session, read)
+    kept = [
+        hits[posting_id]
+        for posting_id in read
+        if posting_id in hits and not (in_area and _outside_area(hits[posting_id]))
+    ][:want]
+    return kept, {hit.posting_id: spans[hit.posting_id] for hit in kept}
 
 
 async def _reranked(
@@ -1163,19 +1213,48 @@ async def _reranked(
     question: str,
     hits: list[_Hit],
     spans: dict[uuid.UUID, tuple[int, int]],
+    added: list[_Hit] | None = None,
 ) -> tuple[list[_Hit], str | None]:
     """`hits` with its top `_rerank_pool()` re-ordered, and the model that did it.
 
-    Only ever a re-ordering of what it was given (`rerank.py`). Any failure
-    leaves the search's own order: the assistant has to answer either way.
+    A model that scores likeness only ever re-orders what it was given
+    (`rerank.py`), and reads the chunk alone.
+
+    A model that judges reads each posting under its title, and its order is
+    fused with the search's. It may also be handed `added`, postings the
+    search did not find. One of those is kept only when the model scores it
+    above zero, its own line for "this answers the question". What the search
+    found stays whatever its score: keywords decided that (§14).
+
+    Any failure leaves the search's own order with nothing added: the
+    assistant has to answer either way, and an unjudged candidate is the
+    near-topic posting the keyword rule exists to keep out.
     """
     head = hits[: _rerank_pool()]
-    if reranker is None or len(head) < 2:
+    if reranker is None:
         return hits, None
-    passages = [_rerank_text(hit, spans.get(hit.posting_id)) for hit in head]
+    offered = head + (added or []) if reranker.judges else head
+    if len(offered) < 2:
+        return hits, None
+    passages = [
+        _rerank_text(hit, spans.get(hit.posting_id), named=reranker.judges) for hit in offered
+    ]
     try:
         scores = await asyncio.to_thread(reranker.scores, question, passages)
-        return reorder(head, scores) + hits[len(head) :], reranker.name
+        if not reranker.judges:
+            return reorder(head, scores) + hits[len(head) :], reranker.name
+        # Ranked among everything it judged, and only then are the added
+        # postings it did not call an answer left out. Its opinion of a
+        # keyword match is where that match stands among all of them.
+        left_out = {
+            hit.posting_id
+            for hit, score in zip(offered[len(head) :], scores[len(head) :], strict=True)
+            if score <= 0
+        }
+        fused = [
+            hit for hit in fuse(offered, scores, ranked=len(head)) if hit.posting_id not in left_out
+        ]
+        return fused + hits[len(head) :], reranker.name
     except Exception as exc:  # noqa: BLE001 - search must not depend on the second model
         log.warning("rerank_failed", model=reranker.name, error=type(exc).__name__)
         return hits, None
@@ -1576,9 +1655,25 @@ async def retrieve(
             )
             # The chunk that found a semantic candidate is the one to read.
             among_spans.update(semantic_spans)
+        # A model that judges is also handed the postings nearest the
+        # question that the keywords did not find: the same work under
+        # another name, and the one the owner's machine has measured. Only
+        # where the keywords found something. A vector search cannot say
+        # "none" (§20), so candidates are added to what was found and never
+        # in its place. And never to a role's own list, which is that role's
+        # postings, counted and listed by kind.
+        added: list[_Hit] = []
+        if reranker is not None and reranker.judges and role_pool is None and keyword:
+            added, added_spans = await _nearest_unfound(
+                session, chunk_vectors, companies, in_area=bool(area), found=set(keyword_ids)
+            )
+            among_spans.update(added_spans)
+            # Quoted where it matched: it has none of the question's keywords,
+            # so a keyword excerpt of it would be its opening.
+            chunk_spans.update(added_spans)
         # By kind before the re-ranker, so its thirty places go to what was
         # typed, and again after it, so it orders within a kind and not across.
-        rest, reranked_by = await _reranked(reranker, question, by_kind(loose), among_spans)
+        rest, reranked_by = await _reranked(reranker, question, by_kind(loose), among_spans, added)
         rest = held + by_kind(rest)
         chosen = (named + rest)[:limit]
         more_hits = (named + rest)[limit : limit + MORE_LIMIT]

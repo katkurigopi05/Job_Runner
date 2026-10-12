@@ -105,7 +105,15 @@ plugins = ["pydantic.mypy"]
 module = ["packages.core.*", "packages.ats.*"]
 strict = true
 
-# weasyprint ships no py.typed marker.
+# weasyprint ships no py.typed marker. torch and transformers come with the
+# optional `embeddings` extra, which CI does not install.
 [[tool.mypy.overrides]]
-module = ["weasyprint.*", "pypdf.*", "sentence_transformers.*", "nltk.*"]
+module = [
+    "weasyprint.*",
+    "pypdf.*",
+    "sentence_transformers.*",
+    "nltk.*",
+    "torch.*",
+    "transformers.*",
+]
 ignore_missing_imports = true

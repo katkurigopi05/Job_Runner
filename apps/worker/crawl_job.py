@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.config import get_settings
 from packages.core.enums import QueueTaskStatus
 from packages.core.models import QueueTask
-from packages.core.queue import ClaimedTask, decide_alone, enqueue
+from packages.core.queue import ClaimedTask, enqueue
 from packages.crawler.crawl import CrawlReport, crawl_all
 from packages.crawler.dispatch import tick
 from packages.crawler.extract import load_seed
@@ -37,6 +37,27 @@ CRAWL_TASK_KIND = "crawl"
 VALID_TRIGGERS = frozenset({"scheduled", "manual"})
 
 _UNFINISHED = (QueueTaskStatus.PENDING.value, QueueTaskStatus.RUNNING.value)
+
+#: Arbitrary but fixed, and not the key the test suite claims its database with.
+_QUEUE_GUARD_LOCK_KEY = 4_917_205
+
+
+async def _one_guard_at_a_time(session: AsyncSession) -> None:
+    """Hold the crawl queue's guard for the rest of the caller's transaction.
+
+    Both guards below count the crawl tasks waiting and enqueue when there are
+    none. A count cannot see a row another transaction has not committed, so
+    two callers counting in the same moment each found nothing and each
+    enqueued. With this held, the second waits for the first to commit and
+    then counts its row: READ COMMITTED, the engine's default, gives the count
+    a fresh snapshot.
+
+    Transaction-level, so the caller's commit or rollback releases it and a
+    dropped connection leaves nothing to clear by hand. A unique index is the
+    other way to make this true and does not fit: a running sweep and its
+    pending successor are two unfinished crawl tasks on purpose.
+    """
+    await session.execute(select(func.pg_advisory_xact_lock(_QUEUE_GUARD_LOCK_KEY)))
 
 
 @dataclass(frozen=True)
@@ -57,14 +78,11 @@ async def request_crawl(
     pointless — they would poll the same hosts minutes apart, the later one
     would emit nothing, and it would spend the per-host limit §2.6 protects.
 
-    Two requests at once are two transactions, and each used to count before
-    the other had committed: both found nothing waiting and both queued.
-    `decide_alone` makes the second wait for the first and count after it.
-
-    Does not commit; the caller owns the transaction, as with `enqueue`, and
-    should commit promptly, since the next request waits for it.
+    Does not commit; the caller owns the transaction, as with `enqueue`. The
+    guard is held until that transaction ends, so a caller commits or leaves
+    its session straight after: another request is waiting on it until then.
     """
-    await decide_alone(session, CRAWL_TASK_KIND)
+    await _one_guard_at_a_time(session)
     waiting = (
         await session.scalar(
             select(func.count())
@@ -90,13 +108,8 @@ async def _schedule_next_tick(session: AsyncSession, payload: dict, seconds: int
     successor unconditionally would double the number of ticks each time two
     ever ran at once — and at-least-once delivery means two eventually will.
     A single pending sweep is all this ever needs.
-
-    The guard was a look and then an enqueue, so two ticks ending together
-    each found no successor and each scheduled one: the doubling it was
-    written to stop. They decide one at a time now, on the lock a requested
-    crawl takes.
     """
-    await decide_alone(session, CRAWL_TASK_KIND)
+    await _one_guard_at_a_time(session)
     waiting = await session.scalar(
         select(func.count())
         .select_from(QueueTask)
