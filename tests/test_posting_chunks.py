@@ -133,6 +133,54 @@ async def test_without_a_semantic_model_nothing_is_chunked(db_session) -> None:
     assert await db_session.scalar(select(func.count()).select_from(PostingChunk)) == 0
 
 
+class _Recording:
+    """The lexical embedder, remembering every text it was asked to encode."""
+
+    name = LEXICAL.name
+    dim = LEXICAL.dim
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        self.seen.extend(texts)
+        return LEXICAL.encode(texts)
+
+
+async def test_text_two_postings_share_is_encoded_once(db_session) -> None:
+    """An employer's boilerplate repeats across its postings.
+
+    12.7% of the chunks in the newest 500 postings on 2026-10-10 were a text
+    already in the batch. The vector is reused; each posting still gets a row
+    of its own for it, with its own offsets.
+    """
+    company = await _company(db_session)
+    first = await _posting(db_session, company, "Data Engineer", FILLER + " Build Kafka pipelines.")
+    second = await _posting(db_session, company, "Chef", FILLER + " Laminate the doughs.")
+    recording = _Recording()
+
+    assert await chunk_postings(db_session, embedder=recording) == 2
+
+    assert len(recording.seen) == len(set(recording.seen)), "no text is encoded twice"
+    ours, theirs = await _chunks(db_session, first), await _chunks(db_session, second)
+    assert len(ours) == len(spans(normalize(first.description_raw)))
+    assert len(theirs) == len(spans(normalize(second.description_raw)))
+    assert len(recording.seen) < len(ours) + len(theirs), "the shared opening was reused"
+    assert (ours[0].start, ours[0].length) == (theirs[0].start, theirs[0].length) == (0, CHUNK_SIZE)
+    assert ours[0].embedding == theirs[0].embedding
+    assert ours[-1].embedding != theirs[-1].embedding, "their endings differ, so do the vectors"
+
+
+async def test_a_description_of_only_whitespace_writes_no_chunks(db_session) -> None:
+    """Nothing to cut, so nothing to insert, and the pass still finishes."""
+    company = await _company(db_session)
+    await _posting(db_session, company, "Blank", "  \n ")
+
+    await chunk_postings(db_session, embedder=LEXICAL)
+
+    assert await db_session.scalar(select(func.count()).select_from(PostingChunk)) == 0
+
+
 async def test_deleting_a_posting_deletes_its_chunks(db_session) -> None:
     company = await _company(db_session)
     posting = await _posting(db_session, company, "Data Engineer", FILLER)
