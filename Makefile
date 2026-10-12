@@ -63,8 +63,11 @@ worker:
 
 # make workers n=4 — one process, n independent claimants. The queue was
 # always safe for this (SKIP LOCKED); nothing could start more than one.
+# Each claimant holds a database connection for its task and takes a second
+# beside it, so the pool is sized to the count; the worker refuses a count
+# its pool cannot hold.
 workers:
-	$(PY)/python -m apps.worker.run --workers $(or $(n),4)
+	DB_POOL_SIZE=$(shell expr 2 \* $(or $(n),4)) $(PY)/python -m apps.worker.run --workers $(or $(n),4)
 
 # Speaks MCP over stdio; Claude Code launches it itself via .mcp.json.
 # Run it by hand only to check it starts. It needs `make api` running.

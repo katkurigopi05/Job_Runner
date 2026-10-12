@@ -18,7 +18,13 @@ from packages.core.config import get_settings
 @lru_cache
 def get_engine() -> AsyncEngine:
     """Get the cached async database engine."""
-    return create_async_engine(get_settings().async_database_url, pool_pre_ping=True)
+    settings = get_settings()
+    return create_async_engine(
+        settings.async_database_url,
+        pool_pre_ping=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+    )
 
 
 @lru_cache

@@ -27,9 +27,10 @@ offsets.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import structlog
-from sqlalchemy import delete, exists, select
+from sqlalchemy import delete, exists, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Posting
@@ -112,28 +113,49 @@ async def chunk_postings(
     )
 
     texts: list[str] = []
-    rows: list[PostingChunk] = []
+    rows: list[dict[str, object]] = []
     for posting_id, description, content_hash in pending:
         body = normalize(description or "")
         for ordinal, (start, length) in enumerate(spans(body)):
             texts.append(body[start : start + length])
             rows.append(
-                PostingChunk(
-                    posting_id=posting_id,
-                    ordinal=ordinal,
-                    start=start,
-                    length=length,
-                    content_hash=content_hash,
-                    embedding_model=stamp,
-                )
+                {
+                    "posting_id": posting_id,
+                    "ordinal": ordinal,
+                    "start": start,
+                    "length": length,
+                    "content_hash": content_hash,
+                    "embedding_model": stamp,
+                }
             )
+    # An employer's boilerplate repeats across its postings, so a text is
+    # encoded once and every chunk that reads the same takes its vector. Each
+    # still gets a row of its own: the offsets and the hash are the posting's.
+    distinct = list(dict.fromkeys(texts))
+    started = time.perf_counter()
     # Off the event loop: encoding thousands of chunks is seconds of CPU.
-    vectors = await asyncio.to_thread(active.encode, texts)
-    for row, vector in zip(rows, vectors, strict=True):
-        row.embedding = vector
-    session.add_all(rows)
-    await session.flush()
-    log.info("postings_chunked", postings=len(pending), chunks=len(rows), model=stamp)
+    encoded = await asyncio.to_thread(active.encode, distinct)
+    vectors = dict(zip(distinct, encoded, strict=True))
+    encode_seconds = time.perf_counter() - started
+
+    # One statement for the batch rather than an object per row, which nothing
+    # here reads back. Guarded, because executed with no rows it would insert
+    # one of defaults.
+    started = time.perf_counter()
+    if rows:
+        await session.execute(
+            insert(PostingChunk),
+            [{**row, "embedding": vectors[text]} for row, text in zip(rows, texts, strict=True)],
+        )
+    log.info(
+        "postings_chunked",
+        postings=len(pending),
+        chunks=len(rows),
+        distinct=len(distinct),
+        encode_seconds=round(encode_seconds, 3),
+        write_seconds=round(time.perf_counter() - started, 3),
+        model=stamp,
+    )
     return len(pending)
 
 
