@@ -822,11 +822,17 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
         ),
         matched_title_words=list(found.title_words),
         matched_role_filter=found.role_keys[0] if len(found.role_keys) == 1 else None,
-        unsupported_citations=unsupported_citations(cited, (p.label for p in found.passages)),
+        # A posting carried over from an earlier answer was supplied too, under
+        # a label of its own (`chat_history.earlier_postings`), so citing it is
+        # not inventing one. The check knew only what was found for this
+        # question, and reported "the one from before [P6]" as made up.
+        unsupported_citations=unsupported_citations(
+            cited, (p.label for p in (*found.passages, *ready.earlier))
+        ),
         postings_open=found.searched + found.unsearchable,
         postings_ranked=found.ranked,
         postings_reranked=found.reranked,
-        postings_supplied=len(found.passages),
+        postings_supplied=len(found.passages) + len(ready.earlier),
         gap_postings_counted=ready.gap_counted,
     )
 

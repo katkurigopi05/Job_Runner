@@ -773,7 +773,8 @@ class ChatReply(BaseModel):
     postings_ranked: int = 0
     #: How many of those the second model re-ordered. 0 when none did.
     postings_reranked: int = 0
-    #: How many the model was shown, which is `len(sources)`. An answer can be
+    #: How many the model was shown under a label: the ones found for this
+    #: question, and any read again from earlier answers. An answer can be
     #: about these and no others.
     postings_supplied: int = 0
     #: How many postings the skill-gap table was counted over: the owner's
