@@ -317,3 +317,43 @@ async def test_a_name_after_a_second_at_is_still_read(db_session) -> None:
 
     assert found.companies == ("Fast",)
     assert theirs.id in [p.posting_id for p in found.passages]
+
+
+# --------------------------------------------------------------------------
+# Where a name would stand
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "",
+        "?",
+        "   ",
+        "  ?",
+        "\n",
+        " growing startups",
+        "\nx",
+        "x\n",
+        ", and remote",
+        " .",
+        "\t;",
+        " ?",
+        " 7 of them?",
+    ],
+)
+def test_the_end_of_what_was_said_is_read_as_the_regex_read_it(tail: str) -> None:
+    """`_nothing_follows` replaced `re.match(r"\\s*(?:[?.!,;:]|$)", rest)`.
+
+    The regex is why CodeQL failed #140: it reads a slice of text the owner
+    typed, once per "at" in the question, and calls the pattern polynomial on
+    it. The walk that replaced it has to answer every one of these the same
+    way, including the two `$` is subtle about — a trailing newline is the end
+    of what was said, and a newline in the middle is not.
+    """
+    import re
+
+    from packages.matching.retrieve import _nothing_follows
+
+    was = re.match(r"\s*(?:[?.!,;:]|$)", tail) is not None
+    assert _nothing_follows("at fast" + tail, len("at fast")) is was, tail

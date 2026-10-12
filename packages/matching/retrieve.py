@@ -706,6 +706,27 @@ async def _named_companies(
     return named, naming, names
 
 
+#: What ends a sentence, for `_nothing_follows`.
+_SENTENCE_END = frozenset("?.!,;:")
+
+
+def _nothing_follows(question: str, index: int) -> bool:
+    r"""Whether `index` is the end of what was said, bar punctuation.
+
+    This was `re.match(r"\s*(?:[?.!,;:]|$)", question[index:])`, and CodeQL
+    reads that as a polynomial pattern on text it cannot vouch for: the slice
+    copies the rest of the question for every "at" in it, and `\s*` is then
+    scanned over the copy. Measured on 36,000 characters of "at fast" it ran
+    in 2ms, so the quadratic was reachable only in theory — but a character
+    walk is linear by construction and needs no argument, which is worth more
+    here than the two lines it costs. Same answers: a run of space then
+    punctuation, or the end of the string, and nothing else.
+    """
+    while index < len(question) and question[index].isspace():
+        index += 1
+    return index == len(question) or question[index] in _SENTENCE_END
+
+
 def _one_word_names_it(
     word: str, own_postings: int, frequencies: idf.DocumentFrequencies, question: str
 ) -> bool:
@@ -737,8 +758,7 @@ def _one_word_names_it(
     # Every place it follows "at", not the first: "at fast growing startups,
     # or at Fast" says the word once as a word and once as the name.
     return any(
-        after_at.group(1)[:1].isupper()
-        or re.match(r"\s*(?:[?.!,;:]|$)", question[after_at.end() :]) is not None
+        after_at.group(1)[:1].isupper() or _nothing_follows(question, after_at.end())
         for after_at in re.finditer(
             rf"(?:\bat|@)\s+({re.escape(word)})(?![\w\u2010-\u2015-])", question, re.IGNORECASE
         )
