@@ -355,6 +355,30 @@ async def run_pool(count: int, *, lease_seconds: int | None = None) -> None:
     )
 
 
+#: A claimant holds one database connection for as long as its task runs,
+#: which is a minute at a time while it waits on a host, and takes a second
+#: for what runs beside the task: the rate limiter's reservation, the request
+#: meter, a heartbeat.
+CONNECTIONS_PER_CLAIMANT = 2
+
+
+def pool_shortfall(workers: int, *, pool_size: int, max_overflow: int) -> str | None:
+    """Why this many claimants cannot start on this connection pool, or None.
+
+    Checked before anything is claimed. Past the pool's limit the claimants
+    hold every connection and then each waits on the others for one more,
+    thirty seconds at a time.
+    """
+    needed = workers * CONNECTIONS_PER_CLAIMANT
+    capacity = pool_size + max_overflow
+    if needed <= capacity:
+        return None
+    return (
+        f"--workers {workers} needs {needed} database connections and the pool "
+        f"allows {capacity}: set DB_POOL_SIZE={needed} (`make workers n={workers}` does)"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Jobrunner queue worker")
     parser.add_argument(
@@ -368,6 +392,12 @@ def main() -> None:
 
     if args.workers < 1:
         parser.error("--workers must be at least 1")
+    settings = get_settings()
+    refusal = pool_shortfall(
+        args.workers, pool_size=settings.db_pool_size, max_overflow=settings.db_max_overflow
+    )
+    if refusal is not None:
+        parser.error(refusal)
     if args.workers == 1:
         asyncio.run(run_forever())
     else:
