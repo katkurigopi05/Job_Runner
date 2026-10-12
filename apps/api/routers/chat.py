@@ -490,6 +490,17 @@ def _postings_section(
             + f"; the closest {len(found.passages)} are below and the owner sees the rest "
             "listed by kind under your answer. Say how many there are and name the main kinds."
         )
+    if found.not_hiring:
+        # The question says a word that is also a company's name, and that
+        # company has nothing open. The word was searched for, in case a tool
+        # was meant; the owner may have meant the employer, so this says so.
+        one = len(found.not_hiring) == 1
+        lines.append(
+            f"  {', '.join(found.not_hiring)} {'is' if one else 'are'} also "
+            f"{'a company' if one else 'companies'} on the owner's list, with no open postings"
+            f"{'' if one else ' each'}. What was searched for is the word, in every "
+            "employer's postings."
+        )
     if not found.passages:
         within = " in the search area" if found.outside_area else ""
         lines.append(
