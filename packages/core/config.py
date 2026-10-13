@@ -366,6 +366,17 @@ class Settings(BaseSettings):
     #: that.
     chat_semantic_candidates: bool = False
 
+    #: What the assistant does with a title that names no level when a
+    #: question names one ("senior data engineer jobs").
+    #:
+    #: Off: such a posting is left out and counted, and the answer says how
+    #: many were. Unknown is not a pass (CLAUDE.md §16). On: they are listed
+    #: after the titles that are at the level, and the model is told not to
+    #: call one senior. Nearly half the titles in the owner's area name no
+    #: level, which is why it is theirs to set. A title naming *another* level
+    #: is never listed under either.
+    chat_allow_unknown_seniority: bool = False
+
     storage_root: str = "./storage"
     #: Where `make backup` writes. Outside storage_root so a backup never
     #: contains itself, and gitignored like it.
