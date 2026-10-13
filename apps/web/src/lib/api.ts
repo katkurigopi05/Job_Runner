@@ -368,6 +368,7 @@ export type Classification =
   | "rejection"
   | "offer"
   | "info_request"
+  | "assessment"
   | "acknowledgement"
   | "otp"
   | "noise";
