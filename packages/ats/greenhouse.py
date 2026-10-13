@@ -87,8 +87,20 @@ _URL_RE = re.compile(
     r"^https?://(?:job-)?boards\.greenhouse\.io/(?P<company>[^/]+)/jobs/(?P<job_id>\d+)",
     re.IGNORECASE,
 )
-#: Embedded form on a company's own careers page.
-_EMBED_RE = re.compile(r"greenhouse\.io/embed/job_app\?.*\bfor=(?P<company>[^&]+)", re.I)
+#: The form a company embeds in its own careers page: an address on
+#: Greenhouse, with the company in `for=`.
+#:
+#: Anchored to the host, and matched from the start. This was searched for
+#: anywhere in the URL, so a page on any site whose address *contained* one
+#: (`evil.example/go?u=https://boards.greenhouse.io/embed/job_app?for=acme`)
+#: was a Greenhouse form to `matches`, both when the adapter was chosen and
+#: when `navigate._check_still_ours` asked where the browser had landed. The
+#: owner's profile and résumé would have been typed into it.
+#: `tests/test_ats_lookalike_hosts.py`.
+_EMBED_RE = re.compile(
+    r"^https?://(?:[a-z0-9-]+\.)+greenhouse\.io/embed/job_app\?(?:[^#]*&)?for=(?P<company>[^&#]+)",
+    re.I,
+)
 
 
 def _looks_required(label: str, element_required: bool) -> bool:
@@ -150,7 +162,7 @@ class GreenhouseAdapter:
 
     @staticmethod
     def matches(url: str) -> bool:
-        return bool(_URL_RE.match(url) or _EMBED_RE.search(url))
+        return bool(_URL_RE.match(url) or _EMBED_RE.match(url))
 
     @staticmethod
     def external_id(url: str) -> str | None:
@@ -159,7 +171,7 @@ class GreenhouseAdapter:
 
     @staticmethod
     def company_slug(url: str) -> str | None:
-        match = _URL_RE.match(url) or _EMBED_RE.search(url)
+        match = _URL_RE.match(url) or _EMBED_RE.match(url)
         return match.group("company") if match else None
 
     @staticmethod

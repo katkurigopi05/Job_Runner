@@ -69,6 +69,21 @@ def application_route(url: str, url_re: re.Pattern[str], segment: str | None) ->
     return urlunsplit((parts.scheme, parts.netloc, f"{path}/{segment}", "", ""))
 
 
+def over_https(url: str) -> str:
+    """`url`, asked for over https whatever scheme it was written with.
+
+    An adapter recognises `http://boards.greenhouse.io/…` because a link on a
+    careers page may be written that way. The page behind it is where the
+    owner's name, phone, work authorization and résumé are typed, and a plain
+    request can be answered by anyone on the network between here and the
+    ATS. Every ATS here serves https.
+    """
+    parts = urlsplit(url)
+    if parts.scheme.lower() != "http":
+        return url
+    return urlunsplit(("https", *parts[1:]))
+
+
 async def wait_for_form(
     page: Any,
     *,

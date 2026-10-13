@@ -29,7 +29,7 @@ from packages.ats.base import (
     SiteError,
     UnsupportedSiteError,
 )
-from packages.ats.navigate import open_application
+from packages.ats.navigate import open_application, over_https
 from packages.ats.registry import adapter_for
 from packages.ats.screen import ScreenReport, screen
 from packages.core.config import get_settings
@@ -144,7 +144,7 @@ async def _run_pipeline(
     application.ats = adapter.name
 
     async with browser_page(adapter.name) as page:
-        response = await page.goto(application.url, wait_until="domcontentloaded")
+        response = await page.goto(over_https(application.url), wait_until="domcontentloaded")
 
         # A withdrawn posting is `job_closed`, not `site_error`.
         #
