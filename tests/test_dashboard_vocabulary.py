@@ -32,12 +32,26 @@ WEB = Path(__file__).resolve().parent.parent / "apps/web/src"
 API_TS = (WEB / "lib/api.ts").read_text(encoding="utf-8")
 TRACKER = (WEB / "app/tracker/page.tsx").read_text(encoding="utf-8")
 
-#: `export type Name = | "a" | "b";` and the one-line form.
-_UNION = re.compile(r"export type (\w+) =\s*((?:\|?\s*\"[^\"]+\"\s*)+);")
+#: `export type Name = …;`, up to the semicolon that ends it.
+_DECLARATION = re.compile(r"export type (\w+) =([^;]*);")
+_LITERAL = re.compile(r"\"([^\"]*)\"")
 
-UNIONS: dict[str, set[str]] = {
-    name: set(re.findall(r"\"([^\"]+)\"", body)) for name, body in _UNION.findall(API_TS)
-}
+
+def _string_unions(source: str) -> dict[str, set[str]]:
+    """Each type that is nothing but string literals joined by `|`.
+
+    Read in two steps, a declaration and then the literals in it, so no
+    pattern repeats a group that can itself match in more than one way.
+    """
+    found: dict[str, set[str]] = {}
+    for name, body in _DECLARATION.findall(source):
+        members = _LITERAL.findall(body)
+        if members and not _LITERAL.sub("", body).replace("|", "").strip():
+            found[name] = set(members)
+    return found
+
+
+UNIONS: dict[str, set[str]] = _string_unions(API_TS)
 ENUMS: dict[str, set[str]] = {
     name: {member.value for member in value}
     for name, value in vars(enums).items()
