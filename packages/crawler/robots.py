@@ -16,17 +16,21 @@ Two decisions worth stating, because both cut against convenience:
 - **Crawl-delay is honoured when it is longer than ours.** A site asking for
   more space gets it. A site asking for less does not, because §2.6's floor
   is configurable upward only.
+
+What the file says once it has been read is `robots_rules.py`, which is where
+the reasons `urllib.robotparser` no longer reads it are.
 """
 
 from __future__ import annotations
 
 import time
-import urllib.robotparser
 from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlparse
 
 import httpx
 import structlog
+
+from packages.crawler.robots_rules import Rules, parse
 
 log = structlog.get_logger(__name__)
 
@@ -58,13 +62,13 @@ class RobotsDecision:
 
 @dataclass
 class _CachedRobots:
-    parser: urllib.robotparser.RobotFileParser | None
+    rules: Rules | None
     fetched_at: float
     reachable: bool
     missing: bool = False
 
 
-async def _read_capped(client: httpx.AsyncClient, url: str) -> tuple[httpx.Response, str]:
+async def _read_capped(client: httpx.AsyncClient, url: str) -> tuple[httpx.Response, bytes]:
     """GET `url`, reading at most `ROBOTS_PARSE_LIMIT_BYTES` of the body.
 
     Streamed rather than fetched whole: `client.get` buffers everything before
@@ -73,10 +77,14 @@ async def _read_capped(client: httpx.AsyncClient, url: str) -> tuple[httpx.Respo
 
     A status outside 2xx needs no body — every branch in `_load` decides on the
     code alone — so nothing is read for those.
+
+    Bytes, undecoded: rules are matched on the octets they name
+    (`robots_rules.py`), and decoding with `errors="replace"` turned a path
+    written in another encoding into one the site does not serve.
     """
     async with client.stream("GET", url) as response:
         if not (200 <= response.status_code < 300):
-            return response, ""
+            return response, b""
         chunks: list[bytes] = []
         total = 0
         async for chunk in response.aiter_bytes():
@@ -85,8 +93,7 @@ async def _read_capped(client: httpx.AsyncClient, url: str) -> tuple[httpx.Respo
             if total >= ROBOTS_PARSE_LIMIT_BYTES:
                 log.info("robots_truncated", url=url, limit=ROBOTS_PARSE_LIMIT_BYTES)
                 break
-        raw = b"".join(chunks)[:ROBOTS_PARSE_LIMIT_BYTES]
-    return response, raw.decode("utf-8", errors="replace")
+    return response, b"".join(chunks)[:ROBOTS_PARSE_LIMIT_BYTES]
 
 
 def origin_key(url: str) -> str:
@@ -172,7 +179,7 @@ class RobotsCache:
             response, body = await _read_capped(self._client_for_requests(), robots_url)
         except Exception as exc:  # noqa: BLE001 - any failure means "unknown"
             log.warning("robots_unreachable", host=host, error=type(exc).__name__)
-            entry = _CachedRobots(parser=None, fetched_at=time.monotonic(), reachable=False)
+            entry = _CachedRobots(rules=None, fetched_at=time.monotonic(), reachable=False)
             self._cache[host] = entry
             return entry
 
@@ -190,7 +197,7 @@ class RobotsCache:
             if response.status_code != 404:
                 log.info("robots_unavailable", host=host, status=response.status_code)
             entry = _CachedRobots(
-                parser=None, fetched_at=time.monotonic(), reachable=True, missing=True
+                rules=None, fetched_at=time.monotonic(), reachable=True, missing=True
             )
             self._cache[host] = entry
             return entry
@@ -201,13 +208,11 @@ class RobotsCache:
             # is the case the permissive reading gets wrong — a site having a
             # bad day is not a site granting permission.
             log.warning("robots_error_status", host=host, status=response.status_code)
-            entry = _CachedRobots(parser=None, fetched_at=time.monotonic(), reachable=False)
+            entry = _CachedRobots(rules=None, fetched_at=time.monotonic(), reachable=False)
             self._cache[host] = entry
             return entry
 
-        parser = urllib.robotparser.RobotFileParser()
-        parser.parse(body.splitlines())
-        entry = _CachedRobots(parser=parser, fetched_at=time.monotonic(), reachable=True)
+        entry = _CachedRobots(rules=parse(body), fetched_at=time.monotonic(), reachable=True)
         self._cache[host] = entry
         return entry
 
@@ -221,16 +226,15 @@ class RobotsCache:
                 reason=("robots.txt could not be read; refusing to assume the rules allow us"),
             )
 
-        if entry.missing or entry.parser is None:
+        if entry.missing or entry.rules is None:
             return RobotsDecision(allowed=True, reason="no robots.txt published")
 
-        allowed = entry.parser.can_fetch(self.user_agent, url)
-        delay = entry.parser.crawl_delay(self.user_agent)
+        allowed = entry.rules.allows(self.user_agent, url)
 
         return RobotsDecision(
             allowed=allowed,
             reason="allowed by robots.txt" if allowed else "disallowed by robots.txt",
-            crawl_delay=float(delay) if delay is not None else None,
+            crawl_delay=entry.rules.crawl_delay(self.user_agent),
         )
 
     def clear(self) -> None:
