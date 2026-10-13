@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from packages.llm.prompts import TAILOR_SYSTEM
 from packages.llm.provider import LLMProvider
 from packages.llm.router import temperature_for
+from packages.tailor import placeholders
 from packages.tailor.guard import (
     _COMMON_WORDS,
     GuardReport,
@@ -251,6 +252,13 @@ def vet(
 
     if not candidate:
         return False, "model returned nothing", report
+
+    # Before anything is traced: `[company]` is three ordinary lowercase
+    # letters, so the entity check below has nothing to hold it to. A span the
+    # line or the résumé already had (`[GitHub]`) is the owner's own.
+    blank = placeholders.refusal(candidate, known=f"{original}\n{corpus.text}")
+    if blank is not None:
+        return False, blank, report
 
     borrowed = borrowed_terms(original, candidate, forbidden)
     if borrowed:

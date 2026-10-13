@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from packages.llm.prompts import COVER_LETTER_SYSTEM
 from packages.llm.provider import LLMProvider
 from packages.llm.router import temperature_for
+from packages.tailor import placeholders
 from packages.tailor.guard import EntityKind, GuardReport, SourceCorpus, _index, check
 from packages.tailor.keywords import analyze, borrowed_terms
 
@@ -289,6 +290,13 @@ def vet(candidate: str, corpus: SourceCorpus) -> tuple[bool, str | None, GuardRe
 
     if not candidate.strip():
         return False, "model returned nothing", report
+
+    # The whole letter, addressing included: "Dear [Hiring Manager]," and
+    # "Sincerely, [Your Name]" are where a model most often leaves one, and
+    # both were set aside two lines up.
+    blank = placeholders.refusal(candidate, known=corpus.text)
+    if blank is not None:
+        return False, blank, report
 
     if not report.ok:
         return False, report.summary(), report
