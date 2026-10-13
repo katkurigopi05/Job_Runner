@@ -34,6 +34,11 @@ Adding a group widens what the guard permits, so it is a §2.1 decision and not
 a data-entry chore. `SourceCorpus` says the same thing about its own inputs:
 "widening this set is how a fabrication becomes permissible, so it should be
 done deliberately and never quietly."
+
+A tool and the practice it is a tool for stay out of this table, for the
+reason given below for `git` and `version control`. The one place such a pair
+is read is `packages/tailor/practices.py`: one way, in the bullet that names
+the tool, and only by the targeted revision.
 """
 
 from __future__ import annotations

@@ -922,6 +922,59 @@ For scale, the floors alone: 181 boards at the 2s shared-API floor is about
 is 60s, so discovery costs about 2 minutes per company — overlapping, since
 those are all distinct hosts.
 
+### Revising only the bullets that can gain a term
+
+```bash
+python -m scripts.tailor_targeted <posting-id>
+python -m scripts.tailor_targeted <posting-id> --run
+```
+
+The ordinary tailorer sends every bullet to a model with the whole posting. On
+a posting your résumé already matches as well as it truthfully can, that has
+nothing to win and everything in the bullet to lose. This asks the question
+first.
+
+**Without `--run` no model is asked anything and nothing is written.** The
+posting's terms are sorted against your base résumé, four ways:
+
+- **covered**: the résumé says it.
+- **supported synonym**: the résumé says it another way (`UI` for "user
+  interface"). A parser that matches words does not see it.
+- **supported, not stated**: no form of it is on the résumé, and something
+  that may speak for you supports it. A bullet that names pytest supports
+  "automated testing"; a GitHub project supports what GitHub reports of it.
+- **gap**: none of those. Never written in.
+
+It then lists the bullets a revision would be asked for, and why. When there
+are none it says `no supported keyword gain available` and stops.
+
+**With `--run`** those bullets, and only those, go to the tailoring provider:
+one call each, and at most one more if the first answer is refused. The model
+is given the bullet, the terms and the evidence for each, not the posting. A
+revision is kept only if it adds the term and takes nothing away: every
+number, unit, name, model name and date of the bullet has to still be there,
+and a term goes only into the bullet that holds its evidence. Anything else
+and the bullet stays as you wrote it.
+
+What is kept is published as a new résumé version, and its PDF is read back:
+the added terms and every figure and listed technology have to be in the
+extracted text, which is what an employer's parser reads. Then the scores
+before and after are printed twice, document to document and PDF to PDF, with
+both PDFs rendered by the same template.
+
+Three things it does not do:
+
+- **It attaches nothing.** No match and no application is changed, and the
+  version is not offered to the tailoring cache. Choosing it is yours to do.
+- **It decides nothing from a score.** A fall in any part is listed under
+  `for review`. The scores are heuristics about a parser and a reader, not a
+  prediction about a hiring decision. One of them falls by arithmetic: the
+  scan score is the share of matched terms near the top of the page, so a term
+  gained lower down lowers it with nothing at the top having changed.
+- **It adds no skill.** The only rule that reads a term into a bullet is the
+  one-row table in `packages/tailor/practices.py`, and each row there is a
+  decision about what may be said on your behalf.
+
 ## 9. Development and verification commands
 
 | Command | Purpose |
