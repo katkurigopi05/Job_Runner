@@ -30,6 +30,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.analytics import funnel
 from packages.core.enums import ApplicationStatus, Outcome
 from packages.core.models import Application
 
@@ -44,16 +45,13 @@ DEFAULT_SILENT_AFTER_DAYS = 14
 #: recording it as a rejection would corrupt the funnel's own numbers.
 DEFAULT_STALE_AFTER_DAYS = 45
 
-#: Outcomes that mean the employer has answered, so silence has ended.
-_ANSWERED: frozenset[str] = frozenset(
-    {
-        Outcome.INTERVIEW.value,
-        Outcome.OFFER.value,
-        Outcome.REJECTED.value,
-        Outcome.INFO_REQUESTED.value,
-        Outcome.ACKNOWLEDGED.value,
-    }
-)
+#: Outcomes that mean the employer has answered, so silence has ended: the
+#: funnel's own set, and the automated receipt as well.
+#:
+#: Built from the funnel's and not listed again. The list that was here had
+#: no assessment in it, so an application with a timed exercise waiting was
+#: reported as silent and owed a follow-up.
+_ANSWERED: frozenset[str] = funnel.ANSWERED | {Outcome.ACKNOWLEDGED.value}
 
 
 @dataclass(frozen=True)
@@ -210,7 +208,7 @@ async def latency(session: AsyncSession, *, profile_id: str | None = None) -> La
         all_days.append(days)
         if application.outcome == Outcome.REJECTED.value:
             rejection_days.append(days)
-        elif application.outcome in {Outcome.INTERVIEW.value, Outcome.OFFER.value}:
+        elif application.outcome in funnel.ENGAGED:
             engagement_days.append(days)
 
     if not all_days:
