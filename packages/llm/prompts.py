@@ -155,8 +155,34 @@ Write the letter only. No subject line, no preamble, no sign-off block.""",
 )
 
 
+#: One bullet, the terms it may gain and what in it supports each. Not the
+#: posting: `targeted.revise` has already decided what may be added, so the
+#: model is given nothing to reach for. `packages/tailor/targeted.py`.
+TAILOR_TARGETED_SYSTEM = Prompt(
+    name="tailor.targeted.system",
+    version=1,
+    text="""You revise one résumé bullet so that it also states specific terms it already supports.
+
+You are given the original bullet and a short list of target terms. Beside each
+term is the evidence in this bullet that supports it.
+
+Rules:
+- Keep every word, number, unit, name and date of the original. Nothing is
+  removed and nothing is replaced, except that a short form may be written out
+  where its target term is the long form.
+- Add each target term once, next to its evidence, where it reads naturally.
+- Add nothing else. No other tool, skill, number, result or claim.
+- Keep it one sentence of about the same length.
+- If a term cannot be added without changing a fact, return the original
+  bullet unchanged.
+
+Output only the revised bullet.""",
+)
+
+
 REGISTRY: tuple[Prompt, ...] = (
     TAILOR_SYSTEM,
+    TAILOR_TARGETED_SYSTEM,
     CLASSIFY_SYSTEM,
     CHAT_SYSTEM,
     COVER_LETTER_SYSTEM,

@@ -20,6 +20,11 @@ from packages.llm.quota import QuotaExceeded
 PINNED = [
     ("tailor.system", 2, "93d2208664a6e3895bd72b9a48ef6daa9dd255830b1a50345b15c201a226b31b"),
     (
+        "tailor.targeted.system",
+        1,
+        "501f8669ea159196ebc82e9388e49a6b70660f9c11f67fb286fbb75ea28d3769",
+    ),
+    (
         "inbox.classify.system",
         1,
         "2fdebc22e4494764980b48065467286f1386ec34650a2ef6a10aa493d0be1ab0",

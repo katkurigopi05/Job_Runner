@@ -248,7 +248,7 @@ def read(text: str) -> list[Figure]:
     return figures
 
 
-def _stated(text: str) -> set[tuple[Decimal, bool]]:
+def stated(text: str) -> set[tuple[Decimal, bool]]:
     """Every value `text` states, counting a number written as a word."""
     stated = {figure.key for figure in read(text)}
     for word in _WORD.findall(text):
@@ -260,7 +260,7 @@ def _stated(text: str) -> set[tuple[Decimal, bool]]:
 
 def lost(original: str, candidate: str) -> Loss | None:
     """What `candidate` did to the figures `original` states, if anything."""
-    kept = _stated(candidate)
+    kept = stated(candidate)
     dropped: list[str] = []
     seen: set[tuple[Decimal, bool]] = set()
     source = read(original)
@@ -286,4 +286,4 @@ def dropped(original: str, candidate: str) -> tuple[str, ...]:
     return loss.dropped if loss is not None else ()
 
 
-__all__ = ["Figure", "Loss", "dropped", "lost", "read"]
+__all__ = ["Figure", "Loss", "dropped", "lost", "read", "stated"]

@@ -119,6 +119,28 @@ async def _next_version(session: AsyncSession, candidate_id: uuid.UUID) -> int:
     return int(highest or 0) + 1
 
 
+def assembly_options(
+    parsed: ParsedResume, options: AssemblyOptions | None = None
+) -> AssemblyOptions | None:
+    """The options a tailoring of `parsed` is rendered with.
+
+    A résumé tailored on its Projects section keeps that section. The GitHub
+    set is rebuilt per posting and is the right Projects section for an
+    employment résumé, where it is supporting material — but here it would
+    overwrite the only substantive thing the document has, discarding every
+    rewrite `publish_tailored` was called to render. The review screen would
+    report eighteen changes and the PDF would contain none of them.
+
+    Its own function so that whoever renders the *base* for a like-for-like
+    comparison (`scripts/tailor_targeted.py`) gets the same template.
+    """
+    from packages.tailor.bullets import tailorable_section
+
+    if options is None and tailorable_section(parsed) == "projects":
+        return AssemblyOptions(include_projects=False, replace_source_projects=False)
+    return options
+
+
 async def publish_tailored(
     session: AsyncSession,
     *,
@@ -145,16 +167,7 @@ async def publish_tailored(
     """
     tailored = apply_rewrites(parsed, result, posting_text=posting_text)
 
-    # A résumé tailored on its Projects section keeps that section. The GitHub
-    # set is rebuilt per posting and is the right Projects section for an
-    # employment résumé, where it is supporting material — but here it would
-    # overwrite the only substantive thing the document has, discarding every
-    # rewrite this function was called to render. The review screen would report
-    # eighteen changes and the PDF would contain none of them.
-    from packages.tailor.bullets import tailorable_section
-
-    if options is None and tailorable_section(parsed) == "projects":
-        options = AssemblyOptions(include_projects=False, replace_source_projects=False)
+    options = assembly_options(parsed, options)
 
     try:
         pdf = assemble_pdf(tailored, projects, options)
