@@ -84,6 +84,7 @@ from packages.llm.provider import (
     PromptTooLong,
 )
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
+from packages.matching.level import LevelCount
 from packages.matching.retrieve import Passage, Retrieval, retrieve
 from packages.matching.roles import display_name
 from packages.matching.sponsored import SponsorshipCount
@@ -439,6 +440,40 @@ def _unmet_by_posting(
     return _PostingGaps(lines, across)
 
 
+def _level_lines(count: LevelCount) -> list[str]:
+    """How the postings found stand against the level asked, as the model is told it.
+
+    The count of what was left out is the point. Half the titles in the
+    owner's area name no level, so "23 senior data engineer postings" is true
+    only beside "17 more name no level", and which of the two the owner sees
+    listed is their setting (`CHAT_ALLOW_UNKNOWN_SENIORITY`). Either way the
+    model is told that a title which does not say is not known to be that
+    level: handed a list after a question about senior jobs, it will otherwise
+    call them all senior.
+    """
+    total = count.at_level + count.unknown + count.other
+    if not (count.unknown or count.other):
+        return [f"  level asked for: {count.said}. All {total} found are at that level by title."]
+    lines = [
+        f"  level asked for: {count.said}. Of the {total} found, {count.at_level} at that "
+        f"level by title, {count.unknown} naming no level, {count.other} naming another level.",
+        "  A title that names another level is never listed.",
+    ]
+    if not count.unknown:
+        return lines
+    if count.unknown_listed:
+        lines.append(
+            "  The ones naming no level are listed after the ones at that level: "
+            f"do not call one {count.said}, say its title names no level."
+        )
+    else:
+        lines.append(
+            "  The ones naming no level are not listed. Say how many there are: "
+            f"a title that does not say is not known to be {count.said}."
+        )
+    return lines
+
+
 def _sponsorship_lines(count: SponsorshipCount) -> list[str]:
     """What the postings asked about state on sponsorship, as the model is told it.
 
@@ -516,6 +551,17 @@ def _postings_section(
         )
     elif found.area_waived:
         lines.append("  search area: not applied, the question names a place outside it")
+    # With a level asked, the totals below count the postings listed for it,
+    # and the level line after them says how many were not.
+    listed_at_level = (
+        ""
+        if found.level is None
+        else (
+            " and is listed for the level asked"
+            if (found.role_total or found.title_total or 0) == 1
+            else " and are listed for the level asked"
+        )
+    )
     if found.roles:
         # The model sees the closest few. Without the count it cannot say
         # there are more, and three shown out of sixty-one read as "three".
@@ -524,7 +570,7 @@ def _postings_section(
         lines.append(
             f"  role asked for: {' or '.join(found.roles)}. {count} open posting"
             f"{'' if count == 1 else 's'} in the search area "
-            f"{'has' if count == 1 else 'have'} such a title"
+            f"{'has' if count == 1 else 'have'} such a title{listed_at_level}"
             + (f" ({breakdown})" if len(found.kinds) > 1 else "")
             + f"; the closest {len(found.passages)} are below and the owner sees the rest "
             "listed by kind under your answer. Say how many there are of each kind."
@@ -541,7 +587,7 @@ def _postings_section(
             breakdown += f", and {len(found.kinds) - len(shown)} more kinds"
         lines.append(
             f"  titles searched: {count} open posting{'' if count == 1 else 's'} in the search "
-            f"area {'has' if count == 1 else 'have'} {words} in the title"
+            f"area {'has' if count == 1 else 'have'} {words} in the title{listed_at_level}"
             + (f" ({breakdown})" if len(found.kinds) > 1 else "")
             + f"; the closest {len(found.passages)} are below and the owner sees the rest "
             "listed by kind under your answer. Say how many there are and name the main kinds."
@@ -568,6 +614,8 @@ def _postings_section(
                 else "  none shared anything with this question"
             )
         )
+    if found.level is not None:
+        lines += _level_lines(found.level)
     if found.sponsorship is not None:
         lines += _sponsorship_lines(found.sponsorship)
     if found.passages and not (found.roles or found.title_words or found.sponsorship):

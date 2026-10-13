@@ -102,6 +102,14 @@ from packages.matching.embed import (
     get_embedder,
     tokenize,
 )
+from packages.matching.level import (
+    AskedLevel,
+    LevelCount,
+    asked_level,
+    at_the_level,
+    sift,
+    standing,
+)
 from packages.matching.locality import Locality, area_exclusion, locality_of
 from packages.matching.rerank import Reranker, fuse, get_reranker, reorder
 from packages.matching.roles import (
@@ -472,6 +480,9 @@ class Retrieval:
     #: was about state, counted. The passages are then only the ones that state
     #: they do (`_stating_sponsorship`).
     sponsorship: SponsorshipCount | None = None
+    #: Set when the question named a level ("senior", "entry level"): how the
+    #: postings found stand against it by their titles (`matching/level.py`).
+    level: LevelCount | None = None
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -905,7 +916,11 @@ def _title_stems(title: str) -> frozenset[str]:
 
 
 async def _title_word_hits(
-    session: AsyncSession, stems: set[str], companies: list[uuid.UUID]
+    session: AsyncSession,
+    stems: set[str],
+    companies: list[uuid.UUID],
+    *,
+    keep: Callable[[str], bool] | None = None,
 ) -> list[_Hit]:
     """Open postings whose title has every one of `stems`, newest first.
 
@@ -921,7 +936,7 @@ async def _title_word_hits(
     ids = [
         posting_id
         for posting_id, title in (await session.execute(query)).all()
-        if stems <= _title_stems(title or "")
+        if stems <= _title_stems(title or "") and (keep is None or keep(title or ""))
     ]
     found = await _hits_for(session, ids)
     return [found[posting_id] for posting_id in ids if posting_id in found]
@@ -1413,6 +1428,29 @@ def _fuse_candidates(*rankings: list[uuid.UUID]) -> dict[uuid.UUID, float]:
     return scores
 
 
+#: Keyword matches read for their level when a question names one. Wider
+#: than `KEYWORD_POOL` for the reason `_AREA_POOL` is: what is cut off before
+#: it is filtered is a posting the answer says does not exist, and of thirty
+#: postings that say "backend" one was junior.
+_LEVEL_POOL = 500
+
+
+def _at_level(hits: list[_Hit], level: AskedLevel | None) -> tuple[list[_Hit], LevelCount | None]:
+    """`hits` whose titles are at the level asked, and how all of them stood.
+
+    Titles that name no level are left out or kept by the owner's setting
+    (`CHAT_ALLOW_UNKNOWN_SENIORITY`); `retrieve` puts the kept ones last.
+    """
+    if level is None:
+        return hits, None
+    return sift(
+        hits,
+        level,
+        allow_unknown=get_settings().chat_allow_unknown_seniority,
+        title=lambda hit: hit.title,
+    )
+
+
 #: Keyword matches read for their verdict when a question asks which jobs
 #: sponsor and also names something to look for. Wider than `KEYWORD_POOL`:
 #: an offer is rare (15 of 5,204 in the owner's area), and one cut off by a
@@ -1571,6 +1609,13 @@ async def retrieve(
         and bool(_FIRST_PERSON.search(question.lower()))
     )
     aside = _APPLICATION_STATE if about_my_applications else frozenset()
+    # A level is read from titles and never searched for as a word: "junior"
+    # in a description is "mentor junior engineers" in a senior posting.
+    level = asked_level(question)
+    level_count: LevelCount | None = None
+    if level is not None:
+        aside = aside | level.words
+        asks_about_jobs = asks_about_jobs or level.implies_postings
     frequencies, active_revision = await idf.load_active(session)
     companies, company_words, company_names, not_hiring = await _named_companies(
         session, words, frequencies, question
@@ -1585,7 +1630,8 @@ async def retrieve(
     # Asked for by its whole title, whatever its words are: found before the
     # check below, so a posting titled "Open Application" is still a subject.
     titled = await _titles_in_question(session, question, companies)
-    if not (subject_terms or companies or titled):
+    # A level alone names something: "internships" is every intern posting.
+    if not (subject_terms or companies or titled or level is not None):
         return Retrieval(attempted=False, unnamed=True)
 
     open_total = (
@@ -1683,6 +1729,7 @@ async def retrieve(
         of_the_role = await _role_hits(session, set(asked_roles), companies)
         role_pool = [hit for hit in of_the_role if not (area and _outside_area(hit))]
         left_out |= {hit.posting_id for hit in of_the_role} - {hit.posting_id for hit in role_pool}
+        role_pool, level_count = _at_level(role_pool, level)
         label_of = _kind_labels(role_pool)
         typed_kinds = {alias_label(alias) for alias in typed_aliases}
         kinds = _kinds(label_of, lambda label: int(label in typed_kinds), set(label_of.values()))
@@ -1697,12 +1744,25 @@ async def retrieve(
             if word not in _FRAMING_WORDS and word not in company_words and word not in aside
         ]
         stems = {_stem(word) for word in asked_words}
-        of_the_title = await _title_word_hits(session, stems, companies) if stems else []
+        if stems:
+            of_the_title = await _title_word_hits(session, stems, companies)
+        elif level is not None:
+            # Nothing but a level was asked for: "internships", "any senior
+            # roles". Every title at that level is the answer, and a title
+            # naming no level is not one of them whatever the setting says:
+            # with nothing else to narrow by, that is half the corpus.
+            asked = level
+            of_the_title = await _title_word_hits(
+                session, set(), companies, keep=lambda title: at_the_level(title, asked)
+            )
+        else:
+            of_the_title = []
         if of_the_title:
             role_pool = [hit for hit in of_the_title if not (area and _outside_area(hit))]
             left_out |= {hit.posting_id for hit in of_the_title} - {
                 hit.posting_id for hit in role_pool
             }
+            role_pool, level_count = _at_level(role_pool, level)
             title_words = tuple(_as_typed(question, word) for word in asked_words)
             label_of = _kind_labels(role_pool)
             kinds = _kinds(
@@ -1737,6 +1797,8 @@ async def retrieve(
     more_hits: list[_Hit] = []
     if terms or titled or role_pool is not None:
         pool = _AREA_POOL if area else KEYWORD_POOL
+        if level is not None:
+            pool = max(pool, _LEVEL_POOL)
         if role_pool is None:
             scanned = (
                 await _keyword_hits(session, terms, frequencies, companies, pool=pool)
@@ -1775,9 +1837,27 @@ async def retrieve(
             left_out |= {hit.posting_id for hit in titled + scanned} - {
                 hit.posting_id for hit in kept_titled + kept_scanned
             }
+            titled, scanned = kept_titled, kept_scanned
+        if level is not None:
+            # After the area and before the cut. A posting asked for by its
+            # whole title is held to it too: "Data Engineer" is the whole of a
+            # title inside "junior data engineer jobs", and names no level.
+            if role_pool is None:
+                at_level, level_count = _at_level(titled + scanned, level)
+                kept_ids = {hit.posting_id for hit in at_level}
+                scanned = [hit for hit in scanned if hit.posting_id in kept_ids]
+            else:
+                kept_ids = {hit.posting_id for hit in role_pool}
+            titled = [hit for hit in titled if hit.posting_id in kept_ids]
+        if role_pool is None and (area or level is not None):
             # A role's postings are all listed, so they are not cut to a pool.
-            titled = kept_titled
-            scanned = kept_scanned if role_pool is not None else kept_scanned[:KEYWORD_POOL]
+            if level is not None:
+                # The level asked ahead of no level, before the cut and not
+                # only after it: thirty postings naming no level are otherwise
+                # what is kept, and the junior one is thirty-first.
+                asked = level
+                scanned = sorted(scanned, key=lambda hit: not at_the_level(hit.title, asked))
+            scanned = scanned[:KEYWORD_POOL]
         keyword = titled + scanned
         keyword_ids = [hit.posting_id for hit in keyword]
         semantic: list[_Hit] = []
@@ -1898,9 +1978,26 @@ async def retrieve(
         handed = by_kind(loose)
         rest, reranked_by = await _reranked(reranker, question, handed, among_spans, added)
         rest = held + by_kind(rest)
-        chosen = (named + rest)[:limit]
-        more_hits = (named + rest)[limit : limit + MORE_LIMIT]
-        ranked_total = len(named) + len(rest)
+        everything = named + rest
+        if level is not None:
+            # Last, and stable: the word typed, then its rung, then the titles
+            # naming no level when the owner has them listed. Within each the
+            # order above stands.
+            asked = level
+            # A role's or a title search's postings have no order of their own
+            # but kind and age, so the word typed leads its rung there. What a
+            # keyword found is ordered by what it says, and keeps that order.
+            everything = sorted(
+                everything,
+                key=lambda hit: (
+                    standing(hit.title, asked)
+                    if role_pool is not None
+                    else int(not at_the_level(hit.title, asked))
+                ),
+            )
+        chosen = everything[:limit]
+        more_hits = everything[limit : limit + MORE_LIMIT]
+        ranked_total = len(everything)
         # What the second model read: the head of what it was handed, which
         # leaves out the postings held ahead of it, and for one that judges,
         # the unfound postings it was handed beside them.
@@ -1933,6 +2030,7 @@ async def retrieve(
                 if rank < len(hits) and hits[rank].posting_id not in taken:
                     taken.add(hits[rank].posting_id)
                     ranked.append(hits[rank])
+        ranked, level_count = _at_level(ranked, level)
         reranked_total = 0
         if reranker is None:
             chosen = []
@@ -2019,6 +2117,7 @@ async def retrieve(
             for hit in more_hits
         ),
         kinds=tuple(kinds),
+        level=level_count,
         related=tuple(
             dict.fromkeys(
                 neighbour
