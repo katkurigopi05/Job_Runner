@@ -82,6 +82,7 @@ const CLASSIFICATION_LABEL: Record<Classification, string> = {
   rejection: "rejection",
   offer: "offer",
   info_request: "asked something",
+  assessment: "assessment",
   acknowledgement: "acknowledgement",
   otp: "verification code",
   noise: "noise",
