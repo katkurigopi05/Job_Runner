@@ -16,7 +16,13 @@ Six samples with room thought 839 to 1,498 tokens and wrote 15 to 40. So at
 300 every answer is cut off, and the provider returned the fragment as the
 answer. The fabrication guard asks whether a rewrite says something the
 résumé does not, and a bullet that stops half way says nothing new: "Built a
-Python and PostgreSQL pipeline handling" passes it, with the metric gone.
+Python and PostgreSQL pipeline handling" passed it, with the metric gone.
+
+That fragment is refused now, by the check that a rewrite keeps the bullet's
+numbers (`tests/test_figures_not_dropped.py`), which arrived after this. A
+fragment that stops one word later, with its number, is still accepted. The
+guard reads what a rewrite says and what it left out. It does not read
+whether the sentence ended.
 
 This is §7's OpenRouter trap again (`REASONING_HEADROOM_TOKENS`), on the
 provider the project ships with. Two changes, and the second is the one that
@@ -47,8 +53,10 @@ Built a Python and PostgreSQL pipeline handling 12 million events a day.
 Skills: Python, PostgreSQL, Docker, Kafka
 """
 BULLET = "Built a Python and PostgreSQL pipeline handling 12 million events a day."
-#: Stops where the limit fell. The guard accepts it: nothing in it is new.
+#: Stops where the limit fell, before the bullet's number.
 CUT_OFF = "Built a Python and PostgreSQL pipeline handling"
+#: Stops after it. Nothing in it is new and nothing the guard counts is gone.
+CUT_OFF_PAST_THE_NUMBER = "Built a Python and PostgreSQL pipeline handling 12 million events a"
 POSTING = "We need a backend engineer with Python and PostgreSQL experience."
 
 
@@ -151,16 +159,32 @@ async def test_the_refusal_does_not_quote_the_fragment(gemini) -> None:
 
 
 async def test_the_guard_alone_would_have_let_the_fragment_through() -> None:
-    """Why the provider has to refuse it. Handed over as an answer, the
-    fragment is accepted, and the bullet loses its number."""
+    """Why the provider has to refuse it. Handed over as an answer, a
+    fragment that kept its number is accepted, and the bullet ends on "a"."""
+    from packages.llm.provider import StubProvider
+
+    rewrite = await tailor_bullet(
+        StubProvider({"Built": CUT_OFF_PAST_THE_NUMBER}),
+        BULLET,
+        POSTING,
+        SourceCorpus.from_texts(RESUME),
+    )
+
+    assert rewrite.tailored == CUT_OFF_PAST_THE_NUMBER
+    assert not rewrite.tailored.endswith(".")
+
+
+async def test_a_fragment_that_lost_its_number_is_the_guards_now() -> None:
+    """The fragment this file was written about. The guard had accepted it;
+    since rewrites are held to their numbers it does not."""
     from packages.llm.provider import StubProvider
 
     rewrite = await tailor_bullet(
         StubProvider({"Built": CUT_OFF}), BULLET, POSTING, SourceCorpus.from_texts(RESUME)
     )
 
-    assert rewrite.tailored == CUT_OFF
-    assert "12 million" not in rewrite.tailored
+    assert rewrite.tailored == BULLET and rewrite.guard_refused
+    assert rewrite.dropped_figures == ["12 million"]
 
 
 async def test_a_cut_off_bullet_keeps_the_resumes_own(gemini) -> None:
