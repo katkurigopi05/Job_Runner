@@ -629,6 +629,31 @@ class OllamaCloudProvider(OllamaProvider):
         return {"Authorization": f"Bearer {self.api_key}"}
 
 
+#: Room for the thinking Gemini does before it writes.
+#:
+#: `maxOutputTokens` bounds *thinking plus answer*, and every caller in this
+#: repo means `max_tokens` as an answer budget: the trap
+#: `REASONING_HEADROOM_TOKENS` records for OpenRouter, on the provider this
+#: project ships with. Measured on 2026-10-13 on `gemini-3.8-flash`, with the
+#: tailorer's own prompt and a fixture bullet:
+#:
+#:     cap 300    thought 288, wrote 8    finishReason MAX_TOKENS
+#:     cap 4396   thought 839, wrote 17   finishReason STOP
+#:
+#: At 300 the answer was "Implemented a Python and PostgreSQL data processing
+#: pipeline": the bullet with its metric cut off, returned as a 200 with text.
+#: Six samples with room thought 839 to 1,498 tokens and wrote 15 to 40, so
+#: OpenRouter's 1,024 would have cut four of the six. The shipped model,
+#: `gemini-3.6-flash`, answered 503 throughout and was not measured; the day
+#: before, five of its seven rewrites of the owner's résumé were refused for
+#: dropping a technology or keeping 4% of the wording, which is what a
+#: fragment looks like to the guard.
+#:
+#: Headroom, for the reason given there: the caller's number still means what
+#: it says. A model that thinks past it is refused in `_answer`, not trusted.
+THINKING_HEADROOM_TOKENS = 4096
+
+
 class GeminiProvider:
     name = "gemini"
 
@@ -662,17 +687,45 @@ class GeminiProvider:
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"parts": [{"text": user}]}],
             "generationConfig": {
-                "maxOutputTokens": max_tokens,
+                "maxOutputTokens": max_tokens + THINKING_HEADROOM_TOKENS,
                 "temperature": temperature,
             },
         }
-        payload = await self._post(body)
+        return self._answer(await self._post(body))
+
+    @staticmethod
+    def _answer(payload: dict[str, Any]) -> str:
+        """The text of a response that finished, or the reason there is none.
+
+        A response cut off at the token limit is a 200, and it can carry
+        text: the first words of an answer the model did not get to finish.
+        That text is refused here whatever it says. The fabrication guard
+        cannot do it, because half a bullet claims nothing the résumé does
+        not, and it reads as a sentence often enough to be sent.
+
+        The fragment is never quoted in the error: it is résumé content, and
+        the message is logged (§10).
+        """
         try:
-            return str(payload["candidates"][0]["content"]["parts"][0]["text"])
-        except (KeyError, IndexError) as exc:
+            candidate = payload["candidates"][0]
+        except (KeyError, IndexError, TypeError) as exc:
             # A 200 with no candidate is usually a safety block. Saying so
             # beats an IndexError from four frames down.
             raise LLMError(f"Gemini returned no text: {_scrubbed(exc)}") from exc
+
+        finish = candidate.get("finishReason")
+        if finish == "MAX_TOKENS":
+            raise LLMError(
+                "Gemini's answer was cut off at the token limit (finishReason='MAX_TOKENS'): "
+                "the model thought for longer than THINKING_HEADROOM_TOKENS leaves room for. "
+                "What it had written is not used."
+            )
+        try:
+            return str(candidate["content"]["parts"][0]["text"])
+        except (KeyError, IndexError, TypeError) as exc:
+            raise LLMError(
+                f"Gemini returned no text (finishReason={finish!r}): {_scrubbed(exc)}"
+            ) from exc
 
     async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
         """One request, paced and retried on 429.
