@@ -36,7 +36,7 @@ from packages.tailor import figures, verify
 from packages.tailor.assemble import assemble_pdf
 from packages.tailor.guard import SourceCorpus
 from packages.tailor.parse import ParsedResume, extract_text
-from packages.tailor.practices import evidence_in, practice_for
+from packages.tailor.practices import affirmed_in, practice_for
 from packages.tailor.publish import apply_rewrites, publish_tailored
 from packages.tailor.rewrite import tailor_bullets, vet
 from packages.tailor.targeted import (
@@ -122,12 +122,12 @@ def test_the_three_terms_are_sorted_three_ways() -> None:
 
 
 def test_the_supporting_entries_are_recorded() -> None:
-    """The pytest bullet and the skills line both name the tool. The bullet
-    is the one that can be revised."""
+    """The pytest bullet says what the tool was used for. The skills line
+    only lists it, and is no source (`tests/test_practice_evidence.py`)."""
     terms = by_term(classify(RESUME, POSTING))
 
     assert terms["classification"].sources == ("experience:0",)
-    assert terms["automated testing"].sources == ("experience:1", "shared")
+    assert terms["automated testing"].sources == ("experience:1",)
     assert terms["automated testing"].bullet == 1
     assert terms["kubernetes"].sources == () and terms["kubernetes"].bullet is None
 
@@ -356,8 +356,8 @@ async def test_the_ordinary_rewrite_is_refused_the_term_as_before() -> None:
 
 def test_the_table_goes_one_way() -> None:
     assert practice_for("automated testing") is practice_for("Test Automation")
-    assert evidence_in("automated testing", LOADER) == "pytest"
-    assert evidence_in("automated testing", CLASSIFIER) is None
+    assert affirmed_in("automated testing", LOADER) == "pytest"
+    assert affirmed_in("automated testing", CLASSIFIER) is None
     # A practice is evidence of no tool, and a tool of no other practice.
     assert practice_for("pytest") is None
     assert practice_for("Kubernetes") is None and practice_for("continuous integration") is None
@@ -656,7 +656,7 @@ def test_the_plan_is_described_without_a_model() -> None:
     lines = describe_plan(classify(RESUME, POSTING))
     text = "\n".join(lines)
 
-    assert "automated testing: by 'pytest' in experience:1, shared; bullet 2 can be revised" in text
+    assert "automated testing: by 'pytest' in experience:1; bullet 2 can be revised" in text
     assert "gaps, never written in: Kubernetes" in text
     assert "1 of 3 bullets would be sent, 2 model calls at most:" in text
     assert "bullet 2: automated testing (evidence: pytest)" in text
