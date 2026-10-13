@@ -154,7 +154,8 @@ def parse(body: bytes) -> Rules:
             if not naming:
                 agents, naming = [], True
             agent = _token(value.decode("ascii", errors="replace"))
-            agents.append(agent)
+            if agent not in agents:  # named twice, its rules are still once each
+                agents.append(agent)
             # Recorded even with no rule to its name: see the module docstring.
             rules.setdefault(agent, [])
         elif key in (b"allow", b"disallow"):
@@ -168,8 +169,10 @@ def parse(body: bytes) -> Rules:
             naming = False
             delay = _delay(value)
             if delay is not None:
+                # The longer of two, whichever was written first: a site asking
+                # for more space gets it, and the longer honours both.
                 for agent in agents:
-                    delays.setdefault(agent, delay)
+                    delays[agent] = max(delay, delays.get(agent, delay))
     return Rules(
         rules={agent: tuple(group) for agent, group in rules.items()},
         delays=delays,

@@ -250,3 +250,36 @@ def test_a_crawl_delay_keeps_the_rules_after_it() -> None:
 
     assert not allows(body, "/careers/private")
     assert parse(body.encode()).crawl_delay(US) == 10.0
+
+
+# --------------------------------------------------------------------------
+# From the review of the change that added this file
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "User-agent: *\nCrawl-delay: 10\nCrawl-delay: 90\n",
+        "User-agent: *\nCrawl-delay: 90\nCrawl-delay: 10\n",
+        "User-agent: *\nCrawl-delay: 10\n\nUser-agent: *\nCrawl-delay: 90\n",
+    ],
+)
+def test_of_two_crawl_delays_the_longer_is_the_one_asked_for(body: str) -> None:
+    """The first one read was kept, so which a site got depended on the order
+    it wrote them in. A site asking for more space gets it (`robots.py`), and
+    of two requests the longer is the one that honours both."""
+    assert parse(body.encode()).crawl_delay(US) == 90.0
+
+
+def test_an_agent_named_twice_in_a_group_gets_each_rule_once() -> None:
+    rules = parse(b"User-agent: *\nUser-agent: *\nDisallow: /careers\n").rules
+
+    assert len(rules["*"]) == 1
+
+
+def test_a_digit_ends_a_crawlers_name() -> None:
+    """RFC 9309 §2.2.1: a product token is letters, `_` and `-`. The review
+    read it as allowing digits. It does not, and a group for `jobrunner2` is
+    read as naming `jobrunner`, which is the cautious way to be wrong."""
+    assert not allows("User-agent: jobrunner2\nDisallow: /careers\n", "/careers")

@@ -72,6 +72,15 @@ def test_the_question_can_be_answered_no() -> None:
     assert git("check-ignore", "--quiet", "--no-index", ".env.example").returncode == 1
 
 
+def test_a_directory_is_listed_with_what_is_inside_it() -> None:
+    """The review of this file doubted that `storage`, named with no slash,
+    reaches the files under it. A pathspec that names a directory does: this
+    is the same listing, of a directory known to hold tracked files."""
+    listed = git("ls-files", "--", "tests").stdout.split()
+
+    assert "tests/conftest.py" in listed
+
+
 def test_nothing_under_those_roots_is_tracked() -> None:
     """A rule added after the file was committed ignores nothing."""
     tracked = git("ls-files", "--", ".env", ".env.*", ".secrets", "storage")
