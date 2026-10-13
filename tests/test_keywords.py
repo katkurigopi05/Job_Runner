@@ -7,8 +7,10 @@ instruction not to invent, and the instruction was the only safeguard.
 
 from __future__ import annotations
 
+import pytest
+
 from packages.tailor.guard import SourceCorpus
-from packages.tailor.keywords import analyze, job_terms
+from packages.tailor.keywords import analyze, borrowed_terms, job_terms
 
 RESUME = """Jordan Avery
 Senior Engineer, Example Corp
@@ -80,3 +82,34 @@ def test_an_empty_posting_yields_nothing() -> None:
     assert report.supported == []
     assert report.missing == []
     assert report.coverage == 0.0
+
+
+# --------------------------------------------------------------------------
+# A term taken from the posting, wherever in the sentence it lands
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "rewrite",
+    [
+        "Built backend services in Python for payments teams.",
+        # The last word of the sentence. The guard's token pattern keeps the
+        # full stop, and this was compared as `payments.` and matched nothing.
+        "Built backend services in Python for payments.",
+        "Built backend services in Python (payments).",
+        "Built backend services in Python: payments, billing.",
+        "Built backend services in Python for payments",
+    ],
+)
+def test_a_borrowed_term_is_caught_wherever_it_stands(rewrite: str) -> None:
+    original = "Built backend services in Python."
+
+    assert borrowed_terms(original, rewrite, ("payments",)) == ["payments"]
+
+
+def test_a_term_the_bullet_already_ended_on_is_not_borrowed() -> None:
+    """The same full stop, on the other side of the comparison."""
+    original = "Built backend services for payments."
+    rewrite = "Built payments services for the backend."
+
+    assert borrowed_terms(original, rewrite, ("payments",)) == []

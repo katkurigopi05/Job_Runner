@@ -375,6 +375,14 @@ Everything the employer would receive, before it is sent:
   many the fabrication guard refused, and which model wrote the document
   (`written by gemini`, or `ollama:llama3.1` if the allowance ran out mid-run).
   "not recorded" means the résumé predates that being tracked, never a guess.
+
+  A refusal is not only for something invented. The guard also refuses a
+  rewrite that takes something true *out*: a technology your résumé lists, or
+  a number the bullet states. `reaching a test ROC-AUC of 0.72` rewritten
+  without the `0.72` is refused, and so is `by 30%` rewritten as `by 30`. The
+  same value written another way (`1,000` as `1000`, `30%` as `30 percent`) is
+  not a change, and a date is not a number: a rewrite may leave a year out.
+  Either way the bullet that is sent is the one your résumé had.
 - **Cover letter** — the letter itself, open by default, with its word count,
   how many sentences the guard stripped, and which model wrote it. Present only
   when the form actually asked for one, which most do not. A refusal is shown
@@ -913,6 +921,59 @@ For scale, the floors alone: 181 boards at the 2s shared-API floor is about
 6 minutes serialised on one vendor and 1.5 across four; a company's own site
 is 60s, so discovery costs about 2 minutes per company — overlapping, since
 those are all distinct hosts.
+
+### Revising only the bullets that can gain a term
+
+```bash
+python -m scripts.tailor_targeted <posting-id>
+python -m scripts.tailor_targeted <posting-id> --run
+```
+
+The ordinary tailorer sends every bullet to a model with the whole posting. On
+a posting your résumé already matches as well as it truthfully can, that has
+nothing to win and everything in the bullet to lose. This asks the question
+first.
+
+**Without `--run` no model is asked anything and nothing is written.** The
+posting's terms are sorted against your base résumé, four ways:
+
+- **covered**: the résumé says it.
+- **supported synonym**: the résumé says it another way (`UI` for "user
+  interface"). A parser that matches words does not see it.
+- **supported, not stated**: no form of it is on the résumé, and something
+  that may speak for you supports it. A bullet that names pytest supports
+  "automated testing"; a GitHub project supports what GitHub reports of it.
+- **gap**: none of those. Never written in.
+
+It then lists the bullets a revision would be asked for, and why. When there
+are none it says `no supported keyword gain available` and stops.
+
+**With `--run`** those bullets, and only those, go to the tailoring provider:
+one call each, and at most one more if the first answer is refused. The model
+is given the bullet, the terms and the evidence for each, not the posting. A
+revision is kept only if it adds the term and takes nothing away: every
+number, unit, name, model name and date of the bullet has to still be there,
+and a term goes only into the bullet that holds its evidence. Anything else
+and the bullet stays as you wrote it.
+
+What is kept is published as a new résumé version, and its PDF is read back:
+the added terms and every figure and listed technology have to be in the
+extracted text, which is what an employer's parser reads. Then the scores
+before and after are printed twice, document to document and PDF to PDF, with
+both PDFs rendered by the same template.
+
+Three things it does not do:
+
+- **It attaches nothing.** No match and no application is changed, and the
+  version is not offered to the tailoring cache. Choosing it is yours to do.
+- **It decides nothing from a score.** A fall in any part is listed under
+  `for review`. The scores are heuristics about a parser and a reader, not a
+  prediction about a hiring decision. One of them falls by arithmetic: the
+  scan score is the share of matched terms near the top of the page, so a term
+  gained lower down lowers it with nothing at the top having changed.
+- **It adds no skill.** The only rule that reads a term into a bullet is the
+  one-row table in `packages/tailor/practices.py`, and each row there is a
+  decision about what may be said on your behalf.
 
 ## 9. Development and verification commands
 

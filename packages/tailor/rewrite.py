@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from packages.llm.prompts import TAILOR_SYSTEM
 from packages.llm.provider import LLMProvider
 from packages.llm.router import temperature_for
-from packages.tailor import placeholders
+from packages.tailor import figures, placeholders
 from packages.tailor.guard import (
     _COMMON_WORDS,
     GuardReport,
@@ -65,6 +65,9 @@ class BulletRewrite(BaseModel):
     #: Set when the model's attempt was discarded.
     rejected_reason: str | None = None
     entities_checked: int = 0
+    #: Figures the bullet states that the refused rewrite had dropped or
+    #: changed, as the bullet wrote them. Empty for every other refusal.
+    dropped_figures: list[str] = Field(default_factory=list)
     #: The model never answered — a transport error, an empty completion, a
     #: spent allowance.
     #:
@@ -228,8 +231,8 @@ def vet(
 
     Rejection reasons, in order of how often they matter: a term the posting
     asked for that the résumé does not support, fabricated content, a bullet
-    replaced wholesale rather than rewritten, implausible growth, or an empty
-    answer.
+    replaced wholesale rather than rewritten, implausible growth, an empty
+    answer, or a number the bullet states that the rewrite dropped or changed.
 
     `forbidden` is the posting's vocabulary the résumé does not back, computed
     by `packages/tailor/keywords.py`. It is checked *here* rather than only
@@ -329,6 +332,23 @@ def vet(
     if len(candidate) > max(len(original), 40) * MAX_GROWTH_RATIO:
         return False, "rewrite is disproportionately longer than the source", report
 
+    # The second check that reads what is missing, and the last one on
+    # purpose. Tailoring the owner's résumé for one posting, two of eight
+    # accepted rewrites had lost a number: a test score and the span of its
+    # data from one bullet, a count from another. The guard above refuses a
+    # number the source does not have, and has nothing to say about the
+    # source's number going away.
+    #
+    # Last, so that every rewrite refused before this existed is refused for
+    # the reason it always was. This only refuses what used to be accepted.
+    #
+    # A year is not a figure here and a rewrite may leave one out; what a
+    # figure is, and what two spellings of one share, is `figures.py`'s.
+    loss = figures.lost(original, candidate)
+    if loss is not None:
+        report.dropped_figures = loss.dropped
+        return False, loss.reason, report
+
     return True, None, report
 
 
@@ -365,13 +385,22 @@ async def tailor_bullet(
     accepted, reason, report = vet(bullet, candidate, corpus, forbidden)
 
     if not accepted:
-        # Never log the candidate itself — it may carry résumé content.
-        log.info("tailor_rejected", reason=reason, violations=len(report.violations))
+        # Never log the candidate itself — it may carry résumé content. A
+        # figure is résumé content too, so that refusal is logged as a count
+        # and the number itself stays on the result.
+        loss = figures.lost(bullet, candidate) if report.dropped_figures else None
+        log.info(
+            "tailor_rejected",
+            reason=loss.loggable if loss is not None else reason,
+            violations=len(report.violations),
+            figures=len(report.dropped_figures),
+        )
         return BulletRewrite(
             original=bullet,
             tailored=bullet,
             rejected_reason=reason,
             entities_checked=report.checked,
+            dropped_figures=list(report.dropped_figures),
         )
 
     if not is_substantive(bullet, candidate):

@@ -224,12 +224,27 @@ def borrowed_terms(original: str, candidate: str, forbidden: tuple[str, ...]) ->
     if not forbidden:
         return []
 
-    had = {stem(word) for word in _GUARD_TOKEN_RE.findall(original)}
-    has = {stem(word) for word in _GUARD_TOKEN_RE.findall(candidate)}
+    had = _stems(original)
+    has = _stems(candidate)
 
     borrowed = []
     for term in forbidden:
-        term_stems = {stem(word) for word in _GUARD_TOKEN_RE.findall(term)}
+        term_stems = _stems(term)
         if term_stems and term_stems <= has and not term_stems <= had:
             borrowed.append(term)
     return borrowed
+
+
+def _stems(text: str) -> set[str]:
+    """Every word of `text`, folded the way two spellings of it compare equal.
+
+    Normalized before it is stemmed. The guard's token pattern keeps a full
+    stop that follows a word, so the last word of a sentence arrived here as
+    `payments.` and matched nothing: "Built backend services in Python for
+    payments." did not borrow "payments", and the same sentence with one more
+    word after it did. Found on 2026-10-13 by a targeted revision that ended
+    on a term it had not been asked for.
+    """
+    return {
+        stem(word) for word in (normalize(raw) for raw in _GUARD_TOKEN_RE.findall(text)) if word
+    }

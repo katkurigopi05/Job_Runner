@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 
 from packages.tailor.dates import contains_date, is_open_ended
 from packages.tailor.guard import SourceCorpus, normalize
-from packages.tailor.keywords import analyze
+from packages.tailor.keywords import analyze, job_terms
 from packages.tailor.parse import ParsedResume, _match_section
 
 #: A bullet this long is one an ATS keeps and a human skips. Not a parse
@@ -270,6 +270,21 @@ def _requirements_text(job_description: str) -> str:
     if len(section) < _MIN_REQUIREMENTS_CHARS:
         return _without_footer(job_description)
     return _without_footer(section)
+
+
+def requirements_text(job_description: str) -> str:
+    """The part of a posting `score` reads its terms from."""
+    return _requirements_text(job_description)
+
+
+def requirement_terms(job_description: str, *, limit: int = 40) -> list[str]:
+    """The terms `score` holds a résumé to, before any résumé is read.
+
+    The same list, so that whoever classifies a posting's terms
+    (`targeted.classify`) and whoever counts them here cannot be reading two
+    postings.
+    """
+    return _requirements(job_terms(_requirements_text(job_description), limit=limit))
 
 
 def _without_footer(text: str) -> str:
@@ -701,6 +716,8 @@ __all__ = [
     "AtsReport",
     "Finding",
     "compare",
+    "requirement_terms",
+    "requirements_text",
     "score",
     "score_change",
 ]
