@@ -122,6 +122,23 @@ ALLOWED_PROVIDERS = (
 SYSTEM = CHAT_SYSTEM.text
 
 
+def _one_line(text: object) -> str:
+    """Somebody else's text, as one line of the context and never more.
+
+    The context is lines, and some are the app's own: `APPLICATIONS BY
+    STATUS:`, `WAITING ON YOU:`, `[P1] …`. A posting's title, a form's
+    question and a reply's subject are written by an employer or a sender, and
+    one that brings a line break with it writes lines of its own under those,
+    in the same voice. The prompt tells the model the context is material and
+    not instruction, which is advice. This is the part that is code: whatever
+    such text says, it says inside the one line it was given.
+
+    `str.split` with no argument splits on every whitespace character Unicode
+    has, the line and paragraph separators among them.
+    """
+    return " ".join(str(text or "").split())
+
+
 async def _context(
     session: SessionDep, application_id: uuid.UUID | None, *, include_mail: bool
 ) -> str:
@@ -182,7 +199,7 @@ async def _context(
 
         lines += [
             "THE APPLICATION BEING ASKED ABOUT:",
-            f"  url: {application.url}",
+            f"  url: {_one_line(application.url)}",
             f"  status: {application.status}",
             f"  ats: {application.ats or 'unknown'}",
             f"  outcome: {application.outcome or 'nothing back yet'}",
@@ -192,7 +209,7 @@ async def _context(
         unanswered = review.get("unanswered") or []
         if unanswered:
             lines.append("  questions it is parked on:")
-            lines += [f"    - {q.get('question')}" for q in unanswered]
+            lines += [f"    - {_one_line(q.get('question'))}" for q in unanswered]
 
         if include_mail:
             messages = list(
@@ -207,7 +224,10 @@ async def _context(
             )
             if messages:
                 lines.append("  recent replies:")
-                lines += [f"    - {m.from_addr}: {m.subject or '(no subject)'}" for m in messages]
+                lines += [
+                    f"    - {_one_line(m.from_addr)}: {_one_line(m.subject) or '(no subject)'}"
+                    for m in messages
+                ]
         else:
             # Said rather than silently omitted. The model is told to answer
             # from what it was handed and to say when it does not know — an
@@ -464,7 +484,7 @@ def _postings_section(
         # The model sees the closest few. Without the count it cannot say
         # there are more, and three shown out of sixty-one read as "three".
         count = found.role_total or 0
-        breakdown = ", ".join(f"{number} {kind}" for kind, number in found.kinds)
+        breakdown = ", ".join(f"{number} {_one_line(kind)}" for kind, number in found.kinds)
         lines.append(
             f"  role asked for: {' or '.join(found.roles)}. {count} open posting"
             f"{'' if count == 1 else 's'} in the search area "
@@ -480,7 +500,7 @@ def _postings_section(
         count = found.title_total or 0
         words = " and ".join(f'"{word}"' for word in found.title_words)
         shown = found.kinds[:_KINDS_IN_CONTEXT]
-        breakdown = ", ".join(f"{number} {kind}" for kind, number in shown)
+        breakdown = ", ".join(f"{number} {_one_line(kind)}" for kind, number in shown)
         if len(found.kinds) > len(shown):
             breakdown += f", and {len(found.kinds) - len(shown)} more kinds"
         lines.append(
@@ -496,7 +516,7 @@ def _postings_section(
         # was meant; the owner may have meant the employer, so this says so.
         one = len(found.not_hiring) == 1
         lines.append(
-            f"  {', '.join(found.not_hiring)} {'is' if one else 'are'} also "
+            f"  {', '.join(map(_one_line, found.not_hiring))} {'is' if one else 'are'} also "
             f"{'a company' if one else 'companies'} on the owner's list, with no open postings"
             f"{'' if one else ' each'}. What was searched for is the word, in every "
             "employer's postings."
@@ -504,7 +524,7 @@ def _postings_section(
     if not found.passages:
         within = " in the search area" if found.outside_area else ""
         lines.append(
-            f"  no open postings at {', '.join(found.companies)}{within}"
+            f"  no open postings at {', '.join(map(_one_line, found.companies))}{within}"
             if found.companies
             else (
                 "  none in the search area"
@@ -523,13 +543,18 @@ def _postings_section(
     if gaps is not None and gaps.across:
         lines.append(gaps.across)
     for passage in found.passages:
-        where = " — ".join(part for part in (passage.company, passage.location) if part)
-        lines.append(f"  [{passage.label}] {passage.title}" + (f" — {where}" if where else ""))
+        # An employer's words, each kept to the line it is given (`_one_line`).
+        where = " — ".join(_one_line(part) for part in (passage.company, passage.location) if part)
+        lines.append(
+            f"  [{passage.label}] {_one_line(passage.title)}" + (f" — {where}" if where else "")
+        )
         if passage.application_status:
             lines.append(f"       you applied: {passage.application_status}")
         lines.append(f"       excerpt: {passage.excerpt}")
         # Under the excerpt, which shows the word and not how it is asked for.
-        lines += [f"       {line}" for line in (evidence or {}).get(passage.posting_id, [])]
+        lines += [
+            f"       {_one_line(line)}" for line in (evidence or {}).get(passage.posting_id, [])
+        ]
         if gaps is not None and passage.posting_id in gaps.lines:
             lines.append(f"       {gaps.lines[passage.posting_id]}")
     return "\n".join(lines)

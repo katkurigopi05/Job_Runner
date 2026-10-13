@@ -65,6 +65,18 @@ def _decode(value: object) -> str:
     return str(value)
 
 
+def _header(value: object) -> str:
+    """A header's text on one line, which is what a header is.
+
+    RFC 2047 lets a sender encode any byte into one, a line break among them
+    (`=?utf-8?q?Interview=0AAPPLICATIONS_BY_STATUS=3A…?=`), and it decodes to
+    a subject of several lines. A subject is shown in the tracker and handed
+    to the assistant as a line of its context, where a second line reads as
+    the app's own. `tests/test_red_team.py`.
+    """
+    return " ".join(_decode(value).split())
+
+
 def parse_message(raw: bytes) -> InboundEmail:
     """Turn RFC-822 bytes into the shape the router wants."""
     parsed = email.message_from_bytes(raw, policy=email.policy.default)
@@ -97,11 +109,11 @@ def parse_message(raw: bytes) -> InboundEmail:
 
     return InboundEmail(
         message_id=_decode(parsed.get("Message-ID")) or _synthetic_id(raw),
-        from_addr=_decode(parsed.get("From")),
-        to_addr=_decode(parsed.get("To")),
-        cc_addr=_decode(parsed.get("Cc")),
-        delivered_to=_decode(parsed.get("Delivered-To")),
-        subject=_decode(parsed.get("Subject")),
+        from_addr=_header(parsed.get("From")),
+        to_addr=_header(parsed.get("To")),
+        cc_addr=_header(parsed.get("Cc")),
+        delivered_to=_header(parsed.get("Delivered-To")),
+        subject=_header(parsed.get("Subject")),
         body=body,
         received_at=received_at or datetime.now(UTC),
     )
