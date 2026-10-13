@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -334,6 +334,15 @@ review-resume:
 
 bench-matching:
 	$(PY)/python -m scripts.bench_matching $(ARGS)
+
+# make eval-retrieval — where each benchmark question's own posting lands in
+# the assistant's search: first, in the five shown, in the list. Read-only, and
+# no model is asked. The questions are in seeds/retrieval_questions.json; a
+# posting that has closed is counted as gone and never as a miss. `set=heldout`
+# for the half no rule was chosen on. See packages/matching/known_target.py for
+# what the numbers do not say.
+eval-retrieval:
+	$(PY)/python -m scripts.eval_retrieval $(if $(set),--set $(set),) $(if $(out),--json $(out),)
 
 # Export the owner's swipe decisions as a labeled set. Gate 5 asks whether the
 # ranker works on this owner's material and every label in the repo is a

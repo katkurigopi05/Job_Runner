@@ -90,7 +90,7 @@ inbox half has never met real input (CLAUDE.md §15).
 | Exact match preserved | Holds |
 | One posting once | Holds. A posting is ranked by its best chunk and listed once |
 | Citations on every answer | Holds. Labels are parsed out of the answer, and one never supplied is reported |
-| Benchmarked before adopted | Holds as a practice. Partly as tooling: the question sets and scripts are under git-ignored `storage/`, so a clean checkout cannot rerun them |
+| Benchmarked before adopted | Holds. `make eval-retrieval` reruns the known-target measurement from a checkout, on the question set in `seeds/` |
 | Same model and dimensions unless measured | Holds. bge-small was the weakest of the models ranked on 2026-10-05 and is still what runs: nothing since has shown a gain in what is shown that would pay for embedding the corpus again |
 
 ### Routing and control (phase 5)
@@ -143,7 +143,7 @@ writes what a poisoned posting asks for is refused), or forge the record.
 | Measure | Status |
 |---|---|
 | NDCG, MAP, MRR, P@K for the feed | Holds (`make bench-matching`), and refuses to name a production candidate on fixture labels |
-| Recall and MRR for the assistant | Partly. Known-target runs on 104 dev and 80 held-out questions, decaying as postings close: 41 and 26 of each kind were still open and in the area on 2026-10-12 |
+| Recall and MRR for the assistant | Holds for known targets (`make eval-retrieval`): first, in the five, in the list and MRR, for each set and each form of question, stamped with the corpus size and the settings in force. 67 of the 80 tracked cases could be asked on 2026-10-12; the other 13 are outside the search area |
 | Exact-token retrieval | Holds as tests and as the confusion matrix in §20 |
 | Citation correctness | Holds per reply. Not aggregated over a question set |
 | Groundedness of the prose | Missing, and not buildable from fixtures. It needs a judge and grades |
@@ -157,11 +157,13 @@ writes what a poisoned posting asks for is refused), or forge the record.
    for the want of them, and no code produces them. `/label` and
    `next_to_grade` are built. Until there are a few dozen, a better number is
    a better fit to two small question sets.
-2. **A retrieval evaluation a clean checkout can run.** The harness that
-   produced this file's numbers lives beside its results in `storage/`. A
-   tracked command with its question set, and each result stamped with the
-   corpus size, model and settings, is the gap in phase 8. The set decays
-   with the corpus, which the command has to report and not hide.
+2. **New questions as the old ones close.** `make eval-retrieval` runs the
+   tracked set (done 2026-10-12: it was scripts and files under git-ignored
+   `storage/` before). The set shrinks with the corpus: 41 of the 56 dev
+   postings and 39 of the 40 held-out ones were still stored when it was
+   tracked, and postings are pruned after 30 days. Writing replacements
+   takes a model call for each batch, and a rule for which postings to
+   write them from that does not favour the ones a search already finds.
 3. **Sponsorship and seniority in the assistant's search.** The feed can be
    asked for them and the assistant cannot.
 4. **Rates from rows already kept**: ingestion failures, stale postings,

@@ -1,0 +1,581 @@
+{
+ "about": "Known-target questions for `make eval-retrieval`. Each was written by a model from one crawled posting, in two forms: `natural` names the job, `paraphrased` describes it without its title or any technology. The posting is found by its URL. Postings close and are pruned after 30 days, so the set shrinks; the command says how many are left.",
+ "sets": {
+  "dev": {
+   "written_by": "nvidia/nemotron-3-super-120b-a12b:free",
+   "written": "2026-10-05",
+   "tuned_on": true,
+   "written_from": 56,
+   "cases": [
+    {
+     "url": "https://boards.greenhouse.io/cloudflare/jobs/8237119?gh_jid=8237119",
+     "title": "Customer Experience Manager - Hebrew Speaking",
+     "company": "Cloudflare",
+     "natural": "Looking for Customer Experience Manager roles at a global network security and performance company",
+     "paraphrased": "Seeking jobs focused on improving online performance and security for diverse web applications"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/lancedb/d72f807c-7d73-4356-8f49-4597293aa5ef",
+     "title": "AI Research Engineer",
+     "company": "LanceDB",
+     "natural": "Looking for AI Research Engineer roles at an AI-native multimodal lakehouse company",
+     "paraphrased": "Seeking jobs focused on experimenting with model training processes to improve data-driven workflows"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/grafanalabs/jobs/6191976004",
+     "title": "Majors Account Executive - Key Customers | Bay Area | Remote",
+     "company": "Grafana Labs",
+     "natural": "Looking for Majors Account Executive roles at a remote-first observability and AI platform company",
+     "paraphrased": "Seeking jobs focused on acquiring and expanding large client relationships for a data monitoring service"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/cobot/9a96442e-d4bc-4482-9aac-8622d96fa7df",
+     "title": "Robotics Data Collection Operator - Santa Clara",
+     "company": "Collaborative Robotics",
+     "natural": "Looking for Robotics Data Collection Operator roles at a firm developing collaborative mobile robots",
+     "paraphrased": "Seeking jobs focused on operating machinery to gather information for improving automated systems"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/harvey/d16bd223-cb68-46f3-8bf6-41267b9770cb",
+     "title": "Staff Security Software Engineer, IAM",
+     "company": "Harvey",
+     "natural": "Looking for Staff Security Software Engineer IAM roles at an AI-driven legal tech platform",
+     "paraphrased": "Seeking jobs focused on creating secure entry strategies for users and internal teams"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/plaid/71c4fdf3-966a-4ec5-9560-801c5ebcecba",
+     "title": "Privacy & Regulatory Counsel",
+     "company": "Plaid",
+     "natural": "Looking for Privacy & Regulatory Counsel roles at a company enabling financial data connections",
+     "paraphrased": "Seeking jobs focused on advising businesses about legal rules and compliance requirements"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/xero/ff231d75-c83e-40df-8fe0-dc8af925f650",
+     "title": "Partner Success Manager",
+     "company": "Xero",
+     "natural": "What Partner Success Manager roles are available for managing accounting partner portfolios?",
+     "paraphrased": "jobs supporting accounting businesses to increase revenue through client reviews and growth strategies"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/onemedical/jobs/8213865",
+     "title": "Primary Care Nurse Practitioner or Physician Assistant  (Adults 14+) - Sign-on Bonus Available",
+     "company": "One Medical",
+     "natural": "What Primary Care Nurse Practitioner jobs are available for adult patient care?",
+     "paraphrased": "jobs delivering health services to patients aged 14 and over via in-person and remote appointments"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/airwallex/9296567a-62bd-40f2-84ee-6e67776e42f0",
+     "title": "Account Executive, SME & Growth (Mountain / Central Time Zone)",
+     "company": "Airwallex",
+     "natural": "What Account Executive roles focus on SME growth in Mountain Time Zone?",
+     "paraphrased": "jobs helping small businesses expand internationally through payment solutions and revenue strategies"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/agilityrobotics/jobs/6208308004",
+     "title": "Staff Hardware Technical Program Manager",
+     "company": "Agility Robotics",
+     "natural": "What Staff Hardware Technical Program Manager roles are available for leading hardware development?",
+     "paraphrased": "jobs overseeing product creation cycles and coordinating engineering teams to ensure timely delivery"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/greenhouse/jobs/8234044?gh_jid=8234044",
+     "title": "Enterprise Sales Development Representative",
+     "company": "Greenhouse Software",
+     "natural": "What Enterprise Sales Development Representative roles focus on generating leads for enterprise accounts?",
+     "paraphrased": "jobs finding new business opportunities and supporting revenue teams to meet targets"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/gitlab/jobs/8858174002",
+     "title": "Regional Sales Director, National Security Group",
+     "company": "GitLab",
+     "natural": "What Regional Sales Director roles focus on leading teams for national security accounts?",
+     "paraphrased": "jobs guiding revenue teams to secure government contracts for safety solutions"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/onemedical/jobs/8240710",
+     "title": "Primary Care Physician (Transbay Center) - Sign-On Bonus Available – 3 days in-office, 2 days WFH ",
+     "company": "One Medical",
+     "natural": "primary care physician roles hybrid 3 days in office 2 days remote",
+     "paraphrased": "jobs for doctors handling patient care mix of acute chronic wellness visits hybrid schedule"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/pinterest/jobs/8241516",
+     "title": "Sr. Manager, Engineering –  Delivery Serving Infrastructure",
+     "company": "Pinterest",
+     "natural": "senior manager engineering delivery serving infrastructure roles hybrid",
+     "paraphrased": "jobs overseeing teams that build and maintain core platforms for product developers"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/taskrabbit/jobs/8234605",
+     "title": "Analytics Engineer",
+     "company": "TaskRabbit",
+     "natural": "analytics engineer roles hybrid remote sql",
+     "paraphrased": "jobs creating data models and reports to support business decisions"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/gusto/jobs/8144242",
+     "title": "Head of Product, New Customer Experience",
+     "company": "Gusto",
+     "natural": "head of product new customer experience roles hybrid remote",
+     "paraphrased": "jobs leading teams that design and improve user onboarding and satisfaction for prospective clients"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/gusto/jobs/8209666",
+     "title": "Recruiting Operations and Transformation Lead",
+     "company": "Gusto",
+     "natural": "recruiting operations transformation lead roles hybrid remote",
+     "paraphrased": "jobs overseeing efforts to streamline or automate hiring processes while improving candidate experience"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/wayve/jobs/8809600002",
+     "title": "SWE, Data Ingestion ",
+     "company": "Wayve",
+     "natural": "What jobs are there for a Data Ingestion Engineer working on self‑driving AI data pipelines?",
+     "paraphrased": "What jobs involve collecting and preparing information so machines can get better at comprehending surroundings?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/carrotfertility/jobs/6190610004",
+     "title": "Customer Success Executive, Health Plans",
+     "company": "Carrot Fertility",
+     "natural": "What jobs are there for a Customer Success Executive focusing on health plan accounts?",
+     "paraphrased": "What jobs involve being the main liaison for medical coverage partners to keep benefits effective?"
+    },
+    {
+     "url": "https://boards.greenhouse.io/cloudflare/jobs/8143377?gh_jid=8143377",
+     "title": "Presales Customer Engineer",
+     "company": "Cloudflare",
+     "natural": "What jobs are there for a Presales Customer Engineer at a global network security company?",
+     "paraphrased": "What jobs focus on finding online service issues and building tools to fix them quickly?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/pinterest/jobs/8130616",
+     "title": "Sr. Client Partner (tvScientific)",
+     "company": "Pinterest",
+     "natural": "What jobs are there for a Senior Client Partner working with TV advertising platforms?",
+     "paraphrased": "What jobs involve helping advertisers improve their ad campaigns to get better outcomes?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/oura/jobs/4424653009",
+     "title": "Manager, Partner Development (Health Plan and Employer)",
+     "company": "Oura",
+     "natural": "What jobs are there for a Manager of Partner Development working with health plans and employers?",
+     "paraphrased": "What jobs involve building relationships with companies that provide wellness benefits to increase their usage?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/waymo/jobs/8238145",
+     "title": "Program Manager, Tooling and Integrations",
+     "company": "Waymo",
+     "natural": "What jobs exist for a Program Manager handling tooling and integrations?",
+     "paraphrased": "Looking for jobs that oversee coordination projects and development for safety‑focused engineering teams"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/astranis/jobs/4704803006",
+     "title": "FPGA Intern (Winter 2027)",
+     "company": "Astranis",
+     "natural": "What internship roles exist for FPGA work at a space technology company?",
+     "paraphrased": "Looking for jobs that involve entry‑level hardware design projects for space‑based systems"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/etched/5998298b-f29d-4f45-885d-d2876391606c",
+     "title": "Head of Legal / General Counsel",
+     "company": "Etched",
+     "natural": "What jobs are available for a Head of Legal or General Counsel at a hardware startup?",
+     "paraphrased": "Looking for jobs that oversee regulatory affairs and build governance teams at fast‑growing tech firms"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/discord/jobs/8823881002",
+     "title": "Software Engineer, Safety Processing",
+     "company": "Discord",
+     "natural": "What jobs exist for a Software Engineer focused on safety processing systems?",
+     "paraphrased": "Looking for jobs that develop platforms to monitor and address online community user protection issues"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/motional/jobs/8003807003",
+     "title": "Senior Software Engineer, Data Platform",
+     "company": "Motional",
+     "natural": "What jobs are available for a Senior Software Engineer working on data platform infrastructure?",
+     "paraphrased": "Looking for jobs that create scalable back‑end systems to organize and track large‑scale information flows"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/tanium/jobs/8249559",
+     "title": "Sr. Manager of Contracts",
+     "company": "Tanium",
+     "natural": "What jobs are available for a Senior Manager of Contracts supporting sales and operations teams?",
+     "paraphrased": "Looking for jobs that oversee agreement negotiations and provide legal guidance for business growth initiatives"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/brex/jobs/8834121002",
+     "title": "Senior Counsel, Risk",
+     "company": "Brex",
+     "natural": "What jobs exist for a Senior Counsel focusing on risk management at a financial technology firm?",
+     "paraphrased": "Looking for jobs that give legal advice on business risks and manage external negotiations"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/abnormalsecurity/jobs/7999810003",
+     "title": "Enterprise Account Executive - NorCal",
+     "company": "Abnormal Security",
+     "natural": "What are the available Enterprise Account Executive roles in Northern California?",
+     "paraphrased": "What jobs involve finding new clients, building pipelines, and delivering tailored demos to close deals?"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/openai/4a9774e2-6505-4cc2-92eb-22a8450aacdc",
+     "title": "Operating Systems Engineer, On-Device Inference | Consumer Devices",
+     "company": "OpenAI",
+     "natural": "What are the Operating Systems Engineer roles focused on on-device inference for consumer devices?",
+     "paraphrased": "What jobs involve creating low-level software that makes smart applications run efficiently on handheld gadgets?"
+    },
+    {
+     "url": "https://jobs.lever.co/zoox/2ec7b1be-46f6-420d-b582-e565fe4f6b3e",
+     "title": "Staff Compute Systems Engineer",
+     "company": "Zoox",
+     "natural": "What are the Staff Compute Systems Engineer roles focused on autonomous vehicle compute platforms?",
+     "paraphrased": "What jobs involve creating equipment specs, ensuring dependable operation, and coordinating teams for self-driving cars?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/waymo/jobs/8221795",
+     "title": "2027 Summer Intern, MS/PhD, Software Engineer, Simulation Evaluation ML Model",
+     "company": "Waymo",
+     "natural": "What are the 2027 Summer Intern Software Engineer roles focused on simulation evaluation of ML models?",
+     "paraphrased": "What jobs involve assessing predictive algorithms in virtual environments for self-guided on-demand offering?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/coinbase/jobs/8241724",
+     "title": "Senior Software Engineer, Native Mobile",
+     "company": "Coinbase",
+     "natural": "What are the Senior Software Engineer Native Mobile roles focused on mobile app rewrite to Swift/Kotlin?",
+     "paraphrased": "What jobs involve increasing pace of creating handheld programs and planning models for user processes?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/instacart/jobs/8214732",
+     "title": "HR Business Partner",
+     "company": "Instacart",
+     "natural": "What are the HR Business Partner roles focused on supporting marketing and communications leaders?",
+     "paraphrased": "What jobs involve helping leaders with people decisions and providing human resources support?"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/crusoe/c08a297f-2be4-467f-85c0-24f9ad0bec8e",
+     "title": "Principal Product Manager, Bare Metal",
+     "company": "Crusoe",
+     "natural": "What are the Principal Product Manager Bare Metal roles focused on bare metal for AI-native firms?",
+     "paraphrased": "What jobs involve helping firms use advanced machines for heavy processing tasks?"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/decagon/ea1a3ad6-53ba-46fd-939a-3ab4c982b117",
+     "title": "Strategy and Operations, Customers",
+     "company": "Decagon",
+     "natural": "What are the Strategy and Operations customer‑focused roles at this company?",
+     "paraphrased": "jobs streamlining internal workflows aligning teams for better customer outcomes"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/addepar1/jobs/8799895002",
+     "title": "Internal Events Marketing Manager",
+     "company": "Addepar",
+     "natural": "What Internal Events Marketing Manager roles are open?",
+     "paraphrased": "jobs planning staff gatherings and online sessions to boost employee engagement"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/replit/951e0ebb-a957-45fa-8763-d56ba46750b4",
+     "title": "Support Engineer I (FC, Weekend Shift)",
+     "company": "Replit",
+     "natural": "What Support Engineer I weekend shift roles are open?",
+     "paraphrased": "jobs assisting users with technical issues and maintaining help resources"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/roblox/jobs/8209010",
+     "title": "Senior Software Engineer -  Account Infrastructure",
+     "company": "Roblox",
+     "natural": "What Senior Software Engineer Account Infrastructure roles are available?",
+     "paraphrased": "jobs creating systems that enable users to build and share interactive experiences"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/decagon/56ca2731-eb4b-44cc-9f3f-c677a6ccb9df",
+     "title": "Agent UX Designer",
+     "company": "Decagon",
+     "natural": "What Agent UX Designer roles are hiring?",
+     "paraphrased": "jobs shaping how automated exchanges feel and sound for business users"
+    }
+   ]
+  },
+  "heldout": {
+   "written_by": "gemini",
+   "written": "2026-10-06",
+   "tuned_on": false,
+   "written_from": 40,
+   "cases": [
+    {
+     "url": "https://job-boards.greenhouse.io/stripe/jobs/8175653",
+     "title": "Commercial Operations Associate",
+     "company": "Stripe",
+     "natural": "What are the Commercial Operations Associate roles available?",
+     "paraphrased": "What jobs focus on improving deal processes and driving revenue growth?"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/commure/39e07152-a3d2-47c0-8c5b-36e8b3a6cdf5",
+     "title": "Software Engineer, AI Integrations",
+     "company": "Commure",
+     "natural": "What are the Software Engineer AI Integrations roles available?",
+     "paraphrased": "What jobs involve building smart tools to automate healthcare documentation and claims?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/zerocater/jobs/8257581",
+     "title": "Catering Assistant (Tuesdays 10am-3pm)",
+     "company": "ZeroCater",
+     "natural": "What are the Catering Assistant roles available?",
+     "paraphrased": "What jobs involve managing meal setup, guest service, and food safety at client sites?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/uberfreight/jobs/5438114008",
+     "title": "Customer Support Specialist ll-After Hours ",
+     "company": "Uber Freight",
+     "natural": "What are the Customer Support Specialist ll-After Hours roles?",
+     "paraphrased": "What jobs focus on monitoring shipments, coordinating carriers, and ensuring on-time delivery?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/flyzipline/jobs/8013258003",
+     "title": "Facilities and Workplace Sr. Coordinator",
+     "company": "Zipline",
+     "natural": "What are the Facilities and Workplace Sr. Coordinator roles?",
+     "paraphrased": "What jobs involve managing logistics operations to deliver essential goods globally?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/humaninterest/jobs/8256948",
+     "title": "Senior Technical Program Manager",
+     "company": "Human Interest",
+     "natural": "What are the Senior Technical Program Manager roles?",
+     "paraphrased": "What jobs focus on ensuring accurate funds transfers and building easy-to-use financial tools?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/onemedical/jobs/8255989",
+     "title": "Float Phlebotomist/Front Desk",
+     "company": "One Medical",
+     "natural": "What are the Float Phlebotomist/Front Desk roles?",
+     "paraphrased": "What jobs involve drawing blood, assisting patients, and improving clinic check-in experience?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/waymo/jobs/8257660",
+     "title": "2027 Summer Intern, BS, Software Engineer, Model Eval",
+     "company": "Waymo",
+     "natural": "What are the 2027 Summer Intern BS Software Engineer Model Eval roles?",
+     "paraphrased": "What jobs involve creating programs that help vehicles sense surroundings and make safe navigation choices?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/stitchfix/jobs/8256733",
+     "title": "Senior Manager, Growth Algorithms",
+     "company": "Stitch Fix",
+     "natural": "Where can I find Senior Manager Growth Algorithms jobs focused on client acquisition?",
+     "paraphrased": "Are there leadership jobs directing analytics teams to increase customer retention and reduce churn?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/nebius/jobs/4964387101",
+     "title": "Investor Relations Associate ",
+     "company": "Nebius",
+     "natural": "What investor relations associate jobs are available communicating financial performance to investment communities?",
+     "paraphrased": "Are there entry or mid level financial communications jobs for presenting quarterly results to shareholders?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/fivetran/jobs/8014680003",
+     "title": "Growth Marketing Strategy & Planning Manager",
+     "company": "Fivetran",
+     "natural": "Are there growth marketing strategy and planning manager jobs available in data infrastructure?",
+     "paraphrased": "What commercial roadmap expansion jobs focus on driving customer acquisition for tech platforms?"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/aurora-operations-inc/2e895957-c755-41c4-a39d-6ad71ab2406a",
+     "title": "Senior Software Engineer, Geometric Generation ",
+     "company": "Aurora",
+     "natural": "Which senior software engineer geometric generation jobs work on 3D spatial map building?",
+     "paraphrased": "Show me technical programming jobs creating spatial three dimensional mapping pipelines for autonomous transport."
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/pinterest/jobs/8231071",
+     "title": "Sr Software Engineer, Monetization Engineering",
+     "company": "Pinterest",
+     "natural": "What sr software engineer monetization engineering jobs focus on full stack revenue features?",
+     "paraphrased": "Looking for lead developer roles creating backend platform features that drive ad revenue."
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/heartflowinc/jobs/6211359004",
+     "title": "Manager, Digital Learning & Program Development",
+     "company": "HeartFlow",
+     "natural": "Are there manager digital learning and program development jobs supporting commercial sales enablement?",
+     "paraphrased": "What leadership jobs build training tools and custom workflows for medical sales representatives?"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/xero/300d16ab-a5dd-4e67-bbe4-e118dd891c13",
+     "title": "Engineer",
+     "company": "Xero",
+     "natural": "Are there engineer roles working on core accounting platform systems and payroll foundations?",
+     "paraphrased": "What technical builder roles focus on maintaining financial platform libraries for small business tools?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/dealpath/jobs/8259758",
+     "title": "Senior Product Manager, Strategic Accounts",
+     "company": "Dealpath",
+     "natural": "Where can I find senior product manager strategic accounts jobs working with enterprise customers?",
+     "paraphrased": "Are there lead position roles focused on building software features to retain major key clients?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/onemedical/jobs/8260394",
+     "title": "Primary Care Nurse Practitioner or Physician Assistant  (Adults 14+) - Sign-on Bonus Available, 4 days in clinic, 1 day remote",
+     "company": "One Medical",
+     "natural": "Find primary care nurse practitioner jobs offering sign-on bonuses with four clinic days.",
+     "paraphrased": "Are there hybrid healthcare provider roles offering sign-on bonuses for treating adult patient panels?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/gleanwork/jobs/4740088005",
+     "title": "Senior/Staff Applied Scientist",
+     "company": "Glean",
+     "natural": "Search senior applied scientist jobs focused on enterprise search engines and AI knowledge graphs.",
+     "paraphrased": "Are there high-level artificial intelligence research roles developing automated enterprise knowledge search systems?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/intercom/jobs/8247523",
+     "title": "Senior Director, GTM Enablement",
+     "company": "Intercom",
+     "natural": "Find senior director GTM enablement jobs building AI-powered operating systems for revenue teams.",
+     "paraphrased": "Search executive leadership roles training and scaling commercial sales teams using automated software tools."
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/better-mortgage/99595d3f-5243-449a-a87c-522fa88d8bde",
+     "title": "Senior IAM Engineer",
+     "company": "Better Mortgage",
+     "natural": "Looking for senior IAM engineer jobs managing Okta administration and identity lifecycle automation.",
+     "paraphrased": "Find security authorization specialist roles automating account login permissions across modern cloud software."
+    },
+    {
+     "url": "https://jobs.lever.co/zoox/aee9fb25-2129-4bf8-9d59-65e71ecba5cb",
+     "title": "Team Lead, Fleet Support Operations",
+     "company": "Zoox",
+     "natural": "Show me team lead fleet support operations jobs coordinating autonomous vehicle repair scheduling.",
+     "paraphrased": "Search supervisory roles directing daily maintenance workflows and scheduling repairs for self-driving automotive groups."
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/alphasense/jobs/8868451002",
+     "title": "Account Manager, Life Sciences",
+     "company": "Alpha Sense",
+     "natural": "Are there account manager life sciences jobs selling market intelligence software to pharmaceutical clients?",
+     "paraphrased": "Show client relationship supervisor roles growing existing subscription accounts within pharmaceutical and biotechnology sectors."
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/harvey/bab83f3e-dfa4-4e8e-9160-6ed428d3ab13",
+     "title": "Sr. Technical Program Manager, GTM Technology",
+     "company": "Harvey",
+     "natural": "Show senior technical program manager jobs overseeing go-to-market technology delivery in IT organizations.",
+     "paraphrased": "Are there lead project coordinator roles directing cross-functional software initiatives for commercial enterprise teams?"
+    },
+    {
+     "url": "https://boards.greenhouse.io/cloudflare/jobs/8245197?gh_jid=8245197",
+     "title": "Software Engineer Intern (2027)",
+     "company": "Cloudflare",
+     "natural": "Are there software engineer intern jobs for candidates building internet and AI solutions?",
+     "paraphrased": "Are there entry level coding jobs focused on fixing web network performance problems?"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/faculty/b5b718ba-0b9a-4e99-88f6-ca0e1e271c3c",
+     "title": "Senior Manager ",
+     "company": "Faculty",
+     "natural": "I am looking for senior manager roles leading UK defence AI implementation projects.",
+     "paraphrased": "Show me lead consultation roles overseeing high stakes military client technology and strategic deployment."
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/algolia/jobs/6210792004",
+     "title": "Senior Marketing Operations Manager ",
+     "company": "Algolia",
+     "natural": "Show me senior marketing operations manager roles managing Marketo lead processing and Salesforce campaigns.",
+     "paraphrased": "Are there customer campaign management jobs handling lead database routing and audience list setups?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/mongodb/jobs/8236841",
+     "title": "Field Marketing Manager",
+     "company": "MongoDB",
+     "natural": "Find field marketing manager roles in Mexico City running regional event programs across North America.",
+     "paraphrased": "Looking for client event outreach jobs organizing regional developer workshops and promotional roadshows."
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/roblox/jobs/8233720",
+     "title": "Senior Machine Learning Platform Engineer, Foundation AI",
+     "company": "Roblox",
+     "natural": "Looking for senior machine learning platform engineer roles building developer infrastructure and APIs.",
+     "paraphrased": "Find technical lead backend roles building internal developer infrastructure for automated model deployment tools."
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/runpod/c05a0e1a-a80e-4004-9dcd-c392340634ed",
+     "title": "Senior Video Producer ",
+     "company": "RunPod",
+     "natural": "I want senior video producer roles managing high volume technical promotional and product media.",
+     "paraphrased": "Find content creation roles editing visual product media and defining creative multimedia brand guidelines."
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/nabis/jobs/6216819004",
+     "title": "Credit Analyst",
+     "company": "Nabis",
+     "natural": "Show me credit analyst roles evaluating factoring requests and portfolio risk for wholesale platforms.",
+     "paraphrased": "Looking for financial risk assessment jobs evaluating short term cash advance requests and portfolios."
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/anthropic/jobs/5440752008",
+     "title": "Partner Success Lead",
+     "company": "Anthropic",
+     "natural": "Find partner success lead roles overseeing partner delivery and customer engagements in EMEA.",
+     "paraphrased": "Are there client account management jobs unblocking regional consulting implementations and driving tool adoption?"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/perplexity/9cec9b33-06f2-4ba1-8c9e-20a598361ca2",
+     "title": "Member of Technical Staff (Machine Learning Engineer, Search & Agents)",
+     "company": "Perplexity",
+     "natural": "Looking for Machine Learning Engineer search and agents roles to train LLMs.",
+     "paraphrased": "Which open jobs focus on training automated systems to find information and solve problems?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/datavant2/jobs/5431188008",
+     "title": "Health Information Specialist I",
+     "company": "Datavant",
+     "natural": "Are there entry level Health Information Specialist roles processing medical records in Raleigh?",
+     "paraphrased": "Show me entry level jobs processing patient data requests and supporting client phone calls."
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/junipersquare/8756e6a5-9ca2-4539-8b8f-9592120264e5",
+     "title": "Senior People Business Partner",
+     "company": "Juniper Square",
+     "natural": "What Senior People Business Partner roles are open for remote financial tech companies?",
+     "paraphrased": "Where can I find jobs advising leadership on workforce strategy and team culture?"
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/stripe/jobs/8203220",
+     "title": "Fraud Architect",
+     "company": "Stripe",
+     "natural": "Where can I apply for Fraud Architect roles to help prevent payment abuse?",
+     "paraphrased": "Find me tech jobs designing strategies to prevent financial scams and system exploitation."
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/vanta/e8ed04e4-28ab-4108-95da-6282e9d6bf86",
+     "title": "Staff Software Engineer, Program Structure & Trust",
+     "company": "Vanta",
+     "natural": "Looking for Staff Software Engineer roles building enterprise program structure and compliance systems.",
+     "paraphrased": "Are there senior developer jobs constructing complex organizational data models for enterprise clients?"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/etched/7e8988e1-311f-4b34-aec5-01e4d410a04a",
+     "title": "Fleet Software Lead",
+     "company": "Etched",
+     "natural": "Are there Fleet Software Lead roles available for large scale hardware cluster deployments?",
+     "paraphrased": "Show technical management jobs coordinating supercomputer infrastructure deployments and system rollouts."
+    },
+    {
+     "url": "https://job-boards.greenhouse.io/godaddy/jobs/8012616003",
+     "title": "Care Sales Guide - Inbound",
+     "company": "GoDaddy",
+     "natural": "Looking for remote Care Sales Guide Inbound roles helping customers build online websites.",
+     "paraphrased": "Are there work from home jobs answering customer phone calls and recommending products?"
+    },
+    {
+     "url": "https://jobs.ashbyhq.com/airwallex/f5af682d-6fe5-47be-bebf-d0a60242c504",
+     "title": "Assistant Relationship Manager, Enterprise",
+     "company": "Airwallex",
+     "natural": "What Assistant Relationship Manager Enterprise roles are available in payment technology?",
+     "paraphrased": "Which client account support jobs focus on helping large corporate clients grow commercial transactions?"
+    }
+   ]
+  }
+ }
+}
