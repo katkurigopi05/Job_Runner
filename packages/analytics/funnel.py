@@ -32,8 +32,8 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.core.enums import ApplicationStatus, Outcome
-from packages.core.models import Application, Match
+from packages.core.enums import OUTCOME_FOR_CLASSIFICATION, ApplicationStatus, Outcome
+from packages.core.models import Application, InboundMessage, Match
 
 #: Score buckets, low to high. Half-open on the right except the last.
 #: Chosen to match how the feed is actually read — "below a coin flip",
@@ -48,13 +48,34 @@ SCORE_BUCKETS: tuple[tuple[str, float, float], ...] = (
 #: Outcomes that mean a human at the employer engaged. `acknowledged` is
 #: excluded on purpose: an automated "we received your application" is not a
 #: reply, and counting it would make every bucket look successful.
+#:
+#: An assessment is in it. `Outcome.ASSESSMENT` was added to the enum and to
+#: none of the sets here or in `cadence.py`, so an employer who sent a timed
+#: exercise had not answered, had not engaged, and was listed as silent and
+#: owed a follow-up. `tests/test_analytics.py` now fails on an outcome that is
+#: in none of the three groups, or in two.
 ENGAGED: frozenset[str] = frozenset(
-    {Outcome.INTERVIEW.value, Outcome.OFFER.value, Outcome.INFO_REQUESTED.value}
+    {
+        Outcome.INTERVIEW.value,
+        Outcome.OFFER.value,
+        Outcome.INFO_REQUESTED.value,
+        Outcome.ASSESSMENT.value,
+    }
 )
+
+#: Nothing from a person yet: no reply, or the automated receipt.
+NOT_AN_ANSWER: frozenset[str] = frozenset({Outcome.AWAITING.value, Outcome.ACKNOWLEDGED.value})
 
 #: A rejection is a real answer — it means a person read it. Kept apart from
 #: ENGAGED because the two say opposite things about whether to apply again.
 ANSWERED: frozenset[str] = ENGAGED | {Outcome.REJECTED.value}
+
+#: What a message is classified as when it means one of ENGAGED.
+_ENGAGING: frozenset[str] = frozenset(
+    classification.value
+    for classification, outcome in OUTCOME_FOR_CLASSIFICATION.items()
+    if outcome.value in ENGAGED
+)
 
 
 @dataclass(frozen=True)
@@ -151,7 +172,8 @@ async def build(session: AsyncSession, *, profile_id: str | None = None) -> Funn
         query = query.where(Application.profile_id == profile_id)
     applications = list((await session.scalars(query)).all())
 
-    stages = _count_stages(applications)
+    ever_engaged = await _ever_engaged(session, applications)
+    stages = _count_stages(applications, ever_engaged)
 
     # One query for every relevant score rather than one per application.
     scores = await _scores_for(session, applications)
@@ -176,7 +198,7 @@ async def build(session: AsyncSession, *, profile_id: str | None = None) -> Funn
             tally["submitted"] += 1
             if application.outcome in ANSWERED:
                 tally["answered"] += 1
-            if application.outcome in ENGAGED:
+            if _engaged(application, ever_engaged):
                 tally["engaged"] += 1
 
     buckets = [
@@ -187,7 +209,40 @@ async def build(session: AsyncSession, *, profile_id: str | None = None) -> Funn
     return FunnelReport(stages=stages, buckets=buckets, unscored=unscored)
 
 
-def _count_stages(applications: list[Application]) -> StageCounts:
+async def _ever_engaged(session: AsyncSession, applications: list[Application]) -> set[object]:
+    """The applications an employer engaged with at any point, whatever came after.
+
+    `Application.outcome` is the latest and most final thing an employer said:
+    `inbox/route.py` only ever moves it to something at least as definitive,
+    and a rejection outranks an interview. Most interviews end in one. Counted
+    from `outcome` alone, the applications that got furthest were the ones the
+    engagement rate lost, in the report that asks whether a high score earns a
+    reply.
+
+    The messages are the history. Only one tied to its application by the
+    alias counts, for the reason the router gives: an inferred link is a guess
+    about which application a message belongs to, and may conclude nothing.
+    """
+    ids = [application.id for application in applications]
+    if not ids:
+        return set()
+    rows = await session.scalars(
+        select(InboundMessage.application_id)
+        .where(
+            InboundMessage.application_id.in_(ids),
+            InboundMessage.link_method == "alias",
+            InboundMessage.classification.in_(_ENGAGING),
+        )
+        .distinct()
+    )
+    return set(rows.all())
+
+
+def _engaged(application: Application, ever_engaged: set[object]) -> bool:
+    return application.outcome in ENGAGED or application.id in ever_engaged
+
+
+def _count_stages(applications: list[Application], ever_engaged: set[object]) -> StageCounts:
     submitted = [a for a in applications if a.status == ApplicationStatus.SUBMITTED.value]
     return StageCounts(
         total=len(applications),
@@ -197,7 +252,7 @@ def _count_stages(applications: list[Application]) -> StageCounts:
         ),
         failed=sum(1 for a in applications if a.status == ApplicationStatus.FAILED.value),
         answered=sum(1 for a in submitted if a.outcome in ANSWERED),
-        engaged=sum(1 for a in submitted if a.outcome in ENGAGED),
+        engaged=sum(1 for a in submitted if _engaged(a, ever_engaged)),
     )
 
 

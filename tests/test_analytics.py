@@ -20,7 +20,15 @@ import pytest
 
 from packages.analytics import cadence, digest, funnel
 from packages.core.enums import ApplicationStatus, Outcome
-from packages.core.models import Application, Candidate, Match, Posting, Profile, User
+from packages.core.models import (
+    Application,
+    Candidate,
+    InboundMessage,
+    Match,
+    Posting,
+    Profile,
+    User,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -291,3 +299,131 @@ async def test_the_digest_counts_only_the_window(db_session) -> None:
     # The funnel is all-time on purpose — a week is far too little to read a
     # conversion rate from.
     assert report.funnel.stages.total == 2
+
+
+# --------------------------------------------------------------------------
+# An outcome added later, and an outcome that was overwritten
+# --------------------------------------------------------------------------
+#
+# Found on 2026-10-12 by asking two questions another project's tests ask of
+# its own reports (MadsLorentzen/ai-job-search, MIT): is every status in one
+# authoritative list, and is a funnel counted from what happened or from
+# where things stand now.
+
+
+async def test_every_outcome_is_placed_on_purpose() -> None:
+    """`Outcome.ASSESSMENT` was added to the enum and to none of the sets
+    here, so an employer sending a timed exercise had not answered, had not
+    engaged, and was owed a follow-up for its silence. An outcome added next
+    fails this until somebody says which it is."""
+    placed = [funnel.ENGAGED, funnel.NOT_AN_ANSWER, frozenset({Outcome.REJECTED.value})]
+
+    for outcome in Outcome:
+        homes = [group for group in placed if outcome.value in group]
+        assert len(homes) == 1, f"{outcome.value} is in {len(homes)} of the three groups"
+    assert funnel.ENGAGED | {Outcome.REJECTED.value} == funnel.ANSWERED
+    # Silence has ended wherever the funnel says somebody answered.
+    assert funnel.ANSWERED <= cadence._ANSWERED
+
+
+async def test_an_assessment_is_an_answer_and_an_engagement(db_session) -> None:
+    candidate, profile = await _owner(db_session)
+    await _application(db_session, candidate, profile, outcome=Outcome.ASSESSMENT.value)
+
+    report = await funnel.build(db_session, profile_id=str(profile.id))
+
+    assert report.stages.answered == 1
+    assert report.stages.engaged == 1
+
+
+async def test_an_application_with_an_assessment_is_not_silent(db_session) -> None:
+    """It has a deadline on it. Telling the owner nobody replied is the
+    opposite of what they need to hear."""
+    candidate, profile = await _owner(db_session)
+    await _application(
+        db_session,
+        candidate,
+        profile,
+        created_days_ago=30,
+        outcome=Outcome.ASSESSMENT.value,
+        outcome_days_after=3,
+    )
+
+    report = await cadence.silence(db_session, profile_id=str(profile.id))
+
+    assert report.silent == []
+
+
+async def test_an_assessment_is_timed_with_the_other_engagements(db_session) -> None:
+    candidate, profile = await _owner(db_session)
+    for days in (8, 12):
+        await _application(
+            db_session,
+            candidate,
+            profile,
+            created_days_ago=60,
+            outcome=Outcome.ASSESSMENT.value,
+            outcome_days_after=days,
+        )
+
+    report = await cadence.latency(db_session, profile_id=str(profile.id))
+
+    assert report.median_engagement_days == 10
+
+
+async def _message(session, application: Application, classification: str, link: str) -> None:
+    session.add(
+        InboundMessage(
+            candidate_id=application.candidate_id,
+            application_id=application.id,
+            from_addr="recruiter@example.com",
+            classification=classification,
+            link_method=link,
+        )
+    )
+    await session.flush()
+
+
+async def test_an_interview_that_ended_in_rejection_was_still_an_interview(db_session) -> None:
+    """`outcome` holds the latest and most final thing an employer said, and
+    a rejection outranks an interview. Most interviews end in one. Counted
+    from `outcome` alone, the applications that got furthest were the ones
+    the engagement rate lost, in the report that asks whether a high score
+    earns a reply."""
+    candidate, profile = await _owner(db_session)
+    application = await _application(
+        db_session, candidate, profile, score=0.9, outcome=Outcome.REJECTED.value
+    )
+    await _message(db_session, application, "interview", "alias")
+    await _message(db_session, application, "rejection", "alias")
+
+    report = await funnel.build(db_session, profile_id=str(profile.id))
+
+    assert report.stages.answered == 1
+    assert report.stages.engaged == 1
+    bucket = next(b for b in report.buckets if b.label == "0.80–1.00")
+    assert (bucket.answered, bucket.engaged) == (1, 1)
+
+
+async def test_a_message_guessed_onto_an_application_proves_nothing(db_session) -> None:
+    """Only an exact alias may conclude anything (`inbox/route.py`). A message
+    matched on its sender and wording is a guess about which application it
+    belongs to, and the funnel does not count a guess."""
+    candidate, profile = await _owner(db_session)
+    application = await _application(db_session, candidate, profile, outcome=Outcome.REJECTED.value)
+    await _message(db_session, application, "interview", "inferred")
+
+    report = await funnel.build(db_session, profile_id=str(profile.id))
+
+    assert report.stages.engaged == 0
+
+
+async def test_a_rejection_alone_is_still_not_an_engagement(db_session) -> None:
+    candidate, profile = await _owner(db_session)
+    application = await _application(db_session, candidate, profile, outcome=Outcome.REJECTED.value)
+    await _message(db_session, application, "acknowledgement", "alias")
+    await _message(db_session, application, "rejection", "alias")
+
+    report = await funnel.build(db_session, profile_id=str(profile.id))
+
+    assert (report.stages.answered, report.stages.engaged) == (1, 0)
