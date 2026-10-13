@@ -94,6 +94,7 @@ from packages.core.config import get_settings
 from packages.core.models import Application, Company, Posting
 from packages.core.models_chunks import PostingChunk
 from packages.matching import idf
+from packages.matching.eligibility import Sponsorship
 from packages.matching.embed import (
     Embedder,
     LexicalEmbedder,
@@ -112,6 +113,16 @@ from packages.matching.roles import (
     related_to,
 )
 from packages.matching.roles import normalize as role_words_of
+from packages.matching.sponsored import (
+    MENTIONS as SPONSORSHIP_MENTIONS,
+)
+from packages.matching.sponsored import (
+    SponsorshipCount,
+    asking_words,
+    asks_which_sponsor,
+    sentence_that_says_so,
+    verdict,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -457,6 +468,10 @@ class Retrieval:
     #: yet": a corpus that could not be read, where the question was what
     #: had nothing in it.
     unnamed: bool = False
+    #: Set when the question asked which postings sponsor: what the postings it
+    #: was about state, counted. The passages are then only the ones that state
+    #: they do (`_stating_sponsorship`).
+    sponsorship: SponsorshipCount | None = None
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -1398,6 +1413,140 @@ def _fuse_candidates(*rankings: list[uuid.UUID]) -> dict[uuid.UUID, float]:
     return scores
 
 
+#: Keyword matches read for their verdict when a question asks which jobs
+#: sponsor and also names something to look for. Wider than `KEYWORD_POOL`:
+#: an offer is rare (15 of 5,204 in the owner's area), and one cut off by a
+#: pool of thirty is one the answer says does not exist.
+_SPONSOR_POOL = 500
+
+
+async def _stating_sponsorship(
+    session: AsyncSession,
+    question: str,
+    *,
+    frequencies: idf.DocumentFrequencies,
+    companies: list[uuid.UUID],
+    company_words: set[str],
+    company_names: list[str],
+    not_hiring: list[str],
+    open_total: int,
+    limit: int,
+) -> Retrieval:
+    """The postings that state they sponsor, for a question that asks which do.
+
+    "jobs that sponsor H-1B" was a search for those words, and on the owner's
+    database every one of the five shown stated that it does not. What a
+    posting states is read by `eligibility.py`; this asks it.
+
+    The postings the question is about are found by what else it names: a
+    role's postings, the ones that say a word it asked for, or, naming
+    nothing, every posting that mentions sponsorship at all. Each is read, and
+    only an explicit offer is listed. Silence and a statement that cannot be
+    resolved are counted and not shown: unknown is never a pass (§16, §18).
+
+    The counts are of that same set, so the answer can say "one of four data
+    engineer postings states it sponsors, one states it does not", which is
+    the true answer when the list is short.
+    """
+    area = _search_area(question)
+    asked_roles = named_in(question)
+    role_words = {
+        word for aliases in asked_roles.values() for alias in aliases for word in alias.split()
+    }
+    terms = _search_terms(
+        question, frequencies, exclude=company_words | role_words | asking_words(question)
+    )
+
+    mentions_only = False
+    if asked_roles:
+        pool = await _role_hits(session, set(asked_roles), companies)
+        over = " or ".join(display_name(key) for key in sorted(asked_roles)) + " postings"
+        if terms and pool:
+            pool = await _keyword_hits(
+                session,
+                terms,
+                frequencies,
+                companies,
+                pool=len(pool),
+                only=[hit.posting_id for hit in pool],
+            )
+            over += " that say " + " or ".join(f'"{term}"' for term in terms)
+    elif terms:
+        pool = await _keyword_hits(session, terms, frequencies, companies, pool=_SPONSOR_POOL)
+        over = "postings that say " + " or ".join(f'"{term}"' for term in terms)
+    else:
+        mentions_only = True
+        query = (
+            select(
+                Posting.id,
+                Posting.title,
+                Posting.location,
+                Posting.url,
+                Posting.description_raw,
+                Company.name,
+            )
+            .outerjoin(Company, Company.id == Posting.company_id)
+            .where(
+                Posting.closed_at.is_(None),
+                Posting.description_raw.op("~*")(SPONSORSHIP_MENTIONS),
+            )
+            .order_by(Posting.first_seen_at.desc(), Posting.id)
+        )
+        if companies:
+            query = query.where(Posting.company_id.in_(companies))
+        pool = [_Hit(*row) for row in (await session.execute(query)).all()]
+        over = "open postings that mention sponsorship or a visa"
+
+    inside = [hit for hit in pool if not (area and _outside_area(hit))]
+    over += " in the search area" if area else ""
+    stated = {hit.posting_id: verdict(hit.description) for hit in inside}
+    offering = [hit for hit in inside if stated[hit.posting_id] is Sponsorship.AVAILABLE]
+    refused = sum(1 for value in stated.values() if value is Sponsorship.UNAVAILABLE)
+
+    chosen = offering[:limit]
+    statuses = await _application_statuses(session, [hit.posting_id for hit in chosen])
+    return Retrieval(
+        attempted=True,
+        passages=tuple(
+            Passage(
+                label=f"P{index}",
+                posting_id=hit.posting_id,
+                title=hit.title or "(untitled)",
+                company=hit.company,
+                location=hit.location,
+                url=hit.url,
+                excerpt=sentence_that_says_so(hit.description),
+                application_status=statuses.get(hit.posting_id),
+            )
+            for index, hit in enumerate(chosen, start=1)
+        ),
+        searched=open_total,
+        companies=tuple(sorted(company_names)),
+        not_hiring=tuple(sorted(not_hiring)),
+        area=area,
+        area_waived=area is None and get_settings().search_us_only,
+        outside_area=len(pool) - len(inside),
+        ranked=len(offering),
+        more=tuple(
+            Listed(
+                posting_id=hit.posting_id,
+                title=hit.title or "(untitled)",
+                company=hit.company,
+                location=hit.location,
+                url=hit.url,
+            )
+            for hit in offering[limit : limit + MORE_LIMIT]
+        ),
+        sponsorship=SponsorshipCount(
+            offered=len(offering),
+            refused=refused,
+            unstated=len(inside) - len(offering) - refused,
+            over=over,
+            mentions_only=mentions_only,
+        ),
+    )
+
+
 async def retrieve(
     session: AsyncSession, question: str, *, limit: int = DEFAULT_LIMIT
 ) -> Retrieval:
@@ -1445,6 +1594,19 @@ async def retrieve(
         )
         or 0
     )
+    if asks_which_sponsor(question):
+        # Answered from what postings state, and not from the words that ask.
+        return await _stating_sponsorship(
+            session,
+            question,
+            frequencies=frequencies,
+            companies=companies,
+            company_words=company_words,
+            company_names=company_names,
+            not_hiring=not_hiring,
+            open_total=open_total,
+            limit=limit,
+        )
     space_rows = (
         await session.execute(
             select(Posting.embedding_model, Posting.embedding_revision, func.count())

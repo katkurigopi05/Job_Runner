@@ -86,6 +86,7 @@ from packages.llm.provider import (
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
 from packages.matching.retrieve import Passage, Retrieval, retrieve
 from packages.matching.roles import display_name
+from packages.matching.sponsored import SponsorshipCount
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -438,6 +439,41 @@ def _unmet_by_posting(
     return _PostingGaps(lines, across)
 
 
+def _sponsorship_lines(count: SponsorshipCount) -> list[str]:
+    """What the postings asked about state on sponsorship, as the model is told it.
+
+    All three numbers, because the true answer is often the short one: "one
+    of four states that it sponsors, and one states that it does not". And the
+    instruction that goes with them: a posting that does not say has not said
+    yes (§16, §18), and a model handed a list of jobs after a question about
+    sponsorship will otherwise call them all sponsoring.
+    """
+
+    def said(number: int, one: str, many: str) -> str:
+        return f"{number} {one if number == 1 else many}"
+
+    total = count.offered + count.refused + count.unstated
+    quiet = (
+        said(count.unstated, "mentions it without saying", "mention it without saying")
+        if count.mentions_only
+        else said(count.unstated, "does not say", "do not say")
+    )
+    lines = [
+        f"  sponsorship: asked for. Of the {total} {count.over}, "
+        + said(count.offered, "states that it sponsors", "state that they sponsor")
+        + ", "
+        + said(count.refused, "states that it does not", "state that they do not")
+        + f", {quiet}.",
+        "  Only the ones that state they sponsor are listed below. A posting that does not "
+        "say may or may not sponsor: never present one as sponsoring.",
+    ]
+    if count.mentions_only:
+        lines.append("  Every other open posting says nothing about sponsorship.")
+    if not count.offered:
+        lines.append("  None states that it sponsors: say so, and give the numbers above.")
+    return lines
+
+
 def _postings_section(
     found: Retrieval,
     gaps: _PostingGaps | None = None,
@@ -532,7 +568,9 @@ def _postings_section(
                 else "  none shared anything with this question"
             )
         )
-    if found.passages and not (found.roles or found.title_words):
+    if found.sponsorship is not None:
+        lines += _sponsorship_lines(found.sponsorship)
+    if found.passages and not (found.roles or found.title_words or found.sponsorship):
         # A role or a title search states its total above. Any other search
         # has none to state: the pool it ranks is cut off, so "the 5 below"
         # must not become "5 postings" in the answer.
