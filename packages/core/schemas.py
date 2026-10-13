@@ -440,6 +440,23 @@ class ApplicationResumeOut(BaseModel):
     sections: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class LayoutFindingOut(BaseModel):
+    """One thing about a document's pages worth seeing before it is sent."""
+
+    code: str
+    page: int
+    detail: str
+
+
+class ResumeLayoutOut(BaseModel):
+    """How a stored résumé sits on its pages (`packages/tailor/layout.py`)."""
+
+    pages: int
+    #: Printed lines on each page, in order.
+    lines: list[int] = Field(default_factory=list)
+    findings: list[LayoutFindingOut] = Field(default_factory=list)
+
+
 class ResumeParsedOut(BaseModel):
     """What the parser extracted, so it can be checked before it is trusted."""
 
@@ -450,6 +467,9 @@ class ResumeParsedOut(BaseModel):
     sections: dict[str, int]
     line_count: int
     parsed: dict[str, Any]
+    #: None when the file is not a PDF or could not be read. That is "not
+    #: measured", which a screen must not show as "nothing found".
+    layout: ResumeLayoutOut | None = None
 
 
 # --------------------------------------------------------------------------

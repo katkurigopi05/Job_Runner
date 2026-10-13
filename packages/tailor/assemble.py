@@ -82,6 +82,15 @@ SECTION_TITLES: dict[str, str] = {
 #: the contact line and returned `Gopi Krishna Reddy Katkurigkatkuri@…` — our
 #: own output reproducing, on the way out, the same fused-field defect the
 #: DOCX reader was just fixed for on the way in.
+#:
+#: Three rules say where a page may not break. An entry's name stays with the
+#: line under it, a line of supporting detail with the bullets it introduces,
+#: and a bullet is not cut in two. Without them an employer's name was the
+#: last line of page one with its dates and degree on page two
+#: (`tests/test_resume_page_layout.py`). A break may still fall between any
+#: two bullets, so no entry is one block that has to move whole and leave a
+#: hole behind it. A section heading needs no rule: WeasyPrint's own
+#: stylesheet keeps `h2` with what follows it.
 RESUME_CSS = """
 @page { size: Letter; margin: 0.55in; }
 body { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
@@ -95,8 +104,10 @@ h2 { font-size: 9.5pt; font-weight: 700; margin: 13pt 0 5pt;
      text-transform: uppercase; letter-spacing: 0.08em; color: #222;
      border-bottom: 0.7pt solid #888; padding-bottom: 2.5pt; }
 p { margin: 0 0 4pt; }
-.entry { margin: 6pt 0 2pt; }
+.entry { margin: 6pt 0 2pt; break-after: avoid; }
 .entry:first-child { margin-top: 0; }
+.entry-meta + ul { break-before: avoid; }
+li { break-inside: avoid; }
 .entry-name { font-weight: 700; }
 .entry-date { font-size: 9pt; color: #444; font-weight: 400; }
 .entry-date::before { content: "  \\00b7  "; color: #999; }
