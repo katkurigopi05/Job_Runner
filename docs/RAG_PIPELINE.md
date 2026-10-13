@@ -84,7 +84,7 @@ inbox half has never met real input (CLAUDE.md §15).
 
 | Requirement | Status |
 |---|---|
-| Filters before retrieval | Holds for open, company, area, role, freshness. Partly for sponsorship and seniority: both are feed filters (§18) and the assistant's search does not take them |
+| Filters before retrieval | Holds for open, company, area, role, freshness, and since 2026-10-13 sponsorship: a question asking which jobs sponsor is answered from what postings state (`matching/sponsored.py`). Not for seniority: a level named in a question is searched for as a word |
 | Hybrid with a measured fusion | Holds. RRF at a borrowed `k=60` |
 | Reranking on a shortlist | Holds, and off: measured live, an embedding reranker bought nothing and a cross-encoder moved 15 named targets up and 1 down (§21) |
 | Exact match preserved | Holds |
@@ -164,8 +164,15 @@ writes what a poisoned posting asks for is refused), or forge the record.
    tracked, and postings are pruned after 30 days. Writing replacements
    takes a model call for each batch, and a rule for which postings to
    write them from that does not favour the ones a search already finds.
-3. **Sponsorship and seniority in the assistant's search.** The feed can be
-   asked for them and the assistant cannot.
+3. **A level named in a question.** Sponsorship is done (2026-10-13: "jobs
+   that sponsor H-1B" had shown five postings that all state they do not).
+   Seniority is not. "senior" and "staff" work because titles say them.
+   "entry level software engineer jobs" showed three senior postings,
+   "junior backend roles" five senior ones, and "internships in data
+   science" nothing, with 196 intern titles open in the area. Nearly half
+   the titles in the area name no level, which is the part to decide before
+   building: unknown is not a pass (§16), and leaving them out of "senior
+   data engineer jobs" would drop 17 of that role's 42 postings.
 4. **Rates from rows already kept**: ingestion failures, stale postings,
    cache hits, approvals against rejections.
 5. **The inbox reads only unread mail in one folder.** `inbox/imap.py`
