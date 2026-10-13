@@ -6,6 +6,7 @@ database holds a reference and the parsed structure, never the bytes.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from pathlib import Path
 from typing import Annotated
@@ -18,10 +19,17 @@ from apps.api.errors import ApiError
 from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
 from packages.core.models import Candidate, Profile, Project, Resume
-from packages.core.schemas import ResumeEdit, ResumeOut, ResumeParsedOut, ResumePreviewOut
+from packages.core.schemas import (
+    ResumeEdit,
+    ResumeLayoutOut,
+    ResumeOut,
+    ResumeParsedOut,
+    ResumePreviewOut,
+)
 from packages.core.storage import get_storage, resume_key
 from packages.github.select import select_projects
 from packages.tailor.assemble import describe
+from packages.tailor.layout import measure, section_headings
 from packages.tailor.parse import ParsedResume, ParseError, parse_resume
 from packages.tailor.projects import LinkStyle, ProjectEntry, link_text
 
@@ -117,14 +125,35 @@ async def get_parsed(resume_id: uuid.UUID, session: SessionDep) -> ResumeParsedO
         raise ApiError(ErrorCode.NOT_FOUND, "resume not found")
 
     parsed = resume.parsed_json or {}
+    sections = parsed.get("sections") or {}
     return ResumeParsedOut(
         id=resume.id,
         version=resume.version,
         contact=parsed.get("contact", {}),
-        sections={name: len(lines) for name, lines in (parsed.get("sections") or {}).items()},
+        sections={name: len(lines) for name, lines in sections.items()},
         line_count=len(parsed.get("raw_lines") or []),
         parsed=parsed,
+        # Off the event loop: it reads the file and walks every page of it.
+        layout=await asyncio.to_thread(_layout_of, resume.storage_ref, list(sections)),
     )
+
+
+def _layout_of(storage_ref: str, sections: list[str]) -> ResumeLayoutOut | None:
+    """How the stored file sits on its pages, when it is a PDF that can be read.
+
+    Measured from the file on every read and not kept on the row: the review
+    screen shows the document that will be sent, and an edit there writes a
+    new file.
+    """
+    if not storage_ref.lower().endswith(".pdf"):
+        return None
+    try:
+        data = get_storage().get(storage_ref)
+    except OSError:
+        # A missing file is the download route's to report.
+        return None
+    report = measure(data, headings=section_headings(sections))
+    return ResumeLayoutOut.model_validate(report.model_dump()) if report else None
 
 
 @router.post("/{resume_id}/edit", response_model=ResumeOut, status_code=status.HTTP_201_CREATED)

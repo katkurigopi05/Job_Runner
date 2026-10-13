@@ -330,6 +330,21 @@ export interface Resume {
   created_at: string;
 }
 
+/** One thing about a document's pages worth seeing before it is sent. */
+export interface LayoutFinding {
+  code: string;
+  page: number;
+  detail: string;
+}
+
+/** How a stored résumé sits on its pages. */
+export interface ResumeLayout {
+  pages: number;
+  /** Printed lines on each page, in order. */
+  lines: number[];
+  findings: LayoutFinding[];
+}
+
 /** What the parser pulled out, so it can be checked before it is trusted. */
 export interface ResumeParsed {
   id: string;
@@ -344,6 +359,8 @@ export interface ResumeParsed {
     sections?: Record<string, string[]>;
     raw_lines?: string[];
   };
+  /** Null when the file is not a PDF or could not be read: not measured. */
+  layout?: ResumeLayout | null;
 }
 
 export type Classification =

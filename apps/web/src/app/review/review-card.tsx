@@ -425,9 +425,21 @@ function AttachedResume({
         Résumé to be sent
         <span className="ml-2 text-ink-faint">
           {tailored ? "· tailored for this posting" : "· profile base, unmodified"}
+          {resume.layout
+            ? ` · ${resume.layout.pages} ${resume.layout.pages === 1 ? "page" : "pages"}`
+            : ""}
           {editable ? " · editable" : ""}
         </span>
       </summary>
+      {/* Where the PDF's text falls on its pages. Shown above the editor,
+          which is where a line too many can be taken out. */}
+      {resume.layout && resume.layout.findings.length > 0 ? (
+        <ul className="mt-3 max-w-prose space-y-1 border-l-2 border-attn pl-3 text-sm text-ink-soft">
+          {resume.layout.findings.map((finding) => (
+            <li key={`${finding.code}-${finding.page}`}>{finding.detail}</li>
+          ))}
+        </ul>
+      ) : null}
       <div className="mt-4">
         {editable ? (
           <ResumeEditor
