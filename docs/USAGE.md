@@ -375,6 +375,14 @@ Everything the employer would receive, before it is sent:
   many the fabrication guard refused, and which model wrote the document
   (`written by gemini`, or `ollama:llama3.1` if the allowance ran out mid-run).
   "not recorded" means the résumé predates that being tracked, never a guess.
+
+  A refusal is not only for something invented. The guard also refuses a
+  rewrite that takes something true *out*: a technology your résumé lists, or
+  a number the bullet states. `reaching a test ROC-AUC of 0.72` rewritten
+  without the `0.72` is refused, and so is `by 30%` rewritten as `by 30`. The
+  same value written another way (`1,000` as `1000`, `30%` as `30 percent`) is
+  not a change, and a date is not a number: a rewrite may leave a year out.
+  Either way the bullet that is sent is the one your résumé had.
 - **Cover letter** — the letter itself, open by default, with its word count,
   how many sentences the guard stripped, and which model wrote it. Present only
   when the form actually asked for one, which most do not. A refusal is shown

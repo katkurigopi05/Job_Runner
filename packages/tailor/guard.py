@@ -236,6 +236,12 @@ class GuardReport:
     #: was document-wide — correct for a cover letter, too permissive for a
     #: bullet, and recorded either way so the two are never confused.
     scope_ref: str | None = None
+    #: Figures the source bullet states and the rewrite does not, as the
+    #: bullet wrote them. Set by `rewrite.vet`, which is the only caller with
+    #: a source line to compare against; `check` reads the output alone and
+    #: cannot know. Not a violation: nothing was invented, and `ok` is about
+    #: invention.
+    dropped_figures: tuple[str, ...] = ()
 
     def summary(self) -> str:
         against = "source" if self.scope_ref is None else self.scope_ref
