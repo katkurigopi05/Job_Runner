@@ -941,8 +941,10 @@ posting's terms are sorted against your base résumé, four ways:
 - **supported synonym**: the résumé says it another way (`UI` for "user
   interface"). A parser that matches words does not see it.
 - **supported, not stated**: no form of it is on the résumé, and something
-  that may speak for you supports it. A bullet that names pytest supports
-  "automated testing"; a GitHub project supports what GitHub reports of it.
+  that may speak for you supports it. A bullet that says pytest ran its checks
+  supports "automated testing"; a GitHub project supports what GitHub reports
+  of it. Naming pytest is not enough: a skills line, a plan to learn it and a
+  bullet that says it was not used all name it.
 - **gap**: none of those. Never written in.
 
 It then lists the bullets a revision would be asked for, and why. When there
@@ -951,10 +953,11 @@ are none it says `no supported keyword gain available` and stops.
 **With `--run`** those bullets, and only those, go to the tailoring provider:
 one call each, and at most one more if the first answer is refused. The model
 is given the bullet, the terms and the evidence for each, not the posting. A
-revision is kept only if it adds the term and takes nothing away: every
+revision is kept only if it adds the term and does nothing else: every
 number, unit, name, model name and date of the bullet has to still be there,
-and a term goes only into the bullet that holds its evidence. Anything else
-and the bullet stays as you wrote it.
+no other word may arrive ("across the company" is a larger claim in ordinary
+words), and a term goes only into the bullet that holds its evidence, beside
+it. Anything else and the bullet stays as you wrote it.
 
 What is kept is published as a new résumé version, and its PDF is read back:
 the added terms and every figure and listed technology have to be in the
@@ -972,8 +975,11 @@ Three things it does not do:
   scan score is the share of matched terms near the top of the page, so a term
   gained lower down lowers it with nothing at the top having changed.
 - **It adds no skill.** The only rule that reads a term into a bullet is the
-  one-row table in `packages/tailor/practices.py`, and each row there is a
-  decision about what may be said on your behalf.
+  one row in `packages/tailor/practices.py`, pytest for "automated testing",
+  and a second row would be a decision about what may be said on your behalf.
+
+Switching applications and the nightly batch to this is not done.
+`docs/TARGETED_TAILORING_INTEGRATION.md` is the plan for it.
 
 ## 9. Development and verification commands
 

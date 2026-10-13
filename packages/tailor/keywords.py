@@ -176,8 +176,8 @@ def _known_phrases(job_description: str) -> tuple[list[str], set[str]]:
 def _supported(term: str, corpus: SourceCorpus) -> bool:
     """Whether the source material backs a term.
 
-    Token match first, then a substring check on the normalized text — a
-    multi-word term like "machine learning" is never a single token, and
+    Token match first, then a search of the text for the term as whole words
+    — a multi-word term like "machine learning" is never a single token, and
     missing it would report the résumé as thinner than it is.
 
     Equivalent spellings count. A posting asking for "machine learning" is
@@ -193,7 +193,28 @@ def _supported(term: str, corpus: SourceCorpus) -> bool:
     if not key:
         return False
 
-    return any(form in corpus.tokens or form in corpus.text for form in equivalents(key) or {key})
+    return any(
+        form in corpus.tokens or _stands_in(form, corpus.text) for form in equivalents(key) or {key}
+    )
+
+
+def _stands_in(form: str, text: str) -> bool:
+    """Whether `form` is in `text` as a word or words of its own.
+
+    The second test above was `form in corpus.text`, which finds a term
+    inside a longer word. On the owner's résumé that made "user experience"
+    supported by the `ux` in "Linux", "RESTful APIs" by the `rest` in "Random
+    Forest", and "code" by "cross-encoder". Supported terms are handed to the
+    model as safe to work in and left off the list a rewrite may not take
+    from the posting, so this was the guard's input and not only a score: a
+    rewrite wrote "user experience" into a bullet about a command-line tool,
+    and it was kept.
+
+    A letter or a digit on either side makes it part of another word. A
+    hyphen or a full stop does not, so "Kubernetes-based" still says
+    Kubernetes and "node.js" is still found whole.
+    """
+    return re.search(rf"(?<![a-z0-9]){re.escape(form)}(?![a-z0-9])", text) is not None
 
 
 def analyze(job_description: str, corpus: SourceCorpus, *, limit: int = 40) -> TermReport:

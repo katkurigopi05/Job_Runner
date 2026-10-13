@@ -581,10 +581,56 @@ def _requirements(terms: list[str]) -> list[str]:
         if " " in term.strip():
             kept.append(term)
             continue
-        if key in _BOILERPLATE or len(key) < 3:
+        if key in _BOILERPLATE or key in _GRAMMAR or len(key) < 3:
             continue
         kept.append(term)
     return kept
+
+
+#: Words of grammar: prepositions, conjunctions, pronouns, determiners and
+#: the question words. None is something a posting asks for.
+#:
+#: `_BOILERPLATE` above has "what", "when", "where", "which", "who" and "why",
+#: and not "how". Sorting one posting against the owner's résumé listed "how"
+#: among its 36 requirements, and then found it supported, by a GitHub project
+#: whose description uses the word. Measured over 300 of the owner's open
+#: postings on 2026-10-13: of about 10,280 terms scored, 190 were closed-class
+#: words by the tagger, in "through" (69 postings), "how" (49), "like" (20),
+#: "between" (10), "behind", "throughout", "per", "via" and "whether". With
+#: this list, none.
+#:
+#: A list of its own, and here, for two reasons this module already gives.
+#: `keywords._STOPWORDS` is the guard's: what it drops is no longer a term a
+#: rewrite is refused for taking, and a measurement does not get to move
+#: that. `_BOILERPLATE` is the matcher's fallback vocabulary for a posting's
+#: furniture, and is a judgement about postings. This is neither. A closed
+#: class is closed: unlike a list of skills it has no next entry to miss.
+#:
+#: Only a single lower-cased word is ever dropped by it, and nothing in it
+#: is a technology's name. `go` and `can` are not here for that reason.
+_GRAMMAR_TEXT = """
+about above across after against along alongside amid among around before
+behind below beneath beside besides between beyond despite down during
+except from inside into like near off onto outside over past per since
+than through throughout till toward towards under underneath until unto upon
+via with within without
+
+and but nor yet because although though while whereas unless whether once
+
+you she they him her them your his its our their mine yours hers ours theirs
+myself yourself himself herself itself ourselves yourselves themselves this
+that these those who whom whose which what whatever whoever whichever
+
+the each every either neither another any some all both few many much most
+several such
+
+how why when where however whenever wherever
+
+are was were been being have has had does did will would shall should could
+might must
+"""
+
+_GRAMMAR: frozenset[str] = frozenset(_GRAMMAR_TEXT.split())
 
 
 def _deduction(findings: list[Finding]) -> float:

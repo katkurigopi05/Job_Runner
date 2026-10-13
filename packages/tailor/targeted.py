@@ -18,9 +18,10 @@ Here it is computed, from the same term list `ats.score` counts:
 - **supported synonym**: the résumé says it another way, by the alias table
   (`ML` for "machine learning"). An ATS that matches words does not see it.
 - **supported, not stated**: no form of it is on the résumé, and a source
-  that may speak for the owner supports it. A bullet that names a tool
-  supports the practice the tool is (`practices.py`), and a GitHub project
-  supports what GitHub reports of it (`evidence.py`).
+  that may speak for the owner supports it. A bullet that says pytest ran
+  its checks supports "automated testing" (`practices.py`, which is one row
+  and says what counts as saying so), and a GitHub project supports what
+  GitHub reports of it (`evidence.py`).
 - **gap**: none of those. Never written in, by anyone.
 
 Only the second and third are opportunities, and only where one bullet holds
@@ -29,10 +30,13 @@ the evidence. Then:
 - **Only those bullets reach a model**, each with its own target terms and
   the evidence for each. Not the posting. A résumé with no opportunity makes
   no call at all.
-- **A targeted revision adds and does not take away.** `rewrite.vet` holds it
-  to everything a rewrite is held to, and `taken_away` holds it to more:
-  every word of the bullet that is not grammar is still there. Numbers,
-  units, names, model names and dates are words.
+- **A targeted revision adds its terms, and that is all it does.**
+  `rewrite.vet` holds it to everything a rewrite is held to. `taken_away`
+  holds it to more: every word of the bullet that is not grammar is still
+  there, and numbers, units, names, model names and dates are words.
+  `brought_in` is the other half: no word arrives but the terms asked for,
+  since "across the company" is ordinary English and the guard lets ordinary
+  English through.
 - **A term goes where its evidence is.** A term is a target of the one
   bullet that holds its evidence and off limits to every other, so another
   project's tool never becomes a claim on an employer's bullet. A term
@@ -289,20 +293,27 @@ def classify(
             continue
 
         if practices.practice_for(term) is not None:
-            named = [(ref, practices.evidence_in(term, text)) for ref, text in places]
-            sources = tuple(ref for ref, tool in named if tool is not None)
-            if sources:
+            # A statement in a bullet, line by line. The entry's title and its
+            # stack line name the tool and say nothing was done with it, and
+            # the skills list is not read at all.
+            stated = [
+                (ref, tool)
+                for ref, text in ((item.ref, item.text) for item in corpus.items)
+                for line in text.split("\n")
+                if (tool := practices.affirmed_in(term, line)) is not None
+            ]
+            if stated:
                 naming = [
                     (index, tool)
                     for index, bullet in enumerate(bullets)
-                    if (tool := practices.evidence_in(term, bullet)) is not None
+                    if (tool := practices.affirmed_in(term, bullet)) is not None
                 ]
                 terms.append(
                     Term(
                         term,
                         Status.SUPPORTED,
-                        sources=sources,
-                        via=next(tool for _, tool in named if tool is not None),
+                        sources=tuple(dict.fromkeys(ref for ref, _ in stated)),
+                        via=stated[0][1],
                         bullet=claim(naming, term, practice=True),
                     )
                 )
@@ -352,6 +363,35 @@ def taken_away(original: str, candidate: str) -> tuple[str, ...]:
         if shown not in gone:
             gone.append(shown)
     return tuple(gone)
+
+
+def brought_in(original: str, candidate: str, targets: Sequence[Target]) -> tuple[str, ...]:
+    """Words `candidate` has that are neither the bullet's nor a target's.
+
+    The other half of `taken_away`. The fabrication guard lets ordinary
+    English through, and ordinary English is enough to enlarge a claim:
+    "across the company" is three words it has no quarrel with. A targeted
+    revision was asked for its terms and nothing else.
+    """
+    had = _index(_separated(original))
+    had |= {stem(word) for word in had}
+    asked = {
+        form
+        for target in targets
+        for word in _words(f"{target.term} {target.evidence}")
+        for form in (word, singular(word), stem(word))
+    }
+    new: list[str] = []
+    for raw in _TOKEN_RE.findall(_separated(candidate)):
+        word = normalize(raw)
+        if not word or word in _FUNCTION_WORDS:
+            continue
+        if {word, singular(word), stem(word)} & (had | asked):
+            continue
+        shown = str(raw).strip(".,;:")
+        if shown not in new:
+            new.append(shown)
+    return tuple(new)
 
 
 @dataclass(frozen=True)
@@ -433,10 +473,30 @@ def judge(
         named = ", ".join(repr(word) for word in gone)
         return (), f"takes {named} out of the bullet; a targeted revision only adds", (), 0
 
+    extra = brought_in(bullet, candidate, targets)
+    if extra:
+        named = ", ".join(repr(word) for word in extra)
+        return (), f"adds {named}; a targeted revision adds its terms and nothing else", (), 0
+
     said = Said(candidate)
     added = tuple(target.term for target in targets if said.says(target.term))
     if not added or not is_substantive(bullet, candidate):
         return (), "adds none of the terms it was revised for", (), report.checked
+
+    # A practice keeps the scope its evidence had. By now every word of the
+    # bullet is still there and none has arrived but the terms asked for, and
+    # the term can still have been put somewhere else in the sentence: after
+    # an "and" it is a second claim, not a name for what the tool did.
+    for target in targets:
+        stated = target.practice and target.term in added
+        if stated and not practices.stands_beside(target.term, target.evidence, candidate):
+            return (
+                (),
+                f"does not put {target.term!r} beside {target.evidence}; "
+                "the term is true of what the tool did and of nothing else",
+                (),
+                report.checked,
+            )
     return added, None, (), report.checked
 
 
@@ -549,6 +609,7 @@ __all__ = [
     "Status",
     "Target",
     "Term",
+    "brought_in",
     "classify",
     "judge",
     "posting_terms",
