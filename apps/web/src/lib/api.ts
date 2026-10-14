@@ -259,6 +259,9 @@ export interface ReviewRecord {
   screening?: Screening | null;
   /** §25/§44/§53 — the composite, its band, and what is stopping this going. */
   readiness?: Readiness | null;
+  /** §16 — set true when a previous submission attempt is in an uncertain state. */
+  submission_uncertain?: boolean;
+  attempted_at?: string;
 }
 
 /** One measured axis of readiness. `measured` false means its input was

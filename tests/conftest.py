@@ -95,6 +95,7 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 #: Truncated between committing tests, children first is handled by CASCADE.
 _ALL_TABLES = (
+    "applied_postings",
     "application_tasks",
     "application_contacts",
     "contacts",

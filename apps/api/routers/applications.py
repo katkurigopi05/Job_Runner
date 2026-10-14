@@ -13,11 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from apps.api.status_stream import stream
+from packages.core import submissions
 from packages.core.completeness import missing_requirements
 from packages.core.enums import ApplicationStatus, ErrorCode, FailureReason
 from packages.core.models import (
     Application,
     ApplicationEvent,
+    AppliedPosting,
     Candidate,
     Company,
     Posting,
@@ -203,6 +205,14 @@ async def review_application(
         payload: dict[str, Any] = {"decision": "approve"}
         if body.note:
             payload["note"] = body.note
+
+        # Approval releases an uncertain fence (§16):
+        # A released fence allows exactly one more attempt. Fences of other
+        # applications for the same job still block.
+        fence = await session.get(AppliedPosting, application.id)
+        if fence is not None and fence.state == "uncertain":
+            fence.state = "released"
+
         # The approval has to be recorded on the application, not only as an
         # event: the resumed run re-enters the submit gate, and without this it
         # cannot tell an owner-approved run from a fresh one. With AUTO_SUBMIT
@@ -728,6 +738,8 @@ async def mark_submitted(
         # Already recorded. Idempotent rather than an error: at a hundred a
         # day the owner will double-tap, and a queue that punishes that is a
         # queue that gets used slowly.
+        await submissions.record_manual(session, application)
+        await session.commit()
         return application
 
     await transition(
@@ -745,6 +757,8 @@ async def mark_submitted(
     )
     # The reason it could not be automated is history now, not current state.
     application.failure_reason = None
+    # Fence the job so automated workers will not submit it again (§16).
+    await submissions.record_manual(session, application)
     await session.commit()
     _announce()
     await session.refresh(application)

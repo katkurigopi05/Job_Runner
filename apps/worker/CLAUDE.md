@@ -68,3 +68,40 @@ the assigning paths when it is set. Two details are load-bearing:
 `tests/test_review_resume_edit.py` covers both ways of choosing. They are real
 gates: with the pin removed, three go red and the log shows
 `tailored_resume_published … version=3` landing on top of the owner's pick.
+
+
+### A retried apply task can submit the same application twice (§16)
+
+A database transaction rollback cannot undo the employer's Submit click.
+Before the submission ledger, `_submit` called `adapter.submit(page)`, took a
+screenshot, and called `transition(..., ApplicationStatus.SUBMITTED)`. Nothing
+was committed until the task handler returned. A worker crash (OOM, SIGKILL,
+power cut), browser timeout, or post-click exception rolled back the database
+transaction. The queue lease expired, reclaimed the task, and resumed the
+pipeline — which saw `owner_approved` and clicked Submit again.
+
+The submission ledger (`applied_postings` table and `_submit` ordering) fixes
+this and must not be undone:
+1. `lock_candidate` advisory lock and `SELECT ... FOR UPDATE` re-read of the
+   application row prevents concurrent submissions.
+2. An existing fence from another application or a fence in `attempting`/`uncertain`
+   parks at `needs_review` without clicking.
+3. The fence is made durable as `attempting` and committed to PostgreSQL *before*
+   `adapter.submit(page)` is called.
+4. If `adapter.submit` succeeds, the fence is set to `submitted`, transitioned to
+   `ApplicationStatus.SUBMITTED`, and committed *immediately*. Only then is the
+   screenshot captured. Screenshot errors are logged and swallowed; they must never
+   undo the submitted status.
+5. If `adapter.submit` raises an `Exception` or returns `submitted=False`, the
+   fence is set to `uncertain`, parked at `needs_review`, committed, and returned
+   normally (not re-raised, so the task is not retried).
+6. Post-click networkidle timeouts must NOT be caught in `packages/ats/form.py`
+   to invent success: an unknown outcome after the click is genuinely uncertain
+   and must stop for human review.
+7. Approval of an application with an uncertain fence sets the fence to `released`,
+   allowing exactly one retry attempt.
+8. Manual submission records the fence as `submitted` so automated workers will
+   not re-submit the same job.
+
+Covered by `tests/test_submission_ledger.py`.
+

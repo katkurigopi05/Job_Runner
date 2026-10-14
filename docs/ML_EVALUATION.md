@@ -1295,7 +1295,7 @@ reproduced. Every confirmed row has a regression test that failed first.
 | 13 | MCP: a dead API under the name of a result; a request that got no answer fails with no words; the owner's form does not say which application | Confirmed, all three. Fixed | `apps/mcp/server.py`, `apps/mcp/client.py` | Six tools wrapped whatever came back; httpx's timeout has no message; the form showed the questions and not whose | `_under`; `ApiDidNotAnswer`, which says whether a write may have happened; the form carries the posting's address |
 | 14 | 471 open postings had no usable chunks | Confirmed: stale, not failed | `posting_chunks` | Their text changed in the crawl of 2026-10-07 and the worker stopped before a matching pass reached them | `make chunk-postings`: 471 postings, 6,460 chunks (about 0.62M tokens), 42 s. 11,147 of 11,147 covered |
 | 15 | "searched 0 of 11,147, 11,147 not searchable yet" for a question that named nothing | Confirmed. Fixed | `retrieve()` | An empty subject cannot be made into a vector, and was reported as a corpus that could not be read | `Retrieval.unnamed`, and a context line that says so |
-| 16 | A retried `apply` task can send a form twice | Code-level risk. Not reproduced, not fixed | `apps/worker/apply_job.py`, `_submit` | `adapter.submit()` sends the form, and the `submitted` status is committed after it. A worker that dies between the two leaves a `running` application, which the next claim resumes from the top | Left alone: it is the submission path, and reproducing it means submitting. See *What is still wrong* |
+| 16 | A retried `apply` task can send a form twice | Fixed | `apps/worker/apply_job.py`, `packages/core/submissions.py`, `packages/core/models.py` (`applied_postings`) | `adapter.submit()` sends the form, and the `submitted` status is committed after it. A worker that dies between the two leaves a `running` application, which the next claim resumes from the top | Submission ledger fences the job as `attempting` in PostgreSQL *before* calling `submit()`, commits `submitted` immediately upon success, and parks at `needs_review` with `submission_uncertain=True` on failure or retry. Covered by `tests/test_submission_ledger.py` |
 | 17 | A one-word company name read from an ordinary use of the word | Confirmed on 4 of 80 held-out questions. Not fixed, on purpose | `retrieve._one_word_names_it` | "Front Desk", "sense surroundings", "managing Okta administration", "Marketo lead processing" | Left so the held-out set stays one nothing was fitted to |
 | 18 | Paraphrased questions do not find their posting | Measured. Not fixed | bge-small chunk search | See *Where a target is lost* | The limit of the first-stage model, and of the benchmark |
 
@@ -1811,17 +1811,18 @@ assistant's answers are right, and several things here are known not to be.
   here is where one known posting landed. The semantic candidates add
   postings to the five shown that nobody has judged, which is the whole
   reason the experiment stays off.
-- **A retried `apply` task can send a form twice (#16).**
-  `apply_job._submit` calls `adapter.submit(page)`, and the move to
-  `submitted` is committed by the worker afterwards. A worker that dies
-  between the two leaves the application `running`; the lease expires, the
-  task is claimed again, `begin_work` reads `running` as an abandoned run,
-  and the pipeline runs from the top. Read from the code, not reproduced:
-  reproducing it means submitting. What would close it is a record written
-  and committed *before* the click ("submit attempted"), and a resumed run
-  that finds one failing as `manual_completion_required` with "this may
-  already have been sent" in place of clicking again. It is a change to the
-  submission path and wants its own review.
+- **A retried `apply` task can send a form twice (#16). Fixed.**
+  Previously, `apply_job._submit` called `adapter.submit(page)`, and the move to
+  `submitted` was committed by the worker handler afterwards. A worker that died
+  between the two left the application `running`; the lease expired, the task was
+  reclaimed, `begin_work` read `running` as an abandoned run, and the pipeline
+  ran from the top and submitted again.
+  Fixed via the submission ledger (`applied_postings` table and `_submit` ordering):
+  a durable fence is committed as `attempting` before calling `submit()`. On success,
+  the fence is marked `submitted`, transitioned, and committed immediately before screenshot.
+  On failure or retry after worker death, the application parks at `needs_review` with
+  `submission_uncertain=True` warning the owner before any second attempt can be authorized.
+  Covered by `tests/test_submission_ledger.py`.
 - **A one-word company name is still read from an ordinary use of the word
   (#17).** On the held-out questions: "Front Desk roles" was a search of
   Front's postings, "help vehicles sense surroundings" of Sense's, "managing

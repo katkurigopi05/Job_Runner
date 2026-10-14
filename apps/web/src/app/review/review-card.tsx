@@ -193,6 +193,17 @@ export function ReviewCard({
       ) : null}
 
       <form id={approveFormId} action={runApprove}>
+        {review.reason ? (
+          <section className={`border-b border-rule px-6 py-5 ${review.submission_uncertain ? "bg-stop/5" : ""}`}>
+            <h3 className={`font-mono text-xs uppercase tracking-widest ${review.submission_uncertain ? "text-stop" : "text-attn"}`}>
+              {review.submission_uncertain ? "Submission uncertain" : "Parked for review"}
+            </h3>
+            <p className={`mt-2 max-w-prose text-sm ${review.submission_uncertain ? "text-stop" : "text-ink-soft"}`}>
+              {review.reason}
+            </p>
+          </section>
+        ) : null}
+
         {required.length > 0 ? (
           <section className="border-b border-rule px-6 py-6">
             <h3 className="font-mono text-xs uppercase tracking-widest text-attn">
@@ -238,14 +249,14 @@ export function ReviewCard({
               })}
             </ul>
           </section>
-        ) : (
+        ) : !review.reason ? (
           <section className="border-b border-rule px-6 py-5">
             <p className="text-sm text-ink-soft">
               Every required field was filled from your profile. Nothing is waiting on an answer —
               only on your approval.
             </p>
           </section>
-        )}
+        ) : null}
       </form>
 
       {review.base_resume ? (
