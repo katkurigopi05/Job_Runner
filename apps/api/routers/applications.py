@@ -211,11 +211,25 @@ async def review_application(
         )
 
     if body.approve:
+        review = dict(application.review_json or {})
+        conflict_id = review.get("submission_conflict_application_id")
+        if conflict_id:
+            ways = "reject, or mark submitted if it was sent"
+            if review.get("submission_conflict_by_canonical"):
+                ways = (
+                    "reject, mark submitted if it was sent, or split the posting out of the group"
+                )
+            raise ApiError(
+                ErrorCode.INVALID_STATE,
+                f"cannot approve: job already has a submission record in "
+                f"application {conflict_id}; ways out: {ways}",
+            )
+
         payload: dict[str, Any] = {"decision": "approve"}
         if body.note:
             payload["note"] = body.note
 
-        # Approval releases an uncertain fence (§16):
+        # Approval releases an uncertain fence (defect #16):
         # A released fence allows exactly one more attempt. Fences of other
         # applications for the same job still block.
         fence = await session.get(AppliedPosting, application.id)
@@ -756,6 +770,9 @@ async def mark_submitted(
         await session.commit()
         return application
 
+    # Fence the job so automated workers will not submit it again (defect #16).
+    fence = await submissions.record_manual(session, application)
+
     await transition(
         session,
         application,
@@ -767,12 +784,11 @@ async def mark_submitted(
             # unsupported site, a question nobody could answer.
             "was": application.status,
             "failure_reason": application.failure_reason,
+            "confirmed_fence_application_id": str(fence.application_id),
         },
     )
     # The reason it could not be automated is history now, not current state.
     application.failure_reason = None
-    # Fence the job so automated workers will not submit it again (§16).
-    await submissions.record_manual(session, application)
     await session.commit()
     _announce()
     await session.refresh(application)

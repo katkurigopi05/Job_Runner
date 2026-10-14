@@ -9,7 +9,7 @@ The shape of the run is fixed by two rules:
 - Any required question the agent cannot answer parks the application at
   `needs_review` carrying the question's exact text (CLAUDE.md §2.4).
 
-Submission ledger (§16):
+Submission ledger (defect #16):
 `_submit` commits partway through the handler because external side effects
 (clicking Submit on an employer's ATS) cannot be atomically rolled back by a
 database transaction. Commits in `_submit` commit everything the session did
@@ -153,6 +153,16 @@ async def _run_pipeline(
 ) -> None:
     adapter = adapter_for(application.url)
     application.ats = adapter.name
+
+    if getattr(application, "review_json", None):
+        cleaned = dict(application.review_json)
+        cleaned.pop("submission_uncertain", None)
+        cleaned.pop("attempted_at", None)
+        cleaned.pop("reason", None)
+        cleaned.pop("submission_conflict_application_id", None)
+        cleaned.pop("submission_conflict_state", None)
+        cleaned.pop("submission_conflict_by_canonical", None)
+        application.review_json = cleaned
 
     async with browser_page(adapter.name) as page:
         response = await page.goto(over_https(application.url), wait_until="domcontentloaded")
@@ -1125,20 +1135,26 @@ async def _submit(
 ) -> None:
     """Send the form and record the receipt. The only path that submits.
 
-    Order of operations for the submission ledger (§16):
-    1. Lock candidate and check if application is already SUBMITTED.
+    Order of operations for the submission ledger (defect #16):
+    1. Lock candidate and re-read application FOR UPDATE; return if not RUNNING.
     2. Check existing fence for this candidate and job:
-       - If fence belongs to another application: park at needs_review with conflicting details.
+       - If fence is 'submitted': park at needs_review (already recorded as submitted).
+       - If fence belongs to another application: park at needs_review with conflict keys.
        - If fence belongs to this application and is attempting/uncertain: park at needs_review
          with submission_uncertain=True and warning message.
-    3. Make fence durable as 'attempting' and COMMIT before the browser clicks.
+    3. Make fence durable as 'attempting' (or re-arm 'released') and COMMIT
+       before the browser clicks.
     4. Call adapter.submit(page):
-       - If submitted=True: set fence to 'submitted', store receipt_json, transition to
-         SUBMITTED, and COMMIT immediately. Only then capture screenshot.
-       - If Exception raised or submitted=False: set fence to 'uncertain', park at needs_review,
-         set submission_uncertain=True, COMMIT, and RETURN NORMALLY (no retry).
-       - If BaseException (worker death): fence remains 'attempting' in Postgres, which step 2
-         detects on task retry.
+       - Pre-click refusals (ManualCompletionRequired, SiteError): restore fence
+         to prior state ('released' or deleted), commit, and re-raise so
+         application fails without submission_uncertain.
+       - If submitted=True: set fence to 'submitted', store receipt_json, transition
+         to SUBMITTED, and COMMIT immediately. Only then capture screenshot.
+       - If other Exception raised or submitted=False: set fence to 'uncertain',
+         park at needs_review, set submission_uncertain=True, COMMIT, and
+         RETURN NORMALLY (no retry).
+       - If BaseException (worker death): fence remains 'attempting' in Postgres,
+         which step 2 detects on task retry.
     """
     # 1. Lock candidate advisory lock and re-read application FOR UPDATE
     await submissions.lock_candidate(session, application.candidate_id)
@@ -1164,12 +1180,19 @@ async def _submit(
     if fence is not None:
         # A fence belonging to ANOTHER application, in any state: do not click.
         if fence.application_id != application.id:
+            from packages.core.submission_identity import submission_key_v1
+
             msg = (
                 f"A submission for this job already exists in application {fence.application_id} "
                 f"({fence.url}) with status '{fence.state}'."
             )
             review = dict(application.review_json or {})
             review["reason"] = msg
+            review["submission_conflict_application_id"] = str(fence.application_id)
+            review["submission_conflict_state"] = fence.state
+            review["submission_conflict_by_canonical"] = fence.job_key != submission_key_v1(
+                application.url
+            )
             application.review_json = review
             await transition(
                 session,
@@ -1215,14 +1238,36 @@ async def _submit(
             await session.commit()
             return
 
-        # If already submitted for this application:
+        # If already submitted for this job:
         if fence.state == "submitted":
+            msg = (
+                f"This job is already recorded as submitted by application {fence.application_id} "
+                f"(source: {fence.source})."
+            )
+            review = dict(application.review_json or {})
+            review["reason"] = msg
+            application.review_json = review
+            await transition(
+                session,
+                application,
+                ApplicationStatus.NEEDS_REVIEW,
+                payload={
+                    "reason": msg,
+                    "submitted_by_application_id": str(fence.application_id),
+                    "source": fence.source,
+                },
+            )
+            await session.commit()
             return
 
     # 3. Otherwise record this application's fence as 'attempting' and COMMIT,
     # before adapter.submit is called. If the application has a 'released' fence,
     # set that fence back to 'attempting' with a new attempted_at rather than adding a row.
-    if fence is not None and fence.application_id == application.id and fence.state == "released":
+    prior_fence_state = (
+        fence.state if fence is not None and fence.application_id == application.id else None
+    )
+    if prior_fence_state == "released":
+        assert fence is not None
         fence.state = "attempting"
         fence.attempted_at = datetime.now(UTC)
     else:
@@ -1232,6 +1277,17 @@ async def _submit(
     # 4. Call adapter.submit(page)
     try:
         receipt = await adapter.submit(page)
+    except (ManualCompletionRequired, SiteError):
+        # A refusal before the click means nothing was sent.
+        # Put fence back to state before this attempt and re-raise so handle_apply
+        # marks application as failed without submission_uncertain.
+        if prior_fence_state == "released":
+            assert fence is not None
+            fence.state = "released"
+        else:
+            await session.delete(fence)
+        await session.commit()
+        raise
     except Exception as exc:
         log.warning("submit_failed_exception", error=type(exc).__name__)
         receipt = None

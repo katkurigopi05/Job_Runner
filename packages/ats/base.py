@@ -201,7 +201,13 @@ class ATSAdapter(Protocol):
 
     async def fill(self, page: Any, answers: dict[str, Any]) -> FillReport: ...
 
-    async def submit(self, page: Any) -> Receipt: ...
+    async def submit(self, page: Any) -> Receipt:
+        """Click submit and return receipt.
+
+        ManualCompletionRequired or SiteError from submit() means nothing was sent:
+        the check failed before the submit button was clicked.
+        """
+        ...
 
 
 class UnsupportedSiteError(Exception):
@@ -212,6 +218,7 @@ class SiteError(Exception):
     """The page did not behave as the adapter expects — maps to `site_error`.
 
     Message must not carry page HTML; it is written to the task row.
+    SiteError from submit() means nothing was sent.
     """
 
 
@@ -238,4 +245,5 @@ class ManualCompletionRequired(Exception):
 
     Maps to `manual_completion_required`. CLAUDE.md §2.5 makes this a hard
     scope boundary: the owner finishes by hand, the agent does not evade.
+    ManualCompletionRequired from submit() means nothing was sent.
     """

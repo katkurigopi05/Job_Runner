@@ -88,7 +88,7 @@ async def record(
     return row
 
 
-async def record_manual(session: AsyncSession, application: Application) -> None:
+async def record_manual(session: AsyncSession, application: Application) -> AppliedPosting:
     """The owner reports a fact; this does not click or authorize another click."""
     await lock_candidate(session, application.candidate_id)
     row = await find_existing(
@@ -99,7 +99,8 @@ async def record_manual(session: AsyncSession, application: Application) -> None
         application_id=application.id,
     )
     if row is None:
-        await record(session, application, state="submitted", source="owner")
-    else:
-        row.state = "submitted"
-        row.confirmed_at = datetime.now(UTC)
+        return await record(session, application, state="submitted", source="owner")
+    row.state = "submitted"
+    row.source = "owner"
+    row.confirmed_at = datetime.now(UTC)
+    return row

@@ -194,13 +194,47 @@ export function ReviewCard({
 
       <form id={approveFormId} action={runApprove}>
         {review.reason ? (
-          <section className={`border-b border-rule px-6 py-5 ${review.submission_uncertain ? "bg-stop/5" : ""}`}>
-            <h3 className={`font-mono text-xs uppercase tracking-widest ${review.submission_uncertain ? "text-stop" : "text-attn"}`}>
-              {review.submission_uncertain ? "Submission uncertain" : "Parked for review"}
+          <section
+            className={`border-b border-rule px-6 py-5 ${
+              review.submission_uncertain || review.submission_conflict_application_id
+                ? "bg-stop/5"
+                : ""
+            }`}
+          >
+            <h3
+              className={`font-mono text-xs uppercase tracking-widest ${
+                review.submission_uncertain || review.submission_conflict_application_id
+                  ? "text-stop"
+                  : "text-attn"
+              }`}
+            >
+              {review.submission_uncertain
+                ? "Submission uncertain"
+                : review.submission_conflict_application_id
+                  ? "Submission conflict"
+                  : "Parked for review"}
             </h3>
-            <p className={`mt-2 max-w-prose text-sm ${review.submission_uncertain ? "text-stop" : "text-ink-soft"}`}>
+            <p
+              className={`mt-2 max-w-prose text-sm ${
+                review.submission_uncertain || review.submission_conflict_application_id
+                  ? "text-stop"
+                  : "text-ink-soft"
+              }`}
+            >
               {review.reason}
             </p>
+            {review.submission_conflict_application_id ? (
+              <p className="mt-2 text-xs text-ink-soft">
+                This job has already been recorded by application{" "}
+                <span className="font-mono">{review.submission_conflict_application_id}</span>.
+                Approving cannot submit. You can reject this application, mark it submitted if
+                already sent
+                {review.submission_conflict_by_canonical
+                  ? ", or split the posting out of the group"
+                  : ""}
+                .
+              </p>
+            ) : null}
           </section>
         ) : null}
 
