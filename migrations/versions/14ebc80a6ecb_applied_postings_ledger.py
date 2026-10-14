@@ -53,5 +53,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if op.get_bind().scalar(sa.text("SELECT EXISTS (SELECT 1 FROM applied_postings)")):
+        raise RuntimeError(
+            "refusing to drop nonempty submission ledger; preserve/export submission "
+            "history and explicitly plan rollback before removing duplicate protection"
+        )
     op.drop_index("ix_applied_postings_posting_id", table_name="applied_postings")
     op.drop_table("applied_postings")

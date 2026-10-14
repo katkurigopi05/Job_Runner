@@ -1,7 +1,7 @@
 """One durable submit attempt per candidate/job, across retries and profiles.
 
 The caller takes lock_candidate, checks the ledger, saves its fence and
-COMMMITS before the click. No DB transaction can atomically commit an ATS
+COMMITS before the click. No DB transaction can atomically commit an ATS
 click: unknown outcomes must stop for a person, never automatically retry.
 """
 

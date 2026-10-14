@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from apps.worker import apply_job
 from packages.ats.base import Receipt
-from packages.core.enums import ApplicationStatus
+from packages.core.enums import ApplicationStatus, FailureReason
 from packages.core.models import (
     Application,
     ApplicationEvent,
@@ -436,3 +436,115 @@ async def test_api_payload_surfaces_park_message_and_uncertain_flag(
     assert "attempted_at" in data["review"]
     reason = data["review"]["reason"]
     assert "earlier attempt" in reason or "previous submission" in reason
+
+
+async def test_stale_worker_cannot_submit_a_rejected_application(committing_sessionmaker):
+    maker = committing_sessionmaker
+    app_id = await _application(maker)
+    employer = Employer()
+    async with maker() as stale:
+        app = await stale.get(Application, app_id)
+        async with maker() as owner:
+            current = await owner.get(Application, app_id)
+            await transition(owner, current, ApplicationStatus.NEEDS_REVIEW)
+            await transition(
+                owner,
+                current,
+                ApplicationStatus.FAILED,
+                failure_reason=FailureReason.REJECTED_AT_REVIEW,
+            )
+            await owner.commit()
+        await apply_job._submit(stale, app, employer, None)
+    assert employer.clicks == 0
+    async with maker() as check:
+        assert (await check.get(Application, app_id)).status == "failed"
+
+
+async def test_failed_fence_commit_never_contacts_employer(committing_sessionmaker, monkeypatch):
+    maker = committing_sessionmaker
+    app_id = await _application(maker)
+    employer = Employer()
+    async with maker() as session:
+        app = await session.get(Application, app_id)
+
+        async def fail_commit():
+            raise RuntimeError("database unavailable")
+
+        monkeypatch.setattr(session, "commit", fail_commit)
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            await apply_job._submit(session, app, employer, None)
+    assert employer.clicks == 0
+
+
+async def test_api_rejects_alias_of_submitted_job(client, complete_candidate, worker_session):
+    body = {
+        **complete_candidate,
+        "url": "https://boards.greenhouse.io/acme/jobs/987",
+    }
+    created = await client.post("/applications", json=body)
+    assert created.status_code == 201, created.text
+    app_id = uuid.UUID(created.json()["id"])
+    app = await worker_session.get(Application, app_id)
+    await transition(worker_session, app, ApplicationStatus.RUNNING)
+    await worker_session.commit()
+    marked = await client.post(f"/applications/{app_id}/submitted", json={})
+    assert marked.status_code == 200, marked.text
+    body["url"] = "https://job-boards.greenhouse.io/acme/jobs/987?utm_source=mail"
+    duplicate = await client.post("/applications", json=body)
+    assert duplicate.status_code == 409, duplicate.text
+
+
+async def test_retry_while_first_click_is_in_flight(committing_sessionmaker):
+    maker = committing_sessionmaker
+    app_id = await _application(maker)
+    clicked = asyncio.Event()
+    finish = asyncio.Event()
+
+    class SlowEmployer(Employer):
+        async def submit(self, page):
+            receipt = await super().submit(page)
+            clicked.set()
+            await asyncio.wait_for(finish.wait(), timeout=5)
+            return receipt
+
+    employer = SlowEmployer()
+
+    async def first_worker():
+        async with maker() as session:
+            app = await session.get(Application, app_id)
+            await apply_job._submit(session, app, employer, None)
+
+    first = asyncio.create_task(first_worker())
+    try:
+        await asyncio.wait_for(clicked.wait(), timeout=5)
+        async with maker() as retry:
+            app = await retry.get(Application, app_id)
+            await apply_job._submit(retry, app, employer, None)
+            assert app.status == "needs_review"
+            assert employer.clicks == 1
+    finally:
+        finish.set()
+        await first
+    async with maker() as session:
+        assert (await session.get(Application, app_id)).status == "submitted"
+        assert (await session.get(AppliedPosting, app_id)).state == "submitted"
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "same"),
+    [
+        ("https://jobs.lever.co/acme/123", "https://jobs.lever.co/acme/123/apply", True),
+        (
+            "https://jobs.ashbyhq.com/acme/123",
+            "https://jobs.ashbyhq.com/acme/123/application",
+            True,
+        ),
+        ("https://example.test/job?id=1", "https://example.test/job?id=2", False),
+        ("https://jobs.lever.co/acme/123", "https://jobs.lever.co/acme/124", False),
+        ("https://jobs.lever.co/acme/123", "https://jobs.lever.co/other/123", False),
+    ],
+)
+def test_submission_identity_does_not_merge_different_jobs(left, right, same):
+    from packages.core.submission_identity import submission_key_v1
+
+    assert (submission_key_v1(left) == submission_key_v1(right)) is same

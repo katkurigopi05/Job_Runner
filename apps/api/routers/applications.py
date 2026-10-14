@@ -81,6 +81,15 @@ async def create_application(body: ApplicationCreate, session: SessionDep) -> Ap
     if profile.candidate_id != candidate.id:
         raise ApiError(ErrorCode.INVALID_REQUEST, "profile does not belong to candidate")
 
+    await submissions.lock_candidate(session, candidate.id)
+    existing = await submissions.find_existing(session, candidate.id, body.url)
+    if existing is not None:
+        raise ApiError(
+            ErrorCode.DUPLICATE_APPLICATION,
+            f"this job already has a {existing.state} submission record; "
+            f"review application {existing.application_id} instead",
+        )
+
     # `incomplete_candidate` is knowable here, so it is rejected here. An
     # application that provably cannot be completed is never created — no row,
     # no queued task, nothing to fail later.
@@ -733,6 +742,11 @@ async def mark_submitted(
     application = await session.get(Application, application_id)
     if application is None:
         raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+
+    # Same lock order as the worker: candidate, then application. Otherwise
+    # flushing the status before acquiring the candidate lock can deadlock.
+    await submissions.lock_candidate(session, application.candidate_id)
+    await session.refresh(application, with_for_update=True)
 
     if application.status == ApplicationStatus.SUBMITTED.value:
         # Already recorded. Idempotent rather than an error: at a hundred a

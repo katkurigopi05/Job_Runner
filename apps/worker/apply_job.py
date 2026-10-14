@@ -1142,10 +1142,15 @@ async def _submit(
     """
     # 1. Lock candidate advisory lock and re-read application FOR UPDATE
     await submissions.lock_candidate(session, application.candidate_id)
-    app_locked = await session.get(Application, application.id, with_for_update=True)
-    if app_locked is not None:
-        application = app_locked
-    if application.status == ApplicationStatus.SUBMITTED.value:
+    app_locked = await session.get(
+        Application, application.id, with_for_update=True, populate_existing=True
+    )
+    if app_locked is None:
+        return
+    application = app_locked
+    # FOR UPDATE alone does not refresh SQLAlchemy's identity map. A worker
+    # may still hold the RUNNING object from before the owner's rejection.
+    if application.status != ApplicationStatus.RUNNING.value:
         return
 
     # 2. find_existing fence for this candidate and job
@@ -1228,7 +1233,7 @@ async def _submit(
     try:
         receipt = await adapter.submit(page)
     except Exception as exc:
-        log.warning("submit_failed_exception", error=type(exc).__name__, message=str(exc))
+        log.warning("submit_failed_exception", error=type(exc).__name__)
         receipt = None
 
     if receipt is not None and receipt.submitted:

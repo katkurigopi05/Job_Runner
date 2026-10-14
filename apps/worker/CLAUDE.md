@@ -105,3 +105,12 @@ this and must not be undone:
 
 Covered by `tests/test_submission_ledger.py`.
 
+Rollout: stop/drain workers before `alembic upgrade head`, then restart all
+workers on the same code. Old workers do not honor the ledger. The follow-up
+backfill preserves submitted history and fences interrupted legacy runs as
+uncertain (including claimed tasks whose application state rolled back).
+Legacy timestamps are approximate, not recorded click times. Tracking-link
+aliases of fenced jobs are rejected before a new application is queued.
+Downgrading the backfill retains its evidence; dropping a nonempty ledger is
+refused. Review uncertainty at the employer before approving another attempt;
+if it was already sent, use **mark submitted**, not **approve & submit**.
