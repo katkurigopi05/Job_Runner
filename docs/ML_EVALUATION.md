@@ -857,6 +857,301 @@ Do not recommend enabling the experiment unless natural-question quality is
 preserved and paraphrase improvements hold on independent labeled examples.
 ```
 
+## Embedding new postings: timing and tool investigation (2026-10-10)
+
+This investigation benchmarks the existing BGE chunk encoder and isolated
+alternatives. It does not change the production encoder, settings, dependencies,
+or stored vectors. Public model downloads were used for the isolated FastEmbed
+experiment; posting text stayed local.
+
+### What is already incremental, and what is waiting
+
+`chunk_postings()` skips an open posting when chunks exist with its current
+posting content hash and encoder stamp. It processes up to 500 postings per
+call, newest first, and the model instance is cached within each process.
+Re-embedding every unchanged posting and loading the model on every batch are
+therefore not the current mechanisms to fix.
+
+The live snapshot held 11,147 open postings: 10,676 had current neural chunks,
+and 471 had chunks with stale stamps. None of those 471 lacked chunks entirely.
+The table contained 149,011 vectors in total, including stale vectors; the
+previous 142,577 count described current chunks. These are different measures.
+
+Follow-up on October 11: the separate assistant-repair work below refreshed
+those 471 postings. A read-only recheck found **zero open postings with missing
+or stale neural chunks**, still out of 11,147. No worker heartbeat was healthy
+at that recheck. The original backlog numbers below describe the initial
+snapshot, not an outstanding repair performed by this timing investigation.
+
+No worker heartbeat was healthy at inspection. One crawl task and 3,037 company
+discovery tasks were pending; nine discovery tasks still carried a running
+status despite the missing healthy heartbeat. This is evidence of operational
+backlog, not a measurement of encoder throughput. The read-only pending-chunk
+query took 95 ms in `EXPLAIN (ANALYZE, BUFFERS)`.
+
+The relevant path is:
+
+```mermaid
+flowchart LR
+    Crawl[New or changed posting] --> Hash[Posting content hash]
+    Hash --> Match[Matching pass]
+    Match --> Pending[Up to 500 missing or stale postings]
+    Pending --> Chunks[500-character chunks, 25 overlap]
+    Chunks --> BGE[Cached BGE-small encoder]
+    BGE --> Rows[384-dimensional halfvec rows]
+    Rows --> Commit[Worker transaction commit]
+    Commit --> Search[Available to assistant retrieval]
+```
+
+`run_matching_pass()` awaits chunking before the worker commits the task.
+Although its comment says a slow chunk pass never delays a score, it can delay
+the score becoming visible to other transactions. The configured scheduler
+interval is 300 seconds, which adds waiting time independently of model speed.
+
+### Avoidable work found in the corpus
+
+| Input group | Posting count | Chunk inputs | Distinct exact chunk texts | Repeated inputs |
+|---|---:|---:|---:|---:|
+| Newest postings used for timing | 100 | 1,322 | 1,141 | 13.7% |
+| Newest 500 postings | 500 | 6,659 | 5,810 | 12.7% |
+| Current stale backlog | 471 | 6,460 | 5,345 | 17.3% |
+| All open descriptions | 11,147 | 149,037 | 121,285 | 18.6% |
+
+These counts use the current normalization and chunk boundaries. They show
+potential compute reuse, not rows that should be deleted: every posting still
+needs its own chunk offsets, source identity, and freshness metadata.
+
+There is another avoidable invalidation mechanism. `posting_hash()` includes
+external ID, title, location, and description, while chunk inference reads only
+the whitespace-normalized description. A title/location-only edit or a
+whitespace-only description change can therefore invalidate otherwise reusable
+chunk vectors. The proportion of historical edits caused by this mechanism was
+not measured. A future reuse cache should key on the actual encoder input and
+model recipe, while retaining the posting hash for source freshness.
+
+### Measurement scope
+
+Hardware: Apple M4, 16 GiB memory, native macOS. The installed environment used
+PyTorch 2.13.0, Sentence Transformers 6.0.0, four PyTorch CPU threads, and
+`BAAI/bge-small-en-v1.5`; automatic device selection chose `mps:0`. This setup
+already uses the Apple GPU. The measured model-construction time was 1.21 s,
+excluding Python imports and any download.
+
+The timing sample is the newest 100 open descriptions, producing 1,322 chunks.
+Inference runs keep the same model and chunking unless explicitly labeled
+otherwise. The first sweep uses two runs per variant; the confirmation sweep
+uses three, rotates FP32 batch-size order, and runs separately from the database
+write experiment. These are measurements on a development laptop, not a
+dedicated load-test host or an end-to-end crawl SLA.
+
+Numerical checks compare output vectors with the FP32 reference. Search-order
+checks use 112 existing benchmark questions against only these 100 postings,
+ranking postings by their best chunk. Top-five set overlap measures agreement
+with the reference, not labeled relevance, target hit rate, or answer accuracy.
+It must not be confused with the earlier 104-question live retrieval evaluation.
+
+The write comparison uses a transaction-local temporary table with the chunk
+column types and B-tree indexes, then rolls back. It excludes production foreign
+key checks, persistent-table WAL, and commit cost. It compares SQLAlchemy ORM
+object creation/flush with bulk `Session.execute(insert(...), mappings)`.
+
+### First timing sweep and why it needed confirmation
+
+| Operation | Median time | Repeats |
+|---|---:|---:|
+| MPS FP32, batch 32, all 1,322 chunks | 12.863 s | 3 |
+| MPS FP32, batch 16 | 12.067 s | 3 |
+| MPS FP32, batch 8 | 13.249 s | 3 |
+| MPS FP16, batch 16, exact duplicates encoded once | 9.092 s | 3 |
+| PyTorch CPU, batch 32 | 31.941 s | 2 |
+| FastEmbed CPU, batch 32, four threads | 62.694 s | 3 |
+| FastEmbed CPU, batch 64, four threads | 96.410 s | 3 |
+| FastEmbed CPU, batch 32, duplicate reuse | 86.010 s | 3 |
+| ORM construction and flush, 1,322 temporary rows | 3.096 s | 3 |
+| Bulk insert, same temporary rows | 0.974 s | 3 |
+
+The GPU FP16/reuse combination reduced encoding time by 29.3% in this sweep.
+Larger FP32 batches of 64 and 128 measured 14.614 s and 14.898 s in the initial
+two-run sweep, so increasing the batch size was not a demonstrated improvement.
+
+However, other development work continued on the machine. FastEmbed runs varied
+widely, and its duplicate-reuse case was paradoxically slower despite processing
+fewer inputs. A later 300-chunk GPU check took 0.937 s (median of three), showing
+that absolute timing had changed substantially. Treat the first sweep as a
+record of observed behavior, not an intrinsic speed ratio between runtimes.
+The later sequential comparison below is the preferred runtime comparison.
+
+The FP32 duplicate-reuse experiment produced identical vectors in this sample.
+FP16's minimum per-chunk cosine against FP32 was 0.9999989; with FP32 queries,
+top-five posting-set agreement was 99.82%. FastEmbed's minimum cosine was
+0.9999962, with 99.64% set agreement for FP32 queries and 99.46% when both
+queries and documents used FastEmbed. Those small changes can still reorder
+near-ties; they do not establish unchanged retrieval relevance.
+
+### Sequential confirmation after the competing work finished
+
+The same archived 100 postings / 1,322 chunks were measured again on October
+11. Each runtime was run separately, with one full warmup and three measured
+passes. The BGE model, sample, normalization, and output dimensions were held
+constant; the optimized GPU variant encoded 1,141 distinct chunks and restored
+all 1,322 results.
+
+| Encoder | Median time for 100 postings | Individual measured runs |
+|---|---:|---|
+| Current PyTorch MPS FP32, batch 32 | 4.175 s | 4.175 / 4.151 / 4.216 s |
+| PyTorch MPS FP16, batch 16, exact duplicate reuse | 2.974 s | 2.975 / 2.947 / 2.974 s |
+| FastEmbed CPU, batch 32, four threads | 24.299 s | 24.299 / 24.191 / 24.319 s |
+
+This is **28.8% less encoding time, or 1.40 times the throughput**. The earlier
+sweep's absolute times were affected by machine load, while the GPU variant's
+relative gain repeated. This comparison still excludes database commits and
+queue waiting. The optimized output's minimum cosine against the original
+FP32 reference remained 0.9999989. No production settings were changed.
+
+FastEmbed also sped up once the competing workload ended, but its measured
+CPU path remained 5.82 times slower than the existing MPS baseline. This
+configuration is therefore not recommended as a throughput replacement on
+this M4. That is a local comparison with four CPU threads and one packaged
+ONNX model, not a claim that all ONNX configurations or other hardware are
+slower. Concurrent Ollama generation was not measured, so a CPU encoder's
+effect on chat responsiveness remains unproven.
+
+The temporary-table write test was also repeated after all encoder tests
+finished. ORM creation/flush took **0.432 s** and bulk insertion **0.225 s**
+(medians of three): 48.0% less write-stage time, or 1.92 times the throughput.
+These replace the noisy first sweep for estimating the size of this benefit.
+They still exclude production foreign keys, WAL and commit costs. Do not add
+separately measured stage timings and describe the sum as an end-to-end result.
+
+### Recommended implementation order
+
+1. **Reuse exact chunk inputs within each batch.** Encode distinct texts once,
+   then restore every original posting's vector and offsets. This needs no
+   external service or model change. Start here before building a persistent
+   cache; the sample already contains 13.7% repeated inputs.
+2. **Use SQLAlchemy bulk insertion for chunk rows.** Keep deletion/replacement
+   atomic and retain the unique posting/ordinal constraint. The temporary-table
+   test supports testing this in the actual ingestion path; its timing is not
+   a promise about production commit time. The API is documented in
+   [SQLAlchemy's bulk insertion guide](https://docs.sqlalchemy.org/en/20/orm/queryguide/dml.html#orm-bulk-insert-statements).
+3. **Evaluate optional FP16 on the existing MPS encoder.** Expose the choice
+   explicitly, retain the FP32 default until the current live/held-out retrieval
+   evaluations pass, and measure assistant responsiveness during ingestion.
+   Stored `halfvec` already reduces database size; it does not itself make model
+   inference use FP16. [Sentence Transformers documents backend and precision options](https://sbert.net/docs/sentence_transformer/usage/efficiency.html).
+4. **Separate indexing from the matching transaction.** Use the existing durable
+   queue for a bounded embedding task, commit posting/match changes promptly,
+   and let one warm encoder drain new work. Avoid a process/model per posting.
+   Claim work atomically, and recheck the source hash before committing vectors
+   so an edit during inference cannot install stale results. Use short batches
+   with a maximum wait; measure queue age separately from encode duration.
+   This scheduling change is proposed, not benchmarked or implemented here.
+5. **Only then consider persistent input reuse.** Key it by normalized chunk
+   text plus the model revision, pooling, normalization, and input recipe.
+   Rebuild offsets from the current description and preserve source freshness.
+   Avoid triggering description embeddings solely for title/location edits.
+   The current generic `sentence-transformers` stamp is insufficient to identify
+   an arbitrary replacement model or preprocessing recipe; equal dimensions
+   do not prove compatible vector spaces.
+
+### Steps 1 and 2, implemented (2026-10-11)
+
+`chunk_postings()` now encodes each distinct chunk text once per batch and
+writes the batch with one bulk `INSERT`. Steps 3 to 5 are not implemented, and
+the encoder, its precision and its batch size are unchanged.
+
+Duplicate reuse was then measured on its own, which the sweeps above did not
+do. Same newest 100 postings: 1,322 chunks (129,626 tokens), 1,141 distinct
+(109,962 tokens). MPS FP32, batch 32, three runs each, alternating, with the
+API and the IDE still running:
+
+| Encoder input | Median | Individual runs |
+|---|---:|---|
+| Every chunk | 4.287 s | 4.990 / 4.287 / 4.028 s |
+| Distinct texts, vectors restored | 3.573 s | 3.784 / 3.573 / 3.473 s |
+
+That is 16.6% less encoding time and no vector changes: the restored vectors
+equal the every-chunk ones exactly, and rounded to float16 they equal all
+1,322 rows already stored for those postings. The 28.8% above bundled reuse
+with FP16 and batch 16; whatever of it is not reuse still needs step 3's
+retrieval evaluation.
+
+`postings_chunked` now logs `distinct`, `encode_seconds` and `write_seconds`.
+The first pass on the real table, in the worker on 2026-10-12 while five
+claimants were crawling: 500 postings, 6,655 chunks (about 652,000 tokens at
+the sample's 98 a chunk), 5,785 distinct, 20.877 s encoding and 1.439 s for
+the insert, before the commit. Read back afterwards, all 500 postings had the
+right rows, offsets and hash, and no repeated text had two vectors. The tests
+are in `tests/test_posting_chunks.py`.
+
+That pass ran 16 minutes after the crawl began, and the wait was the queue:
+the matching pass is one task, taken oldest-due first, behind 671 company
+crawls. Of 2,482 postings then waiting for chunks, 1,852 were new and 630 had
+a changed hash; 183 of the 630 had a description of exactly the length it was
+chunked at, which is a proxy for step 5's metadata-only edit and not a proof.
+
+### Tools that fit this project
+
+| Tool | Evidence and recommendation |
+|---|---|
+| Existing Sentence Transformers + PyTorch MPS | Already working on this M4. Keep as the reference; reuse and batching changes fit the current code. |
+| Existing SQLAlchemy + PostgreSQL/pgvector | Bulk insertion is worth implementing and testing. No vector-database migration is needed for this optimization. |
+| FastEmbed / ONNX Runtime | Installed and tested in a temporary environment only. Treat as a CPU alternative to evaluate when reserving GPU capacity for Ollama, not an automatic speed upgrade. The packaged BGE model and output agreement were checked. |
+| Hugging Face Text Embeddings Inference (TEI) | A later candidate if several processes need one shared encoder. Official documentation describes token-based batching, telemetry, and native Apple Metal installation. It was researched, not installed or timed here. |
+| Existing structured logs | Add model/device, unique/total chunks, queue age, encoding time, insert time, stale failures, and retry counts. This will distinguish a stopped worker from slow inference without another monitoring service. |
+
+FastEmbed supports standalone embedding and configurable batching/parallelism;
+using it does not require adopting Qdrant as the database.
+[FastEmbed quickstart](https://qdrant.tech/documentation/fastembed/fastembed-quickstart/),
+[throughput controls](https://qdrant.tech/documentation/fastembed/fastembed-optimize/).
+For a shared encoder, TEI documents
+[token-based batching and metrics](https://huggingface.co/docs/text-embeddings-inference/en/index)
+and [native Metal installation](https://huggingface.co/docs/text-embeddings-inference/en/local_metal).
+Any TEI trial still needs model compatibility and local throughput checks.
+
+An HNSW index addresses search latency, not encoder throughput, and adds index
+maintenance work. The chunk table currently has only B-tree indexes. Larger
+backfills can use PostgreSQL binary COPY, but begin with the smaller bulk-insert
+change for normal incoming batches.
+[pgvector loading and indexing documentation](https://github.com/pgvector/pgvector#loading).
+
+### Artifacts and limits
+
+The scripts, sampled inputs, reference vectors, raw timings, and database
+snapshot are in `storage/embed_rank_bench/ingest_2026-10-10/` (git-ignored).
+`inspect_ingest.py` reads the database; `bench_encode.py` and `confirm_encode.py`
+use the cached PyTorch model; `bench_writes.py` creates only a temporary table
+and rolls back; `bench_fastembed.py` uses the separate FastEmbed environment;
+`final_pair.py` repeats the sequential comparison. `final_state.json` records
+the later coverage check. Re-running the snapshot script changes its sample;
+keep the archived inputs when comparing against these timings.
+
+The isolated environment is `/private/tmp/jobrunner-fastembed-20261010`, with
+FastEmbed 0.9.0 and ONNX Runtime 1.31.0. Its public model is cached under
+`/private/tmp/jobrunner-fastembed-models`. The project environment was unchanged.
+No encoder option was enabled in the application. No new full-corpus embeddings
+were written by this investigation, and no end-to-end RAG quality gain is claimed.
+
+For the final comparison, run these commands **sequentially**, from the repository
+root, while the machine is otherwise idle. The FastEmbed command requires the
+temporary environment and cache described above; no project dependency was added.
+
+```sh
+export HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 TOKENIZERS_PARALLELISM=false PYTHONPATH=.
+.venv/bin/python storage/embed_rank_bench/ingest_2026-10-10/final_pair.py mps
+.venv/bin/python storage/embed_rank_bench/ingest_2026-10-10/final_pair.py mps_fp16_dedup
+/private/tmp/jobrunner-fastembed-20261010/bin/python storage/embed_rank_bench/ingest_2026-10-10/final_pair.py fastembed
+.venv/bin/python storage/embed_rank_bench/ingest_2026-10-10/bench_writes.py write_results_confirmation.json
+```
+
+All six benchmark scripts parsed successfully; saved result JSON was validated
+and `git diff --check` passed. Product-code regression tests were not rerun
+because this investigation changed only documentation and local benchmark
+artifacts. An optional process-level CPU inspection was rejected by automatic
+approval review because workspace credits were exhausted at that moment. It
+was not bypassed. The later sequential timing and read-only database checks
+were approved and completed.
+
 ## The assistant's retrieval, routing and tool paths, traced (2026-10-10 and 10-11)
 
 > Kept as it was written, and read with one thing in mind: it describes the
@@ -1708,3 +2003,258 @@ The races are in the test suite and need nothing but the test database:
 .venv/bin/pytest tests/test_review_is_decided_once.py tests/test_crawl_command.py \
     tests/test_mcp_grading.py -q
 ```
+
+## A chunk that says which job it is from (2026-10-12)
+
+Measured before building, and read-only: nothing was written to the database
+and no setting changed. The owner asked for the staged retrieval pipeline of a
+larger system to be applied here, and its first stage is chunks that follow a
+document's structure and carry their ancestry. A chunk here is 500 characters
+from the middle of a posting and never says what the job is called (§21), so
+the test was whether saying so helps the chunk search.
+
+The 5,171 open postings in the search area were cut and embedded three ways
+with bge-small, and each way ranked a question's own posting by its best
+chunk, over all 5,171, as the assistant's chunk search does:
+
+| Variant | What is embedded | Chunks |
+|---|---|---:|
+| `stored` | Fixed 500-character windows, the text alone: what `posting_chunks` holds | 72,422 |
+| `crumb` | The same windows, each under `Title \| Company` | 72,497 |
+| `lines` | Windows ending on the posting's own line breaks, each under `Title \| Company \| heading line` | 95,150 |
+
+About 7.1, 7.1 and 9.3 million tokens at 98 a chunk. Questions are the 104 dev
+and 80 held-out ones of `rag_trace_2026-10-10`, less those whose posting has
+since closed, been pruned or left the area: 41 and 26 of each kind remain.
+
+| Set, kind | Variant | Median rank | In 5 | In 30 | In 100 | In 500 | Up / down against stored |
+|---|---|---:|---:|---:|---:|---:|---|
+| Dev, natural (41) | stored | 6 | 20 | 24 | 33 | 41 | |
+| | crumb | 1 | 34 | 39 | 41 | 41 | 30 / 1 |
+| | lines | 1 | 36 | 39 | 40 | 41 | 26 / 4 |
+| Dev, paraphrased (41) | stored | 181 | 1 | 8 | 16 | 29 | |
+| | crumb | 139 | 3 | 7 | 17 | 34 | 26 / 15 |
+| | lines | 248 | 2 | 10 | 16 | 32 | 23 / 18 |
+| Held-out, natural (26) | stored | 3 | 15 | 19 | 23 | 26 | |
+| | crumb | 1 | 23 | 25 | 25 | 26 | 16 / 1 |
+| | lines | 1 | 21 | 23 | 25 | 26 | 15 / 0 |
+| Held-out, paraphrased (26) | stored | 98 | 4 | 9 | 13 | 19 | |
+| | crumb | 199.5 | 7 | 11 | 12 | 19 | 12 / 14 |
+| | lines | 158.5 | 3 | 10 | 11 | 21 | 11 / 13 |
+
+Read it as:
+
+- **For a question that names the job, the breadcrumb is a large gain in the
+  chunk search**, on both sets: 20 to 34 of 41 in the top five, and 15 to 23
+  of 26, with one question worse on each.
+- **For a paraphrase it is not a gain that can be told from noise.** The top
+  five improves a little on both sets (1 to 3, 4 to 7). The median improves
+  on one set and worsens on the other, and on the held-out set as many
+  questions move down as up. The expectation this was run on, that a chunk
+  naming its job would help paraphrases, was mostly wrong.
+- **Cutting on line breaks adds nothing over the breadcrumb**, and costs 31%
+  more chunks.
+
+What it does not show. This is the chunk search on its own. The assistant
+finds a named job by keywords and by title first, so the first row's gain is
+not a gain in what is shown until it is run through `retrieve()`. (This said
+"and that needs the vectors written under a stamp of their own". It did not,
+and they could not have been: see the next heading.) Each question has one
+target, and a paraphrase describes a kind of job that many postings are; and
+41 and 26 questions is few. Nothing was changed on the strength of it.
+
+For paraphrases the limit is still the first-stage model (see *Where a target
+is lost*). What the larger pipeline offers for that is on the query's side,
+not the document's: a question that finds nothing by its own words is
+rewritten into the titles and skills a posting would use and searched again.
+(This said "Not built, and not measured". It had been measured four days
+earlier and never written down: see *A question restated in a posting's
+words* below.)
+
+`storage/embed_rank_bench/structure_2026-10-12/chunk_shapes.py` is the run and
+`chunk_shapes.json` its numbers.
+
+### The same breadcrumb through the real search
+
+Run the same day, because the table above is the chunk search alone and §21
+is the record of what a number from something other than the shipped path is
+worth.
+
+The plan was to write the breadcrumb vectors to the database "under a stamp
+of their own" and run `retrieve()` over them. Reading the table first:
+`posting_chunks` holds one set of chunks per posting
+(`uq_posting_chunks_posting_ordinal` is on the posting and the ordinal, and
+`chunk_postings` deletes a posting's chunks by posting alone), so a second set
+cannot sit beside the first without a migration. Nor was a write needed.
+`retrieve()` reads chunk vectors in one place, `_best_chunks`.
+`crumb_in_search.py` puts a function in that place that ranks from a matrix
+in memory, and the real `retrieve()` answers every question three ways:
+
+| Arm | What `_best_chunks` reads |
+|---|---|
+| `db` | Postgres, as shipped |
+| `stored` | The same stored vectors, in memory. The control |
+| `crumb` | The same windows, each embedded under `Title \| Company` |
+
+each with `CHAT_SEMANTIC_CANDIDATES` off (what ships) and on, no re-ranker,
+inside one `REPEATABLE READ, READ ONLY` transaction so all three read one
+corpus. Nothing was written and no setting was saved.
+
+All 145,200 chunks of the 10,906 open postings that have them, about 14.2
+million tokens at 98 a chunk, and not only the search area's: the chunk
+search ranks the whole corpus before the area is applied. 132,076 distinct
+texts once each carries its title (9% of chunks still repeat another),
+embedded on the CPU in 891 s on four threads with the machine between 44% and
+49% free. The first attempt, on the GPU, was stopped by its own guard at 27%.
+
+**The control agreed everywhere.** `db` and `stored` gave the same five, the
+same list of up to 105 and the same place for the target on 268 of 268 runs
+(134 questions, two modes). What differs below is the vectors.
+
+| Set, kind | Mode | Vectors | In the 5 shown | First | In the list | MRR | Target up / down |
+|---|---|---|---:|---:|---:|---:|---|
+| Dev, natural (41) | shipped | stored | 31 | 18 | 37 | 0.575 | |
+| | | crumb | 33 | 21 | 37 | 0.632 | 10 / 2 |
+| | semantic on | stored | 32 | 19 | 40 | 0.609 | |
+| | | crumb | 37 | 21 | 40 | 0.670 | 11 / 3 |
+| Dev, paraphrased (41) | shipped | stored | 1 | 0 | 4 | 0.019 | |
+| | | crumb | 2 | 0 | 4 | 0.017 | 3 / 1 |
+| | semantic on | stored | 3 | 0 | 10 | 0.031 | |
+| | | crumb | 2 | 0 | 12 | 0.026 | 8 / 6 |
+| Held-out, natural (26) | shipped | stored | 19 | 13 | 22 | 0.603 | |
+| | | crumb | 20 | 13 | 22 | 0.620 | 3 / 0 |
+| | semantic on | stored | 18 | 12 | 23 | 0.570 | |
+| | | crumb | 20 | 12 | 23 | 0.597 | 4 / 0 |
+| Held-out, paraphrased (26) | shipped | stored | 6 | 4 | 12 | 0.198 | |
+| | | crumb | 7 | 3 | 12 | 0.190 | 4 / 4 |
+| | semantic on | stored | 7 | 3 | 13 | 0.189 | |
+| | | crumb | 8 | 4 | 15 | 0.227 | 10 / 3 |
+
+Read it as:
+
+- **The chunk search's gain mostly does not reach the screen.** Alone it put
+  14 more of 41 and 8 more of 26 named targets in its top five. Through the
+  search that ships that is 2 more and 1 more. Keywords and the title had
+  already found most of them; the vectors only order what was found (§14).
+  It moved a named target up on 13 questions and down on 2 across the two
+  sets, and none into or out of the list.
+- **Paraphrases did not move in the shipped search**: 1 to 2 and 6 to 7 in
+  the five, 4 and 12 in the list either way. That is what the chunk search
+  on its own predicted.
+- **With semantic candidates on it does more**: named targets 32 to 37 and 18
+  to 20 in the five, and two more paraphrased targets into the list on each
+  set. That setting is off, for the reason under *Whether to turn the
+  experiment on*.
+- **It changes what is shown far more than it changes where the target is.**
+  In the shipped search, 63 of the 335 postings shown for named questions
+  were different ones (47 of 67 questions had at least one of the five
+  replaced), and 92 of 335 for paraphrases (61 of 67). With semantic
+  candidates on, 167 of 335 for paraphrases. Nobody has judged the ones that
+  left or the ones that came.
+
+Nothing was changed. What can be counted is three more targets in the five
+over 67 named questions; what cannot is a fifth of everything shown. It is
+the same position as the semantic candidates: relevance grades decide it, and
+there are none (`posting_labels` holds 0 rows).
+
+What adopting it would take, so the cost is on record beside the number: the
+text `chunk_postings` embeds and a stamp of its own for it (vectors of
+different texts must never be compared, and `_encoders` has to know the
+stamp), and every chunk embedded again, a quarter of an hour on the CPU. A
+posting whose title changes is already re-chunked: `posting_hash` covers the
+title.
+
+`crumb_in_search.py` and `crumb_in_search.json` are beside `chunk_shapes.py`.
+
+### A question restated in a posting's words
+
+The larger pipeline's answer for a paraphrase is on the query's side: a model
+rewrites the question into the titles and terms a posting would use, and the
+search runs again. The section above called that "not built, and not
+measured". It was measured on 2026-10-08, with the cross-encoder work, and
+the numbers stayed in `storage/embed_rank_bench/embed_rank/` and out of this
+document. They are here now, with a second run from 2026-10-12. Every number
+is the real `retrieve()`, read-only, the target's place among the five shown
+and the list of up to 105.
+
+**2026-10-08, the ceiling and one model** (`er_restate.py`,
+`er_restate_llm.py`, `er_restate_eval.py`). The 49 paraphrased dev questions
+whose posting was open that day:
+
+| | No re-ranker: in the 5 | In the list | Cross-encoder: in the 5 | In the list |
+|---|---:|---:|---:|---:|
+| As asked (49) | 2 | 5 | 3 | 11 |
+| Restated by hand (49) | 8 | 22 | 10 | 35 |
+| As asked, the 31 whose answer had not been on screen | 1 | 3 | 2 | 7 |
+| Restated by hand, those 31 | 7 | 15 | 9 | 24 |
+| As asked, the 22 Gemini reached | 1 | 3 | 3 | 8 |
+| Restated by Gemini (22) | 0 | 5 | 0 | 6 |
+| Gemini's titles alone (22) | 3 | 6 | 1 | 9 |
+| Restated by hand, those 22 | 5 | 10 | 7 | 16 |
+
+"By hand" is Claude writing each restatement from the question, in a session
+where some answers had been seen, which is why those are counted apart. It is
+an upper bound on the mechanism and not a model the assistant could use.
+Gemini (`gemini-3.6-flash`, one call a question, stopped at 22) was asked for
+"concrete duties, skills or tools", and its restatements ran to a median 26
+words naming tools the postings do not: WAF rules, OWASP, Salesforce, Jira.
+The search then looked for those.
+
+**2026-10-12, a shorter prompt and a second set** (`restate_batched.py`,
+`restate_in_search.py`). Nemotron was asked for one or two titles and at most
+four plain terms, with no tool the question does not point to: a median 19
+words. All 92 paraphrased questions in four batched calls, of the day's 50
+free ones. 67 have a posting still open and in the area.
+
+| Set | Question | No re-ranker: in the 5 | First | In the list | Cross-encoder: in the 5 | First | In the list |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Dev (41) | as asked | 1 | 0 | 4 | 2 | 0 | 9 |
+| | restated by Nemotron | 6 | 1 | 12 | 8 | 1 | 13 |
+| | restated by hand (39 of them) | 8 | 5 | 17 | 10 | 5 | 26 |
+| Held-out (26) | as asked | 6 | 4 | 12 | 9 | 7 | 14 |
+| | restated by Nemotron | 5 | 2 | 9 | 5 | 3 | 12 |
+
+Read it as:
+
+- **On the dev questions a model's restatement helped, most of the way to the
+  ceiling**: 1 to 6 in the five against 8 by hand, the target up on 11
+  questions and down on 3.
+- **On the held-out questions it lost**: 6 to 5 in the five, 4 to 2 first,
+  the target down on 9 of 26 and up on 3. With the cross-encoder, 9 to 5.
+- **The two sets differ in who wrote them, and that is the likeliest
+  reason.** Nemotron wrote the dev questions and Nemotron restated them: a
+  model undoing its own paraphrase. Gemini wrote the held-out ones, and they
+  keep more of the posting's own words ("drawing blood", "claims"), which the
+  keyword search already reads. The restatement puts a guessed title in front
+  of those words, and 18 of the 67 restatements were then answered from the
+  role table. "…building smart tools to automate healthcare documentation
+  and claims" found its posting first. Restated as "What Healthcare Software
+  Engineer or Clinical Informatics Analyst roles…" it was a question about
+  software engineers, and the same posting was tenth.
+- **So a restatement cannot replace the question.** If the two lists were
+  shown interleaved, the question's own first, the target would be in the
+  five on at least 3 dev questions (5 with the cross-encoder) and on 6 and 9
+  held-out ones, which is no loss there. That is arithmetic on the two ranks
+  (`2r - 1` and `2r`), not a mode that was run.
+
+Nothing was built. Five things stand between this and a stage in the
+assistant:
+
+- The model would be the assistant's own, which is the local one unless the
+  owner names another for that question (§14). Neither run used it. Its
+  first words of an answer take a median 4.9 s here, and a restatement is a
+  call before that.
+- The first run shows the prompt decides the result more than the mechanism
+  does, and the second prompt was written after reading the dev questions
+  and the first run's failures. Dev is not a clean set for it. Held-out is,
+  and it lost there.
+- A batch of 20 to 26 questions a call is not one question a call.
+- "When the search finds nothing" has no test to run it on. A paraphrase
+  nearly always finds thirty postings by some word, and there is no
+  similarity cut-off because there is no graded set to choose one on.
+- One target a question. A paraphrase describes a kind of job that many
+  postings are, so a restatement that finds five other security engineers
+  scores as a miss here.
+
+The last is the blocker it has been since 2026-10-10: relevance grades, of
+which there are none.
