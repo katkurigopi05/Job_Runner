@@ -265,6 +265,8 @@ export interface ReviewRecord {
   submission_conflict_application_id?: string;
   submission_conflict_state?: string;
   submission_conflict_by_canonical?: boolean;
+  /** Defect #16 — the application this job was already sent through. */
+  submission_recorded_application_id?: string;
 }
 
 /** One measured axis of readiness. `measured` false means its input was

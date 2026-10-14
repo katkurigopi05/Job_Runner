@@ -200,9 +200,13 @@ async def review_application(
     application is the form sent twice. The second caller now waits, reads
     what the first left, and is told the application has moved on.
     """
-    application = await session.get(Application, application_id, with_for_update=True)
+    application = await session.get(Application, application_id)
     if application is None:
         raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+    # The worker's lock order, as `mark_submitted` keeps it: the candidate,
+    # under which the ledger is read, then the row being decided.
+    await submissions.lock_candidate(session, application.candidate_id)
+    await session.refresh(application, with_for_update=True)
 
     if application.status != ApplicationStatus.NEEDS_REVIEW.value:
         raise ApiError(
@@ -211,18 +215,13 @@ async def review_application(
         )
 
     if body.approve:
-        review = dict(application.review_json or {})
-        conflict_id = review.get("submission_conflict_application_id")
-        if conflict_id:
-            ways = "reject, or mark submitted if it was sent"
-            if review.get("submission_conflict_by_canonical"):
-                ways = (
-                    "reject, mark submitted if it was sent, or split the posting out of the group"
-                )
+        # The ledger as it is now, not what the park saved (defect #16). Only a
+        # new run clears what a park saved, and a new run is what is being
+        # refused, so a split that ended a conflict was refused for ever.
+        blocker = await submissions.blocking(session, application)
+        if blocker is not None:
             raise ApiError(
-                ErrorCode.INVALID_STATE,
-                f"cannot approve: job already has a submission record in "
-                f"application {conflict_id}; ways out: {ways}",
+                ErrorCode.INVALID_STATE, await _cannot_approve(session, application, blocker)
             )
 
         payload: dict[str, Any] = {"decision": "approve"}
@@ -265,6 +264,25 @@ async def review_application(
     _announce()
     await session.refresh(application)
     return application
+
+
+async def _cannot_approve(
+    session: AsyncSession, application: Application, blocker: AppliedPosting
+) -> str:
+    """Why approving cannot send this application, and what to do instead."""
+    if blocker.application_id == application.id:
+        sent = await submissions.sent_through(session, blocker)
+        return (
+            "cannot approve: this job is already recorded as submitted, through "
+            f"application {sent}; reject this application"
+        )
+    ways = "reject, or mark submitted if it was sent"
+    if submissions.through_group(blocker, application.url):
+        ways = "reject, mark submitted if it was sent, or split the posting out of the group"
+    return (
+        "cannot approve: job already has a submission record in "
+        f"application {blocker.application_id}; ways out: {ways}"
+    )
 
 
 @router.post("/{application_id}/tailoring/compare", response_model=ApplicationOut)

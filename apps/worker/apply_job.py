@@ -162,6 +162,7 @@ async def _run_pipeline(
         cleaned.pop("submission_conflict_application_id", None)
         cleaned.pop("submission_conflict_state", None)
         cleaned.pop("submission_conflict_by_canonical", None)
+        cleaned.pop("submission_recorded_application_id", None)
         application.review_json = cleaned
 
     async with browser_page(adapter.name) as page:
@@ -1180,8 +1181,6 @@ async def _submit(
     if fence is not None:
         # A fence belonging to ANOTHER application, in any state: do not click.
         if fence.application_id != application.id:
-            from packages.core.submission_identity import submission_key_v1
-
             msg = (
                 f"A submission for this job already exists in application {fence.application_id} "
                 f"({fence.url}) with status '{fence.state}'."
@@ -1190,8 +1189,8 @@ async def _submit(
             review["reason"] = msg
             review["submission_conflict_application_id"] = str(fence.application_id)
             review["submission_conflict_state"] = fence.state
-            review["submission_conflict_by_canonical"] = fence.job_key != submission_key_v1(
-                application.url
+            review["submission_conflict_by_canonical"] = submissions.through_group(
+                fence, application.url
             )
             application.review_json = review
             await transition(
@@ -1238,14 +1237,19 @@ async def _submit(
             await session.commit()
             return
 
-        # If already submitted for this job:
+        # Its own row is `submitted` but it is not: the owner marked another
+        # application for this job sent, and that confirmed this row. Name the
+        # one sent, and say approving cannot help; the approve route refuses.
         if fence.state == "submitted":
+            sent = await submissions.sent_through(session, fence)
             msg = (
-                f"This job is already recorded as submitted by application {fence.application_id} "
-                f"(source: {fence.source})."
+                f"This job is already recorded as submitted, through application {sent} "
+                f"(source: {fence.source}). Approving cannot send it again; "
+                "reject this application."
             )
             review = dict(application.review_json or {})
             review["reason"] = msg
+            review["submission_recorded_application_id"] = str(sent)
             application.review_json = review
             await transition(
                 session,
@@ -1253,7 +1257,7 @@ async def _submit(
                 ApplicationStatus.NEEDS_REVIEW,
                 payload={
                     "reason": msg,
-                    "submitted_by_application_id": str(fence.application_id),
+                    "submitted_by_application_id": str(sent),
                     "source": fence.source,
                 },
             )

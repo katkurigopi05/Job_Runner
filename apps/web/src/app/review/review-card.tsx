@@ -72,6 +72,19 @@ export function ReviewCard({
   const theme = useResolvedTheme();
   const reducedMotion = usePrefersReducedMotion();
   const review = application.review ?? {};
+  // Defect #16: the ledger stopped this one, and approving may not help.
+  const ledgerStop = Boolean(
+    review.submission_uncertain ||
+      review.submission_conflict_application_id ||
+      review.submission_recorded_application_id,
+  );
+  const parkTitle = review.submission_uncertain
+    ? "Submission uncertain"
+    : review.submission_conflict_application_id
+      ? "Submission conflict"
+      : review.submission_recorded_application_id
+        ? "Already submitted"
+        : "Parked for review";
   const unanswered = review.unanswered ?? [];
   const required = unanswered.filter((q) => q.required !== false);
 
@@ -194,32 +207,16 @@ export function ReviewCard({
 
       <form id={approveFormId} action={runApprove}>
         {review.reason ? (
-          <section
-            className={`border-b border-rule px-6 py-5 ${
-              review.submission_uncertain || review.submission_conflict_application_id
-                ? "bg-stop/5"
-                : ""
-            }`}
-          >
+          <section className={`border-b border-rule px-6 py-5 ${ledgerStop ? "bg-stop/5" : ""}`}>
             <h3
               className={`font-mono text-xs uppercase tracking-widest ${
-                review.submission_uncertain || review.submission_conflict_application_id
-                  ? "text-stop"
-                  : "text-attn"
+                ledgerStop ? "text-stop" : "text-attn"
               }`}
             >
-              {review.submission_uncertain
-                ? "Submission uncertain"
-                : review.submission_conflict_application_id
-                  ? "Submission conflict"
-                  : "Parked for review"}
+              {parkTitle}
             </h3>
             <p
-              className={`mt-2 max-w-prose text-sm ${
-                review.submission_uncertain || review.submission_conflict_application_id
-                  ? "text-stop"
-                  : "text-ink-soft"
-              }`}
+              className={`mt-2 max-w-prose text-sm ${ledgerStop ? "text-stop" : "text-ink-soft"}`}
             >
               {review.reason}
             </p>
@@ -233,6 +230,13 @@ export function ReviewCard({
                   ? ", or split the posting out of the group"
                   : ""}
                 .
+              </p>
+            ) : null}
+            {review.submission_recorded_application_id ? (
+              <p className="mt-2 text-xs text-ink-soft">
+                This job was already sent, through application{" "}
+                <span className="font-mono">{review.submission_recorded_application_id}</span>.
+                Approving cannot send it again. Reject this application.
               </p>
             ) : null}
           </section>

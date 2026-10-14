@@ -84,12 +84,14 @@ The submission ledger (`applied_postings` table and `_submit` ordering) fixes
 this and must not be undone:
 1. `lock_candidate` advisory lock and `SELECT ... FOR UPDATE` re-read of the
    application row prevents concurrent submissions.
-2. If an existing fence is already `submitted`, `_submit` parks at `needs_review`
-   citing that it was already recorded as submitted (never left `running`).
+2. `find_existing` prefers another application's row to this one's own, whatever
+   their ages. Read earliest-first, an older `released` row of its own won, and
+   the application clicked for a job another listing of it had already sent.
 3. An existing fence from another application parks at `needs_review` with conflict
-   keys (`submission_conflict_application_id`, etc.), and approval via API is
-   refused with 409 `invalid_state` directing the user to reject, mark submitted,
-   or split canonical group.
+   keys (`submission_conflict_application_id`, etc.). This application's own fence,
+   once `submitted`, parks naming the application the job was sent through
+   (`submission_recorded_application_id`, read by `submissions.sent_through`), so
+   it is never left `running`.
 4. This application's own fence in `attempting`/`uncertain` parks at `needs_review`
    with `submission_uncertain=True` without clicking.
 5. The fence is made durable as `attempting` (or re-arms a `released` fence) and
@@ -111,9 +113,18 @@ this and must not be undone:
     allowing exactly one retry attempt. `_run_pipeline` clears `submission_uncertain`
     and earlier attempt keys on retry so later parks (e.g. questions) do not retain
     stale uncertainty.
-11. Manual submission records or updates the fence to `submitted` with `source="owner"`
-    and records `confirmed_fence_application_id` in the `ApplicationEvent` transition
-    payload so automated workers will not re-submit the same job.
+11. Manual submission confirms the application's own fence if it has one, and
+    otherwise the job's, as `submitted` with `source="owner"`, and records
+    `confirmed_fence_application_id` in the `ApplicationEvent` transition payload
+    so automated workers will not re-submit the same job.
+12. Approval reads the ledger as it is now (`submissions.blocking`), never what a
+    park saved: only a new run clears that, and a new run is what is being
+    refused. Another application's row, or its own once `submitted`, refuses
+    with 409 `invalid_state` and the ways out (reject; mark submitted; split the
+    posting out of its group when that is how it matched). Read from what the
+    park saved, a split that ended a conflict was refused for ever, and an
+    already-submitted park was approved, re-ran and parked again for ever.
+    The route takes the candidate lock before the row lock, as the worker does.
 
 Covered by `tests/test_submission_ledger.py`.
 

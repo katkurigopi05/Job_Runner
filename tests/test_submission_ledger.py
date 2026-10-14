@@ -1098,3 +1098,258 @@ async def test_record_manual_while_other_fence_is_released(
         app1 = await session.get(Application, app1_id)
         assert app1.status == "needs_review"
         assert "already recorded as submitted" in app1.review_json.get("reason", "").lower()
+
+
+async def _apply_tasks_for(maker, application_id) -> int:
+    async with maker() as session:
+        tasks = (await session.scalars(select(QueueTask))).all()
+        return sum(
+            1 for t in tasks if (t.payload_json or {}).get("application_id") == str(application_id)
+        )
+
+
+async def _canonical_pair(maker):
+    """Two listings of one job, grouped, and an application to each.
+
+    The first is sent; the second parks naming it. Returns both application
+    ids and the second listing's posting id.
+    """
+    from packages.core.models import Company, Posting
+    from packages.core.models_jobs import CanonicalJob
+
+    async with maker() as session:
+        co = Company(name="Acme", domain="acme.test")
+        session.add(co)
+        await session.flush()
+        group = CanonicalJob(company_id=co.id, title_key="engineer")
+        session.add(group)
+        await session.flush()
+        first = Posting(
+            company_id=co.id,
+            url="https://boards.greenhouse.io/acme/jobs/111",
+            canonical_job_id=group.id,
+        )
+        second = Posting(
+            company_id=co.id,
+            url="https://boards.greenhouse.io/acme/jobs/222",
+            canonical_job_id=group.id,
+        )
+        session.add_all([first, second])
+        await session.commit()
+        second_posting_id = second.id
+
+    app1_id = await _application(maker, url="https://boards.greenhouse.io/acme/jobs/111")
+    employer = Employer()
+    async with maker() as session:
+        await apply_job._submit(session, await session.get(Application, app1_id), employer, None)
+        await session.commit()
+    async with maker() as session:
+        app1 = await session.get(Application, app1_id)
+        app2 = Application(
+            candidate_id=app1.candidate_id,
+            profile_id=app1.profile_id,
+            url="https://boards.greenhouse.io/acme/jobs/222",
+        )
+        session.add(app2)
+        await session.flush()
+        await transition(session, app2, ApplicationStatus.RUNNING)
+        await session.commit()
+        app2_id = app2.id
+    async with maker() as session:
+        await apply_job._submit(session, await session.get(Application, app2_id), employer, None)
+        await session.commit()
+    assert employer.clicks == 1
+    return app1_id, app2_id, second_posting_id
+
+
+async def test_splitting_the_posting_out_of_the_group_lets_approval_through(
+    client: AsyncClient, committing_sessionmaker
+):
+    """The conflict message offers the split as a way out, so it has to be one.
+
+    The refusal read the conflict saved on the application, which only a new
+    run clears, and a new run needs the approval being refused.
+    """
+    maker = committing_sessionmaker
+    app1_id, app2_id, second_posting_id = await _canonical_pair(maker)
+
+    refused = await client.post(f"/applications/{app2_id}/review", json={"approve": True})
+    assert refused.status_code == 409, refused.text
+    assert "split" in refused.json()["error"]["message"].lower()
+
+    split = await client.post(f"/postings/{second_posting_id}/split")
+    assert split.status_code == 200, split.text
+
+    approved = await client.post(f"/applications/{app2_id}/review", json={"approve": True})
+    assert approved.status_code == 200, approved.text
+    async with maker() as session:
+        assert (await session.get(Application, app2_id)).status == "running"
+        # The first application's record is untouched by the second's approval.
+        assert (await session.get(AppliedPosting, app1_id)).state == "submitted"
+        assert await session.get(AppliedPosting, app2_id) is None
+    assert await _apply_tasks_for(maker, app2_id) == 1
+
+
+async def test_approval_reads_the_ledger_not_what_the_park_saved(
+    client: AsyncClient, committing_sessionmaker
+):
+    """A job sent through another application after this one parked still blocks."""
+    maker = committing_sessionmaker
+    app1_id = await _application(maker, url="https://boards.greenhouse.io/acme/jobs/555")
+    async with maker() as session:
+        app1 = await session.get(Application, app1_id)
+        await transition(
+            session,
+            app1,
+            ApplicationStatus.NEEDS_REVIEW,
+            payload={"reason": "required questions could not be answered"},
+        )
+        app2 = Application(
+            candidate_id=app1.candidate_id,
+            profile_id=app1.profile_id,
+            url="https://job-boards.greenhouse.io/acme/jobs/555?utm_source=mail",
+        )
+        session.add(app2)
+        await session.flush()
+        await transition(session, app2, ApplicationStatus.RUNNING)
+        await session.commit()
+        app2_id = app2.id
+    employer = Employer()
+    async with maker() as session:
+        await apply_job._submit(session, await session.get(Application, app2_id), employer, None)
+        await session.commit()
+    assert employer.clicks == 1
+
+    resp = await client.post(f"/applications/{app1_id}/review", json={"approve": True})
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"]["code"] == "invalid_state"
+    assert str(app2_id) in resp.json()["error"]["message"]
+    async with maker() as session:
+        assert (await session.get(Application, app1_id)).status == "needs_review"
+    assert await _apply_tasks_for(maker, app1_id) == 0
+
+
+async def test_already_submitted_park_names_the_application_sent_and_cannot_be_approved(
+    client: AsyncClient, committing_sessionmaker
+):
+    """Marking B sent by hand confirms A's ledger row; A must say B, and stop.
+
+    It named A itself, and approving it ran the whole pipeline again only to
+    park the same way: an approval that can never send anything.
+    """
+    maker = committing_sessionmaker
+    app1_id = await _application(maker, url="https://boards.greenhouse.io/acme/jobs/444")
+    async with maker() as session:
+        from packages.core import submissions
+
+        app1 = await session.get(Application, app1_id)
+        await submissions.record(session, app1, state="released", source="worker")
+        app2 = Application(
+            candidate_id=app1.candidate_id,
+            profile_id=app1.profile_id,
+            url="https://job-boards.greenhouse.io/acme/jobs/444?utm_source=direct",
+        )
+        session.add(app2)
+        await session.flush()
+        await transition(session, app2, ApplicationStatus.RUNNING)
+        await session.commit()
+        app2_id = app2.id
+    assert (await client.post(f"/applications/{app2_id}/submitted", json={})).status_code == 200
+
+    employer = Employer()
+    async with maker() as session:
+        await apply_job._submit(session, await session.get(Application, app1_id), employer, None)
+        await session.commit()
+    assert employer.clicks == 0
+    async with maker() as session:
+        app1 = await session.get(Application, app1_id)
+        assert app1.status == "needs_review"
+        reason = app1.review_json["reason"]
+        assert "already recorded as submitted" in reason.lower()
+        assert str(app2_id) in reason
+        assert str(app1_id) not in reason
+        assert app1.review_json["submission_recorded_application_id"] == str(app2_id)
+
+    resp = await client.post(f"/applications/{app1_id}/review", json={"approve": True})
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"]["code"] == "invalid_state"
+    assert str(app2_id) in resp.json()["error"]["message"]
+    async with maker() as session:
+        assert (await session.get(Application, app1_id)).status == "needs_review"
+    assert await _apply_tasks_for(maker, app1_id) == 0
+
+
+async def test_another_applications_record_outranks_an_older_one_of_its_own(
+    client: AsyncClient, committing_sessionmaker
+):
+    """Two listings of one grouped job: A's own uncertain row is older than B's sent one.
+
+    The ledger was read earliest-first, so A found its own row, approval
+    released it, and A's next run would click for a job already sent as B.
+    """
+    from packages.core import submissions
+    from packages.core.models import Company, Posting
+    from packages.core.models_jobs import CanonicalJob
+
+    maker = committing_sessionmaker
+    async with maker() as session:
+        co = Company(name="Acme", domain="acme.test")
+        session.add(co)
+        await session.flush()
+        group = CanonicalJob(company_id=co.id, title_key="engineer")
+        session.add(group)
+        await session.flush()
+        session.add_all(
+            [
+                Posting(
+                    company_id=co.id,
+                    url="https://boards.greenhouse.io/acme/jobs/777",
+                    canonical_job_id=group.id,
+                ),
+                Posting(
+                    company_id=co.id,
+                    url="https://boards.greenhouse.io/acme/jobs/888",
+                    canonical_job_id=group.id,
+                ),
+            ]
+        )
+        await session.commit()
+
+    app1_id = await _application(maker, url="https://boards.greenhouse.io/acme/jobs/777")
+    async with maker() as session:
+        app1 = await session.get(Application, app1_id)
+        await submissions.record(session, app1, state="uncertain", source="worker")
+        await transition(
+            session, app1, ApplicationStatus.NEEDS_REVIEW, payload={"reason": "uncertain"}
+        )
+        app2 = Application(
+            candidate_id=app1.candidate_id,
+            profile_id=app1.profile_id,
+            url="https://boards.greenhouse.io/acme/jobs/888",
+        )
+        session.add(app2)
+        await session.flush()
+        await submissions.record(session, app2, state="submitted", source="worker")
+        await session.commit()
+        app2_id = app2.id
+
+    resp = await client.post(f"/applications/{app1_id}/review", json={"approve": True})
+    assert resp.status_code == 409, resp.text
+    assert str(app2_id) in resp.json()["error"]["message"]
+    async with maker() as session:
+        assert (await session.get(AppliedPosting, app1_id)).state == "uncertain"
+
+    # And a run that reaches the submit step anyway does not click.
+    async with maker() as session:
+        app1 = await session.get(Application, app1_id)
+        await transition(session, app1, ApplicationStatus.RUNNING)
+        await session.commit()
+    employer = Employer()
+    async with maker() as session:
+        await apply_job._submit(session, await session.get(Application, app1_id), employer, None)
+        await session.commit()
+    assert employer.clicks == 0
+    async with maker() as session:
+        app1 = await session.get(Application, app1_id)
+        assert app1.status == "needs_review"
+        assert app1.review_json["submission_conflict_application_id"] == str(app2_id)
