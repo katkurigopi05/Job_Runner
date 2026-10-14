@@ -40,17 +40,18 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.core.enums import TailorMode
 from packages.core.models import Match, Posting, Profile, Project, Resume
 from packages.github.select import select_projects
 from packages.llm import quota
 from packages.llm.provider import LLMProvider
 from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
+from packages.tailor.dispatch import active_mode, hold_to_pdf, plan_needed_calls, tailor
 from packages.tailor.evidence import matched_job_terms
-from packages.tailor.guard import SourceCorpus
 from packages.tailor.parse import ParsedResume
 from packages.tailor.publish import publish_tailored
-from packages.tailor.rewrite import tailor_bullets
+from packages.tailor.targeted import NO_GAIN
 
 log = structlog.get_logger(__name__)
 
@@ -91,12 +92,13 @@ async def pending(
     session: AsyncSession,
     profile_id: str | None = None,
     *,
-    limit: int = DEFAULT_LIMIT,
+    limit: int | None = DEFAULT_LIMIT,
 ) -> list[tuple[Match, Posting]]:
     """Matches the owner kept that have no tailored résumé yet.
 
     Highest score first, so a run cut short by the quota has spent it on the
     strongest matches rather than on whatever the database returned first.
+    `limit=None` is all of them.
     """
     stmt = (
         select(Match, Posting)
@@ -124,13 +126,23 @@ async def run(
 ) -> BatchResult:
     """Tailor everything pending, stopping before the allowance runs out."""
     result = BatchResult()
-    work = await pending(session, profile_id, limit=limit)
+    mode = active_mode()
+    # A posting with nothing to gain is passed over and stays pending, and
+    # under `targeted` that is most of them. Held to the ceiling as well, the
+    # same fifty would be read every night and nothing below them ever
+    # reached. So a targeted run reads the whole list, which asks no model,
+    # and counts towards the ceiling only the postings it had work for.
+    work = await pending(session, profile_id, limit=None if mode is TailorMode.TARGETED else limit)
     if not work:
         return result
 
     provider_name = getattr(provider, "name", "unknown")
+    worked = 0
 
     for match, posting in work:
+        if worked >= limit:
+            break
+
         profile = await session.get(Profile, match.profile_id)
         if profile is None or profile.base_resume_id is None:
             result.failed += 1
@@ -146,16 +158,6 @@ async def run(
         if not bullets:
             result.failed += 1
             continue
-
-        # Checked per posting rather than once: the count moves as the batch
-        # spends it, and the point is to stop before the last call, not after.
-        left = quota.remaining(provider_name)
-        if left is not None and left <= QUOTA_MARGIN + len(bullets):
-            result.stopped_reason = (
-                f"{provider_name} has ~{left} calls left today; stopping with a margin "
-                "rather than leaving the queue half-tailored"
-            )
-            break
 
         project_inventory = list(
             (
@@ -177,6 +179,29 @@ async def run(
             if project.pinned or matched_job_terms(project, posting.description_raw or "")
         ]
 
+        needed_calls = plan_needed_calls(
+            parsed, posting.description_raw or "", projects=relevant_projects, mode=mode
+        )
+
+        # Checked per posting rather than once: the count moves as the batch
+        # spends it, and the point is to stop before the last call, not after.
+        left = quota.remaining(provider_name)
+        if left is not None and left <= QUOTA_MARGIN + needed_calls:
+            result.stopped_reason = (
+                f"{provider_name} has ~{left} calls left today; stopping with a margin "
+                "rather than leaving the queue half-tailored"
+            )
+            break
+
+        # A targeted run with no bullet to revise and no project to add would
+        # store the base résumé under another version number. Passed over
+        # instead: not a failure, no call, and still pending, so a later
+        # night sorts it again in case the posting or the résumé has changed.
+        if mode is TailorMode.TARGETED and needed_calls == 0 and not relevant_projects:
+            result.per_posting.append((posting.title or str(posting.id), NO_GAIN))
+            continue
+        worked += 1
+
         # Before the model, not after: the point is to not make the call. §15
         # predicted this would start costing once tailoring went remote, and
         # the audit trail says it has.
@@ -186,6 +211,7 @@ async def run(
             projects=relevant_projects,
             provider=provider_name,
             model=getattr(provider, "model", None),
+            mode=mode,
         )
         cached = await find_cached(session, candidate_id=profile.candidate_id, key=cache_key)
         if cached is not None:
@@ -198,9 +224,14 @@ async def run(
             continue
 
         try:
-            rewrites = await tailor_bullets(
-                provider, bullets, posting.description_raw or "", SourceCorpus.from_resume(parsed)
+            tailored = await tailor(
+                lambda: provider,
+                parsed,
+                posting.description_raw or "",
+                projects=relevant_projects,
+                mode=mode,
             )
+            rewrites = tailored.result
         except Exception as exc:  # noqa: BLE001 - one posting must not end the night
             log.warning("batch_tailor_failed", error=type(exc).__name__)
             result.failed += 1
@@ -213,9 +244,14 @@ async def run(
         # once would label every one of them wrong from the exhaustion onward,
         # and the apply pipeline serves these rows straight to the review
         # screen without ever calling a provider again.
-        answered_by = getattr(provider, "answered_by", None) or provider_name
+        #
+        # And nobody, when a targeted run had no bullet to send: the document
+        # is then the base with its projects added, and no model wrote it.
+        answered_by = (
+            getattr(provider, "answered_by", None) or provider_name if tailored.calls else None
+        )
 
-        result.calls_spent += len(bullets)
+        result.calls_spent += tailored.calls
 
         if rewrites.provider_failures:
             result.failed += 1
@@ -246,10 +282,31 @@ async def run(
             tailored_key=cache_key,
             posting_id=posting.id,
             answered_by=answered_by,
+            mode=mode,
         )
         if published is None:
             result.failed += 1
             continue
+
+        # A targeted document is read back from its PDF before it is attached
+        # to the match, because apply reuses what was prepared here without
+        # reading it again. One that fails is taken out of the cache too
+        # (`hold_to_pdf`), so the posting stays pending and a later night
+        # starts over.
+        if mode is TailorMode.TARGETED:
+            verdict = hold_to_pdf(
+                published, parsed, rewrites, posting.description_raw or "", tailored.gained
+            )
+            if not verdict.ok:
+                result.failed += 1
+                result.per_posting.append(
+                    (
+                        posting.title or str(posting.id),
+                        "the PDF did not hold what the résumé says; left pending",
+                    )
+                )
+                await session.flush()
+                continue
 
         match.tailored_resume_id = published.id
         result.tailored += 1

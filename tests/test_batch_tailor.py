@@ -451,3 +451,71 @@ async def test_partial_provider_failure_stays_pending_for_retry(db_session) -> N
     assert result.tailored == 0
     assert match.tailored_resume_id is None
     assert [m.id for m, _ in await batch.pending(db_session, str(profile.id))] == [match.id]
+
+
+async def test_batch_targeted_mode_no_gain_skips_cleanly(db_session, monkeypatch) -> None:
+    """In targeted mode, a posting with no keyword gain and no projects to add
+    spends 0 calls, records 0 failures, and leaves the posting pending for next night.
+    """
+    from sqlalchemy import select
+
+    from packages.core.config import get_settings
+    from packages.core.models import Project
+    from packages.llm.provider import StubProvider
+
+    monkeypatch.setattr(get_settings(), "tailor_mode", "targeted")
+    profile = await _owner(db_session)
+    match = await _tailorable(db_session, profile)
+    posting = await db_session.get(Posting, match.posting_id)
+    posting.description_raw = "We want Python and Postgres experience."
+    # Remove projects so there's no project to add either
+    projects = (
+        await db_session.scalars(
+            select(Project).where(Project.candidate_id == profile.candidate_id)
+        )
+    ).all()
+    for p in projects:
+        await db_session.delete(p)
+    await db_session.flush()
+
+    provider = StubProvider()
+
+    result = await batch.run(db_session, provider, profile_id=str(profile.id))
+
+    assert result.tailored == 0
+    assert result.failed == 0
+    assert len(provider.calls) == 0, "Provider was called despite zero gain!"
+    assert match.tailored_resume_id is None
+
+
+async def test_batch_targeted_mode_pdf_failure_leaves_posting_pending(
+    db_session, monkeypatch
+) -> None:
+    """When PDF verification fails on batch-tailored output, match.tailored_resume_id is not set."""
+    from packages.core.config import get_settings
+    from packages.llm.provider import StubProvider
+    from packages.tailor.verify import PdfCheck
+
+    monkeypatch.setattr(get_settings(), "tailor_mode", "targeted")
+    profile = await _owner(db_session)
+    match = await _tailorable(db_session, profile)
+
+    monkeypatch.setattr(
+        "packages.tailor.dispatch.check_pdf",
+        lambda *args, **kwargs: PdfCheck(
+            extracted_chars=100,
+            garbled=False,
+            missing_terms=("automated testing",),
+            missing_figures=(),
+            missing_technologies=(),
+            parse=0.9,
+            parse_findings=(),
+            pages=1,
+            layout_findings=(),
+        ),
+    )
+
+    result = await batch.run(db_session, StubProvider(), profile_id=str(profile.id))
+
+    assert (result.tailored, result.failed) == (0, 1)
+    assert match.tailored_resume_id is None

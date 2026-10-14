@@ -33,7 +33,7 @@ from packages.ats.navigate import open_application, over_https
 from packages.ats.registry import adapter_for
 from packages.ats.screen import ScreenReport, screen
 from packages.core.config import get_settings
-from packages.core.enums import ApplicationStatus, FailureReason
+from packages.core.enums import ApplicationStatus, FailureReason, TailorMode
 from packages.core.models import (
     Application,
     Candidate,
@@ -52,7 +52,7 @@ from packages.llm import router as llm_router
 from packages.matching.embed import get_embedder
 from packages.matching.pick_resume import choose_base_resume
 from packages.tailor.bullets import tailorable_bullets
-from packages.tailor.cache import find_cached, tailoring_key
+from packages.tailor.cache import find_cached, mode_of, tailoring_key
 from packages.tailor.readiness import assess
 
 log = structlog.get_logger(__name__)
@@ -67,12 +67,13 @@ async def _match_score(session: AsyncSession, application: Application) -> float
     """
     if application.posting_id is None:
         return None
-    return await session.scalar(
+    score = await session.scalar(
         select(Match.score).where(
             Match.profile_id == application.profile_id,
             Match.posting_id == application.posting_id,
         )
     )
+    return float(score) if score is not None else None
 
 
 class TaskPayloadError(Exception):
@@ -318,6 +319,10 @@ async def _prepared_resume(
 
     Returns None rather than raising when the stored file has gone missing —
     the run then tailors normally, which is slower and correct.
+
+    None as well for one prepared under the other tailoring mode. `TAILOR_MODE`
+    says which kind of document a posting gets, and a row the batch wrote
+    before the setting changed is not that kind.
     """
     if application.posting_id is None:
         return None
@@ -337,6 +342,9 @@ async def _prepared_resume(
         return None
     if not get_storage().path_for(resume.storage_ref).is_file():
         log.warning("prepared_resume_missing", storage_ref=resume.storage_ref)
+        return None
+    if mode_of(resume) is not TailorMode(get_settings().tailor_mode):
+        log.info("prepared_resume_other_mode", prepared=mode_of(resume).value)
         return None
     return resume.id
 
@@ -488,12 +496,23 @@ async def _tailor(
     if base_id is None or not posting_text.strip():
         return None
 
+    mode = TailorMode(get_settings().tailor_mode)
+
     # A batch run may already have tailored this posting overnight
     # (packages/tailor/batch.py). Reusing it is the whole point: it takes the
     # slowest step out of the critical path, and re-tailoring would spend a
     # second set of provider calls to produce a *different* document from the
     # one the owner may already have reviewed.
-    prepared = await _prepared_resume(session, application, profile)
+    #
+    # A targeted run does not take this door. What a targeted document may
+    # say is set by a table that can change (`practices.PRACTICES`), and the
+    # cache key below is what knows whether a prepared one was written under
+    # today's. One that still qualifies is found there.
+    prepared = (
+        await _prepared_resume(session, application, profile)
+        if mode is TailorMode.REWRITE
+        else None
+    )
     if prepared is not None:
         application.tailored_resume_id = prepared
         # No provider is built on this path, so the model cannot be read live —
@@ -511,9 +530,11 @@ async def _tailor(
 
     try:
         from packages.tailor.diff import summarize
+        from packages.tailor.dispatch import HEURISTIC_NOTICE, hold_to_pdf, tailor
         from packages.tailor.guard import SourceCorpus
         from packages.tailor.parse import ParsedResume
-        from packages.tailor.rewrite import tailor_bullets
+        from packages.tailor.publish import apply_rewrites, publish_tailored
+        from packages.tailor.targeted import NO_GAIN, classify
 
         parsed = ParsedResume.model_validate(resume.parsed_json)
         _, bullets = tailorable_bullets(parsed)
@@ -524,12 +545,43 @@ async def _tailor(
         # employer's entry from another's, or a rewrite can move a metric
         # between them and still trace to "the résumé".
         corpus = SourceCorpus.from_resume(parsed)
-        provider = llm_router.tailor_resume()
 
         # Chosen before the key rather than inside the publish call, because
         # which projects get attached changes the document and so has to be
         # part of what identifies it.
         projects = await _projects_for(session, resume.candidate_id, posting_text)
+
+        # A targeted run sorts the posting's terms first, which asks no model.
+        # With no bullet to revise and no project to add, the document would
+        # be the base résumé under another version number. So nothing is
+        # attached, no provider is built, and `_resume_path` uploads the base.
+        plan = None
+        if mode is TailorMode.TARGETED:
+            plan = classify(parsed, posting_text, projects=projects)
+            if not plan.targets and not projects:
+                application.tailored_resume_id = None
+                log.info("tailoring_no_gain")
+                return {
+                    "mode": mode.value,
+                    "changed": 0,
+                    "unchanged": len(bullets),
+                    "rejected": 0,
+                    "provider_failures": 0,
+                    "gained": [],
+                    "refusals": [],
+                    "message": NO_GAIN,
+                    "answered_by": None,
+                    "attached": False,
+                    "fallback_reason": f"{NO_GAIN}; base résumé used",
+                    "pdf_check": None,
+                    "heuristic_notice": HEURISTIC_NOTICE,
+                    "ats": None,
+                    "recruiter": None,
+                    "unified": "",
+                    "changes": [],
+                }
+
+        provider = llm_router.tailor_resume()
         # From the stored row, not from `posting`: the adapter hands this
         # function a `ParsedPosting`, which carries no content hash.
         cache_key = tailoring_key(
@@ -538,6 +590,7 @@ async def _tailor(
             projects=projects,
             provider=getattr(provider, "name", "unknown"),
             model=getattr(provider, "model", None),
+            mode=mode,
         )
         cached = await find_cached(session, candidate_id=resume.candidate_id, key=cache_key)
         if cached is not None:
@@ -557,17 +610,27 @@ async def _tailor(
                 "answered_by": cached.tailored_by,
             }
 
-        result = await tailor_bullets(provider, bullets, posting_text, corpus)
-        # After the rewrites, never before — see `_answered_by`.
-        answered_by = _answered_by(provider)
+        tailored = await tailor(
+            lambda: provider,
+            parsed,
+            posting_text,
+            projects=projects,
+            corpus=corpus,
+            mode=mode,
+            plan=plan,
+        )
+        result = tailored.result
+        # After the rewrites, never before — see `_answered_by`. And nobody,
+        # when a targeted run had no bullet to send: the document below is
+        # then the base with its Projects section rebuilt, and no model wrote
+        # a word of it.
+        answered_by = _answered_by(provider) if tailored.calls else None
 
         # Scored against the same posting, before and after, so the review
         # screen can say what tailoring bought rather than only what it
         # changed. `apply_rewrites` is called here anyway — `publish_tailored`
         # below does the same thing internally — and the duplicate is cheap
         # next to re-deriving it on the screen from two stored documents.
-        from packages.tailor.publish import apply_rewrites
-
         summary = summarize(
             result,
             source=parsed,
@@ -579,8 +642,6 @@ async def _tailor(
         # rejected: that document is the source résumé with the current
         # Projects section rebuilt into it, which is still the right thing to
         # send and is not what sits in storage as the base.
-        from packages.tailor.publish import publish_tailored
-
         published = await publish_tailored(
             session,
             candidate_id=resume.candidate_id,
@@ -593,11 +654,37 @@ async def _tailor(
             # From the application, not from `posting`: the adapter's
             # ParsedPosting is read off the page and has no row id.
             posting_id=application.posting_id,
+            mode=mode,
         )
+
+        # A targeted document is read back from its PDF before it is attached.
+        # One that lacks a term the revision added, a figure or a listed
+        # technology is not the file to send: the base goes instead, the way
+        # a missing tailored file is handled, and the review screen says why.
+        attached = published is not None
+        fallback_reason = None
+        pdf_check = None
+        if published is not None and mode is TailorMode.TARGETED:
+            verdict = hold_to_pdf(published, parsed, result, posting_text, tailored.gained)
+            pdf_check = verdict.as_dict()
+            if not verdict.ok:
+                attached = False
+                fallback_reason = f"{verdict.reason}; base résumé used"
         if published is not None:
-            application.tailored_resume_id = published.id
+            application.tailored_resume_id = published.id if attached else None
 
         return {
+            # Which of the two ways this was tailored, and for a targeted run
+            # what it gained and what it was refused. Named here one by one
+            # for the reason the comment below gives.
+            "mode": mode.value,
+            "gained": list(tailored.gained),
+            "refusals": list(tailored.refusals),
+            "message": tailored.message,
+            "attached": attached,
+            "fallback_reason": fallback_reason,
+            "pdf_check": pdf_check,
+            "heuristic_notice": HEURISTIC_NOTICE,
             "changed": summary.changed,
             "unchanged": summary.unchanged,
             # Rewrites the guard refused. Surfaced, not swallowed.

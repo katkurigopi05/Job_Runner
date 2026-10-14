@@ -212,3 +212,13 @@ class CitizenshipStatus(StrEnum):
     OTHER_AUTHORIZED = "other_authorized"
     #: Not currently authorized in the United States.
     NOT_AUTHORIZED = "not_authorized"
+
+
+class TailorMode(StrEnum):
+    """How a résumé is tailored for a posting. `TAILOR_MODE` picks one."""
+
+    #: Every tailorable bullet goes to the model. The default.
+    REWRITE = "rewrite"
+    #: Only the bullets with a supported term to gain go, and none when there
+    #: is nothing to gain.
+    TARGETED = "targeted"

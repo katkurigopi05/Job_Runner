@@ -68,6 +68,7 @@ refused by it as an unsupported noun, whatever this table says.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 
@@ -252,6 +253,16 @@ def stands_beside(term: str, tool: str, text: str) -> bool:
     return False
 
 
+def practices_digest() -> str:
+    """A digest of the table, for the tailoring cache's key.
+
+    A row decides what a targeted revision may write, so adding or changing
+    one has to stop a document written without it from being served.
+    """
+    material = repr(tuple((sorted(p.forms), sorted(p.tools), sorted(p.uses)) for p in PRACTICES))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
 __all__ = [
     "PRACTICES",
     "Practice",
@@ -259,5 +270,6 @@ __all__ = [
     "phrase",
     "phrases",
     "practice_for",
+    "practices_digest",
     "stands_beside",
 ]

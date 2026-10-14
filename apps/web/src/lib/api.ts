@@ -33,6 +33,8 @@ export type FailureReason =
   | "rejected_at_review"
   | "site_error";
 
+export type TailorMode = "rewrite" | "targeted";
+
 /** One question the agent could not answer. The text is the employer's. */
 export interface UnansweredQuestion {
   key?: string;
@@ -143,6 +145,29 @@ export interface ResumeDiff {
    * unrecorded — a résumé tailored before the column existed — never a guess.
    */
   answered_by?: string | null;
+  /** Tailoring mode used: "rewrite" or "targeted". */
+  mode?: TailorMode;
+  /** Terms actually gained in this revision pass. */
+  gained?: string[];
+  /** Refusal reasons encountered during targeted revision. */
+  refusals?: string[];
+  /** PDF extraction check results. */
+  pdf_check?: {
+    ok: boolean;
+    missing_terms?: string[];
+    missing_figures?: string[];
+    missing_technologies?: string[];
+    parse_findings?: string[];
+    layout_findings?: string[];
+  } | null;
+  /** Whether the tailored résumé was attached to the application. */
+  attached?: boolean;
+  /** Observable reason why the base résumé was used instead. */
+  fallback_reason?: string | null;
+  /** Summary or status message (such as "no supported keyword gain available"). */
+  message?: string | null;
+  /** Explicit statement that heuristic scores do not predict hiring success. */
+  heuristic_notice?: string | null;
 }
 
 /**
@@ -169,6 +194,18 @@ export interface TailoringCandidate {
   changes?: ResumeChange[];
   reused?: boolean;
   error?: string | null;
+  mode?: TailorMode;
+  gained?: string[];
+  refusals?: string[];
+  pdf_check?: {
+    ok: boolean;
+    missing_terms?: string[];
+    missing_figures?: string[];
+    missing_technologies?: string[];
+    parse_findings?: string[];
+    layout_findings?: string[];
+  } | null;
+  heuristic_notice?: string | null;
 }
 
 /**

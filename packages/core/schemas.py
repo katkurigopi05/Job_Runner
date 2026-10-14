@@ -230,6 +230,8 @@ class TailoringCompareRequest(BaseModel):
     #: and quietly adding a column the caller did not list would be the exact
     #: surprise upload this design avoids.
     clouds: list[str] | None = None
+    #: Include a targeted revision as a third candidate column.
+    targeted: bool = False
 
 
 class TailoringChoice(BaseModel):

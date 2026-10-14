@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.models import Project, Resume
 from packages.core.storage import cover_letter_key, get_storage, resume_key
 from packages.tailor.assemble import AssemblyOptions, assemble_pdf
+from packages.tailor.cache import MODE_STAMP
 from packages.tailor.parse import ParsedResume
 from packages.tailor.rewrite import TailorResult
 from packages.tailor.skills import reorder_skills
@@ -153,6 +154,7 @@ async def publish_tailored(
     tailored_key: str | None = None,
     posting_id: uuid.UUID | None = None,
     answered_by: str | None = None,
+    mode: str = "rewrite",
 ) -> Resume | None:
     """Render the tailored résumé to PDF, store it, and return its row.
 
@@ -185,13 +187,20 @@ async def publish_tailored(
         log.warning("tailored_store_failed", error=type(exc).__name__)
         return None
 
+    # Beside the résumé's own fields and not one of them: `ParsedResume`
+    # ignores a key it does not know. It is how apply tells a document the
+    # batch prepared under one mode from one prepared under the other
+    # (`cache.mode_of`); the cache key says the same and cannot be read back.
+    stored_json = tailored.model_dump(mode="json")
+    stored_json[MODE_STAMP] = str(mode)
+
     resume = Resume(
         candidate_id=candidate_id,
         version=version,
         storage_ref=key,
         # The parsed form of what was rendered, so a later tailoring pass reads
         # the tailored text rather than re-deriving it from the PDF.
-        parsed_json=tailored.model_dump(mode="json"),
+        parsed_json=stored_json,
         is_default=False,
         # Written only on the miss that produced this row. Left NULL when the
         # caller had nothing safe to key on, which keeps it out of every future

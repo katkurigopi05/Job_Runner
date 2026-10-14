@@ -40,6 +40,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.core.enums import TailorMode
 from packages.core.models import Posting, Profile, Project, Resume
 from packages.github.select import relevant_for_posting
 from packages.llm.provider import build_provider
@@ -48,15 +49,18 @@ from packages.llm.router import (
     cloud_for_tailoring,
     comparable_clouds,
     is_comparable_cloud,
+    tailor_resume,
 )
 from packages.matching.embed import get_embedder
 from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
 from packages.tailor.diff import summarize
+from packages.tailor.dispatch import HEURISTIC_NOTICE, hold_to_pdf, tailor
 from packages.tailor.guard import SourceCorpus
 from packages.tailor.parse import ParsedResume
 from packages.tailor.publish import publish_tailored
 from packages.tailor.rewrite import tailor_bullets
+from packages.tailor.targeted import NO_GAIN, classify
 
 log = structlog.get_logger(__name__)
 
@@ -98,6 +102,15 @@ class Candidate:
     reused: bool = False
     #: Why this side has nothing to show. None when it ran.
     error: str | None = None
+    #: How this side was tailored. `targeted` is the column that revises only
+    #: the bullets with a supported term to gain, and the four fields below
+    #: are that column's.
+    mode: str = TailorMode.REWRITE.value
+    gained: list[str] = field(default_factory=list)
+    refusals: list[str] = field(default_factory=list)
+    #: What reading the published PDF back found. None when nothing was read.
+    pdf_check: dict[str, Any] | None = None
+    heuristic_notice: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -112,6 +125,11 @@ class Candidate:
             "changes": self.changes,
             "reused": self.reused,
             "error": self.error,
+            "mode": self.mode,
+            "gained": self.gained,
+            "refusals": self.refusals,
+            "pdf_check": self.pdf_check,
+            "heuristic_notice": self.heuristic_notice,
         }
 
 
@@ -126,6 +144,7 @@ async def tailor_with(
     projects: list[Project],
     content_hash: str | None,
     posting_id: uuid.UUID | None,
+    mode: str = TailorMode.REWRITE.value,
 ) -> Candidate:
     """One side of the comparison, guard-checked and stored.
 
@@ -134,6 +153,18 @@ async def tailor_with(
     the allowance runs out, Ollama is not running, no cloud key is set — and it
     must not take the other side down with it.
     """
+    if TailorMode(mode) is TailorMode.TARGETED:
+        return await _targeted_side(
+            session,
+            resume=resume,
+            parsed=parsed,
+            bullets=bullets,
+            posting_text=posting_text,
+            projects=projects,
+            content_hash=content_hash,
+            posting_id=posting_id,
+        )
+
     try:
         provider = build_provider(provider_name)
     except Exception as exc:  # noqa: BLE001 - an unconfigured side is a result, not a crash
@@ -239,6 +270,114 @@ def _requested_clouds(cloud: str | None, clouds: Sequence[str] | None) -> tuple[
     return tuple(ordered)
 
 
+async def _targeted_side(
+    session: AsyncSession,
+    *,
+    resume: Resume,
+    parsed: ParsedResume,
+    bullets: list[str],
+    posting_text: str,
+    projects: list[Project],
+    content_hash: str | None,
+    posting_id: uuid.UUID | None,
+) -> Candidate:
+    """The targeted revision as a column: only the bullets with a term to gain.
+
+    Asked for by name (`targeted` on the request) and sent to the provider
+    real tailoring uses, so the column is the document `TAILOR_MODE=targeted`
+    would attach. Three things it must not do:
+
+    - **Build a provider with nothing to send.** The posting's terms are
+      sorted first, which asks no model. No bullet to revise and no project
+      to add is a column that says so.
+    - **Name a model that did not answer.** One provider is built and it is
+      the one read afterwards. Building one to learn its name and a second to
+      make the calls would report the first, and with `LLM_FALLBACK_LOCAL` on
+      and the allowance spent that is a local model's bullet under a cloud
+      model's name.
+    - **Offer a document that failed its PDF.** It has no résumé id, so it
+      cannot be chosen, and `hold_to_pdf` takes it out of the cache so the
+      next comparison does not offer it as "reused".
+    """
+    label = TailorMode.TARGETED.value
+
+    def side(**fields: Any) -> Candidate:
+        return Candidate(requested=label, mode=label, heuristic_notice=HEURISTIC_NOTICE, **fields)
+
+    try:
+        plan = classify(parsed, posting_text, projects=projects)
+        if not plan.targets and not projects:
+            return side(unchanged=len(bullets), error=f"{NO_GAIN}; nothing was sent")
+
+        provider = tailor_resume()
+        name = getattr(provider, "name", label)
+        cache_key = tailoring_key(
+            source_resume_id=resume.id,
+            content_hash=content_hash,
+            projects=projects,
+            provider=name,
+            model=getattr(provider, "model", None),
+            mode=TailorMode.TARGETED,
+        )
+        cached = await find_cached(session, candidate_id=resume.candidate_id, key=cache_key)
+        if cached is not None:
+            return side(answered_by=cached.tailored_by, resume_id=cached.id, reused=True)
+
+        tailored = await tailor(
+            lambda: provider,
+            parsed,
+            posting_text,
+            projects=projects,
+            mode=TailorMode.TARGETED,
+            plan=plan,
+        )
+    except Exception as exc:  # noqa: BLE001 - an unconfigured side is a result, not a crash
+        log.warning("compare_side_failed", provider=label, error=type(exc).__name__)
+        return side(error=_reason(exc))
+
+    # After the calls, as on the other sides. And nobody when the plan had no
+    # bullet to send: that document is the base with its projects added.
+    answered_by = (getattr(provider, "answered_by", None) or name) if tailored.calls else None
+    summary = summarize(tailored.result)
+
+    published = await publish_tailored(
+        session,
+        candidate_id=resume.candidate_id,
+        parsed=parsed,
+        result=tailored.result,
+        projects=projects,
+        posting_text=posting_text,
+        tailored_key=cache_key,
+        posting_id=posting_id,
+        answered_by=answered_by,
+        mode=TailorMode.TARGETED,
+    )
+
+    error = None
+    verdict = None
+    if published is None:
+        error = "the tailored PDF could not be rendered"
+    else:
+        verdict = hold_to_pdf(published, parsed, tailored.result, posting_text, tailored.gained)
+        if not verdict.ok:
+            error = f"{verdict.reason}; not offered"
+
+    return side(
+        answered_by=answered_by,
+        resume_id=published.id if published is not None and error is None else None,
+        changed=summary.changed,
+        unchanged=summary.unchanged,
+        rejected=summary.rejected,
+        provider_failures=summary.provider_failures,
+        unified=summary.unified,
+        changes=[change.model_dump() for change in summary.changes],
+        gained=list(tailored.gained),
+        refusals=list(tailored.refusals),
+        pdf_check=verdict.as_dict() if verdict is not None else None,
+        error=error,
+    )
+
+
 async def compare_tailorings(
     session: AsyncSession,
     *,
@@ -246,6 +385,7 @@ async def compare_tailorings(
     posting: Posting,
     cloud: str | None = None,
     clouds: Sequence[str] | None = None,
+    targeted: bool = False,
 ) -> list[Candidate]:
     """Tailor this posting with the local model and with a cloud one.
 
@@ -349,6 +489,24 @@ async def compare_tailorings(
                     "against. Set a key and name it with LLM_TASK_TAILOR, or keep "
                     "tailoring local."
                 ),
+            )
+        )
+
+    # Last, and only when asked for: it is one more upload of the bullets it
+    # sends, to the provider real tailoring uses.
+    if targeted:
+        candidates.append(
+            await tailor_with(
+                session,
+                provider_name=TailorMode.TARGETED.value,
+                resume=resume,
+                parsed=parsed,
+                bullets=bullets,
+                posting_text=posting_text,
+                projects=projects,
+                content_hash=posting.content_hash,
+                posting_id=posting.id,
+                mode=TailorMode.TARGETED.value,
             )
         )
 

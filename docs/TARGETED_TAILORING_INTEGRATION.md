@@ -1,10 +1,10 @@
 # Putting the targeted revision behind apply and the nightly batch
 
-A plan for review, written 2026-10-13. **Nothing here is built.** Applications
-and the nightly batch still rewrite every bullet, and
-`python -m scripts.tailor_targeted` is the only caller of
-`packages/tailor/targeted.py`. This says what switching them would take, so
-the decision can be made on the particulars.
+A plan written 2026-10-13, and built the same day behind a setting.
+`TAILOR_MODE` is `rewrite` unless `.env` says otherwise, so applications and
+the nightly batch still rewrite every bullet. What was built, and where it
+departs from the plan below, is under *What was built* at the end. The plan
+is kept as it was written.
 
 ## What calls the ordinary rewrite today
 
@@ -116,3 +116,59 @@ not, on what those comparisons showed.
    has a "tailored" row.
 3. Whether any heuristic fall should block attachment. The plan says none
    does.
+
+## What was built
+
+`packages/tailor/dispatch.py` holds `tailor()`, which the three callers
+share, and `hold_to_pdf()`, the one place a published targeted PDF is read
+back. `TAILOR_MODE` is an enum (`core/enums.py::TailorMode`), so a misspelt
+value refuses to start instead of being read as the default.
+
+| Caller | Under `targeted` |
+|---|---|
+| Apply | Sorts the posting's terms first. Nothing to gain and no project: attaches nothing, builds no provider, and the base is uploaded. Otherwise revises, publishes, reads the PDF back and attaches only if it holds. |
+| Nightly batch | Budgets `plan.calls_needed` instead of one call a bullet. Nothing to gain and no project: passed over, not failed. |
+| Compare models | A third column when the request says `targeted: true`. It goes to the provider real tailoring uses. |
+
+Where it departs from the plan:
+
+- **No key of its own for "nothing to gain"** (question 3). Sorting a posting
+  again costs no call, so nothing is cached for it.
+- **A prepared résumé is found through the cache under `targeted`**
+  (question 4). Under `rewrite` apply reuses whatever the batch prepared,
+  before any provider is built, as it always has. Under `targeted` it reuses
+  one only if its cache key is today's, because that key carries the
+  practices table and a prepared document may have been written under an
+  older one. A résumé prepared under one mode is never reused under the
+  other; the mode is stamped beside the stored résumé (`cache.mode_of`).
+- **A refused PDF is taken out of the cache.** `publish_tailored` writes the
+  key before anything has read the file, so without this the next run was
+  handed the refused document as a cache hit. The row stays, attached to
+  nothing.
+- **The batch's ceiling counts postings it had work for.** A posting with
+  nothing to gain stays pending, and of the owner's 200 newest open postings
+  177 have nothing to gain. Counted against the ceiling, the same fifty
+  would be read every night.
+- **A document no model wrote names no model.** Nothing to gain with a
+  project to add is still published, as the base with its Projects section,
+  and `tailored_by` is empty for it.
+
+Not built:
+
+- **The dashboard does not show the third column.** The API accepts
+  `targeted` and returns the column, and `apps/web/src/lib/api.ts` has the
+  types. No screen sends the flag or renders `gained`, `pdf_check` or the
+  heuristic notice, and the MCP `compare_tailoring` tool does not pass it.
+- **A batch posting whose PDF is refused is tried again every night**, two
+  calls each time, until the cause is fixed. It is reported as failed.
+- **The three decisions above are still the owner's.** The code takes the
+  plan's answers: attach nothing when there is nothing to gain and no
+  project, and let no heuristic fall block attachment.
+
+Measured on the owner's data, with no model called and GitHub projects left
+out: base résumé v9 rendered by the template passes its own PDF check, and
+against the 200 newest open postings a targeted run would send a bullet for
+23 of them, 52 calls at most, where rewriting all 200 is 3,200.
+
+Going back is `TAILOR_MODE=rewrite`, or removing the line. Nothing migrates.
+`tests/test_tailor_dispatch.py` and `tests/test_tailor_mode_callers.py`.

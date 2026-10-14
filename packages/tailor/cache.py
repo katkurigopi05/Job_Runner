@@ -45,8 +45,10 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.core.enums import TailorMode
 from packages.core.models import Project, Resume
-from packages.llm.prompts import TAILOR_SYSTEM
+from packages.llm.prompts import TAILOR_SYSTEM, TAILOR_TARGETED_SYSTEM
+from packages.tailor import practices
 
 #: Separator that cannot occur in an id, a hash, or a model name, so two
 #: different component lists cannot flatten to the same string.
@@ -65,6 +67,7 @@ def tailoring_key(
     projects: list[Project] | None,
     provider: str,
     model: str | None,
+    mode: str = "rewrite",
 ) -> str | None:
     """The cache key for one tailoring, or None when it must not be cached.
 
@@ -85,11 +88,21 @@ def tailoring_key(
         return None
 
     project_ids = sorted(str(project.id) for project in (projects or []))
+    # A targeted document must never be served as an ordinary one, or the
+    # reverse, so the two modes are written under different prompts and the
+    # targeted key carries the mode and the practices table: a row there
+    # decides what may be written, and a document written without it has to
+    # miss. The ordinary key is built exactly as it was before there was a
+    # second mode, so every row cached before then is still a hit.
+    if TailorMode(mode) is TailorMode.TARGETED:
+        policy = [TAILOR_TARGETED_SYSTEM.digest, practices.practices_digest(), TailorMode.TARGETED]
+    else:
+        policy = [TAILOR_SYSTEM.digest]
     material = _SEP.join(
         [
             str(source_resume_id),
             content_hash,
-            TAILOR_SYSTEM.digest,
+            *policy,
             TAILORING_REVISION,
             provider,
             model or "",
@@ -97,6 +110,20 @@ def tailoring_key(
         ]
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+#: The key a published résumé's stored JSON carries its tailoring mode under.
+MODE_STAMP = "tailor_mode"
+
+
+def mode_of(resume: Resume) -> TailorMode:
+    """The mode a stored résumé was tailored under.
+
+    A row written before there were two modes has no stamp, and it was a
+    rewrite.
+    """
+    stamp = (resume.parsed_json or {}).get(MODE_STAMP)
+    return TailorMode(stamp) if stamp in set(TailorMode) else TailorMode.REWRITE
 
 
 async def find_cached(
