@@ -1,0 +1,295 @@
+# Notes on the crawler and the registry
+
+Moved here from the root `CLAUDE.md` on 2026-10-11, word for word, so they
+load only when work touches this directory. "§N" below is a section of
+the root file, which keeps every heading and says where each section went.
+
+## §9, Phase 5: the registry
+
+The registry started at 50. `make validate-seeds` found that 21 of those
+returned 404 from both the board API and the rendered page — those companies
+have left Greenhouse — and they were removed, taking it to 29. A 404 board is
+worse than an absent one: it yields zero postings, which reads identically to
+"nothing new since the last poll".
+
+The import of career-ops' company list then added 90 entries, taking it to 119.
+
+**It is now 181 live boards and 14 retired ones**, and this paragraph carried
+three wrong claims until someone read the file. It has said "29", then "119",
+then "105", and twice described a state of the registry that had already been
+superseded — which is the failure mode worth naming here, because a count in
+prose goes stale the moment anything writes to the file it describes. It went
+stale again the same day, when the OpenHire import below added 76.
+
+What is actually true, read from `seeds/companies.yaml` on **2026-09-13**:
+
+| | |
+|---|---|
+| live entries under `companies:` | 181 — greenhouse 100, ashby 66, lever 15 |
+| entries under `retired:` | 14 |
+| stamped `checked` | **105 of 181**, all `2026-09-07`, all state `api` |
+| **unstamped** | **76** — the OpenHire import, never verified from here |
+| last full sweep | `2026-09-12`, over the 105 then present: all `api=200` |
+
+**Those 76 are the state this section spent three paragraphs warning about**,
+and they are here deliberately rather than by oversight. They came from a peer
+project that verified each one live, and no machine in this session can reach
+an ATS host to confirm it — so they are added *unstamped*, which is the one
+honest representation of "somebody else says these work". `make
+validate-seeds-write` from the owner's machine is what turns them into
+evidence, and until it runs a dead one among them yields zero postings exactly
+like a quiet board.
+
+So the two claims this paragraph used to make are both retired with it:
+
+- It said "there is no retired section in that file and never has been". There
+  is one now, and it holds what §15 argued for — the evidence rather than a
+  deletion. Every entry carries the statuses that condemned it
+  (`temporaltechnologies`, `runpod`, `ada`, `lindy`, `factorial`, `vinted` and
+  the rest: `404` from the API, and `404` or nothing from the rendered page).
+- It said "the 90 imported entries have never been validated", and warned that
+  a meaningful share were probably polling nothing. A `--write` sweep on
+  2026-09-07 checked **all 105** and every one answered through the board API.
+  There are no unvalidated boards left.
+
+The 2026-09-12 re-sweep took just over three minutes for 105 boards, which is
+the §2.6 amendment doing its job: every one of these hosts is in
+`ratelimit.SHARED_API_HOSTS`, so the floor is 2s rather than 60s. At 60s the
+same sweep is 105 minutes, which is the difference between a check you run
+before trusting a crawl and one you never run. `api.ashbyhq.com` returned 401
+for robots.txt again, which the fetcher logs and treats as it always has.
+
+One gap in what the sweep recorded, since it is the kind of thing that is only
+visible later: **every retired entry has `company: None`.** The slug and the
+evidence survived the move; the human-readable name did not. A slug that 404s
+today may be a rename rather than a departure, and the name is half of what
+would tell those apart a year from now.
+
+`make validate-seeds` reports without touching the file;
+`make validate-seeds-write` re-stamps. Re-run before trusting a quiet crawl: a
+stamp says a board answered on the day it was written, not today, and a board
+that has since died yields zero postings — which reads identically to nothing
+new since the last poll. That is the whole reason this sweep exists.
+
+## From §15: What the gates do and do not prove
+
+### §2.6 did not hold for `make workers n=4`
+
+The shared host limiter landed with `CRAWLER_SHARED_RATE_LIMITER=false`, on the
+reasoning that the crawl was one cycle in one worker and the in-process limiter
+was the one with tests measuring it. That reasoning was wrong about its own
+codebase, and measuring took four lines:
+
+```text
+a = build_fetcher(); b = build_fetcher()
+await a.rate_limiter.acquire("boards-api.greenhouse.io")  -> waited 0.000s
+await b.rate_limiter.acquire("boards-api.greenhouse.io")  -> waited 0.000s
+```
+
+`build_fetcher()` constructs a **new** `HostRateLimiter` on every call. So the
+counters were never per-process, they were per-fetcher — and `make workers n=4`
+is a documented command that runs four claimants in one process. Four
+independent counters, four simultaneous requests to a host owed 2s, measured
+0.000s apart. Only `crawl_company_job` passed `shared=True`, so every other
+path — discovery, `validate-seeds`, `probe-bespoke`, the inline cycle — ran at
+up to 4× the permitted rate.
+
+Every gate passed throughout, and `tests/test_ratelimit_concurrency.py` passed
+too, because it builds its limiter explicitly and therefore shares one by
+construction. The suite proved the limiter worked and never asked whether
+callers got the same one. The two new tests go through `build_fetcher`, which
+is the part that was wrong; with the default reverted they report requests
+0.000s apart.
+
+The default is now `true`. That makes a reachable database a requirement for
+fetching, and an unreachable one fails the fetch rather than falling back to
+per-process counting — the right way round, because a fallback here is a breach
+nobody would ever see. The table fixes both halves at once: two limiters in one
+process and two in separate processes reserve from the same row, so there is no
+arrangement of workers that outruns the floor.
+
+### Three thousand careers URLs, and how many are actually a problem
+
+The owner has a CSV of ~3,000 companies with careers URLs.
+`scripts/import_portals.py` already stated why they cannot simply be added:
+
+> A company whose careers page is its own site (`twilio.com/careers`) is
+> reported and skipped: we have no extractor for a bespoke page, so adding it
+> to the registry would mean a crawl cycle that fetches and parses nothing
+> every hour, forever.
+
+So the first question is not "how do we scrape 3,000 sites". It is **how many
+of them are bespoke at all** — careers URLs very often already *are* a
+Greenhouse, Lever, Ashby or Workable board, and each of those needs no new
+code: it is a registry row the existing crawler polls first-hand, through the
+rate limiter and robots.
+
+`make import-csv src=companies.csv` answers that. Four things are deliberate:
+
+- **Offline.** No network, so 3,000 rows sort in **0.02s** (measured, and
+  asserted at that size). A probe per row would make the answer depend on
+  which sites happen to be up, and turn a question worth re-asking while
+  cleaning the sheet into an hours-long crawl.
+- **The remainder is a file, not a number.** Bespoke rows are written to a CSV
+  with every original column preserved — a sheet carrying a sector or a
+  headcount keeps it, because whatever reads it next may want the biggest
+  companies first. A count tells you the size of the problem; the list is what
+  the next tool takes as input.
+- **"No URL" and "cannot read this page" are separate buckets.** They need
+  different fixes, so collapsing them would hide the cheaper one.
+- **It never writes to the registry.** `scripts/import_companies.py` appends
+  through `import_portals.append_to_registry`, so there is one door. The test
+  checks the AST rather than the source text, because the module docstring
+  names that function to say it is somebody else's job and a grep would read
+  the explanation as the violation.
+
+A link to one posting still yields the board — `board_root` anchors to the
+front page on purpose, and a hand-assembled sheet is full of deep links, so
+discarding those would count companies we *can* crawl as bespoke, which is the
+one number this exists to produce.
+
+### On Scrapling for the bespoke remainder
+
+Recorded because the library is a reasonable idea whose headline feature §2.5
+forbids outright. Its README: *"Its fetchers bypass anti-bot systems like
+Cloudflare Turnstile out of the box"*, plus a spider with *"automatic proxy
+rotation"* that *"backs off when it starts blocking you"*, and
+`StealthyFetcher.fetch(...)  # Fetch website under the radar!`. That is
+captcha bypass, bot-detection evasion and proxy rotation — three of §2.5's
+clauses, and not incidentally: it is the pitch.
+
+Its *parser* is a different matter and is BSD-3, so §3's cost rule is fine. If
+it is ever adopted it must be as a parser only, behind `PoliteFetcher`:
+Scrapling's fetchers honour neither robots.txt nor our per-host floor, so
+letting it fetch turns §2.6 from a control into a comment.
+
+Two further limits worth keeping visible:
+
+- **Adaptive selectors are wrong inside an ATS form.** Its value proposition
+  is "if the element moved, find one that looks similar". §2.2 makes
+  work-authorization answers verbatim because they have legal consequences,
+  and §2.4 says an unanswerable question parks rather than guesses. A drifted
+  selector must fail loudly, not find a plausible neighbour.
+- **It buys nothing on the boards we already read.** The crawler fetches
+  `boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true` — JSON. There
+  is no HTML to adapt to.
+
+For a bespoke careers page the higher-yield path is **JSON-LD**: career sites
+publish schema.org `JobPosting` for Google Jobs, already structured, with no
+selector to drift. ~~That is the next build~~ — built, below.
+
+### Reading a bespoke careers page
+
+`packages/crawler/jsonld.py` is that extractor, and `seeds/bespoke_careers.csv`
+— the remainder `make import-csv` writes — is its input.
+
+Structured data rather than selectors because career sites publish
+`JobPosting` **so that machines read it**: it is what Google Jobs indexes, and
+a site that wants its roles found keeps it accurate. That makes it the one
+part of a bespoke page with a stable contract. §15 already records what the
+alternative costs — a Greenhouse fixture had native `<select>` while the live
+board had moved to react-select, and the suite stayed green while the adapter
+misread every dropdown. Multiply that by three thousand sites and it is not a
+maintenance burden, it is the whole project.
+
+Four things are load-bearing:
+
+- **A page with no JSON-LD yields nothing, and that is the answer.** Not a
+  reason to start guessing at markup. The count of pages that yield nothing is
+  the measurement that says whether a second strategy — sitemaps, then
+  rendered HTML — is worth building, and `make probe-bespoke` is what produces
+  that count.
+- **`import_portals.py`'s rule survives having an extractor.** It refused
+  bespoke pages because "adding it to the registry would mean a crawl cycle
+  that fetches and parses nothing every hour, forever". A page that publishes
+  no structured data is still exactly that, so `make probe-bespoke` promotes
+  only the pages that answered — and a board yielding zero postings reads
+  identically to a board with nothing new, which is the failure §9 Phase 5
+  already recorded for the 21 dead Greenhouse slugs.
+- **A fetch failure is not a verdict.** Blocked by robots, a 403, a timeout:
+  each is its own state and none of them promotes or retires anything. A site
+  that is down this afternoon is not a site without structured data, and
+  `make validate-seeds` treats a `jsonld` seed the same way — it asks whether
+  the page still publishes, because a careers page returns HTML and the JSON
+  board check would condemn every live one.
+- **A `jsonld` seed's slug is its page URL.** The four board APIs derive their
+  URL from a company slug; a bespoke page has no such rule, the address *is*
+  the identity. Carrying it in `slug` rather than special-casing the crawler
+  keeps `(ats, slug)` the de-duplication key it already is in `discover.py`,
+  `import_companies.py` and `import_portals.py`. It is deliberately kept out
+  of `EXTRACTORS` for the mirror-image reason: callers that iterate that dict
+  build a URL from a slug, which is the one question this extractor cannot
+  answer.
+
+Nothing here fetches. `PoliteFetcher` gets the bytes, because it is what
+enforces robots.txt and the per-host floor (§2.6), and an extractor that
+fetched for itself would route around both. The floor costs nothing on this
+sweep — thousands of *distinct* hosts, one request each, so no two are ever
+serialized behind one counter.
+
+**Not built, and worth stating rather than implying.** There is no sitemap
+path: a site that publishes `JobPosting` only on individual posting pages,
+with none on the index, still reads as empty. And the sweep needs network
+egress from the owner's machine, like `make validate-seeds` — so how many of
+the ~3,000 bespoke pages actually publish is, today, an unmeasured number.
+
+## §25: one board is polled under one company row
+
+The owner asked for no duplicates on 2026-10-06, after a crawl. There were
+282, and none of the constraints could see them.
+
+Eleven boards were each verified under two company rows: Vercel and ZEIT,
+Elastic and Elastic.co, Flexport and Deliverr, Teleport and Gravitational,
+Replit and Repl.it. The owner's sheet lists a company under an old name and a
+new one, discovery resolved both to the same board, and nothing asked whether
+somebody already held it. Each board was fetched twice a cycle and every
+posting on it stored twice, same URL and same text: 282 of 11,429 open
+postings. The assistant had answered a Kafka question with a Vercel job listed
+as "ZEIT". `uq_postings_company_external_id` is per company, and the two
+copies belong to two companies.
+
+`packages/crawler/duplicate_boards.py` is the fix, in three places:
+
+- **Discovery asks first.** `holder_of` is consulted before a company is
+  verified; a board somebody holds sets the newcomer aside and queues no
+  crawl.
+- **The database refuses the rest.** `uq_companies_verified_board` is a
+  partial unique index on `(ats_type, slug)` for verified rows only. Two
+  discovery tasks can resolve one board at once, each before the other
+  commits, and then neither finds a holder: the index is what still holds.
+  The handler writes inside a savepoint and comes out of that with the
+  company set aside, not with a failed task.
+- **`make merge-duplicate-boards` repaired what was there**, after a verified
+  backup: 11 rows set aside, 282 copies deleted, 32 scores that only a copy
+  had moved to the original, nothing of the owner's touched.
+
+Five things to keep:
+
+- **The row that loses a board is kept.** It becomes `failed`, with no slug,
+  carrying what it resolved to and who holds it (`duplicate_board`). The
+  registry keeps evidence, not deletions (§9), and the row is the only record
+  that the sheet named that company. Two of the eleven are probably not
+  renames at all (Twelve and Twelve Labs, Alchemy and Alchemy Cloud): the
+  board belongs to one and discovery guessed it for the other. Set aside is
+  right for both readings.
+- **The row named like the board keeps it** (`keeper_of`): "Vercel" for
+  `vercel`, "Teleport" for `goteleport`. The name is what the owner reads on
+  a card. Where the names say nothing, the older row. Discovery cannot wait
+  to compare names, so there the first row verified keeps it.
+- **A row that loses a board loses its postings to the holder too**
+  (`absorb`). Nothing polls a set-aside row, so nothing would ever close
+  them, and the holder's next fetch would store each one a second time.
+  `sync_registry` does this when a seed names a board a sheet row holds.
+- **The index is only on verified rows.** The comment on
+  `ix_companies_ats_slug` wanted a collision to stay a fact to look at, and
+  it does: hint, unverified and failed rows may name a board any number of
+  times.
+- **The opening of a savepoint flushes.** The first version changed the row
+  and then opened the savepoint, so the change met the index outside it and
+  took the whole transaction down. The row is changed inside.
+
+What was left alone, and is a decision rather than a defect: 41 open postings
+are an employer listing the same job more than once, with the same title,
+place and text but its own requisition id and URL each time (Process Street
+has one five times). §16 does not merge within one source or across
+requisition ids, and those are the employer's own listings.
