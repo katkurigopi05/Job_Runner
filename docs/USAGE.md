@@ -978,8 +978,21 @@ Three things it does not do:
   one row in `packages/tailor/practices.py`, pytest for "automated testing",
   and a second row would be a decision about what may be said on your behalf.
 
-Switching applications and the nightly batch to this is not done.
-`docs/TARGETED_TAILORING_INTEGRATION.md` is the plan for it.
+Applications and the nightly batch still rewrite every bullet. To have them
+revise only where a term can be gained, set this in `.env` and restart the
+worker:
+
+```dotenv
+TAILOR_MODE=targeted             # rewrite (the default) | targeted
+```
+
+With it set, a posting with nothing to gain and no GitHub project to add gets
+no tailored résumé and your base is uploaded; the review screen's payload says
+"no supported keyword gain available". A revision is attached only after its
+PDF has been read back and holds the added term and every figure and listed
+technology. Remove the line to go back; nothing is migrated either way. The
+dashboard does not yet show which mode wrote a résumé.
+`docs/TARGETED_TAILORING_INTEGRATION.md` has what was built and what was not.
 
 ## 9. Development and verification commands
 

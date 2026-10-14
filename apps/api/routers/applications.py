@@ -200,7 +200,7 @@ async def review_application(
         )
 
     if body.approve:
-        payload = {"decision": "approve"}
+        payload: dict[str, Any] = {"decision": "approve"}
         if body.note:
             payload["note"] = body.note
         # The approval has to be recorded on the application, not only as an
@@ -296,6 +296,7 @@ async def compare_tailoring(
             posting=posting,
             cloud=(body.cloud if body else None),
             clouds=(body.clouds if body else None),
+            targeted=(body.targeted if body else False),
         )
     except CannotCompare as exc:
         raise ApiError(ErrorCode.INVALID_REQUEST, str(exc)) from exc

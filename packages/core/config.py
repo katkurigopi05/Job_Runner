@@ -8,6 +8,8 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from packages.core.enums import TailorMode
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -166,6 +168,12 @@ class Settings(BaseSettings):
     #: and §14 pins to Ollama in code. A setting that could send them to a
     #: third party would be a way to opt out of a non-negotiable.
     llm_task_tailor: str = "auto"
+    #: How a résumé is tailored for a posting (`packages/tailor/dispatch.py`).
+    #: `rewrite` sends every tailorable bullet to the model. `targeted` sends
+    #: only the bullets with a supported term to gain, and none when there is
+    #: nothing to gain. An enum, so a typo refuses to start: read as a string,
+    #: "targetted" would have been neither and rewritten everything.
+    tailor_mode: TailorMode = TailorMode.REWRITE
     llm_task_cover_letter: str = "auto"
     llm_task_open_ended: str = "auto"
     #: On a spent quota or an unreachable remote provider, answer with the

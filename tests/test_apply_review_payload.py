@@ -205,3 +205,80 @@ async def test_the_two_scores_are_carried_apart(db_session, monkeypatch) -> None
     assert payload["ats"] is not None
     assert payload["recruiter"] is not None
     assert payload["ats"].keys() != payload["recruiter"].keys()
+
+
+@pytest.mark.asyncio
+async def test_review_payload_carries_mode_and_heuristic_notice(db_session, monkeypatch) -> None:
+    """The review payload carries the tailoring mode and explicit heuristic disclaimer."""
+    from apps.worker import apply_job
+
+    application, profile, posting = await _fixture(db_session)
+
+    async def _capture(session, **kwargs):
+        return None
+
+    monkeypatch.setattr("packages.tailor.publish.publish_tailored", _capture)
+
+    payload = await apply_job._tailor(db_session, application, profile, posting)
+    assert payload is not None
+    assert payload.get("mode") == "rewrite"
+    assert "not predictions of hiring success" in payload.get("heuristic_notice", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_targeted_mode_no_gain_does_not_attach_duplicate(db_session, monkeypatch) -> None:
+    """In targeted mode with zero gain and no projects, no résumé is published or attached,
+    and review payload observable reason is surfaced.
+    """
+    from apps.worker import apply_job
+    from packages.core.config import get_settings
+
+    application, profile, posting = await _fixture(db_session)
+    monkeypatch.setattr(get_settings(), "tailor_mode", "targeted")
+
+    # Posting with no terms to gain
+    posting.description_raw = "We want Python and Postgres experience."
+    await db_session.flush()
+
+    # Stub empty projects
+    async def _empty_projects(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr("apps.worker.apply_job._projects_for", _empty_projects)
+
+    payload = await apply_job._tailor(db_session, application, profile, posting)
+    assert payload is not None
+    assert payload.get("mode") == "targeted"
+    assert payload.get("attached") is False
+    assert "no supported keyword gain" in payload.get("fallback_reason", "").lower()
+    assert application.tailored_resume_id is None
+
+
+@pytest.mark.asyncio
+async def test_owner_pinned_resume_outranks_both_modes(db_session) -> None:
+    """An owner's explicit pin at review outranks both rewrite and targeted modes."""
+    from apps.worker import apply_job
+
+    application, profile, posting = await _fixture(db_session)
+
+    pinned_resume = Resume(
+        candidate_id=profile.candidate_id,
+        version=3,
+        storage_ref="r/pinned",
+        parsed_json={"raw_lines": ["Pinned line"]},
+    )
+    db_session.add(pinned_resume)
+    await db_session.flush()
+
+    application.tailored_resume_id = pinned_resume.id
+    application.review_json = {
+        "resume_pinned": {"resume_id": str(pinned_resume.id), "source": "owner_edit"},
+        "resume_diff": {"changed": 1, "owner_pinned": "owner_edit"},
+    }
+    await db_session.flush()
+
+    payload = await apply_job._tailor(db_session, application, profile, posting)
+    assert payload is not None
+    assert payload.get("owner_pinned") == "owner_edit"
+    assert payload.get("reused") is True
+    assert application.tailored_resume_id == pinned_resume.id

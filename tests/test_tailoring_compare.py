@@ -534,3 +534,43 @@ async def test_one_unusable_name_stops_the_whole_comparison(db_session, monkeypa
             posting=posting,
             clouds=["gemini", "tokenrouter"],
         )
+
+
+@pytest.mark.asyncio
+async def test_targeted_column_runs_as_third_candidate_when_requested(
+    db_session, monkeypatch
+) -> None:
+    """When targeted=True is passed, targeted tailoring runs as a candidate column."""
+    profile, _ = await _profile(db_session)
+    posting = await _posting(db_session)
+
+    monkeypatch.setattr(compare_mod, "cloud_for_tailoring", lambda: "gemini")
+    asked = _sides_are(
+        monkeypatch,
+        {
+            "ollama": Side(requested="ollama", answered_by="ollama:llama3.1", changed=2),
+            "gemini": Side(requested="gemini", answered_by="gemini", changed=3),
+            "targeted": Side(
+                requested="targeted",
+                answered_by="targeted",
+                mode="targeted",
+                changed=1,
+                gained=["automated testing"],
+                refusals=[],
+            ),
+        },
+    )
+
+    candidates = await compare_tailorings(
+        db_session, profile=profile, posting=posting, targeted=True
+    )
+
+    assert asked == ["ollama", "gemini", "targeted"]
+    assert len(candidates) == 3
+    targeted_cand = candidates[2]
+    assert targeted_cand.requested == "targeted"
+    assert targeted_cand.mode == "targeted"
+    assert targeted_cand.gained == ["automated testing"]
+    data = targeted_cand.as_dict()
+    assert data["mode"] == "targeted"
+    assert data["gained"] == ["automated testing"]

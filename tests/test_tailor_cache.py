@@ -203,3 +203,59 @@ async def test_provider_failure_draft_is_not_cached_as_completed(db_session) -> 
         )
         is None
     )
+
+
+def test_modes_never_share_a_cache_key() -> None:
+    """A targeted document must never be served as a rewrite document, and vice versa."""
+    rewrite_key = _key(mode="rewrite")
+    targeted_key = _key(mode="targeted")
+
+    assert rewrite_key != targeted_key
+
+
+def test_practice_row_changes_targeted_key_and_not_rewrite_key(monkeypatch) -> None:
+    """Adding or modifying a practice row changes what targeted mode may write and has to
+    invalidate what was written without it. The rewrite key must stay untouched.
+    """
+    from packages.tailor import practices
+
+    rewrite_before = _key(mode="rewrite")
+    targeted_before = _key(mode="targeted")
+
+    # Mutate practices list
+    monkeypatch.setattr(
+        practices,
+        "PRACTICES",
+        (
+            *practices.PRACTICES,
+            practices.Practice(
+                forms=frozenset({"event sourcing"}),
+                tools=frozenset({"kafka"}),
+                uses=frozenset({"stream", "streaming"}),
+            ),
+        ),
+    )
+
+    rewrite_after = _key(mode="rewrite")
+    targeted_after = _key(mode="targeted")
+
+    assert rewrite_after == rewrite_before, "Rewrite key changed when only practices changed!"
+    assert targeted_after != targeted_before, (
+        "Targeted key did not invalidate when practices changed!"
+    )
+
+
+def test_targeted_prompt_change_invalidates_targeted_key_only(monkeypatch) -> None:
+    """Changing TAILOR_TARGETED_SYSTEM invalidates targeted key, not rewrite key."""
+    from packages.llm.prompts import Prompt
+
+    rewrite_before = _key(mode="rewrite")
+    targeted_before = _key(mode="targeted")
+
+    monkeypatch.setattr(
+        "packages.tailor.cache.TAILOR_TARGETED_SYSTEM",
+        Prompt(name="tailor.targeted.system", version=2, text="different prompt text"),
+    )
+
+    assert _key(mode="rewrite") == rewrite_before
+    assert _key(mode="targeted") != targeted_before
