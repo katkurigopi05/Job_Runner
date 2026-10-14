@@ -863,6 +863,41 @@ class Application(Base):
     )
 
 
+class AppliedPosting(Base):
+    """Durable submit fence, saved BEFORE contacting an employer.
+
+    An attempting/uncertain row blocks retries just as a confirmed row does.
+    Applications remain the history; this table owns the per-job exclusion.
+    """
+
+    __tablename__ = "applied_postings"
+
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("applications.id", ondelete="RESTRICT"), primary_key=True
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False
+    )
+    posting_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("postings.id", ondelete="SET NULL")
+    )
+    job_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(String(20), nullable=False)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    attempted_at: Mapped[datetime] = _created_at()
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "job_key", name="uq_applied_postings_candidate_job"),
+        CheckConstraint(
+            "state IN ('attempting', 'uncertain', 'submitted', 'released')",
+            name="ck_applied_postings_state",
+        ),
+        Index("ix_applied_postings_posting_id", "posting_id"),
+    )
+
+
 class ApplicationEvent(Base):
     """Append-only audit log. Rows are never updated or deleted."""
 

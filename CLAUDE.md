@@ -551,8 +551,7 @@ offer) in `packages/core/CLAUDE.md`; routing and the semantic experiment in
 `.claude/rules/assistant-search.md`; what the model is handed and what the
 reply says for itself in `apps/api/CLAUDE.md`.
 
-Not fixed, and each is in the report: a retried `apply` task can send a form
-twice if a worker dies between the click and the commit; one-word company
-names read from ordinary words ("Front Desk"); paraphrased questions, where
-bge-small's chunk search is the limit; and the role table reading a title
-only up to its first comma.
+Fixed: a retried `apply` task sending a form twice (#16, covered by `tests/test_submission_ledger.py`).
+Not fixed, and each is in the report: one-word company names read from ordinary words
+("Front Desk"); paraphrased questions, where bge-small's chunk search is the limit;
+and the role table reading a title only up to its first comma.

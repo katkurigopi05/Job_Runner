@@ -13,11 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from apps.api.status_stream import stream
+from packages.core import submissions
 from packages.core.completeness import missing_requirements
 from packages.core.enums import ApplicationStatus, ErrorCode, FailureReason
 from packages.core.models import (
     Application,
     ApplicationEvent,
+    AppliedPosting,
     Candidate,
     Company,
     Posting,
@@ -78,6 +80,15 @@ async def create_application(body: ApplicationCreate, session: SessionDep) -> Ap
 
     if profile.candidate_id != candidate.id:
         raise ApiError(ErrorCode.INVALID_REQUEST, "profile does not belong to candidate")
+
+    await submissions.lock_candidate(session, candidate.id)
+    existing = await submissions.find_existing(session, candidate.id, body.url)
+    if existing is not None:
+        raise ApiError(
+            ErrorCode.DUPLICATE_APPLICATION,
+            f"this job already has a {existing.state} submission record; "
+            f"review application {existing.application_id} instead",
+        )
 
     # `incomplete_candidate` is knowable here, so it is rejected here. An
     # application that provably cannot be completed is never created — no row,
@@ -189,9 +200,13 @@ async def review_application(
     application is the form sent twice. The second caller now waits, reads
     what the first left, and is told the application has moved on.
     """
-    application = await session.get(Application, application_id, with_for_update=True)
+    application = await session.get(Application, application_id)
     if application is None:
         raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+    # The worker's lock order, as `mark_submitted` keeps it: the candidate,
+    # under which the ledger is read, then the row being decided.
+    await submissions.lock_candidate(session, application.candidate_id)
+    await session.refresh(application, with_for_update=True)
 
     if application.status != ApplicationStatus.NEEDS_REVIEW.value:
         raise ApiError(
@@ -200,9 +215,26 @@ async def review_application(
         )
 
     if body.approve:
+        # The ledger as it is now, not what the park saved (defect #16). Only a
+        # new run clears what a park saved, and a new run is what is being
+        # refused, so a split that ended a conflict was refused for ever.
+        blocker = await submissions.blocking(session, application)
+        if blocker is not None:
+            raise ApiError(
+                ErrorCode.INVALID_STATE, await _cannot_approve(session, application, blocker)
+            )
+
         payload: dict[str, Any] = {"decision": "approve"}
         if body.note:
             payload["note"] = body.note
+
+        # Approval releases an uncertain fence (defect #16):
+        # A released fence allows exactly one more attempt. Fences of other
+        # applications for the same job still block.
+        fence = await session.get(AppliedPosting, application.id)
+        if fence is not None and fence.state == "uncertain":
+            fence.state = "released"
+
         # The approval has to be recorded on the application, not only as an
         # event: the resumed run re-enters the submit gate, and without this it
         # cannot tell an owner-approved run from a fresh one. With AUTO_SUBMIT
@@ -232,6 +264,25 @@ async def review_application(
     _announce()
     await session.refresh(application)
     return application
+
+
+async def _cannot_approve(
+    session: AsyncSession, application: Application, blocker: AppliedPosting
+) -> str:
+    """Why approving cannot send this application, and what to do instead."""
+    if blocker.application_id == application.id:
+        sent = await submissions.sent_through(session, blocker)
+        return (
+            "cannot approve: this job is already recorded as submitted, through "
+            f"application {sent}; reject this application"
+        )
+    ways = "reject, or mark submitted if it was sent"
+    if submissions.through_group(blocker, application.url):
+        ways = "reject, mark submitted if it was sent, or split the posting out of the group"
+    return (
+        "cannot approve: job already has a submission record in "
+        f"application {blocker.application_id}; ways out: {ways}"
+    )
 
 
 @router.post("/{application_id}/tailoring/compare", response_model=ApplicationOut)
@@ -724,11 +775,21 @@ async def mark_submitted(
     if application is None:
         raise ApiError(ErrorCode.NOT_FOUND, "application not found")
 
+    # Same lock order as the worker: candidate, then application. Otherwise
+    # flushing the status before acquiring the candidate lock can deadlock.
+    await submissions.lock_candidate(session, application.candidate_id)
+    await session.refresh(application, with_for_update=True)
+
     if application.status == ApplicationStatus.SUBMITTED.value:
         # Already recorded. Idempotent rather than an error: at a hundred a
         # day the owner will double-tap, and a queue that punishes that is a
         # queue that gets used slowly.
+        await submissions.record_manual(session, application)
+        await session.commit()
         return application
+
+    # Fence the job so automated workers will not submit it again (defect #16).
+    fence = await submissions.record_manual(session, application)
 
     await transition(
         session,
@@ -741,6 +802,7 @@ async def mark_submitted(
             # unsupported site, a question nobody could answer.
             "was": application.status,
             "failure_reason": application.failure_reason,
+            "confirmed_fence_application_id": str(fence.application_id),
         },
     )
     # The reason it could not be automated is history now, not current state.
