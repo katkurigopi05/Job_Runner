@@ -8,8 +8,12 @@ services:
       POSTGRES_USER: jobrunner
       POSTGRES_PASSWORD: jobrunner
       POSTGRES_DB: jobrunner
+    # Loopback only. A bare "5432:5432" publishes on every interface, and this
+    # role is a superuser with the password above: anyone on the network could
+    # read every record or queue an application for the worker to send.
+    # tests/test_database_binds_loopback.py holds it.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - jobrunner-pgdata:/var/lib/postgresql/data
       # Creates jobrunner_test and installs pgvector. First-init only.

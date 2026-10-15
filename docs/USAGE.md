@@ -61,7 +61,7 @@ What each command does:
 
 ### Database port on this checkout
 
-The committed `docker-compose.yml` publishes Postgres on port `5432`. This checkout also contains `docker-compose.override.yml`, which changes the host port to `5433` because another local database uses `5432`.
+The committed `docker-compose.yml` publishes Postgres on `127.0.0.1:5432`, this machine only. This checkout also contains `docker-compose.override.yml`, which changes the host port to `127.0.0.1:5433` because another local database uses `5432`. Keep the `127.0.0.1:` prefix in both: without it Docker publishes on every interface.
 
 Make the URLs in `.env` match the active Compose port:
 
