@@ -20,7 +20,13 @@ from apps.mcp import server as mcp_server
 from packages.llm import audit
 
 # The binding to the ASGI app is the other file's, so the two cannot differ.
-from tests.test_mcp import _bind_tools_to_app, _wire, call  # noqa: F401
+from tests.test_mcp import (  # noqa: F401
+    _bind_tools_to_app,
+    _fills_in_every_field,
+    _Owner,
+    _wire,
+    call,
+)
 
 SYSTEM = "You rewrite resume bullets."
 USER = "Built backend services in Python."
@@ -163,7 +169,7 @@ async def test_crawl_status_is_the_dashboards_own() -> None:
 
 
 async def test_starting_a_crawl_with_no_worker_says_nothing_will_run_it() -> None:
-    started = await call("start_crawl")
+    started = await _Owner(_fills_in_every_field).calls("start_crawl")
 
     assert started["queued"] is True and started["worker_alive"] is False
     assert "make worker" in started["note"]
@@ -171,8 +177,9 @@ async def test_starting_a_crawl_with_no_worker_says_nothing_will_run_it() -> Non
 
 
 async def test_a_second_start_queues_nothing_and_says_so() -> None:
-    await call("start_crawl")
-    again = await call("start_crawl")
+    owner = _Owner(_fills_in_every_field)
+    await owner.calls("start_crawl")
+    again = await owner.calls("start_crawl")
 
     assert again["queued"] is False and again["already_waiting"] == 1
     assert "already" in again["note"]
@@ -180,7 +187,7 @@ async def test_a_second_start_queues_nothing_and_says_so() -> None:
 
 
 async def test_a_crawl_with_a_worker_up_says_when_postings_arrive(api) -> None:
-    started = await call("start_crawl")
+    started = await _Owner(_fills_in_every_field).calls("start_crawl")
 
     assert started["queued"] is True
     assert "make worker" not in started["note"] and "feed" in started["note"]
@@ -195,6 +202,45 @@ async def test_starting_a_crawl_asks_the_owner_every_time() -> None:
 
     assert "start_crawl" in mcp_server.ASKS_THE_OWNER
     assert tools["start_crawl"]["_meta"][mcp_server.ASK_FLAG] is True
+
+
+@pytest.mark.parametrize("mode", ["legacy", "auto"])
+async def test_starting_a_crawl_requires_explicit_owner_confirmation(api, mode) -> None:
+    owner = _Owner(_fills_in_every_field, mode=mode)
+
+    started = await owner.calls("start_crawl")
+
+    assert started["queued"] is True
+    [form] = owner.shown
+    assert list(form["properties"]) == ["owner_approval"]
+    assert form["properties"]["owner_approval"]["type"] == "boolean"
+    assert "employer" in owner.messages[0].lower()
+    assert [method for method, _, _, _ in api.asked] == ["POST"]
+
+
+@pytest.mark.parametrize("action", ["decline", "cancel"])
+async def test_declining_a_crawl_starts_nothing(api, action) -> None:
+    result = await _Owner(action=action).calls("start_crawl")
+
+    assert result["queued"] is False
+    assert api.asked == []
+
+
+async def test_accepting_without_affirming_starts_no_crawl(api) -> None:
+    result = await _Owner(lambda schema: {"owner_approval": False}).calls("start_crawl")
+
+    assert result["queued"] is False
+    assert api.asked == []
+
+
+async def test_a_client_without_forms_cannot_start_a_crawl(api) -> None:
+    from mcp.client import Client
+
+    async with Client(mcp_server.server) as client:
+        result = await client.call_tool("start_crawl", {})
+
+    assert result.is_error
+    assert api.asked == []
 
 
 # --------------------------------------------------------------------------
@@ -216,7 +262,7 @@ async def test_the_status_tools_read_and_the_crawl_tool_posts_one_thing(api) -> 
     }
 
     api.asked.clear()
-    await call("start_crawl")
+    await _Owner(_fills_in_every_field).calls("start_crawl")
     # No body: there is nothing about a crawl for a model to choose.
     assert api.asked == [("POST", "/crawl", {}, None)]
 

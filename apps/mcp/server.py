@@ -17,10 +17,10 @@ Two things to know about the tool surface:
   `edit_application_resume` (guard-checked, because a model is typing).
   `preview_resume` is assembly only — source résumé plus ranked GitHub
   projects — and says so.
-- **The owner's two decisions make the client ask.** `approve_application`
-  and `submit_otp` are marked so that Claude Code prompts on every call (see
-  `ASKS_THE_OWNER`). Their docstrings ask a model to wait for the owner; the
-  mark is what makes the client wait.
+- **The owner's decisions make the server ask.** `approve_application`,
+  `submit_otp`, and `start_crawl` are marked so that Claude Code prompts on
+  every call (see `ASKS_THE_OWNER`). They also elicit the decision or value
+  from the person, so a client that ignores the mark cannot make it for them.
 - **What the owner must supply, the owner types.** The answers an application
   was parked for, and a verification code, are asked for in a form the client
   shows the person (`_owners_answers`, `_owners_code`). Neither is an argument
@@ -391,8 +391,11 @@ async def review_queue() -> dict[str, Any]:
 _REVIEW_PAGE = "http://127.0.0.1:3001/review"
 
 
-class _NothingOpen(BaseModel):
-    """What the answers resolver hands on when no question is open. No form is shown."""
+class _CrawlApproval(BaseModel):
+    owner_approval: bool = Field(
+        title="Owner approval",
+        description="Select true to let Jobrunner request the employers' job boards now.",
+    )
 
 
 class _Code(BaseModel):
@@ -433,7 +436,15 @@ def _form_for(questions: list[dict[str, Any]]) -> type[BaseModel]:
     Each field writes itself out under the employer's key, so what the owner
     typed is posted as the review endpoint expects it without a second lookup.
     """
-    fields: dict[str, Any] = {}
+    fields: dict[str, Any] = {
+        "owner_approval": (
+            bool,
+            Field(
+                title="Owner approval",
+                description="Select true to let this application continue toward submission.",
+            ),
+        )
+    }
     for number, question in enumerate(questions, start=1):
         labels = [option["label"] for option in question.get("options") or []]
         one_of_them = bool(labels) and question.get("kind") != "multi_select"
@@ -465,24 +476,38 @@ def _which(application: dict[str, Any]) -> str:
     questions without saying whose they were looked right for any of them. The
     posting's address is what the owner recognises.
     """
-    return f" ({application['url']})" if application.get("url") else ""
+    identity = str(application.get("id") or "the requested application")
+    return f" {identity}" + (f" ({application['url']})" if application.get("url") else "")
 
 
-async def _owners_answers(application_id: str, ctx: Context) -> Elicit[BaseModel] | _NothingOpen:
-    """Ask the owner the questions this application was parked for.
-
-    Runs before the tool, in place of an argument a model could fill. With
-    nothing open there is nothing to ask and no form.
-    """
+async def _owners_answers(application_id: str, ctx: Context) -> Elicit[BaseModel]:
+    """Ask the owner to approve and, when needed, answer employer questions."""
     application = await _application(application_id)
     questions = (application.get("review") or {}).get("unanswered") or []
-    if not questions:
-        return _NothingOpen()
-    _must_reach_the_owner(ctx, "the answers to an employer's questions")
+    _must_reach_the_owner(ctx, "approval and any answers to employer questions")
+    detail = (
+        f" It also has {len(questions)} question(s); what you type goes on the employer's "
+        "form as you typed it."
+        if questions
+        else " It has no unanswered employer questions."
+    )
     return Elicit(
-        f"This application{_which(application)} was left with {len(questions)} question(s) "
-        "for you. What you type goes on the employer's form as you typed it.",
+        f"Approve application{_which(application)} to continue toward submission?{detail}",
         _form_for(questions),
+    )
+
+
+async def _owners_crawl(ctx: Context) -> Elicit[_CrawlApproval]:
+    """Ask the owner before making requests to employers' job boards."""
+    _must_reach_the_owner(
+        ctx,
+        "starting a crawl requires the owner's confirmation",
+        nothing="No crawl was started",
+        page="http://127.0.0.1:3001",
+    )
+    return Elicit(
+        "Start a crawl now? Jobrunner will make real requests to employers' job boards.",
+        _CrawlApproval,
     )
 
 
@@ -511,7 +536,9 @@ async def approve_application(
     approval gate — only call it when the owner has actually decided.
     Approving resumes the run; it does not itself submit anything.
     """
-    if not isinstance(answers, AcceptedElicitation):
+    if not isinstance(answers, AcceptedElicitation) or not getattr(
+        answers.data, "owner_approval", False
+    ):
         return {
             "approved": False,
             "error": (
@@ -519,14 +546,22 @@ async def approve_application(
                 f"guessed in its place. They can answer at {_REVIEW_PAGE}."
             ),
         }
-    typed = answers.data.model_dump(by_alias=True)
+    typed = answers.data.model_dump()
+    fields = type(answers.data).model_fields
+    employer_answers = {
+        str(fields[name].serialization_alias or name): value
+        for name, value in typed.items()
+        if name != "owner_approval"
+    }
     return await _call(
         "POST",
         f"/applications/{_id(application_id)}/review",
         json={
             "approve": True,
             # A field left empty is still an open question, not an answer.
-            "answers": {key: value for key, value in typed.items() if str(value).strip()},
+            "answers": {
+                key: value for key, value in employer_answers.items() if str(value).strip()
+            },
             "note": note,
         },
     )
@@ -956,7 +991,9 @@ async def crawl_status() -> dict[str, Any]:
 
 
 @server.tool(meta=_ASK_EVERY_TIME)
-async def start_crawl() -> dict[str, Any]:
+async def start_crawl(
+    approval: Annotated[ElicitationResult[_CrawlApproval], Resolve(_owners_crawl)],
+) -> dict[str, Any]:
     """Start a crawl of the company registry, so new postings reach the feed.
 
     Only when the owner asks for one. Do not start one because a search or the
@@ -966,6 +1003,11 @@ async def start_crawl() -> dict[str, Any]:
     One crawl runs at a time. If one is already waiting or running, nothing is
     queued and `queued` is false.
     """
+    if not isinstance(approval, AcceptedElicitation) or not approval.data.owner_approval:
+        return {
+            "queued": False,
+            "error": "No crawl was started: the owner did not confirm it.",
+        }
     started = await _call("POST", "/crawl")
     if "queued" not in started:
         return started

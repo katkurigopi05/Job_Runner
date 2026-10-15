@@ -174,7 +174,13 @@ def test_the_project_settings_ask_too() -> None:
 def _fills_in_every_field(schema: dict[str, Any]) -> dict[str, Any]:
     """An owner who answers everything: the first choice where there are choices."""
     return {
-        name: (field["enum"][0] if "enum" in field else "I admire the work.")
+        name: (
+            field["enum"][0]
+            if "enum" in field
+            else True
+            if field.get("type") == "boolean"
+            else "I admire the work."
+        )
         for name, field in schema["properties"].items()
     }
 
@@ -253,7 +259,7 @@ def parked(monkeypatch):
     return install
 
 
-async def test_a_model_has_nowhere_to_put_an_answer_or_a_code() -> None:
+async def test_a_model_has_nowhere_to_put_an_answer_code_or_confirmation() -> None:
     """Read from the wire entry: what a client is told it may pass."""
     tools = {t.name: _wire(t) for t in await mcp_server.server.list_tools()}
 
@@ -262,21 +268,31 @@ async def test_a_model_has_nowhere_to_put_an_answer_or_a_code() -> None:
         "note",
     }
     assert set(tools["submit_otp"]["inputSchema"]["properties"]) == {"application_id"}
+    assert tools["start_crawl"]["inputSchema"]["properties"] == {}
 
 
 @BOTH_PROTOCOLS
 async def test_open_questions_are_put_to_the_owner_in_the_employers_words(parked, mode) -> None:
     api = parked(WHY, AUTHORIZED)
-    owner = _Owner(lambda schema: {"q1": "I admire the work.", "q2": "Yes"}, mode=mode)
+    owner = _Owner(
+        lambda schema: {
+            "owner_approval": True,
+            "q1": "I admire the work.",
+            "q2": "Yes",
+        },
+        mode=mode,
+    )
 
     approved = await owner.calls("approve_application", application_id="app-1")
 
     assert approved["status"] == "running"
     [form] = owner.shown
     assert [field["title"] for field in form["properties"].values()] == [
+        "Owner approval",
         "Why do you want to work at Acme?",
         "Are you legally authorized to work in the United States?",
     ]
+    assert form["properties"]["owner_approval"]["type"] == "boolean"
     # The employer's own choices, and no others: an answer off the menu is
     # refused at the form, long before it could be typed into a dropdown.
     assert form["properties"]["q2"]["enum"] == ["Yes", "No"]
@@ -295,14 +311,16 @@ async def test_open_questions_are_put_to_the_owner_in_the_employers_words(parked
 
 
 @BOTH_PROTOCOLS
-async def test_an_application_with_nothing_open_asks_nothing(parked, mode) -> None:
+async def test_an_application_with_nothing_open_still_requires_owner_approval(parked, mode) -> None:
     api = parked()
-    owner = _Owner(mode=mode)
+    owner = _Owner(_fills_in_every_field, mode=mode)
 
     approved = await owner.calls("approve_application", application_id="app-1", note="go")
 
     assert approved["status"] == "running"
-    assert owner.shown == []
+    [form] = owner.shown
+    assert list(form["properties"]) == ["owner_approval"]
+    assert form["properties"]["owner_approval"]["type"] == "boolean"
     assert api.posted == [
         ("/applications/app-1/review", {"approve": True, "answers": {}, "note": "go"})
     ]
@@ -326,7 +344,10 @@ async def test_an_owner_who_closes_the_form_has_approved_nothing(parked, mode, a
 async def test_a_blank_answer_is_not_sent_as_an_answer(parked, mode) -> None:
     """§2.4: never leave blank. A field left empty stays an open question."""
     api = parked(WHY, AUTHORIZED)
-    owner = _Owner(lambda schema: {"q1": "   ", "q2": "No"}, mode=mode)
+    owner = _Owner(
+        lambda schema: {"owner_approval": True, "q1": "   ", "q2": "No"},
+        mode=mode,
+    )
 
     await owner.calls("approve_application", application_id="app-1")
 
@@ -334,18 +355,31 @@ async def test_a_blank_answer_is_not_sent_as_an_answer(parked, mode) -> None:
     assert posted["answers"] == {"question_32": "No"}
 
 
-async def test_a_client_that_cannot_show_a_form_is_sent_to_the_dashboard(parked) -> None:
+@pytest.mark.parametrize("unanswered", [(), (WHY,)])
+async def test_a_client_that_cannot_show_a_form_is_sent_to_the_dashboard(
+    parked, unanswered
+) -> None:
     """Another MCP client, or this one with forms off. The questions are not
     handed to the model to answer in their place."""
     from mcp.client import Client
 
-    api = parked(WHY)
+    api = parked(*unanswered)
 
     async with Client(mcp_server.server) as client:
         result = await client.call_tool("approve_application", {"application_id": "app-1"})
 
     assert result.is_error
     assert "/review" in result.content[0].text
+    assert api.posted == []
+
+
+async def test_accepting_the_form_without_affirming_approves_nothing(parked) -> None:
+    api = parked()
+    owner = _Owner(lambda schema: {"owner_approval": False})
+
+    answered = await owner.calls("approve_application", application_id="app-1")
+
+    assert answered["approved"] is False
     assert api.posted == []
 
 
@@ -802,12 +836,16 @@ async def test_each_form_says_which_application_it_is_about(parked, mode) -> Non
     api = parked(WHY)
     api.application["url"] = "https://boards.greenhouse.io/acme/jobs/41"
 
-    answering = _Owner(lambda schema: {"q1": "I admire the work."}, mode=mode)
+    answering = _Owner(
+        lambda schema: {"owner_approval": True, "q1": "I admire the work."},
+        mode=mode,
+    )
     await answering.calls("approve_application", application_id="app-1")
     typing = _Owner(lambda schema: {"code": "123456"}, mode=mode)
     await typing.calls("submit_otp", application_id="app-1")
 
     assert "https://boards.greenhouse.io/acme/jobs/41" in answering.messages[-1]
+    assert "app-1" in answering.messages[-1]
     assert "https://boards.greenhouse.io/acme/jobs/41" in typing.messages[-1]
 
 
