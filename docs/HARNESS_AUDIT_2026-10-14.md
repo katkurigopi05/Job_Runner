@@ -23,13 +23,15 @@ Status words used below:
 Kept current at the end of every phase, so a session that has to stop can be
 picked up by another. Each phase is built, tested, pushed and reported before
 the next one starts. Phases are in section H.
+Phases 2 to 4 each add their own report under `docs/harness-audit/`, so
+the open PRs do not edit one shared file; this table is updated by the last.
 
 | Phase | Branch / PR | State | What is left |
 |---|---|---|---|
-| 1. Submission truth, test-database isolation | `fix/unconfirmed-submit-is-uncertain` | Done: 3 commits, pushed | Merge. Restart workers on the merged code (`make workers n=…`); the pool was stopped on 2026-10-15 07:42 UTC and is still stopped |
-| 2. Local network boundary | — | Not started | — |
-| 3. Status truth and reconciliation | — | Not started | — |
-| 4. Audit attribution, derived-data versioning | — | Not started | — |
+| 1. Submission truth, test-database isolation | #164 `fix/unconfirmed-submit-is-uncertain` | Merged 2026-10-15 | Restart workers on the merged code (`make workers n=…`); the pool was stopped on 2026-10-15 07:42 UTC |
+| 2. Local network boundary | #165 `fix/local-network-boundary` | Done, open; report `docs/harness-audit/phase-2.md` | Merge. Owner: where private files live (iCloud); a non-superuser database role |
+| 3. Status truth and reconciliation | #166 `fix/status-truth-and-reconciliation` | Done, open; report `docs/harness-audit/phase-3.md` | Merge. Owner: settle the 5 fences on `/finish`; `NOTIFY_BACKENDS=desktop` |
+| 4. Audit attribution, derived-data versioning | `fix/audit-attribution` | Done; report `docs/harness-audit/phase-4.md` | Merge |
 
 **Phase 1 report (2026-10-15).**
 
