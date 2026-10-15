@@ -69,7 +69,13 @@ async def _accepts(context: Any, params: Any) -> types.ElicitResult:
     return types.ElicitResult(
         action="accept",
         content={
-            name: field["enum"][0] if "enum" in field else "123456"
+            name: (
+                field["enum"][0]
+                if "enum" in field
+                else True
+                if field.get("type") == "boolean"
+                else "123456"
+            )
             for name, field in asked.get("properties", {}).items()
         },
     )
