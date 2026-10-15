@@ -890,6 +890,26 @@ export interface PacketQuestion {
  * the apply form. The work up to that point is real, and this is how it gets
  * handed over instead of thrown away.
  */
+/**
+ * An attempt to send that nobody has vouched for either way: a click whose
+ * outcome is unknown, or a legacy run the ledger fenced to be safe. Another
+ * application's row blocks the job in any state, so each one stops its job
+ * being applied to again until the owner says whether it arrived.
+ */
+export interface UnsettledSubmission {
+  application_id: string;
+  application_status: string;
+  failure_reason?: string | null;
+  url: string;
+  company?: string | null;
+  title?: string | null;
+  /** `attempting`, `uncertain` or `released`. */
+  state: string;
+  /** `worker`, `owner`, or `legacy` (times approximate). */
+  source: string;
+  attempted_at?: string | null;
+}
+
 export interface ApplicationPacket {
   application_id: string;
   status: ApplicationStatus;
@@ -1086,6 +1106,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ note: note ?? null }),
     }),
+  /** The owner checked with the employer: it never arrived. Removes the
+   *  ledger row that would otherwise block the job, keeping it as a note. */
+  markNotSubmitted: (id: string, note?: string) =>
+    request<Application>(`/applications/${id}/not-submitted`, {
+      method: "POST",
+      body: JSON.stringify({ note: note ?? null }),
+    }),
+  unsettledSubmissions: () => request<UnsettledSubmission[]>("/submissions/unsettled"),
   candidates: () => request<Candidate[]>("/candidates"),
   // Scoped to a candidate by the API, not optional. Single-user or not,
   // the route requires it.

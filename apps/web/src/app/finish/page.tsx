@@ -1,6 +1,7 @@
-import { ApiError, api, type ApplicationPacket } from "@/lib/api";
+import { ApiError, api, type ApplicationPacket, type UnsettledSubmission } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
 import { FinishQueue } from "@/components/finish-queue";
+import { UnsettledSubmissions } from "@/components/unsettled-submissions";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +17,9 @@ export const dynamic = "force-dynamic";
  */
 export default async function FinishPage() {
   let packets: ApplicationPacket[];
+  let unsettled: UnsettledSubmission[];
   try {
-    packets = await api.manualQueue(50);
+    [packets, unsettled] = await Promise.all([api.manualQueue(50), api.unsettledSubmissions()]);
   } catch (error) {
     if (error instanceof ApiError) return <ErrorPanel error={error} />;
     throw error;
@@ -32,6 +34,8 @@ export default async function FinishPage() {
           solve the captcha and submit. Keys are listed under each card.
         </p>
       </header>
+
+      <UnsettledSubmissions initial={unsettled} />
 
       <FinishQueue initial={packets} />
     </div>

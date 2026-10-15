@@ -1139,6 +1139,33 @@ class ManualSubmission(BaseModel):
     note: str | None = None
 
 
+class NotSubmitted(BaseModel):
+    """The owner recording that the employer did not receive this application."""
+
+    note: str | None = None
+
+
+class UnsettledSubmissionOut(BaseModel):
+    """An attempt to send that nobody has vouched for either way.
+
+    The ledger's own word for it is `state`: `attempting` or `uncertain` (the
+    outcome of a click is unknown), or `released` (allowed one more try, by
+    an application that may never run again).
+    """
+
+    application_id: uuid.UUID
+    application_status: str
+    failure_reason: str | None = None
+    url: str
+    company: str | None = None
+    title: str | None = None
+    state: str
+    #: `worker`, `owner`, or `legacy` for the backfill of runs from before
+    #: the ledger, whose times are approximate.
+    source: str
+    attempted_at: datetime | None = None
+
+
 class MatchDecisionOut(BaseModel):
     """Confirmation that a verdict was recorded.
 
