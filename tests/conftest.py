@@ -26,7 +26,13 @@ import pytest_asyncio
 import structlog
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.engine import URL, make_url
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from packages.core.models import Application, Base, Candidate, Match, Posting, Profile, User
 
@@ -78,6 +84,74 @@ TEST_DATABASE_URL = (
     or _from_env_file("TEST_DATABASE_URL")
     or "postgresql+asyncpg://jobrunner:jobrunner@localhost:5432/jobrunner_test"
 )
+
+#: What the app would connect to, read before the line below replaces it.
+_LIVE_DATABASE_URL = os.environ.get("DATABASE_URL") or _from_env_file("DATABASE_URL")
+
+#: The comment a test database carries. Set once, by a person or by
+#: `scripts/init-db.sql`, and never by the suite: a mark it wrote for itself
+#: would prove nothing.
+TEST_DATABASE_MARKER = "jobrunner:test"
+
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _where(url: str | URL) -> str:
+    """Host, port and database. Never the user or the password."""
+    parsed = make_url(url)
+    return f"{parsed.host or 'localhost'}:{parsed.port or 5432}/{parsed.database}"
+
+
+def _host(name: str | None) -> str:
+    host = (name or "localhost").strip("[]").casefold()
+    return "localhost" if host in _LOOPBACK else host
+
+
+def same_database(left: str, right: str) -> bool:
+    """Whether two URLs name one database on one server, whatever the driver."""
+    a, b = make_url(left), make_url(right)
+    return (
+        _host(a.host) == _host(b.host)
+        and (a.port or 5432) == (b.port or 5432)
+        and a.database == b.database
+    )
+
+
+async def unmarked(conn: AsyncConnection) -> str | None:
+    """Why the connected database is not one the suite may drop, or None."""
+    name = await conn.scalar(text("SELECT current_database()"))
+    mark = await conn.scalar(
+        text(
+            "SELECT shobj_description(oid, 'pg_database') FROM pg_database "
+            "WHERE datname = current_database()"
+        )
+    )
+    if mark == TEST_DATABASE_MARKER:
+        return None
+    return (
+        f"{_where(conn.engine.url)} is not marked as a test database, and the suite "
+        "drops and recreates the schema of the one it is given. If it is a test "
+        "database, mark it once:\n"
+        f"  COMMENT ON DATABASE {name} IS '{TEST_DATABASE_MARKER}'"
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse a run aimed at the live database, before anything connects.
+
+    The schema drop below takes whatever `TEST_DATABASE_URL` names, and the
+    advisory lock only keeps two runs apart: one typo in `.env` was every
+    application, the submission ledger and the registry. The mark checked in
+    `engine` covers a database this cannot name.
+    """
+    if _LIVE_DATABASE_URL and same_database(TEST_DATABASE_URL, _LIVE_DATABASE_URL):
+        raise pytest.UsageError(
+            f"TEST_DATABASE_URL names {_where(TEST_DATABASE_URL)}, the database "
+            "DATABASE_URL names. The suite drops and recreates the schema of the one "
+            "it is given, so it will not start. Point TEST_DATABASE_URL at the test "
+            "database."
+        )
+
 
 #: The suite's only database is the test database, whatever `.env` names.
 #:
@@ -184,6 +258,7 @@ async def engine():
         held = await claim.scalar(
             text("SELECT pg_try_advisory_lock(:key)"), {"key": SCHEMA_LOCK_KEY}
         )
+        problem = await unmarked(claim)
         # Committed rather than left idle in a transaction — the drop below
         # waits on locks, and this connection must not be holding any. The
         # advisory lock is session-level and survives the commit.
@@ -207,6 +282,13 @@ async def engine():
         await claim.close()
         await eng.dispose()
         pytest.fail(_CONCURRENT_RUN, pytrace=False)
+
+    if problem is not None:
+        # Refused, never skipped, for the reason above: a database the suite
+        # may not drop is a mistake with a remedy, not an absent dependency.
+        await claim.close()
+        await eng.dispose()
+        pytest.fail(problem, pytrace=False)
 
     try:
         async with eng.begin() as conn:
