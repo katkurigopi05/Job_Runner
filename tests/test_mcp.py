@@ -32,7 +32,7 @@ def _bind_tools_to_app(client, monkeypatch):
     from apps.api.main import app
 
     bound = JobrunnerClient(
-        base_url="http://test", transport=ASGITransport(app=app, client=("127.0.0.1", 1))
+        base_url="http://localhost", transport=ASGITransport(app=app, client=("127.0.0.1", 1))
     )
     monkeypatch.setattr(mcp_server, "_client", bound)
     return bound

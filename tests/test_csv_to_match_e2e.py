@@ -398,7 +398,7 @@ async def test_the_status_endpoint_explains_a_cold_start(flow, monkeypatch) -> N
     await _drain()
 
     monkeypatch.setattr(core_db, "get_sessionmaker", lambda: flow["sessions"])
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://localhost") as client:
         body = (await client.get("/companies/status")).json()
 
     assert body["companies_total"] == 5

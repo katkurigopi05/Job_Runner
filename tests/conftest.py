@@ -514,7 +514,7 @@ async def client(committing_sessionmaker, monkeypatch) -> AsyncIterator[AsyncCli
     monkeypatch.setattr(core_db, "get_sessionmaker", lambda: committing_sessionmaker)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(transport=transport, base_url="http://localhost") as ac:
         yield ac
 
 
