@@ -1025,9 +1025,11 @@ export interface RegistrySyncResult {
 
 /** Whether the crawler is working, waiting, or stuck waiting for a worker. */
 export interface CrawlStatus {
+  /** Work held under a current lease, or waiting with a live worker to take it. */
   running: boolean;
+  /** Unclaimed work, a dead worker's lapsed claim included; not a sweep scheduled for later. */
   pending: number;
-  /** Work queued with nobody holding it — `make worker` is not up. */
+  /** Unclaimed work with no live worker available to drain it. */
   stalled: boolean;
   last_finished_at?: string | null;
   last_status?: string | null;

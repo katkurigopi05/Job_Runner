@@ -9,11 +9,14 @@ rather than "nothing has been looked for".
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
 
 from apps.worker.crawl_job import CRAWL_TASK_KIND
 from packages.core.enums import QueueTaskStatus
+from packages.core.heartbeat import record
 from packages.core.queue import enqueue
 
 
@@ -70,6 +73,191 @@ async def test_posting_freshness_is_reported_alongside(client: AsyncClient) -> N
     status = (await client.get("/crawl/status")).json()
 
     assert "newest_posting_at" in status
+
+
+@pytest.mark.parametrize("kind", ["discover_company", "crawl_company"])
+async def test_company_work_keeps_the_spider_running(client, worker_session, kind) -> None:
+    task = await enqueue(worker_session, kind, {})
+    task.status = "running"
+    await worker_session.commit()
+
+    status = (await client.get("/crawl/status")).json()
+    assert status["running"] is True
+    assert status["stalled"] is False
+
+
+@pytest.mark.parametrize("alive", [False, True])
+async def test_a_future_sweep_is_idle_not_stalled(client, worker_session, alive) -> None:
+    now = datetime.now(UTC)
+    await enqueue(worker_session, "crawl", {"dispatch": True}, run_after=now + timedelta(hours=1))
+    if alive:
+        await record(worker_session, worker_id="crawler", started_at=now)
+    await worker_session.commit()
+
+    status = (await client.get("/crawl/status")).json()
+    assert status["running"] is False
+    assert status["pending"] == 0
+    assert status["stalled"] is False
+
+
+@pytest.mark.parametrize("kind", ["crawl", "discover_company", "crawl_company"])
+async def test_ready_work_with_a_live_worker_keeps_moving(client, worker_session, kind) -> None:
+    await enqueue(worker_session, kind, {})
+    await record(worker_session, worker_id="crawler", started_at=datetime.now(UTC))
+    await worker_session.commit()
+
+    status = (await client.get("/crawl/status")).json()
+    assert status["running"] is True
+    assert status["pending"] == 1
+    assert status["stalled"] is False
+
+
+async def test_a_delayed_sweep_retry_is_unfinished_work(client, worker_session) -> None:
+    now = datetime.now(UTC)
+    task = await enqueue(worker_session, "crawl", {}, run_after=now + timedelta(minutes=2))
+    task.attempts = 1
+    await record(worker_session, worker_id="crawler", started_at=now)
+    await worker_session.commit()
+
+    status = (await client.get("/crawl/status")).json()
+    assert status["running"] is True
+    assert status["pending"] == 1
+    assert status["stalled"] is False
+
+
+@pytest.mark.parametrize("kind", ["discover_company", "crawl_company"])
+@pytest.mark.parametrize("worker_state", ["alive", "stale", "stopped", "missing"])
+async def test_deferred_company_work_is_not_finished(
+    client, worker_session, kind, worker_state
+) -> None:
+    now = datetime.now(UTC)
+    await enqueue(worker_session, kind, {}, run_after=now + timedelta(minutes=2))
+    if worker_state != "missing":
+        await record(
+            worker_session,
+            worker_id="crawler",
+            started_at=now,
+            now=now - timedelta(minutes=5) if worker_state == "stale" else now,
+            stopped=worker_state == "stopped",
+        )
+    await worker_session.commit()
+
+    status = (await client.get("/crawl/status")).json()
+    assert status["pending"] == 1
+    assert status["running"] is (worker_state == "alive")
+    assert status["stalled"] is (worker_state != "alive")
+
+
+@pytest.mark.parametrize("terminal", ["done", "failed"])
+async def test_spider_stays_active_from_dispatch_through_last_company(
+    client, worker_session, terminal
+) -> None:
+    now = datetime.now(UTC)
+    await record(worker_session, worker_id="crawler", started_at=now)
+    sweep = await enqueue(worker_session, "crawl", {"dispatch": True})
+    sweep.status = "running"
+    await worker_session.commit()
+    assert (await client.get("/crawl/status")).json()["running"] is True
+
+    # The sweep finishes, but discovery is still queued. The next scheduled
+    # sweep is not part of this cycle and must not keep it alive afterwards.
+    sweep.status = "done"
+    discovery = await enqueue(worker_session, "discover_company", {})
+    await enqueue(worker_session, "crawl", {"dispatch": True}, run_after=now + timedelta(hours=1))
+    await worker_session.commit()
+    assert (await client.get("/crawl/status")).json()["running"] is True
+
+    discovery.status = "done"
+    company = await enqueue(worker_session, "crawl_company", {})
+    other_company = await enqueue(worker_session, "crawl_company", {})
+    other_company.status = terminal
+    await worker_session.commit()
+    assert (await client.get("/crawl/status")).json()["running"] is True
+
+    company.status = "running"
+    await worker_session.commit()
+    assert (await client.get("/crawl/status")).json()["running"] is True
+
+    company.status = terminal
+    await worker_session.commit()
+    status = (await client.get("/crawl/status")).json()
+    assert status["running"] is False
+    assert status["pending"] == 0
+    assert status["stalled"] is False
+
+
+async def test_unrelated_work_does_not_animate_the_spider(client, worker_session) -> None:
+    task = await enqueue(worker_session, "apply", {})
+    task.status = "running"
+    await record(
+        worker_session, worker_id="worker", started_at=datetime.now(UTC), task_kind="apply"
+    )
+    await worker_session.commit()
+    status = (await client.get("/crawl/status")).json()
+    assert status["running"] is False
+    assert status["pending"] == 0
+    assert status["stalled"] is False
+
+
+async def _claimed_by(session, kind: str, *, lease_ends_at: datetime):
+    task = await enqueue(session, kind, {})
+    task.status = "running"
+    task.locked_by = "gone-0"
+    task.lease_expires_at = lease_ends_at
+    return task
+
+
+@pytest.mark.parametrize("kind", ["crawl", "discover_company", "crawl_company"])
+@pytest.mark.parametrize("worker", ["missing", "stopped"])
+async def test_a_dead_workers_claim_is_stalled_not_running(
+    client, worker_session, kind, worker
+) -> None:
+    """A worker killed mid-task leaves its row `running` until a claimant takes
+    the expired lease back. With no claimant alive nothing ever does, and
+    counting the row as work in progress kept the spider walking for good.
+    Found by the 2026-10-14 audit, on this route before and after the
+    handoff-aware rewrite above."""
+    now = datetime.now(UTC)
+    await _claimed_by(worker_session, kind, lease_ends_at=now - timedelta(hours=2))
+    if worker == "stopped":
+        await record(
+            worker_session,
+            worker_id="gone-0",
+            started_at=now - timedelta(hours=3),
+            now=now - timedelta(hours=2),
+            stopped=True,
+        )
+    await worker_session.commit()
+
+    status = (await client.get("/crawl/status")).json()
+    assert status["running"] is False
+    assert status["stalled"] is True
+    assert status["pending"] == 1
+
+
+async def test_a_dead_workers_claim_with_a_live_worker_keeps_moving(client, worker_session) -> None:
+    """A live claimant will take the expired lease back on its next claim."""
+    now = datetime.now(UTC)
+    await _claimed_by(worker_session, "crawl_company", lease_ends_at=now - timedelta(minutes=10))
+    await record(worker_session, worker_id="crawler", started_at=now)
+    await worker_session.commit()
+
+    status = (await client.get("/crawl/status")).json()
+    assert status["running"] is True
+    assert status["stalled"] is False
+    assert status["pending"] == 1
+
+
+async def test_a_claim_whose_lease_is_current_is_running(client, worker_session) -> None:
+    """Somebody holds it now, whatever the heartbeat table last heard."""
+    now = datetime.now(UTC)
+    await _claimed_by(worker_session, "crawl_company", lease_ends_at=now + timedelta(minutes=4))
+    await worker_session.commit()
+
+    status = (await client.get("/crawl/status")).json()
+    assert status["running"] is True
+    assert status["stalled"] is False
+    assert status["pending"] == 0
 
 
 # --------------------------------------------------------------------------

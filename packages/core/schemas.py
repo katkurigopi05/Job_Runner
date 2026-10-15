@@ -607,11 +607,13 @@ class CrawlStatusOut(BaseModel):
     which looks exactly like a crawl in progress if the two are conflated.
     """
 
-    #: A crawl is claimed and being worked right now.
+    #: Crawl/company work is held under a current lease, or unfinished work has
+    #: a live worker to take it.
     running: bool
-    #: Crawls queued and not yet claimed.
+    #: Unclaimed crawl/company work: due tasks, retries, and a dead worker's
+    #: lapsed claim. Not a sweep scheduled for later.
     pending: int
-    #: True when work is waiting but no worker holds it — start `make worker`.
+    #: Unfinished work is unclaimed and no live worker can drain it.
     stalled: bool
     #: When the last crawl finished, successfully or not. None if none ever has.
     last_finished_at: datetime | None = None
