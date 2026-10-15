@@ -369,3 +369,25 @@ to every call that night. Not changed: a 503 is not retried; the
 OpenAI-compatible providers still return partial content when `finish_reason`
 is `"length"` and the content is not empty; `complete_json` sets no limit and
 reads no `finishReason`.
+
+## What a call was for (2026-10-15)
+
+`/audit/summary` and the `audit_trail` MCP tool count uploads by task, so
+the owner can check that nothing but tailoring left (§2.8). Every entry on
+the owner's machine said `unspecified`, because no call site passed a task.
+
+A `Prompt` now names its task, and `audit.record` takes it from the
+registered prompt when the caller names none. Every call site in the app
+sends a registered prompt, so a call that does not reads `unregistered`, a
+word that says something is off where `unspecified` said nothing. Older
+entries are attributed in `read_trail` from the prompt name they recorded.
+That happens in memory: the trail's lines are never rewritten.
+
+On the owner's trail that day: 732 uploads, 429 `tailor_resume`, 74
+`assistant` (a provider chosen per question), 229 `unregistered`. The last
+are scripts and experiments calling providers with prompts of their own.
+Giving those a task means registering their prompts or passing one through,
+which nothing does yet. Also left alone: 12,520 `stub` entries from
+2026-08-17 to 09-18, written by the suite before it got its own trail
+directory. They never left the machine, and quota counts today only.
+`tests/test_audit_attribution.py`.

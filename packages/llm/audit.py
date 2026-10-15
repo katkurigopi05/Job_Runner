@@ -25,14 +25,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
 
 from packages.core.config import get_settings
-from packages.llm.prompts import identify
+from packages.llm.prompts import identify, task_of
 
 log = structlog.get_logger(__name__)
 
@@ -57,6 +57,15 @@ LOCAL_PROVIDERS = frozenset({"stub", "ollama"})
 #: tailoring, but only *audited*, and an audit that is confidently wrong is
 #: worse than none: it answers the one question it exists for, incorrectly.
 CLOUD_MODEL_MARKERS = ("cloud",)
+
+#: The task of a call whose system prompt is not a registered one. Every
+#: call site in the app sends a registered prompt, so this is a script, an
+#: experiment, or a prompt someone forgot to register.
+UNREGISTERED = "unregistered"
+
+#: What every entry said before 2026-10-15, when no caller passed a task.
+#: `read_trail` reads those by their recorded prompt instead.
+LEGACY_UNSPECIFIED = "unspecified"
 
 
 def is_local(provider: str, model: str | None = None) -> bool:
@@ -121,7 +130,7 @@ def record(
     system: str,
     user: str,
     *,
-    task: str = "unspecified",
+    task: str | None = None,
     model: str | None = None,
 ) -> AuditEntry:
     """Authorize, then append one entry to the audit trail and return it.
@@ -139,6 +148,10 @@ def record(
     authorize(provider)
 
     prompt = identify(system)
+    # What it was for: the caller's word, else the registered prompt's.
+    # Every call site sends a registered prompt, so an unregistered one is
+    # something to look at, and says so (`UNREGISTERED`).
+    task = task or (prompt.task if prompt else UNREGISTERED)
 
     entry = AuditEntry(
         at=datetime.now(UTC).isoformat(),
@@ -193,8 +206,20 @@ def read_trail(limit: int | None = None) -> list[AuditEntry]:
     if not path.is_file():
         return []
 
-    entries = [AuditEntry(**json.loads(line)) for line in path.read_text().splitlines() if line]
+    entries = [
+        _attributed(AuditEntry(**json.loads(line)))
+        for line in path.read_text().splitlines()
+        if line
+    ]
     return entries[-limit:] if limit else entries
+
+
+def _attributed(entry: AuditEntry) -> AuditEntry:
+    """An entry written before calls named their task, given the one its
+    prompt says. In memory only: the trail's lines are never rewritten."""
+    if entry.task != LEGACY_UNSPECIFIED:
+        return entry
+    return replace(entry, task=task_of(entry.prompt_name) or UNREGISTERED)
 
 
 def uploads_only(entries: list[AuditEntry] | None = None) -> list[AuditEntry]:
