@@ -1296,6 +1296,10 @@ async def _submit(
         log.warning("submit_failed_exception", error=type(exc).__name__)
         receipt = None
 
+    if receipt is not None and not receipt.submitted:
+        # Clicked, and the site showed no confirmation (packages/ats/form.py).
+        log.warning("submit_unconfirmed", application_id=str(application.id), ats=receipt.ats)
+
     if receipt is not None and receipt.submitted:
         fence.state = "submitted"
         fence.confirmed_at = datetime.now(UTC)

@@ -330,6 +330,41 @@ What that leaves true of the limiter: it spaces the slots by the floor, and a
 request that leaves late lands closer to the next one than the floor by
 however late it was.
 
+### Nothing stopped the suite dropping the live database
+
+Found on 2026-10-15 by an audit. The session fixture drops and recreates the
+schema of whatever `TEST_DATABASE_URL` names, read from the environment or
+`.env`, and nothing compared it with the live database. The advisory lock
+above keeps two runs apart and says nothing about which database they are
+in. One typo, `…5433/jobrunner` for `…5433/jobrunner_test`, and the run
+would have dropped every application, the submission ledger and the registry.
+
+Two checks now, and either one refuses on its own
+(`tests/test_the_suite_refuses_the_live_database.py`, each mutated out in
+turn and caught):
+
+- **Not the live database.** `pytest_configure` compares host, port and
+  database with `DATABASE_URL` as the app would read it, before the override
+  above replaces it, and before anything connects. The driver is ignored,
+  and `localhost`, `127.0.0.1` and `::1` count as one host. Exit 4, and no
+  credentials in the message.
+- **A positive mark.** The database's comment must read `jobrunner:test`,
+  checked on the claiming connection before `drop_all`. Refused, never
+  skipped, for the reason the concurrent-run refusal gives. The suite never
+  writes the mark: one it wrote for itself would prove nothing. Set by
+  `scripts/init-db.sql` and by CI. An existing volume needs it once:
+
+  ```sql
+  COMMENT ON DATABASE jobrunner_test IS 'jobrunner:test'
+  ```
+
+  The owner's `jobrunner_test` was marked on 2026-10-15. A second test
+  database, for running two suites at once, needs the mark as well.
+
+The migration tests' scratch databases are not covered by the mark. They are
+created and dropped by name under `TEST_DATABASE_URL`'s server, never by the
+session fixture.
+
 Not cleaned up: the live table holds eleven rows for made-up hosts
 (`h0.example`, `acme.example`, `careers.slowsite.test` and others) dated
 2026-09-14, from an earlier version of the suite with the same leak. They

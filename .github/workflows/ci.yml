@@ -90,6 +90,7 @@ jobs:
         run: |
           export PGPASSWORD=jobrunner
           psql -h localhost -U jobrunner -d jobrunner -c 'CREATE DATABASE jobrunner_test;'
+          psql -h localhost -U jobrunner -d jobrunner -c "COMMENT ON DATABASE jobrunner_test IS 'jobrunner:test';"
           psql -h localhost -U jobrunner -d jobrunner      -c 'CREATE EXTENSION IF NOT EXISTS vector;'
           psql -h localhost -U jobrunner -d jobrunner_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
