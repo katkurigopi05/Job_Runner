@@ -18,7 +18,7 @@ from apps.worker import run as worker_run
 from packages.core.config import get_settings
 from packages.core.enums import ApplicationStatus, QueueTaskStatus
 from packages.core.models import Application, QueueTask
-from packages.core.queue import claim_task, expire_leases
+from packages.core.queue import ClaimOwnershipLost, claim_task, enqueue, expire_leases
 
 APPLY_URL = "https://boards.greenhouse.io/acme/jobs/98765"
 
@@ -205,6 +205,28 @@ async def test_empty_queue_is_a_no_op(client: AsyncClient) -> None:
     assert await worker_run.run_once(worker_id="test-worker") is False
 
 
+async def test_worker_commits_retry_exhaustion_when_no_task_is_claimed(
+    client: AsyncClient, worker_session
+) -> None:
+    task = await enqueue(worker_session, "apply", {"application_id": "x"})
+    await worker_session.execute(
+        text(
+            """UPDATE queue_tasks
+               SET status = 'running', attempts = 3, locked_by = 'dead-worker',
+                   lease_expires_at = clock_timestamp() - interval '1 second'
+               WHERE id = :id"""
+        ),
+        {"id": task.id},
+    )
+    await worker_session.commit()
+
+    assert await worker_run.run_once(worker_id="worker-4") is False
+
+    await worker_session.refresh(task)
+    assert task.status == QueueTaskStatus.FAILED
+    assert task.last_error == "lease_expired_retry_limit"
+
+
 # --------------------------------------------------------------------------
 # Crash recovery — the lease doing its job end to end
 # --------------------------------------------------------------------------
@@ -238,6 +260,36 @@ async def test_crashed_run_is_resumed_not_deadlocked(
 
     polled = await client.get(f"/applications/{app_id}")
     assert polled.json()["status"] == ApplicationStatus.SUBMITTED
+
+
+async def test_lease_guard_stops_work_after_claim_handoff(
+    committing_sessionmaker, monkeypatch
+) -> None:
+    """A handler cannot continue to a later side effect after losing its generation."""
+    from packages.core import db as core_db
+
+    async with committing_sessionmaker() as first_session:
+        await enqueue(first_session, "apply", {"application_id": "x"})
+        stale = await claim_task(first_session, worker_id="stable-worker")
+        assert stale is not None
+        await first_session.commit()
+
+    async with committing_sessionmaker() as second_session:
+        await expire_leases(second_session)
+        await second_session.commit()
+        current = await claim_task(second_session, worker_id="stable-worker")
+        assert current is not None
+        await second_session.commit()
+
+    monkeypatch.setattr(core_db, "get_sessionmaker", lambda: committing_sessionmaker)
+    reached_side_effect = False
+
+    with pytest.raises(ClaimOwnershipLost):
+        async with worker_run._keep_lease_alive(stale, 0.1):
+            await asyncio.sleep(0.5)
+            reached_side_effect = True
+
+    assert not reached_side_effect
 
 
 async def test_redelivery_after_submission_does_not_resubmit(
@@ -293,8 +345,10 @@ async def test_handler_error_retries_then_fails_the_application(
 
     # Must mirror the real _run_pipeline signature, or the call raises TypeError
     # before the body runs and this stops testing the failure path it names.
+    private_sentinel = "SYNTHETIC_PRIVATE_CONTENT_NOT_A_REAL_SECRET"
+
     async def _boom(session, application, candidate, profile):
-        raise RuntimeError("site exploded")
+        raise RuntimeError(private_sentinel)
 
     monkeypatch.setattr(apply_job, "_run_pipeline", _boom)
 
@@ -318,6 +372,11 @@ async def test_handler_error_retries_then_fails_the_application(
     polled = await client.get(f"/applications/{app_id}")
     assert polled.json()["status"] == ApplicationStatus.FAILED
     assert polled.json()["failure_reason"] == "site_error"
+    events = await client.get(f"/applications/{app_id}/events")
+    await worker_session.refresh(task)
+    assert task.last_error == "RuntimeError"
+    assert private_sentinel not in repr(polled.json())
+    assert private_sentinel not in repr(events.json())
 
 
 async def test_configured_worker_id_is_used(monkeypatch, committing_sessionmaker) -> None:

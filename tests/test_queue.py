@@ -18,11 +18,13 @@ from packages.core.models import QueueTask
 from packages.core.queue import (
     claim_task,
     complete_task,
+    defer_task,
     enqueue,
     expire_leases,
     fail_task,
     heartbeat,
     release_task,
+    renew_lease,
 )
 from packages.core.state import WorkClaim, begin_work
 
@@ -96,21 +98,21 @@ async def test_heartbeat_extends_the_lease(db_session) -> None:
     before = claimed.task.lease_expires_at
     assert before is not None
 
-    await heartbeat(db_session, claimed.task, lease_seconds=600)
+    assert await heartbeat(db_session, claimed, lease_seconds=600)
 
     assert claimed.task.lease_expires_at is not None
     assert claimed.task.lease_expires_at > before
 
 
-async def test_heartbeat_keeps_a_task_unclaimable(db_session) -> None:
+async def test_expired_task_heartbeat_cannot_resurrect_the_claim(db_session) -> None:
     await enqueue(db_session, "apply", {"application_id": "x"})
     claimed = await claim_task(db_session, worker_id=WORKER_A, lease_seconds=1)
     assert claimed is not None
 
     await expire_leases(db_session)
-    await heartbeat(db_session, claimed.task, lease_seconds=600)
+    assert not await heartbeat(db_session, claimed, lease_seconds=600)
 
-    assert await claim_task(db_session, worker_id=WORKER_B) is None
+    assert await claim_task(db_session, worker_id=WORKER_B) is not None
 
 
 async def test_future_run_after_is_not_claimed(db_session) -> None:
@@ -134,7 +136,7 @@ async def test_complete_releases_the_lease(db_session) -> None:
     claimed = await claim_task(db_session, worker_id=WORKER_A)
     assert claimed is not None
 
-    await complete_task(db_session, claimed.task)
+    assert await complete_task(db_session, claimed)
 
     assert claimed.task.status == QueueTaskStatus.DONE
     assert claimed.task.locked_by is None
@@ -149,12 +151,12 @@ async def test_failure_retries_then_gives_up(db_session) -> None:
         claimed = await claim_task(db_session, worker_id=WORKER_A)
         assert claimed is not None
         assert claimed.task.attempts == expected_attempt
-        assert await fail_task(db_session, claimed.task, "boom", retry_in_s=0, max_attempts=3)
+        assert await fail_task(db_session, claimed, "boom", retry_in_s=0, max_attempts=3)
 
     claimed = await claim_task(db_session, worker_id=WORKER_A)
     assert claimed is not None
     assert claimed.task.attempts == 3
-    assert not await fail_task(db_session, claimed.task, "boom", retry_in_s=0, max_attempts=3)
+    assert not await fail_task(db_session, claimed, "boom", retry_in_s=0, max_attempts=3)
     assert claimed.task.status == QueueTaskStatus.FAILED
 
 
@@ -164,10 +166,80 @@ async def test_failure_message_is_truncated(db_session) -> None:
     claimed = await claim_task(db_session, worker_id=WORKER_A)
     assert claimed is not None
 
-    await fail_task(db_session, claimed.task, "x" * 10_000, retry_in_s=0)
+    await fail_task(db_session, claimed, "x" * 10_000, retry_in_s=0)
 
     assert claimed.task.last_error is not None
     assert len(claimed.task.last_error) == 2000
+
+
+@pytest.mark.parametrize("settlement", ["complete", "fail", "release", "defer"])
+async def test_stale_claim_cannot_settle_a_new_claim(
+    committing_sessionmaker, settlement: str
+) -> None:
+    """Owner plus attempt is the claim identity, including same-worker restarts."""
+    async with committing_sessionmaker() as old_session:
+        await enqueue(old_session, "apply", {"application_id": "x"})
+        stale = await claim_task(old_session, worker_id=WORKER_A)
+        assert stale is not None
+        await old_session.commit()
+
+        async with committing_sessionmaker() as new_session:
+            await expire_leases(new_session)
+            await new_session.commit()
+            current = await claim_task(new_session, worker_id=WORKER_A)
+            assert current is not None
+            assert current.task.attempts == 2
+            await new_session.commit()
+
+        if settlement == "complete":
+            accepted = await complete_task(old_session, stale)
+        elif settlement == "fail":
+            accepted = await fail_task(old_session, stale, "safe_error", retry_in_s=0)
+        elif settlement == "release":
+            accepted = await release_task(old_session, stale)
+        else:
+            accepted = await defer_task(
+                old_session, stale, run_after=datetime.now(UTC) + timedelta(minutes=1)
+            )
+        await old_session.commit()
+
+    if settlement == "fail":
+        assert accepted is None
+    else:
+        assert accepted is False
+    async with committing_sessionmaker() as verify_session:
+        row = await verify_session.get(QueueTask, current.task.id)
+        assert row is not None
+        assert row.status == QueueTaskStatus.RUNNING
+        assert row.locked_by == WORKER_A
+        assert row.attempts == 2
+
+
+async def test_repeated_expiry_stops_at_the_retry_bound(committing_sessionmaker) -> None:
+    """A crash loop consumes attempts and parks instead of reclaiming forever."""
+    task_id = None
+    for expected_attempt in range(1, 4):
+        async with committing_sessionmaker() as session:
+            if task_id is None:
+                task_id = (await enqueue(session, "apply", {"application_id": "x"})).id
+            claimed = await claim_task(session, worker_id=f"worker-{expected_attempt}")
+            assert claimed is not None
+            assert claimed.task.attempts == expected_attempt
+            await session.commit()
+        async with committing_sessionmaker() as session:
+            await expire_leases(session)
+            await session.commit()
+
+    async with committing_sessionmaker() as session:
+        assert await claim_task(session, worker_id="worker-4") is None
+        await session.commit()
+
+    async with committing_sessionmaker() as session:
+        task = await session.get(QueueTask, task_id)
+        assert task is not None
+        assert task.status == QueueTaskStatus.FAILED
+        assert task.attempts == 3
+        assert task.last_error == "lease_expired_retry_limit"
 
 
 async def test_release_does_not_consume_a_retry(db_session) -> None:
@@ -175,11 +247,12 @@ async def test_release_does_not_consume_a_retry(db_session) -> None:
     claimed = await claim_task(db_session, worker_id=WORKER_A)
     assert claimed is not None
 
-    await release_task(db_session, claimed.task)
+    assert await release_task(db_session, claimed)
 
     assert claimed.task.status == QueueTaskStatus.PENDING
     assert claimed.task.locked_by is None
     assert claimed.task.last_error is None
+    assert claimed.task.attempts == 0
 
 
 async def test_claims_are_ordered_by_run_after(db_session) -> None:
@@ -286,15 +359,19 @@ async def test_redelivery_after_completion_is_a_no_op(db_session, application, t
 
 
 async def test_renew_lease_extends_ownership(db_session) -> None:
-    from packages.core.queue import renew_lease
-
     await enqueue(db_session, "apply", {"application_id": "x"})
     claimed = await claim_task(db_session, worker_id=WORKER_A, lease_seconds=10)
     assert claimed is not None
     before = claimed.task.lease_expires_at
     assert before is not None
 
-    assert await renew_lease(db_session, claimed.task.id, WORKER_A, lease_seconds=600)
+    assert await renew_lease(
+        db_session,
+        claimed.task.id,
+        WORKER_A,
+        claimed.task.attempts,
+        lease_seconds=600,
+    )
 
     await db_session.refresh(claimed.task)
     assert claimed.task.lease_expires_at is not None
@@ -303,8 +380,6 @@ async def test_renew_lease_extends_ownership(db_session) -> None:
 
 async def test_renew_lease_reports_loss_of_ownership(db_session) -> None:
     """If another worker took over, renewal must say so rather than resurrect."""
-    from packages.core.queue import renew_lease
-
     await enqueue(db_session, "apply", {"application_id": "x"})
     claimed = await claim_task(db_session, worker_id=WORKER_A)
     assert claimed is not None
@@ -314,20 +389,53 @@ async def test_renew_lease_reports_loss_of_ownership(db_session) -> None:
     assert stolen is not None
 
     # Worker A is still running, but no longer owns the task.
-    assert not await renew_lease(db_session, claimed.task.id, WORKER_A)
+    assert not await renew_lease(db_session, claimed.task.id, WORKER_A, claimed.task.attempts)
 
 
-async def test_renewal_keeps_a_slow_task_unclaimable(db_session) -> None:
-    from packages.core.queue import renew_lease
+async def test_old_attempt_cannot_renew_after_same_worker_reclaims(
+    committing_sessionmaker,
+) -> None:
+    """Stable worker ids need the attempt generation to prevent an ABA renewal."""
+    async with committing_sessionmaker() as old_session:
+        await enqueue(old_session, "apply", {"application_id": "x"})
+        stale = await claim_task(old_session, worker_id=WORKER_A)
+        assert stale is not None
+        await old_session.commit()
 
+        async with committing_sessionmaker() as new_session:
+            await expire_leases(new_session)
+            await new_session.commit()
+            current = await claim_task(new_session, worker_id=WORKER_A)
+            assert current is not None
+            assert current.task.attempts == 2
+            await new_session.commit()
+
+        assert stale.task_id is not None
+        assert stale.attempt is not None
+        assert not await renew_lease(
+            old_session,
+            stale.task_id,
+            WORKER_A,
+            stale.attempt,
+            lease_seconds=600,
+        )
+
+
+async def test_expired_claim_cannot_be_resurrected_by_renewal(db_session) -> None:
     await enqueue(db_session, "apply", {"application_id": "x"})
     claimed = await claim_task(db_session, worker_id=WORKER_A, lease_seconds=1)
     assert claimed is not None
 
     await expire_leases(db_session)
-    await renew_lease(db_session, claimed.task.id, WORKER_A, lease_seconds=600)
+    assert not await renew_lease(
+        db_session,
+        claimed.task.id,
+        WORKER_A,
+        claimed.task.attempts,
+        lease_seconds=600,
+    )
 
-    assert await claim_task(db_session, worker_id=WORKER_B) is None
+    assert await claim_task(db_session, worker_id=WORKER_B) is not None
 
 
 # --- kinds that wait for everything else -------------------------------------
