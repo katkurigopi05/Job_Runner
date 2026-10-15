@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.worker.apply_job import TaskPayloadError, handle_apply
 from apps.worker.crawl_company_job import CRAWL_COMPANY_TASK_KIND, handle_crawl_company
@@ -30,10 +31,11 @@ from packages.core import db as core_db
 from packages.core.config import get_settings
 from packages.core.enums import FailureReason
 from packages.core.heartbeat import Heartbeat
-from packages.core.models import Application, QueueTask
+from packages.core.models import Application
 from packages.core.queue import (
     DEFAULT_LEASE_SECONDS,
     ClaimedTask,
+    ClaimOwnershipLost,
     TaskDeferred,
     claim_task,
     complete_task,
@@ -81,6 +83,10 @@ async def run_once(
             lease_seconds=lease_seconds,
         )
         if claimed is None:
+            # `claim_task` also parks expired work that exhausted its retry
+            # budget. Keep that terminal transition even when no task remains
+            # to return to this worker.
+            await session.commit()
             return False
 
         # Commit the claim before doing any work. If the handler raises, the
@@ -96,23 +102,47 @@ async def run_once(
         # A browser run can outlast the lease. Without renewal the task would
         # be reclaimed mid-flight and a second worker would start driving the
         # same form — the one way this design could double-submit.
-        async with _keep_lease_alive(claimed.task.id, worker_id, lease_seconds):
-            await _process(session, claimed)
+        try:
+            async with _keep_lease_alive(claimed, lease_seconds):
+                await _process(session, claimed)
+        except ClaimOwnershipLost:
+            await session.rollback()
+            log.warning(
+                "claim_ownership_lost",
+                task_id=str(claimed.task_id),
+                worker_id=worker_id,
+                attempt=claimed.attempt,
+            )
+            if heartbeat is not None:
+                await heartbeat.pulse(force=True, error_kind="ClaimOwnershipLost")
+            return True
         if heartbeat is not None:
             await heartbeat.pulse(completed=True)
         return True
 
 
 @asynccontextmanager
-async def _keep_lease_alive(
-    task_id: uuid.UUID, worker_id: str, lease_seconds: int
-) -> AsyncIterator[None]:
-    """Renew the lease on its own session for as long as the body runs."""
+async def _keep_lease_alive(claimed: ClaimedTask, lease_seconds: int) -> AsyncIterator[None]:
+    """Renew this claim and cancel its body as soon as ownership is lost."""
+    if claimed.task_id is None or claimed.worker_id is None or claimed.attempt is None:
+        raise ValueError("claimed task has no ownership token")
+    task_id = claimed.task_id
+    worker_id = claimed.worker_id
+    attempt = claimed.attempt
     stop = asyncio.Event()
+    lost = asyncio.Event()
+    body = asyncio.current_task()
+    if body is None:  # pragma: no cover - an async context always has a task
+        raise RuntimeError("lease guard requires an asyncio task")
+
+    def _lose_claim() -> None:
+        lost.set()
+        body.cancel()
 
     async def _renew() -> None:
         # A third of the lease gives two chances to renew before it lapses.
-        interval = max(lease_seconds / 3, 1.0)
+        interval = max(lease_seconds / 3, 0.1)
+        deadline = asyncio.get_running_loop().time() + lease_seconds
         while not stop.is_set():
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=interval)
@@ -121,19 +151,37 @@ async def _keep_lease_alive(
             try:
                 async with core_db.get_sessionmaker()() as renewal_session:
                     still_ours = await renew_lease(
-                        renewal_session, task_id, worker_id, lease_seconds=lease_seconds
+                        renewal_session,
+                        task_id,
+                        worker_id,
+                        attempt,
+                        lease_seconds=lease_seconds,
                     )
                 if not still_ours:
-                    # Someone else owns it now; stop renewing and let the
-                    # handler finish. Its writes will be the loser of any race.
-                    log.warning("lease_lost", task_id=str(task_id), worker_id=worker_id)
+                    log.warning(
+                        "lease_lost",
+                        task_id=str(task_id),
+                        worker_id=worker_id,
+                        attempt=attempt,
+                    )
+                    _lose_claim()
                     return
+                deadline = asyncio.get_running_loop().time() + lease_seconds
             except Exception as exc:  # noqa: BLE001 - renewal must not kill the run
                 log.warning("lease_renewal_failed", error=type(exc).__name__)
+                if asyncio.get_running_loop().time() >= deadline:
+                    _lose_claim()
+                    return
 
     renewer = asyncio.create_task(_renew())
     try:
         yield
+        if lost.is_set():
+            raise ClaimOwnershipLost(str(task_id))
+    except asyncio.CancelledError as exc:
+        if lost.is_set():
+            raise ClaimOwnershipLost(str(task_id)) from exc
+        raise
     finally:
         stop.set()
         renewer.cancel()
@@ -141,7 +189,7 @@ async def _keep_lease_alive(
             await renewer
 
 
-async def _process(session, claimed: ClaimedTask) -> None:
+async def _process(session: AsyncSession, claimed: ClaimedTask) -> None:
     # Captured up front: after a rollback the instance is expired, and touching
     # it would trigger a lazy load outside the async context.
     task_id = claimed.task.id
@@ -149,11 +197,21 @@ async def _process(session, claimed: ClaimedTask) -> None:
 
     handler = HANDLERS.get(task_kind)
     if handler is None:
-        await _fail(session, task_id, f"no handler for kind {task_kind}", max_attempts=0)
+        outcome = await _fail(
+            session,
+            claimed,
+            f"no_handler:{task_kind}",
+            max_attempts=0,
+        )
+        if outcome is None:
+            raise ClaimOwnershipLost(str(task_id))
         return
 
     try:
         await handler(session, claimed)
+    except ClaimOwnershipLost:
+        await session.rollback()
+        raise
     except TaskDeferred as exc:
         # Neither done nor failed. The handler handed the task back because its
         # host was busy, *before* making any request, so there is nothing to
@@ -171,14 +229,18 @@ async def _process(session, claimed: ClaimedTask) -> None:
     except TaskPayloadError as exc:
         # A malformed payload will never succeed, so do not burn retries on it.
         await session.rollback()
-        await _fail(session, task_id, str(exc), max_attempts=0)
-        log.error("task_payload_invalid", task_id=str(task_id), error=str(exc))
+        outcome = await _fail(session, claimed, type(exc).__name__, max_attempts=0)
+        if outcome is None:
+            raise ClaimOwnershipLost(str(task_id)) from exc
+        log.error("task_payload_invalid", task_id=str(task_id), error=type(exc).__name__)
         return
     except Exception as exc:  # noqa: BLE001 - the loop must survive any handler
         await session.rollback()
         # Never log the exception body verbatim: it can carry page content.
-        message = f"{type(exc).__name__}: {exc}"
-        will_retry = await _fail(session, task_id, message)
+        message = type(exc).__name__
+        will_retry = await _fail(session, claimed, message)
+        if will_retry is None:
+            raise ClaimOwnershipLost(str(task_id)) from exc
         if not will_retry:
             await _mark_application_failed(session, claimed, message)
             await session.commit()
@@ -192,14 +254,16 @@ async def _process(session, claimed: ClaimedTask) -> None:
         )
         return
 
-    await complete_task(session, claimed.task)
+    if not await complete_task(session, claimed):
+        await session.rollback()
+        raise ClaimOwnershipLost(str(task_id))
     await session.commit()
     log.info("task_done", task_id=str(task_id), kind=task_kind)
     # After the commit, never before: `notify_if_parked` says why.
     await _notify(session, claimed)
 
 
-async def _notify(session, claimed: ClaimedTask) -> None:
+async def _notify(session: AsyncSession, claimed: ClaimedTask) -> None:
     """Ring the doorbell if the task left an application waiting on the owner.
 
     Wrapped whole: the task has already committed and succeeded by the time
@@ -217,18 +281,26 @@ async def _notify(session, claimed: ClaimedTask) -> None:
         log.warning("notify_failed", error=type(exc).__name__)
 
 
-async def _fail(session, task_id, message: str, *, max_attempts: int | None = None) -> bool:
-    """Re-read the task after a rollback and record the failure."""
-    task = await session.get(QueueTask, task_id)
-    if task is None:  # pragma: no cover - the claim committed, so it exists
-        return False
+async def _fail(
+    session: AsyncSession,
+    claimed: ClaimedTask,
+    message: str,
+    *,
+    max_attempts: int | None = None,
+) -> bool | None:
+    """Record failure only while this exact claim generation is current."""
     kwargs = {} if max_attempts is None else {"max_attempts": max_attempts}
-    will_retry = await fail_task(session, task, message, **kwargs)
-    await session.commit()
+    will_retry = await fail_task(session, claimed, message, **kwargs)
+    if will_retry is None:
+        await session.rollback()
+    else:
+        await session.commit()
     return will_retry
 
 
-async def _mark_application_failed(session, claimed: ClaimedTask, message: str) -> None:
+async def _mark_application_failed(
+    session: AsyncSession, claimed: ClaimedTask, message: str
+) -> None:
     """Out of retries — the application must not sit in `running` forever."""
     from apps.worker.apply_job import park_failed
 

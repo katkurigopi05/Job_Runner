@@ -73,6 +73,10 @@ class ClaimedTask:
     reclaimed: bool
     #: Who held the expired lease, when reclaimed.
     previous_owner: str | None
+    #: Immutable owner and generation for compare-and-set writes.
+    task_id: uuid.UUID | None = None
+    worker_id: str | None = None
+    attempt: int | None = None
 
     @property
     def reclaimed_from_self(self) -> bool:
@@ -80,7 +84,7 @@ class ClaimedTask:
 
         Safe to resume: nothing else ever held the lease.
         """
-        return self.reclaimed and self.previous_owner == self.task.locked_by
+        return self.reclaimed and self.previous_owner == self.worker_id
 
 
 async def enqueue(
@@ -110,6 +114,7 @@ async def claim_task(
     kinds: list[str] | None = None,
     after_others: list[str] | None = None,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> ClaimedTask | None:
     """Atomically claim one runnable task, or return None if there are none.
 
@@ -128,11 +133,39 @@ async def claim_task(
     params: dict[str, Any] = {
         "worker_id": worker_id,
         "lease_seconds": lease_seconds,
+        "max_attempts": max_attempts,
         "after_others": after_others or [],
     }
     if kinds:
         kind_filter = "AND kind = ANY(:kinds)"
         params["kinds"] = kinds
+
+    exhausted = (
+        update(QueueTask)
+        .where(
+            (
+                (
+                    (QueueTask.status == QueueTaskStatus.RUNNING.value)
+                    & QueueTask.lease_expires_at.is_not(None)
+                    & (QueueTask.lease_expires_at < text("clock_timestamp()"))
+                )
+                | (
+                    (QueueTask.status == QueueTaskStatus.PENDING.value)
+                    & (QueueTask.run_after <= text("clock_timestamp()"))
+                )
+            ),
+            QueueTask.attempts >= max_attempts,
+        )
+        .values(
+            status=QueueTaskStatus.FAILED.value,
+            locked_by=None,
+            lease_expires_at=None,
+            last_error="lease_expired_retry_limit",
+        )
+    )
+    if kinds:
+        exhausted = exhausted.where(QueueTask.kind.in_(kinds))
+    await session.execute(exhausted)
 
     # Captured before the UPDATE overwrites locked_by, so the caller can tell
     # whose lease was reclaimed.
@@ -145,6 +178,7 @@ async def claim_task(
                 OR (status = 'running' AND lease_expires_at IS NOT NULL
                     AND lease_expires_at < clock_timestamp())
             )
+            AND attempts < :max_attempts
             {kind_filter}
             ORDER BY (kind = ANY(:after_others)), run_after
             FOR UPDATE SKIP LOCKED
@@ -174,34 +208,36 @@ async def claim_task(
         task=task,
         reclaimed=bool(row.was_running),
         previous_owner=row.previous_owner,
+        task_id=task.id,
+        worker_id=worker_id,
+        attempt=task.attempts,
     )
 
 
 async def heartbeat(
     session: AsyncSession,
-    task: QueueTask,
+    claimed: ClaimedTask,
     *,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
-) -> None:
+) -> bool:
     """Extend the lease in the caller's transaction.
 
     Note this is only visible to other workers once the caller commits. For
     renewal *during* a long-running handler, use `renew_lease()` on a separate
     session — an uncommitted extension does not stop a reclaim.
     """
-    await session.flush()
-    await session.execute(
-        update(QueueTask)
-        .where(QueueTask.id == task.id)
-        .values(lease_expires_at=db_now_plus(lease_seconds))
+    return await _update_claim(
+        session,
+        claimed,
+        lease_expires_at=db_now_plus(lease_seconds),
     )
-    await session.refresh(task)
 
 
 async def renew_lease(
     session: AsyncSession,
     task_id: uuid.UUID,
     worker_id: str,
+    attempt: int,
     *,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
 ) -> bool:
@@ -210,21 +246,18 @@ async def renew_lease(
     Returns False if this worker no longer owns the task — meaning the lease
     already lapsed and someone else claimed it.
 
-    This used to say the caller should stop work. `run._keep_lease_alive`
-    never did: it logs `lease_lost` and lets the handler finish, and that is
-    the decision (2026-10-15). What a second run of one task could harm is
-    the click, and `apply_job._submit` re-reads its row under the candidate
-    lock and the submission ledger before clicking, so of two runs at most
-    one sends. Cancelling a handler mid-query instead risks returning a
-    broken connection to the pool (apps/api/CLAUDE.md §17), for a lease that
-    lapses only when renewal has failed for two thirds of it.
+    The attempt is the claim generation. It prevents a restarted worker with
+    the same stable id from renewing an older execution after reclaim.
     """
     result = await session.execute(
         update(QueueTask)
         .where(
             QueueTask.id == task_id,
             QueueTask.locked_by == worker_id,
+            QueueTask.attempts == attempt,
             QueueTask.status == QueueTaskStatus.RUNNING.value,
+            QueueTask.lease_expires_at.is_not(None),
+            QueueTask.lease_expires_at >= text("clock_timestamp()"),
         )
         .values(lease_expires_at=db_now_plus(lease_seconds))
     )
@@ -232,57 +265,91 @@ async def renew_lease(
     return bool(cast("CursorResult[Any]", result).rowcount)
 
 
-async def complete_task(session: AsyncSession, task: QueueTask) -> None:
-    """Mark done and release the lease."""
-    task.status = QueueTaskStatus.DONE.value
-    task.locked_by = None
-    task.lease_expires_at = None
-    task.last_error = None
+def _claim_predicates(claimed: ClaimedTask) -> tuple[Any, ...]:
+    """SQL predicates identifying exactly one live claim generation."""
+    if claimed.task_id is None or claimed.worker_id is None or claimed.attempt is None:
+        raise ValueError("claimed task has no ownership token")
+    return (
+        QueueTask.id == claimed.task_id,
+        QueueTask.status == QueueTaskStatus.RUNNING.value,
+        QueueTask.locked_by == claimed.worker_id,
+        QueueTask.attempts == claimed.attempt,
+        QueueTask.lease_expires_at.is_not(None),
+        QueueTask.lease_expires_at >= text("clock_timestamp()"),
+    )
+
+
+async def _update_claim(session: AsyncSession, claimed: ClaimedTask, **values: Any) -> bool:
+    """Compare-and-set one claim and refresh its ORM view when accepted."""
     await session.flush()
+    result = await session.execute(
+        update(QueueTask)
+        .where(*_claim_predicates(claimed))
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    accepted = bool(cast("CursorResult[Any]", result).rowcount)
+    if accepted:
+        await session.refresh(claimed.task)
+    return accepted
+
+
+async def complete_task(session: AsyncSession, claimed: ClaimedTask) -> bool:
+    """Mark done only if this exact claim still owns the task."""
+    return await _update_claim(
+        session,
+        claimed,
+        status=QueueTaskStatus.DONE.value,
+        locked_by=None,
+        lease_expires_at=None,
+        last_error=None,
+    )
 
 
 async def fail_task(
     session: AsyncSession,
-    task: QueueTask,
+    claimed: ClaimedTask,
     error: str,
     *,
     retry_in_s: int = 60,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-) -> bool:
-    """Record a failure. Returns True if the task will be retried.
+) -> bool | None:
+    """Record a failure. True retries, False terminates, None lost ownership.
 
     `error` is written to the row, so callers must pass a message that carries
     no secrets, résumé content, or page HTML.
     """
-    task.last_error = error[:2000]
-    task.locked_by = None
-    task.lease_expires_at = None
-
-    if task.attempts >= max_attempts:
-        task.status = QueueTaskStatus.FAILED.value
-        await session.flush()
-        return False
-
-    task.status = QueueTaskStatus.PENDING.value
-    await session.flush()
-
-    await session.execute(
-        update(QueueTask).where(QueueTask.id == task.id).values(run_after=db_now_plus(retry_in_s))
+    retrying = claimed.attempt is not None and claimed.attempt < max_attempts
+    accepted = await _update_claim(
+        session,
+        claimed,
+        status=(QueueTaskStatus.PENDING.value if retrying else QueueTaskStatus.FAILED.value),
+        locked_by=None,
+        lease_expires_at=None,
+        last_error=error[:2000],
+        **({"run_after": db_now_plus(retry_in_s)} if retrying else {}),
     )
-    await session.refresh(task)
-    return True
+    return retrying if accepted else None
 
 
-async def release_task(session: AsyncSession, task: QueueTask) -> None:
+async def release_task(session: AsyncSession, claimed: ClaimedTask) -> bool:
     """Hand a task back unfinished, without consuming a retry.
 
     Used when a task is parked on something external — an approval, an OTP —
     rather than having failed.
     """
-    task.status = QueueTaskStatus.PENDING.value
-    task.locked_by = None
-    task.lease_expires_at = None
-    await session.flush()
+    return await _update_claim(
+        session,
+        claimed,
+        status=QueueTaskStatus.PENDING.value,
+        locked_by=None,
+        lease_expires_at=None,
+        attempts=QueueTask.attempts - 1,
+    )
+
+
+class ClaimOwnershipLost(RuntimeError):
+    """The task was reclaimed before this execution could write its outcome."""
 
 
 class TaskDeferred(Exception):  # noqa: N818 - an outcome, not an error
@@ -302,7 +369,7 @@ class TaskDeferred(Exception):  # noqa: N818 - an outcome, not an error
         self.run_after = run_after
 
 
-async def defer_task(session: AsyncSession, task: QueueTask, *, run_after: datetime) -> None:
+async def defer_task(session: AsyncSession, claimed: ClaimedTask, *, run_after: datetime) -> bool:
     """Put a task back with a later start time, without consuming a retry.
 
     Distinct from `fail_task`, which increments `attempts` and eventually gives
@@ -322,13 +389,16 @@ async def defer_task(session: AsyncSession, task: QueueTask, *, run_after: datet
     which host it belongs to, and `DEFAULT_MAX_ATTEMPTS` would then drop a
     perfectly good company for being on a busy board.
     """
-    task.status = QueueTaskStatus.PENDING.value
-    task.locked_by = None
-    task.locked_at = None
-    task.lease_expires_at = None
-    task.run_after = run_after
-    task.attempts = max(0, task.attempts - 1)
-    await session.flush()
+    return await _update_claim(
+        session,
+        claimed,
+        status=QueueTaskStatus.PENDING.value,
+        locked_by=None,
+        locked_at=None,
+        lease_expires_at=None,
+        run_after=run_after,
+        attempts=QueueTask.attempts - 1,
+    )
 
 
 async def pending_count(session: AsyncSession, *, kind: str | None = None) -> int:

@@ -27,7 +27,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.core.queue import ClaimedTask, TaskDeferred, defer_task
+from packages.core.queue import ClaimedTask, ClaimOwnershipLost, TaskDeferred, defer_task
 from packages.crawler.fetch import PoliteFetcher
 from packages.crawler.ratelimit import host_key
 
@@ -91,7 +91,8 @@ async def defer_if_host_busy(
     payload["deferrals"] = deferrals + 1
     claimed.task.payload_json = payload
     run_after = (now or datetime.now(UTC)) + timedelta(seconds=waiting)
-    await defer_task(session, claimed.task, run_after=run_after)
+    if not await defer_task(session, claimed, run_after=run_after):
+        raise ClaimOwnershipLost(str(claimed.task_id))
     log.info(
         "task_deferred_host_busy",
         kind=claimed.task.kind,
