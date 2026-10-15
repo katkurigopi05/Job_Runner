@@ -847,6 +847,12 @@ class MatchOut(BaseModel):
     #: the board reports no date — an unmeasurable lag, not a lag of zero.
     lag_hours: float | None = None
     closed: bool
+    #: The posting's board failed its last fetch and has not answered since.
+    #: A failed fetch closes nothing, so the posting stays open for as long
+    #: as the board stays down. This says so; it filters and closes nothing.
+    board_unanswered: bool = False
+    #: When that board last answered. None unless `board_unanswered`.
+    board_last_answered_at: datetime | None = None
     title_similarity: float = 0.0
     body_similarity: float = 0.0
     #: Terms the posting emphasizes that the profile evidences, and does not.

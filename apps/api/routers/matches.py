@@ -23,7 +23,7 @@ from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
-from packages.core.models import Application, Match, Posting, Profile
+from packages.core.models import Application, CompanyCrawlState, Match, Posting, Profile
 from packages.core.schemas import (
     CalibrationOut,
     MatchDecision,
@@ -278,6 +278,8 @@ async def list_matches(
         lambda: [(eligibility_of(posting).as_dict(), experience_of(posting)) for _, posting in page]
     )
 
+    unanswered = await _boards_unanswered(session, page)
+
     feed: list[MatchOut] = []
     for (match, posting), (authorization, demanded) in zip(page, readings, strict=True):
         reasons = match.reasons_json or {}
@@ -297,6 +299,8 @@ async def list_matches(
                 published_at=posting.published_at,
                 lag_hours=_lag_hours(posting),
                 closed=posting.closed_at is not None,
+                board_unanswered=posting.company_id in unanswered,
+                board_last_answered_at=unanswered.get(posting.company_id),
                 title_similarity=float(reasons.get("title_similarity") or 0.0),
                 body_similarity=float(reasons.get("body_similarity") or 0.0),
                 matched_terms=list(reasons.get("matched_terms") or []),
@@ -327,6 +331,26 @@ async def list_matches(
             )
         )
     return feed
+
+
+async def _boards_unanswered(
+    session: SessionDep, page: list[tuple[Match, Posting]]
+) -> dict[uuid.UUID, datetime | None]:
+    """When each failing board on this page last answered, by company.
+
+    A failed fetch closes nothing, so a posting stays open for as long as its
+    board stays down; the card is where that is said. One query per page.
+    """
+    company_ids = {posting.company_id for _, posting in page if posting.company_id}
+    if not company_ids:
+        return {}
+    rows = await session.execute(
+        select(CompanyCrawlState.company_id, CompanyCrawlState.last_success_at).where(
+            CompanyCrawlState.company_id.in_(company_ids),
+            CompanyCrawlState.consecutive_failures > 0,
+        )
+    )
+    return {company_id: last_success for company_id, last_success in rows.all()}
 
 
 async def _personalize(

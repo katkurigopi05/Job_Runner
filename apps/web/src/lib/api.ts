@@ -529,6 +529,11 @@ export interface Match {
   /** Hours from publication to us noticing. Null means unmeasurable, not zero. */
   lag_hours: number | null;
   closed: boolean;
+  /** Its board failed the last fetch. A failed fetch closes nothing, so the
+   *  posting may have closed without this knowing. */
+  board_unanswered: boolean;
+  /** When that board last answered; null unless `board_unanswered`. */
+  board_last_answered_at: string | null;
   title_similarity: number;
   body_similarity: number;
   /** Terms the posting emphasizes and the profile evidences. */
