@@ -31,3 +31,23 @@ export async function recordSubmitted(applicationId: string): Promise<SubmitResu
   revalidatePath("/");
   return { ok: true, message: "recorded" };
 }
+
+/**
+ * Record that the employer never received it, after the owner checked.
+ *
+ * The other answer to an attempt nobody could vouch for. It clears the
+ * ledger row that blocks the job, and sends nothing.
+ */
+export async function recordNotSubmitted(applicationId: string): Promise<SubmitResult> {
+  try {
+    await api.markNotSubmitted(applicationId);
+  } catch (error) {
+    if (error instanceof ApiError) return { ok: false, message: error.message };
+    throw error;
+  }
+
+  revalidatePath("/finish");
+  revalidatePath("/review");
+  revalidatePath("/");
+  return { ok: true, message: "recorded" };
+}

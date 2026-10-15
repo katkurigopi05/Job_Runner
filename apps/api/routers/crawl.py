@@ -29,7 +29,7 @@ the tool is one of the ones that make the client ask the owner on every call.
 from __future__ import annotations
 
 from fastapi import APIRouter
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, desc, func, not_, or_, select
 
 from apps.api.deps import SessionDep
 from apps.worker.crawl_job import CRAWL_TASK_KIND, request_crawl
@@ -38,29 +38,60 @@ from packages.core.enums import QueueTaskStatus
 from packages.core.heartbeat import WorkerState
 from packages.core.models import Posting, QueueTask
 from packages.core.schemas import CrawlStartOut, CrawlStatusOut
+from packages.crawler.dispatch import CRAWL_COMPANY_TASK_KIND, DISCOVER_COMPANY_TASK_KIND
 
 router = APIRouter(prefix="/crawl", tags=["crawl"])
 
 
 @router.get("/status", response_model=CrawlStatusOut)
 async def crawl_status(session: SessionDep) -> CrawlStatusOut:
-    """Whether a crawl is running, waiting, or stuck waiting for a worker."""
-    running = await session.scalar(
-        select(func.count())
-        .select_from(QueueTask)
-        .where(
-            QueueTask.kind == CRAWL_TASK_KIND,
-            QueueTask.status == QueueTaskStatus.RUNNING.value,
-        )
+    """Follow the whole crawl, including company tasks and their rate-limit waits."""
+    # One snapshot: separate counts can miss work while a pending company is
+    # claimed between queries. A dispatch task finishing is only a handoff,
+    # not the end of the crawl it queued.
+    is_running = QueueTask.status == QueueTaskStatus.RUNNING.value
+    # A claim counts as held only while its lease does. A worker killed
+    # mid-task leaves the row `running` until a claimant takes the lease
+    # back, and with none alive nothing does: counted as held, the spider
+    # walked for good. Past its lease it is waiting work like any other.
+    # The same test `queue.claim_task` reclaims by, so the two cannot differ.
+    lease_lapsed = and_(
+        is_running,
+        QueueTask.lease_expires_at.is_not(None),
+        QueueTask.lease_expires_at < func.now(),
     )
-    pending = await session.scalar(
-        select(func.count())
-        .select_from(QueueTask)
-        .where(
-            QueueTask.kind == CRAWL_TASK_KIND,
+    lease_held = and_(is_running, not_(lease_lapsed))
+    unclaimed = or_(
+        lease_lapsed,
+        and_(
             QueueTask.status == QueueTaskStatus.PENDING.value,
-        )
+            or_(
+                QueueTask.kind != CRAWL_TASK_KIND,
+                QueueTask.run_after <= func.now(),
+                # A retry belongs to unfinished work, unlike a future tick.
+                QueueTask.attempts > 0,
+            ),
+        ),
     )
+    held, pending = (
+        await session.execute(
+            select(
+                func.count().filter(lease_held),
+                func.count().filter(unclaimed),
+            ).where(
+                QueueTask.kind.in_(
+                    (CRAWL_TASK_KIND, CRAWL_COMPANY_TASK_KIND, DISCOVER_COMPANY_TASK_KIND)
+                )
+            )
+        )
+    ).one()
+    running = bool(held)
+    if pending and not running:
+        # Keep moving between claims and while polite fetching is deferred,
+        # but never animate a queue with nobody alive to drain it.
+        running = any(
+            worker.state is WorkerState.ALIVE for worker in await heartbeat.workers(session)
+        )
 
     last = (
         await session.scalars(
@@ -79,8 +110,7 @@ async def crawl_status(session: SessionDep) -> CrawlStatusOut:
     return CrawlStatusOut(
         running=bool(running),
         pending=int(pending or 0),
-        # Work waiting with nobody holding it. Distinct from running, because
-        # the fix differs: this one means `make worker` is not up.
+        # An unclaimed queue with no live workers is not a completed crawl.
         stalled=bool(pending) and not bool(running),
         last_finished_at=last.locked_at if last else None,
         last_status=last.status if last else None,

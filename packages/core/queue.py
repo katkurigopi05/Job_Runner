@@ -208,8 +208,16 @@ async def renew_lease(
     """Extend the lease and commit, so other workers actually see it.
 
     Returns False if this worker no longer owns the task — meaning the lease
-    already lapsed and someone else claimed it. The caller should stop work
-    rather than keep driving a form it no longer owns.
+    already lapsed and someone else claimed it.
+
+    This used to say the caller should stop work. `run._keep_lease_alive`
+    never did: it logs `lease_lost` and lets the handler finish, and that is
+    the decision (2026-10-15). What a second run of one task could harm is
+    the click, and `apply_job._submit` re-reads its row under the candidate
+    lock and the submission ledger before clicking, so of two runs at most
+    one sends. Cancelling a handler mid-query instead risks returning a
+    broken connection to the pool (apps/api/CLAUDE.md §17), for a lease that
+    lapses only when renewal has failed for two thirds of it.
     """
     result = await session.execute(
         update(QueueTask)

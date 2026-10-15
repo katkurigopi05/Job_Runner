@@ -143,6 +143,22 @@ this and must not be undone:
 
 Covered by `tests/test_submission_ledger.py`.
 
+**Settling what nobody can vouch for** (2026-10-15). The backfill fenced
+every interrupted legacy run `uncertain`, four of five on the owner's
+database on `failed` applications, and nothing listed them. Another
+application's row blocks a job in any state, so each one kept its job from
+being applied to again, invisibly. Releasing one would not help: `released`
+lets its own application try once more, and a failed one never runs.
+`/finish` now lists them (`GET /submissions/unsettled`) with two answers,
+given after checking with the employer. **It was sent** is
+`/applications/{id}/submitted`. **It was not sent** is
+`/applications/{id}/not-submitted`, which removes the row as the
+before-the-click refusal does and keeps it whole in a `note` event
+(`submissions.forget_unsent`). It is refused while a run is in progress and
+for a row recorded `submitted`. Neither answer is an MCP tool.
+`tests/test_submission_reconciliation.py`.
+
+
 Rollout: stop/drain workers before `alembic upgrade head`, then restart all
 workers on the same code. Old workers do not honor the ledger. The follow-up
 backfill preserves submitted history and fences interrupted legacy runs as

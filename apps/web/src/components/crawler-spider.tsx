@@ -17,8 +17,9 @@ const POLL_MS = 10_000;
  *
  * Three states, because each needs a different thing from the owner:
  *
- * - **working** — a crawl is claimed and running. The spider walks.
- * - **waiting** — queued with nobody holding it. The spider is still and amber:
+ * - **working** — a sweep or company task is running, or unfinished work has
+ *   a live worker. The spider keeps walking through handoffs and rate-limit waits.
+ * - **waiting** — unfinished work with no live worker. The spider is still and amber:
  *   `make worker` is not up, and this would otherwise look identical to working.
  * - **idle** — nothing queued. The spider sleeps: a slow breath and three z's
  *   drifting up. Nothing is crawling and nothing is wrong, and a motionless
@@ -82,7 +83,7 @@ export function CrawlerSpider() {
         tone: "text-go",
         moving: true,
         asleep: false,
-        title: "A crawl is running. New postings will appear in /matches when it finishes.",
+        title: "The crawler is discovering boards, fetching postings, or waiting between requests. It stays active until the current work finishes.",
       }
     : status.stalled
       ? {
