@@ -159,6 +159,30 @@ jobs:
       - name: Apply migrations
         run: .venv/bin/alembic upgrade head
 
+      # The boundary tests execute the real TypeScript guard as well as the
+      # ASGI middleware. Never silently skip the dashboard half of security CI.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Local boundary security regressions
+        id: security
+        env:
+          REQUIRE_SECURITY_NODE: "1"
+        run: |
+          .venv/bin/pytest -q tests/test_security_origins.py \
+            tests/test_rebinding_guard.py tests/test_middleware.py \
+            tests/test_database_binds_loopback.py \
+            --junitxml="$RUNNER_TEMP/security-regressions.xml"
+
+      - name: Security regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-regressions-${{ matrix.deps }}
+          path: ${{ runner.temp }}/security-regressions.xml
+          if-no-files-found: warn
+
       # gate-0 is the comprehensive one: ruff, ruff format --check, mypy,
       # alembic check for schema drift, then the whole suite. Gates 1, 3, 4 and
       # 5 re-run subsets of that same suite for labelling, so this covers them.

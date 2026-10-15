@@ -97,6 +97,9 @@ No paid service is permitted in `requirements.txt` or `package.json` without ask
 Postgres runs on **5433** on the owner's machine, not the 5432 in the row above:
 another project holds 5432. The remap lives in an uncommitted
 `docker-compose.override.yml`, and `.env` points at 5433 to match.
+Both files publish on **127.0.0.1** only: the role is a superuser with the
+compose default password, and a bare `5432:5432` put it on the network
+(`tests/test_database_binds_loopback.py`).
 
 `next dev` binds **127.0.0.1:3001**, not the localhost:3000 the row implies.
 Port 3001 because 3000 is taken. `next start` binds 127.0.0.1 too.

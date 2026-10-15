@@ -40,6 +40,9 @@ jobs:
       - name: Review pull request
         id: review
         continue-on-error: true
+        # Stop this advisory step before the job deadline, leaving time for
+        # cleanup and an honest incomplete-review summary instead of cancellation.
+        timeout-minutes: 20
         uses: alibaba/open-code-review@7a571b78d3493b249f6ad14d835c6a79a0a67d2e # v1.12.6
         with:
           ocr_version: '1.12.6'
@@ -60,11 +63,11 @@ jobs:
           incremental: 'true'
 
       - name: Report a review that did not run
-        if: steps.review.outcome == 'failure'
+        if: always() && (steps.review.outcome == 'failure' || steps.review.outcome == 'cancelled')
         env:
           MODEL: ${{ vars.AI_REVIEW_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free' }}
         run: |
-          echo "::warning title=AI review did not run::The reviewer failed, so this PR has had no AI review. Common causes: the free model ($MODEL) was withdrawn, the OpenRouter daily quota is spent, or the tool broke. See the 'Review pull request' step log."
+          echo "::warning title=AI review did not run::The reviewer failed or timed out, so this PR has had no completed AI review. Common causes: the free model ($MODEL) was withdrawn, the OpenRouter daily quota is spent, or the tool broke. See the 'Review pull request' step log."
           {
             echo "### AI review did not run"
             echo

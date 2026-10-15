@@ -27,7 +27,7 @@ async def test_non_local_request_gets_the_error_envelope() -> None:
     from apps.api.main import app
 
     transport = ASGITransport(app=app, client=("10.0.0.5", 12345))
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://localhost") as client:
         r = await client.get("/health")
 
     assert r.status_code == 401
@@ -40,7 +40,7 @@ async def test_local_request_passes() -> None:
     from apps.api.main import app
 
     transport = ASGITransport(app=app, client=("127.0.0.1", 12345))
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://localhost") as client:
         r = await client.get("/health")
 
     assert r.status_code == 200

@@ -59,6 +59,7 @@ _CHECKS: dict[str, tuple[str, str]] = {
     "noun-phrase tagger": ("Fabrication-guard tagger", "tools"),
     "playwright": ("Browser for application forms", "tools"),
     "storage": ("Local storage", "tools"),
+    "cloud sync": ("Private files kept off cloud sync", "data"),
     "llm": ("LLM provider", "tools"),
     "ollama": ("Local model (Ollama)", "tools"),
 }

@@ -85,6 +85,35 @@ network the owner has decided to trust. `tests/test_dashboard_binds_loopback.py`
 holds the default, and holds these documents to it — the stale `next start`
 claim survived in two files precisely because nothing checked prose.
 
+### A page on another site, through the owner's own browser
+
+Found by the 2026-10-14 audit, confirmed live on 2026-10-15: the API, the
+dashboard's `/api` proxy and its pages all answered `Host: evil.example` with
+200. Binding loopback does not cover this. DNS rebinding points a domain the
+attacker owns at 127.0.0.1, so a page on it reaches this machine from the
+owner's own browser, which treats it as same-origin and lets it read the
+replies. From the dashboard that is the review queue, and the approve action.
+
+What the browser will not let the page change is the `Host` it sends.
+Everything here is reached by `localhost` or an IP address, never by a domain
+name, so a domain is refused. That includes a phone on the LAN under
+`JOBRUNNER_WEB_HOST`, which uses the address. Two places, because neither
+can see the other's requests:
+
+- **`src/middleware.ts`** runs on every path, no `matcher`: 403 for a
+  `Host` naming a domain, or a write whose `Origin` does (`null` included).
+  The rule is `src/lib/local-host.ts`, which `tests/test_rebinding_guard.py`
+  runs through `node` rather than restating.
+- **`apps/api/middleware.py`** does the same for direct callers, and reads
+  `X-Forwarded-Host` too. Next's proxy rewrites `Host` to the API's own
+  address (`changeOrigin: true`) and puts the browser's there. Server
+  actions call the API from loopback with no browser `Host` attached, which
+  is why the dashboard needs its own check.
+
+After: the rebound `Host` gets 403 from the dashboard and 401 from the API,
+`localhost` and `127.0.0.1` still get 200, and the status stream still
+arrives through the proxy uncompressed.
+
 ## From §15: What the gates do and do not prove
 
 ### Nested forms on the review card
