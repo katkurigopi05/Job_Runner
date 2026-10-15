@@ -37,6 +37,9 @@ import asyncio
 import os
 import re
 import shutil
+import subprocess
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -615,6 +618,98 @@ def check_storage() -> Check:
     return Check("storage", Health.OK, f"{root} writable, {free_mb}MB free")
 
 
+#: What macOS puts on a folder a sync client manages: `~/Desktop` and
+#: `~/Documents` carry it when iCloud Drive's "Desktop & Documents" is on.
+_FILE_PROVIDER_MARK = "com.apple.file-provider-domain-id"
+
+#: Under home. iCloud Drive's own files, and where Dropbox, Google Drive and
+#: OneDrive keep theirs on current macOS. Synced without any mark to read.
+_SYNC_CLIENT_FOLDERS = ("Library/Mobile Documents", "Library/CloudStorage")
+
+
+def _managed_by_file_provider(folder: Path) -> bool:
+    """Whether a sync client manages `folder`. Never raises; False off macOS."""
+    xattr = shutil.which("xattr")
+    if sys.platform != "darwin" or xattr is None:
+        return False
+    try:
+        found = subprocess.run(
+            [xattr, "-p", _FILE_PROVIDER_MARK, str(folder)],
+            capture_output=True,
+            timeout=CHECK_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return found.returncode == 0
+
+
+def synced_folder(
+    path: Path,
+    *,
+    managed: Callable[[Path], bool] | None = None,
+    home: Path | None = None,
+) -> Path | None:
+    """The nearest folder at or above `path` that a sync client manages."""
+    is_managed = managed or _managed_by_file_provider
+    base = home or Path.home()
+    clients = [base / name for name in _SYNC_CLIENT_FOLDERS]
+    resolved = path.expanduser().resolve()
+    for folder in (resolved, *resolved.parents):
+        if folder in clients or is_managed(folder):
+            return folder
+    return None
+
+
+def check_cloud_sync(
+    *,
+    managed: Callable[[Path], bool] | None = None,
+    home: Path | None = None,
+    env_file: Path | None = None,
+) -> Check:
+    """Whether résumés, sessions, backups or keys sit in a synced folder.
+
+    Not blocking: the app works either way. §2.8 keeps résumés on this
+    machine and §2.7 keeps the vault key out of the checkout, and a sync
+    client uploads whatever is in the folder it manages.
+    """
+    settings = get_settings()
+    places = {
+        "storage": Path(settings.storage_root),
+        "vault": Path(settings.vault_root),
+        "backups": Path(settings.backup_root),
+        ".env": env_file or Path(".env"),
+    }
+    found = {
+        name: folder
+        for name, path in places.items()
+        if (folder := synced_folder(path, managed=managed, home=home)) is not None
+    }
+    if not found:
+        return Check(
+            "cloud sync",
+            Health.OK,
+            "storage, vault, backups and .env are outside every synced folder",
+            required=False,
+        )
+    folders = ", ".join(sorted({str(folder) for folder in found.values()}))
+    return Check(
+        "cloud sync",
+        Health.FAIL,
+        f"{', '.join(found)} inside {folders}, which a sync client manages. If it "
+        "syncs, résumés, filled-form screenshots, ATS browser sessions, backups and "
+        "the vault key are uploaded with it",
+        fix=(
+            "Move the checkout out of the synced folder, for example to ~/Code/Job_Runner\n"
+            "or turn off Desktop & Documents in System Settings > Apple Account > "
+            "iCloud > iCloud Drive\n"
+            "or point STORAGE_ROOT, VAULT_ROOT and BACKUP_ROOT outside it "
+            "(.env is read from the folder the app starts in)"
+        ),
+        required=False,
+    )
+
+
 async def check_ollama() -> Check:
     """Whether the local model server is up.
 
@@ -677,6 +772,7 @@ async def run(*, include_optional: bool = True) -> Report:
     """Run every check. Order is cheap-first so failures surface fast."""
     checks: list[Check] = [
         check_storage(),
+        check_cloud_sync(),
         check_weasyprint(),
         check_np_tagger(),
         await check_playwright_browser(),
