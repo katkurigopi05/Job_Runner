@@ -16,8 +16,9 @@ const WRITES = new Set(["POST", "PUT", "PATCH", "DELETE"]);
  */
 export function middleware(request: NextRequest): NextResponse {
   const origin = request.headers.get("origin");
-  const foreignWrite = WRITES.has(request.method) && origin !== null && !isLocalOrigin(origin);
-  if (!isLocalName(request.headers.get("host")) || foreignWrite) {
+  const host = request.headers.get("host");
+  const foreignWrite = WRITES.has(request.method) && origin !== null && !isLocalOrigin(origin, host);
+  if (!isLocalName(host) || foreignWrite) {
     return new NextResponse(
       "jobrunner answers to localhost or this machine's address, not to a domain name.",
       { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } },

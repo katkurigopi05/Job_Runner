@@ -46,6 +46,7 @@ dashboard runs the same rule on its pages (`apps/web/src/middleware.ts`).
 from __future__ import annotations
 
 import ipaddress
+import re
 from urllib.parse import urlsplit
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -89,13 +90,33 @@ def _is_local_name(host: str | None) -> bool:
     return True
 
 
-def _is_local_origin(origin: str) -> bool:
-    """`null`, sent by a sandboxed or file page, names nothing and is refused."""
+def _is_local_origin(origin: str, requested_host: str | None = None) -> bool:
+    """Trust local pages, or the exact address used for an opted-in LAN dashboard.
+
+    An arbitrary IP belongs to another site just as a domain can. Only HTTP(S)
+    serialized origins are accepted, never opaque URLs or parser-normalized junk.
+    """
+    if not re.fullmatch(r"https?://[^/?#\\\s]+", origin, flags=re.IGNORECASE):
+        return False
     try:
         parts = urlsplit(origin)
+        port = parts.port  # Access validates malformed and out-of-range ports.
+        if parts.username is not None or parts.password is not None or parts.netloc.endswith(":"):
+            return False
+        if parts.hostname == "localhost":
+            return True
+        address = ipaddress.ip_address(parts.hostname or "")
+        if address.is_loopback:
+            return True
+        if not requested_host or not _is_local_name(requested_host):
+            return False
+        requested = urlsplit(f"{parts.scheme}://{requested_host}")
+        default_port = 443 if parts.scheme == "https" else 80
+        return address == ipaddress.ip_address(requested.hostname or "") and (
+            port if port is not None else default_port
+        ) == (requested.port if requested.port is not None else default_port)
     except ValueError:
         return False
-    return bool(parts.scheme and parts.netloc) and _is_local_name(parts.netloc)
 
 
 #: Methods a page cannot send cross-site without the server's say, and the
@@ -137,7 +158,12 @@ class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
                 "jobrunner answers to localhost or this machine's address, not to a domain name."
             )
         origin = headers.get("origin")
-        if request.method in _WRITES and origin is not None and not _is_local_origin(origin):
+        requested_host = headers.get("x-forwarded-host") or headers.get("host")
+        if (
+            request.method in _WRITES
+            and origin is not None
+            and not _is_local_origin(origin, requested_host)
+        ):
             return _refused("jobrunner accepts changes from its own dashboard only.")
 
         return await call_next(request)

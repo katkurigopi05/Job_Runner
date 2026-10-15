@@ -34,10 +34,20 @@ export function isLocalName(host: string | null): boolean {
   return name === "localhost" || isAddress(name);
 }
 
-/** `null`, sent by a sandboxed or file page, names nothing and is refused. */
-export function isLocalOrigin(origin: string): boolean {
+/** Local pages, or the exact address used for an explicitly LAN-bound dashboard. */
+export function isLocalOrigin(origin: string, requestedHost: string | null = null): boolean {
+  // URL() accepts file/data/blob URLs and normalizes whitespace. An Origin
+  // must be an HTTP(S) scheme plus authority, with no credentials or path.
+  if (!/^https?:\/\/[^/?#\\\s]+$/i.test(origin) || origin.endsWith(":")) return false;
   try {
-    return isLocalName(new URL(origin).host);
+    const url = new URL(origin);
+    if (url.username || url.password || origin.includes("@")) return false;
+    const name = url.hostname;
+    if (name === "localhost" || name === "[::1]") return true;
+    if (!isAddress(name)) return false;
+    if (name.startsWith("127.")) return true;
+    if (!requestedHost || !isLocalName(requestedHost)) return false;
+    return url.host === new URL(`${url.protocol}//${requestedHost}`).host;
   } catch {
     return false;
   }
