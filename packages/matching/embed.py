@@ -159,14 +159,48 @@ class LexicalEmbedder:
         return [self.encode_one(text) for text in texts]
 
 
+#: The model `SentenceTransformerEmbedder` loads, per CLAUDE.md §3.
+DEFAULT_SENTENCE_MODEL = "BAAI/bge-small-en-v1.5"
+
+#: `posting_chunks.embedding_model` and `postings.embedding_model` are
+#: `String(64)`.
+STAMP_MAX_CHARS = 64
+
+_SENTENCE_STAMP = "sentence-transformers"
+
+
+def stamp_for(model_name: str) -> str:
+    """The `embedding_model` a vector from this model is stored under.
+
+    Search and the chunk pass compare stamps to decide whether two vectors
+    share a space. The stamp was the backend's name alone, so a different
+    model of the same dimensions would have been searched as bge-small. The
+    default keeps the bare stamp, which is what every stored row means, so
+    nothing has to be re-embedded; any other model is named. A name too long
+    for the column keeps its start and gains a hash, so two never collide.
+    """
+    if model_name == DEFAULT_SENTENCE_MODEL:
+        return _SENTENCE_STAMP
+    stamp = f"{_SENTENCE_STAMP}:{model_name}"
+    if len(stamp) <= STAMP_MAX_CHARS:
+        return stamp
+    digest = hashlib.sha256(model_name.encode("utf-8")).hexdigest()[:16]
+    keep = STAMP_MAX_CHARS - len(_SENTENCE_STAMP) - 1 - len(digest) - 1
+    return f"{_SENTENCE_STAMP}:{model_name[:keep]}#{digest}"
+
+
 class SentenceTransformerEmbedder:
     """BAAI/bge-small-en-v1.5, per CLAUDE.md §3. Downloads on first use."""
 
-    name = "sentence-transformers"
+    #: The default model's stamp, which is what the class means to search
+    #: (`retrieve` compares stored stamps against it). An instance built for
+    #: another model carries that model's own (`stamp_for`).
+    name = _SENTENCE_STAMP
 
-    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5") -> None:
+    def __init__(self, model_name: str = DEFAULT_SENTENCE_MODEL) -> None:
         from sentence_transformers import SentenceTransformer
 
+        self.name = stamp_for(model_name)
         self._model = SentenceTransformer(model_name)
         # Renamed in sentence-transformers 6; the old name still works but
         # warns. Prefer the new one and fall back so older installs keep going.
