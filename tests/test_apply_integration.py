@@ -27,23 +27,32 @@ from packages.core.storage import LocalStorage, set_storage
 FIXTURE = Path(__file__).parent / "fixtures" / "greenhouse_posting.html"
 APPLY_URL = "https://boards.greenhouse.io/acme/jobs/4012345"
 
+#: What Greenhouse answers a sent form with. This served the posting again
+#: before, so a submission was never confirmed, and the test passed only
+#: because any click used to count as sent.
+CONFIRMATION = (
+    '<html><body><div id="application_confirmation">'
+    "Thank you for applying to Acme.</div></body></html>"
+)
+
 
 @pytest.fixture(autouse=True)
 def _serve_fixture(monkeypatch, tmp_path):
     """Intercept navigation and serve the fixture. Everything else is real."""
     body = FIXTURE.read_text()
 
+    def _answer(route):
+        sent = route.request.method == "POST"
+        return route.fulfill(
+            status=200, content_type="text/html", body=CONFIRMATION if sent else body
+        )
+
     @asynccontextmanager
     async def _page(ats: str, **kwargs):
         from apps.worker.browser import ephemeral_page
 
         async with ephemeral_page() as page:
-            await page.route(
-                "**/*",
-                lambda route: asyncio.ensure_future(
-                    route.fulfill(status=200, content_type="text/html", body=body)
-                ),
-            )
+            await page.route("**/*", lambda route: asyncio.ensure_future(_answer(route)))
             yield page
 
     monkeypatch.setattr(browser_mod, "browser_page", _page)

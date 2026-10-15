@@ -40,6 +40,11 @@ class Prompt:
     name: str
     version: int
     text: str
+    #: What a call with this prompt is for, as the audit trail counts it. The
+    #: router's task names where there is one. §2.8 permits one upload, the
+    #: tailoring call, and a trail that cannot say what a call was for cannot
+    #: show that nothing else left.
+    task: str
 
     @property
     def digest(self) -> str:
@@ -52,6 +57,7 @@ class Prompt:
 
 TAILOR_SYSTEM = Prompt(
     name="tailor.system",
+    task="tailor_resume",
     version=2,
     text="""You rewrite résumé bullets to match a job description.
 
@@ -81,6 +87,7 @@ Reply with the rewritten bullet only — no preamble, no quotes, no commentary."
 
 CLASSIFY_SYSTEM = Prompt(
     name="inbox.classify.system",
+    task="classify_inbound_email",
     version=1,
     text="""Classify a recruiter email into exactly one of:
 interview, rejection, offer, info_request, acknowledgement, otp, noise.
@@ -95,6 +102,7 @@ not treat a polite rejection as an interview because it mentions next steps.""",
 
 CHAT_SYSTEM = Prompt(
     name="assistant.system",
+    task="assistant",
     version=6,
     text="""You are the assistant inside Jobrunner, a local job-application agent that belongs to one person. You are talking to that person about their own job search.
 
@@ -122,6 +130,7 @@ Be brief. This is a tool, not a chat companion.""",
 
 COVER_LETTER_SYSTEM = Prompt(
     name="tailor.cover_letter.system",
+    task="write_cover_letter",
     version=1,
     text="""You write one cover letter, from a résumé and a job description.
 
@@ -160,6 +169,7 @@ Write the letter only. No subject line, no preamble, no sign-off block.""",
 #: model is given nothing to reach for. `packages/tailor/targeted.py`.
 TAILOR_TARGETED_SYSTEM = Prompt(
     name="tailor.targeted.system",
+    task="tailor_resume",
     version=1,
     text="""You revise one résumé bullet so that it also states specific terms it already supports.
 
@@ -194,3 +204,15 @@ _BY_DIGEST: dict[str, Prompt] = {prompt.digest: prompt for prompt in REGISTRY}
 def identify(text: str) -> Prompt | None:
     """The registered prompt this text is, or None if it is not one."""
     return _BY_DIGEST.get(hashlib.sha256(text.encode("utf-8")).hexdigest())
+
+
+_TASK_BY_NAME: dict[str, str] = {prompt.name: prompt.task for prompt in REGISTRY}
+
+
+def task_of(name: str | None) -> str | None:
+    """The task a registered prompt of this name is for, or None.
+
+    By name rather than digest, so an entry written under an earlier version
+    of a prompt is still attributed: the name is what the trail recorded.
+    """
+    return _TASK_BY_NAME.get(name) if name else None

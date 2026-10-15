@@ -83,7 +83,9 @@ def test_editing_the_prompt_invalidates_every_entry(monkeypatch) -> None:
     before = _key()
     monkeypatch.setattr(
         "packages.tailor.cache.TAILOR_SYSTEM",
-        Prompt(name="tailor.system", version=3, text="different text entirely"),
+        Prompt(
+            name="tailor.system", version=3, text="different text entirely", task="tailor_resume"
+        ),
     )
     assert _key() != before
 
@@ -254,7 +256,12 @@ def test_targeted_prompt_change_invalidates_targeted_key_only(monkeypatch) -> No
 
     monkeypatch.setattr(
         "packages.tailor.cache.TAILOR_TARGETED_SYSTEM",
-        Prompt(name="tailor.targeted.system", version=2, text="different prompt text"),
+        Prompt(
+            name="tailor.targeted.system",
+            version=2,
+            text="different prompt text",
+            task="tailor_resume",
+        ),
     )
 
     assert _key(mode="rewrite") == rewrite_before

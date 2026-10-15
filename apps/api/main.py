@@ -27,6 +27,7 @@ from apps.api.routers import (
     resumes,
     search_preferences,
     setup,
+    submissions,
     tracking,
 )
 from packages.core.config import get_settings
@@ -62,6 +63,7 @@ app.include_router(search_preferences.router)
 app.include_router(ranking.router)
 app.include_router(tracking.router)
 app.include_router(events.router)
+app.include_router(submissions.router)
 
 
 @app.get("/", tags=["meta"])

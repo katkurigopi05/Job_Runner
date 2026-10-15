@@ -607,11 +607,13 @@ class CrawlStatusOut(BaseModel):
     which looks exactly like a crawl in progress if the two are conflated.
     """
 
-    #: A crawl is claimed and being worked right now.
+    #: Crawl/company work is held under a current lease, or unfinished work has
+    #: a live worker to take it.
     running: bool
-    #: Crawls queued and not yet claimed.
+    #: Unclaimed crawl/company work: due tasks, retries, and a dead worker's
+    #: lapsed claim. Not a sweep scheduled for later.
     pending: int
-    #: True when work is waiting but no worker holds it — start `make worker`.
+    #: Unfinished work is unclaimed and no live worker can drain it.
     stalled: bool
     #: When the last crawl finished, successfully or not. None if none ever has.
     last_finished_at: datetime | None = None
@@ -845,6 +847,12 @@ class MatchOut(BaseModel):
     #: the board reports no date — an unmeasurable lag, not a lag of zero.
     lag_hours: float | None = None
     closed: bool
+    #: The posting's board failed its last fetch and has not answered since.
+    #: A failed fetch closes nothing, so the posting stays open for as long
+    #: as the board stays down. This says so; it filters and closes nothing.
+    board_unanswered: bool = False
+    #: When that board last answered. None unless `board_unanswered`.
+    board_last_answered_at: datetime | None = None
     title_similarity: float = 0.0
     body_similarity: float = 0.0
     #: Terms the posting emphasizes that the profile evidences, and does not.
@@ -1135,6 +1143,33 @@ class ManualSubmission(BaseModel):
     """The owner recording that they sent this application themselves."""
 
     note: str | None = None
+
+
+class NotSubmitted(BaseModel):
+    """The owner recording that the employer did not receive this application."""
+
+    note: str | None = None
+
+
+class UnsettledSubmissionOut(BaseModel):
+    """An attempt to send that nobody has vouched for either way.
+
+    The ledger's own word for it is `state`: `attempting` or `uncertain` (the
+    outcome of a click is unknown), or `released` (allowed one more try, by
+    an application that may never run again).
+    """
+
+    application_id: uuid.UUID
+    application_status: str
+    failure_reason: str | None = None
+    url: str
+    company: str | None = None
+    title: str | None = None
+    state: str
+    #: `worker`, `owner`, or `legacy` for the backfill of runs from before
+    #: the ledger, whose times are approximate.
+    source: str
+    attempted_at: datetime | None = None
 
 
 class MatchDecisionOut(BaseModel):

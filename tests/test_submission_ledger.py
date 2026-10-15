@@ -151,6 +151,34 @@ async def test_unconfirmed_receipt_is_not_success(committing_sessionmaker):
         assert app.status == "needs_review"
 
 
+async def test_a_click_the_site_did_not_confirm_is_fenced_uncertain(committing_sessionmaker):
+    """The adapter's half and the ledger's half, joined. Each was tested
+    alone, and a real adapter reported every click as sent, so a rejected
+    click fenced the job `submitted` and no test spanned the two."""
+    from apps.worker.browser import ephemeral_page
+    from packages.ats.greenhouse import GreenhouseAdapter
+    from tests.test_adapter_fill import _GREENHOUSE, _REJECTED
+
+    maker = committing_sessionmaker
+    app_id = await _application(maker)
+    async with ephemeral_page() as page:
+        await page.set_content(_GREENHOUSE + _REJECTED)
+        async with maker() as session:
+            app = await session.get(Application, app_id)
+            await apply_job._submit(session, app, GreenhouseAdapter(), page)
+
+    async with maker() as session:
+        app = await session.get(Application, app_id)
+        fence = (
+            await session.scalars(
+                select(AppliedPosting).where(AppliedPosting.application_id == app_id)
+            )
+        ).one()
+        assert app.status == ApplicationStatus.NEEDS_REVIEW.value
+        assert app.review_json["submission_uncertain"] is True
+        assert fence.state == "uncertain"
+
+
 async def test_ledger_is_durable_before_employer_is_called(committing_sessionmaker):
     maker = committing_sessionmaker
     app_id = await _application(maker)

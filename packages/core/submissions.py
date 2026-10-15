@@ -15,8 +15,14 @@ from typing import cast
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.core.enums import EventType
 from packages.core.models import Application, ApplicationEvent, AppliedPosting, Posting
 from packages.core.submission_identity import submission_key_v1
+
+#: States in which nobody has vouched for the attempt either way. A
+#: `released` row of a failed application is one: it allows a try that
+#: will never run, and as another application's row it still blocks the job.
+UNSETTLED = ("attempting", "uncertain", "released")
 
 
 async def lock_candidate(session: AsyncSession, candidate_id: uuid.UUID) -> None:
@@ -166,3 +172,35 @@ async def record_manual(session: AsyncSession, application: Application) -> Appl
     row.source = "owner"
     row.confirmed_at = datetime.now(UTC)
     return row
+
+
+async def forget_unsent(session: AsyncSession, row: AppliedPosting, *, note: str | None) -> None:
+    """The owner checked with the employer: it never arrived.
+
+    Removes the fence, as `_submit` does when a refusal comes before the
+    click, so the job can be applied to again. The row is kept whole in a
+    `note` event: the ledger keeps evidence, and the event log is the part of
+    it nothing deletes from. Not a click and not a retry. The caller holds
+    `lock_candidate` and has refused a `submitted` row.
+    """
+    session.add(
+        ApplicationEvent(
+            application_id=row.application_id,
+            type=EventType.NOTE.value,
+            payload_json={
+                "kind": "submission_not_sent",
+                "by": "owner",
+                "note": note,
+                "fence": {
+                    "state": row.state,
+                    "source": row.source,
+                    "job_key": row.job_key,
+                    "url": row.url,
+                    "posting_id": str(row.posting_id) if row.posting_id else None,
+                    "attempted_at": row.attempted_at.isoformat() if row.attempted_at else None,
+                },
+            },
+        )
+    )
+    await session.delete(row)
+    await session.flush()

@@ -35,6 +35,7 @@ from packages.core.schemas import (
     ApplicationResumeEdit,
     ApplicationResumeOut,
     ManualSubmission,
+    NotSubmitted,
     OtpSubmission,
     PacketAnswer,
     PacketPosting,
@@ -809,6 +810,55 @@ async def mark_submitted(
     application.failure_reason = None
     await session.commit()
     _announce()
+    await session.refresh(application)
+    return application
+
+
+@router.post("/{application_id}/not-submitted", response_model=ApplicationOut)
+async def mark_not_submitted(
+    application_id: uuid.UUID, body: NotSubmitted, session: SessionDep
+) -> Application:
+    """Record that the employer did not receive this application.
+
+    The other answer to an attempt nobody could vouch for (`/submitted` is
+    the first), given after checking with the employer. It removes the
+    application's ledger row, which otherwise blocks the job for good, and
+    keeps it in a `note` event (`submissions.forget_unsent`). The status is
+    left as it is: a failed application stays failed, a parked one stays
+    parked and can be approved without the uncertainty warning.
+
+    Not an MCP tool, and refused while a run is in progress: the click it
+    would be undoing may be happening.
+    """
+    application = await session.get(Application, application_id)
+    if application is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+
+    # Same lock order as the worker and `mark_submitted`: candidate, then row.
+    await submissions.lock_candidate(session, application.candidate_id)
+    await session.refresh(application, with_for_update=True)
+
+    if application.status == ApplicationStatus.RUNNING.value:
+        raise ApiError(
+            ErrorCode.INVALID_STATE,
+            "a run is in progress for this application; wait for it to park or finish",
+        )
+    row = await session.get(AppliedPosting, application.id)
+    if row is None:
+        raise ApiError(ErrorCode.INVALID_STATE, "no attempt to send this application is recorded")
+    if row.state == "submitted" or application.status == ApplicationStatus.SUBMITTED.value:
+        raise ApiError(
+            ErrorCode.INVALID_STATE,
+            "this application is recorded as submitted; nothing unconfirmed is left to settle",
+        )
+
+    await submissions.forget_unsent(session, row, note=body.note)
+    if application.review_json:
+        review = dict(application.review_json)
+        review.pop("submission_uncertain", None)
+        review.pop("attempted_at", None)
+        application.review_json = review
+    await session.commit()
     await session.refresh(application)
     return application
 

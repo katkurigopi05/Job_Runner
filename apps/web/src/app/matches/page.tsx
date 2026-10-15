@@ -186,6 +186,18 @@ export default async function MatchesPage({
                         {match.ats_type ?? "unknown ats"}
                       </span>
                       {match.closed ? " · closed" : ""}
+                      {/* A failed fetch closes nothing, so this stays open for
+                          as long as its board is down. */}
+                      {match.board_unanswered ? (
+                        <span className="text-attn">
+                          {" "}
+                          · board not answering
+                          {match.board_last_answered_at
+                            ? ` since ${new Date(match.board_last_answered_at).toLocaleDateString()}`
+                            : ""}
+                          , may have closed
+                        </span>
+                      ) : null}
                       {/* How long we took to notice. The board not saying is
                           different from us being instant, so it reads
                           differently. */}

@@ -529,6 +529,11 @@ export interface Match {
   /** Hours from publication to us noticing. Null means unmeasurable, not zero. */
   lag_hours: number | null;
   closed: boolean;
+  /** Its board failed the last fetch. A failed fetch closes nothing, so the
+   *  posting may have closed without this knowing. */
+  board_unanswered: boolean;
+  /** When that board last answered; null unless `board_unanswered`. */
+  board_last_answered_at: string | null;
   title_similarity: number;
   body_similarity: number;
   /** Terms the posting emphasizes and the profile evidences. */
@@ -890,6 +895,26 @@ export interface PacketQuestion {
  * the apply form. The work up to that point is real, and this is how it gets
  * handed over instead of thrown away.
  */
+/**
+ * An attempt to send that nobody has vouched for either way: a click whose
+ * outcome is unknown, or a legacy run the ledger fenced to be safe. Another
+ * application's row blocks the job in any state, so each one stops its job
+ * being applied to again until the owner says whether it arrived.
+ */
+export interface UnsettledSubmission {
+  application_id: string;
+  application_status: string;
+  failure_reason?: string | null;
+  url: string;
+  company?: string | null;
+  title?: string | null;
+  /** `attempting`, `uncertain` or `released`. */
+  state: string;
+  /** `worker`, `owner`, or `legacy` (times approximate). */
+  source: string;
+  attempted_at?: string | null;
+}
+
 export interface ApplicationPacket {
   application_id: string;
   status: ApplicationStatus;
@@ -1025,9 +1050,11 @@ export interface RegistrySyncResult {
 
 /** Whether the crawler is working, waiting, or stuck waiting for a worker. */
 export interface CrawlStatus {
+  /** Work held under a current lease, or waiting with a live worker to take it. */
   running: boolean;
+  /** Unclaimed work, a dead worker's lapsed claim included; not a sweep scheduled for later. */
   pending: number;
-  /** Work queued with nobody holding it — `make worker` is not up. */
+  /** Unclaimed work with no live worker available to drain it. */
   stalled: boolean;
   last_finished_at?: string | null;
   last_status?: string | null;
@@ -1084,6 +1111,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ note: note ?? null }),
     }),
+  /** The owner checked with the employer: it never arrived. Removes the
+   *  ledger row that would otherwise block the job, keeping it as a note. */
+  markNotSubmitted: (id: string, note?: string) =>
+    request<Application>(`/applications/${id}/not-submitted`, {
+      method: "POST",
+      body: JSON.stringify({ note: note ?? null }),
+    }),
+  unsettledSubmissions: () => request<UnsettledSubmission[]>("/submissions/unsettled"),
   candidates: () => request<Candidate[]>("/candidates"),
   // Scoped to a candidate by the API, not optional. Single-user or not,
   // the route requires it.

@@ -126,7 +126,38 @@ this and must not be undone:
     already-submitted park was approved, re-ran and parked again for ever.
     The route takes the candidate lock before the row lock, as the worker does.
 
+13. **`submitted=True` means the site confirmed it** (2026-10-15). It was
+    `True` for any click: `submit_form` clicked, waited for the network, and
+    read a confirmation if there happened to be one. A validation error, or
+    a challenge that appears only on submit, was recorded as sent and fenced
+    the job `submitted` for good. Reproduced on all four adapters' fixture
+    forms. Now a click counts only when it produced confirmation text that
+    was not on the page before it, so a "thanks for your interest" banner on
+    the form does not count. Anything less is `submitted=False`, which item 8
+    parks as uncertain and logs as `submit_unconfirmed`. A site whose real
+    confirmation the selectors miss also parks; **mark submitted** is the way
+    out, and sending twice is the worse mistake. The ledger tests faked the
+    adapter and the adapter tests never reached the ledger, so
+    `test_a_click_the_site_did_not_confirm_is_fenced_uncertain` runs a real
+    adapter on a real page through `_submit`.
+
 Covered by `tests/test_submission_ledger.py`.
+
+**Settling what nobody can vouch for** (2026-10-15). The backfill fenced
+every interrupted legacy run `uncertain`, four of five on the owner's
+database on `failed` applications, and nothing listed them. Another
+application's row blocks a job in any state, so each one kept its job from
+being applied to again, invisibly. Releasing one would not help: `released`
+lets its own application try once more, and a failed one never runs.
+`/finish` now lists them (`GET /submissions/unsettled`) with two answers,
+given after checking with the employer. **It was sent** is
+`/applications/{id}/submitted`. **It was not sent** is
+`/applications/{id}/not-submitted`, which removes the row as the
+before-the-click refusal does and keeps it whole in a `note` event
+(`submissions.forget_unsent`). It is refused while a run is in progress and
+for a row recorded `submitted`. Neither answer is an MCP tool.
+`tests/test_submission_reconciliation.py`.
+
 
 Rollout: stop/drain workers before `alembic upgrade head`, then restart all
 workers on the same code. Old workers do not honor the ledger. The follow-up
