@@ -281,6 +281,82 @@ async def test_submit_clicks_and_reports_what_the_site_said(page, adapter_cls, h
     assert receipt.confirmation_text == "Thank you for applying to Acme."
 
 
+#: The site answers the click with an error and no confirmation: a validation
+#: message, or a challenge that appears only on submit, which the guard before
+#: the click cannot see.
+_REJECTED = """
+<script>
+  document.addEventListener('click', function (event) {
+    if (event.target.type !== 'submit') return;
+    event.preventDefault();
+    var error = document.createElement('div');
+    error.className = 'field-error';
+    error.textContent = 'Please complete the security check.';
+    document.body.appendChild(error);
+  });
+</script>
+"""
+
+#: Matches every adapter's confirmation selector, and is on the form before
+#: anything is clicked.
+_BANNER = '<div class="thank-you-banner">Thanks for your interest in Acme.</div>'
+
+
+@pytest.mark.parametrize(("adapter_cls", "html"), ADAPTERS)
+async def test_a_click_the_site_did_not_confirm_is_not_a_submission(
+    page, adapter_cls, html
+) -> None:
+    """Recorded as sent, the job would be fenced `submitted` for good and the
+    owner told it went out. `submitted=False` is what `_submit` parks as
+    uncertain."""
+    await page.set_content(html + _REJECTED)
+
+    receipt = await adapter_cls().submit(page)
+
+    assert receipt.submitted is False
+    assert receipt.confirmation_text is None
+
+
+@pytest.mark.parametrize(("adapter_cls", "html"), ADAPTERS)
+async def test_a_banner_on_the_form_before_the_click_is_not_a_confirmation(
+    page, adapter_cls, html
+) -> None:
+    await page.set_content(_BANNER + html + _REJECTED)
+
+    receipt = await adapter_cls().submit(page)
+
+    assert receipt.submitted is False
+    assert receipt.confirmation_text is None
+
+
+_APPENDED_CONFIRMATION = """
+<script>
+  document.addEventListener('click', function (event) {
+    if (event.target.type !== 'submit') return;
+    event.preventDefault();
+    var done = document.createElement('div');
+    done.className = 'application-confirmation';
+    done.textContent = 'Thank you for applying to Acme.';
+    document.body.appendChild(done);
+  });
+</script>
+"""
+
+
+@pytest.mark.parametrize(("adapter_cls", "html"), ADAPTERS)
+async def test_a_confirmation_the_click_produced_counts_beside_an_old_banner(
+    page, adapter_cls, html
+) -> None:
+    """The banner comes first in the page, so reading only the first match
+    would miss the confirmation added after it."""
+    await page.set_content(_BANNER + html + _APPENDED_CONFIRMATION)
+
+    receipt = await adapter_cls().submit(page)
+
+    assert receipt.submitted is True
+    assert receipt.confirmation_text == "Thank you for applying to Acme."
+
+
 @pytest.mark.parametrize(("adapter_cls", "html"), ADAPTERS)
 async def test_submit_without_a_button_is_a_site_error(page, adapter_cls, html) -> None:
     """Never report a submission that did not happen."""

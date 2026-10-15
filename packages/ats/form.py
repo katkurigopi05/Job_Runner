@@ -297,6 +297,14 @@ async def submit_form(adapter: Any, page: Any, *, selectors: dict[str, str]) -> 
     """Click submit and record what the site said back.
 
     Only ever reached after the approval gate — see apps/worker/apply_job.py.
+
+    `submitted` means the site confirmed it: confirmation text that was not on
+    the page before the click. It was `True` for any click, so a validation
+    error, or a challenge that appears only on submit, was recorded as sent,
+    and the ledger then fenced the job as done for good. Anything short of a
+    confirmation is `submitted=False`, which `_submit` parks as uncertain: the
+    click happened and the form may have gone, so it is neither a success nor
+    a failure to retry.
     """
     await adapter._guard_automation_blocks(page)
 
@@ -305,17 +313,27 @@ async def submit_form(adapter: Any, page: Any, *, selectors: dict[str, str]) -> 
         # Never report a submission that did not happen.
         raise SiteError("no submit button found on application form")
 
+    confirmations = page.locator(selectors["confirmation"])
+    # A "thanks for your interest" banner on the form matches the same
+    # selector and says nothing about this click.
+    shown_before = set(await _texts(confirmations))
+
     await button.click()
     await page.wait_for_load_state("networkidle")
 
-    confirmation = None
-    confirm_locator = page.locator(selectors["confirmation"]).first
-    if await confirm_locator.count():
-        confirmation = " ".join((await confirm_locator.inner_text()).split())
+    # Every match, not the first: a confirmation appended below a banner
+    # comes after it in the page.
+    new = [text for text in await _texts(confirmations) if text not in shown_before]
+    confirmation = new[0] if new else None
 
     return Receipt(
-        submitted=True,
+        submitted=confirmation is not None,
         ats=adapter.name,
         url=page.url,
         confirmation_text=confirmation,
     )
+
+
+async def _texts(locator: Any) -> list[str]:
+    """Each match's text with whitespace collapsed, empty ones left out."""
+    return [" ".join(text.split()) for text in await locator.all_inner_texts() if text.strip()]
