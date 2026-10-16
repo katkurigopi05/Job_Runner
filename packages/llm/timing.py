@@ -37,6 +37,7 @@ from typing import Any
 
 import structlog
 
+from packages.core.trace import current_task_id, current_trace_id
 from packages.llm import audit
 
 log = structlog.get_logger(__name__)
@@ -73,6 +74,10 @@ class CallTiming:
     #: The context the request capped the model at. None when it sent no cap,
     #: as for a model Ollama hosts.
     context_limit: int | None
+    #: Version 1 predates request/task correlation. See AuditEntry.
+    event_version: int = 1
+    trace_id: str | None = None
+    task_id: str | None = None
 
     @property
     def before_first_token_ms(self) -> float | None:
@@ -142,6 +147,9 @@ def from_ollama(
         answer_ms=durations["answer_ms"],
         total_ms=durations["total_ms"],
         context_limit=context_limit,
+        event_version=audit.CURRENT_EVENT_VERSION,
+        trace_id=current_trace_id(),
+        task_id=current_task_id(),
     )
 
 
@@ -178,6 +186,8 @@ def note(
         answer_tokens=kept.answer_tokens,
         before_first_token_ms=kept.before_first_token_ms,
         answer_ms=kept.answer_ms,
+        trace_id=kept.trace_id,
+        task_id=kept.task_id,
     )
     if kept.context_full:
         log.warning(

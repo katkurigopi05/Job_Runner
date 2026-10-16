@@ -32,6 +32,7 @@ from pathlib import Path
 import structlog
 
 from packages.core.config import get_settings
+from packages.core.trace import current_task_id, current_trace_id
 from packages.llm.prompts import identify, task_of
 
 log = structlog.get_logger(__name__)
@@ -67,6 +68,8 @@ UNREGISTERED = "unregistered"
 #: `read_trail` reads those by their recorded prompt instead.
 LEGACY_UNSPECIFIED = "unspecified"
 
+CURRENT_EVENT_VERSION = 2
+
 
 def is_local(provider: str, model: str | None = None) -> bool:
     """Whether a call stayed on this machine.
@@ -100,6 +103,11 @@ class AuditEntry:
     #: Which model answered. Recorded because provider alone does not say
     #: whether a call stayed here — see `is_local`.
     model: str | None = None
+    #: Version 1 predates request/task correlation. Defaults to 1 so old JSONL
+    #: lines remain readable without being relabelled as a newer schema.
+    event_version: int = 1
+    trace_id: str | None = None
+    task_id: str | None = None
 
     def matches(self, system: str, user: str) -> bool:
         """Whether this entry records that exact pair of prompts.
@@ -165,6 +173,9 @@ def record(
         user_chars=len(user),
         prompt_name=prompt.name if prompt else None,
         prompt_version=prompt.version if prompt else None,
+        event_version=CURRENT_EVENT_VERSION,
+        trace_id=current_trace_id(),
+        task_id=current_task_id(),
     )
 
     # Digests and counts only — safe for the log. The prompt itself is not.
@@ -177,6 +188,8 @@ def record(
         prompt=prompt.label if prompt else None,
         user_chars=entry.user_chars,
         user_sha256=entry.user_sha256[:12],
+        trace_id=entry.trace_id,
+        task_id=entry.task_id,
     )
 
     try:

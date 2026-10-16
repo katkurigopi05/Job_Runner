@@ -21,6 +21,7 @@ prove what was sent; without it, an entry reveals nothing.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query
@@ -58,6 +59,9 @@ def _out(entry: audit.AuditEntry) -> AuditEntryOut:
         system_chars=entry.system_chars,
         user_sha256=entry.user_sha256,
         system_sha256=entry.system_sha256,
+        event_version=entry.event_version,
+        trace_id=entry.trace_id,
+        task_id=entry.task_id,
     )
 
 
@@ -65,6 +69,7 @@ def _out(entry: audit.AuditEntry) -> AuditEntryOut:
 async def list_calls(
     uploads_only: bool = False,
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    trace_id: uuid.UUID | None = None,
 ) -> list[AuditEntryOut]:
     """Every provider call, newest last.
 
@@ -73,7 +78,11 @@ async def list_calls(
     default — a trail that showed only uploads would be a trail that decided
     for the owner what counts.
     """
-    entries = audit.read_trail(limit=limit)
+    # An exact trace lookup must search the whole local trail before applying
+    # the response bound, or an older match disappears behind newer calls.
+    entries = audit.read_trail(limit=None if trace_id else limit)
+    if trace_id is not None:
+        entries = [entry for entry in entries if entry.trace_id == str(trace_id)][-limit:]
     if uploads_only:
         entries = audit.uploads_only(entries)
     return [_out(entry) for entry in entries]

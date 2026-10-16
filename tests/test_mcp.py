@@ -13,6 +13,8 @@ nothing but tool calls.
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from typing import Any
 
 import httpx
@@ -585,6 +587,7 @@ async def test_a_role_the_feed_does_not_know_is_refused_not_ignored() -> None:
 
     assert "invalid_request" in error
     assert "role" in error
+    assert re.search(r"trace_id=[0-9a-f-]{36}", error)
 
 
 # --------------------------------------------------------------------------
@@ -592,9 +595,16 @@ async def test_a_role_the_feed_does_not_know_is_refused_not_ignored() -> None:
 # --------------------------------------------------------------------------
 
 
-async def test_apply_to_url_queues(complete_candidate) -> None:
+async def test_apply_to_url_queues(complete_candidate, worker_session) -> None:
+    from sqlalchemy import select
+
+    from packages.core.models import QueueTask
+
     result = await call("apply_to_url", **complete_candidate, url=APPLY_URL)
     assert result["status"] == "queued"
+    queued = await worker_session.scalar(select(QueueTask))
+    assert queued is not None
+    assert uuid.UUID(queued.payload_json["_trace_id"])
 
 
 async def test_apply_surfaces_an_incomplete_profile(bare_candidate) -> None:
@@ -900,6 +910,7 @@ async def test_a_read_that_got_no_answer_says_so_and_can_be_asked_again(monkeypa
     assert "no_answer" in error_text
     assert "did not answer" in error_text
     assert "Nothing was changed" in error_text
+    assert re.search(r"Trace ID: [0-9a-f-]{36}", error_text)
 
 
 @pytest.mark.parametrize("error", [httpx.ReadTimeout, httpx.ReadError])
@@ -915,6 +926,7 @@ async def test_a_write_that_got_no_answer_may_have_happened(monkeypatch, error) 
     assert "may have been carried out" in error_text
     assert "before asking again" in error_text
     assert "Nothing was changed" not in error_text
+    assert re.search(r"Trace ID: [0-9a-f-]{36}", error_text)
 
 
 #: The tools that put what the API returned under a name of their own.

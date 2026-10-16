@@ -1221,6 +1221,9 @@ class AuditEntryOut(BaseModel):
     system_chars: int
     user_sha256: str
     system_sha256: str
+    event_version: int = 1
+    trace_id: str | None = None
+    task_id: str | None = None
 
 
 class AuditSummaryOut(BaseModel):

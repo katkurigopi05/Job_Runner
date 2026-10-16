@@ -56,6 +56,33 @@ async def test_a_recorded_call_is_listed(client: AsyncClient) -> None:
     assert body[0]["left_machine"] is True
 
 
+async def test_correlation_is_exposed_without_prompt_material(client: AsyncClient) -> None:
+    from packages.core.trace import correlated
+
+    with correlated(trace_id="c960a1f2-83cf-42da-b849-5f6ec2398e5c", task_id="task-7"):
+        _record_one()
+
+    [entry] = (await client.get("/audit")).json()
+    assert entry["event_version"] == 2
+    assert entry["trace_id"] == "c960a1f2-83cf-42da-b849-5f6ec2398e5c"
+    assert entry["task_id"] == "task-7"
+
+
+async def test_an_exact_trace_can_be_looked_up(client: AsyncClient) -> None:
+    from packages.core.trace import correlated
+
+    wanted = "c960a1f2-83cf-42da-b849-5f6ec2398e5c"
+    with correlated(trace_id=wanted):
+        _record_one()
+    with correlated(trace_id="a4427d58-84b1-43cb-a986-eb5f74f4e4e6"):
+        _record_one()
+
+    response = await client.get("/audit", params={"trace_id": wanted})
+
+    assert response.status_code == 200
+    assert [entry["trace_id"] for entry in response.json()] == [wanted]
+
+
 async def test_no_response_ever_carries_prompt_text(client: AsyncClient) -> None:
     """§10 forbids logging résumé contents and the trail stores none.
 

@@ -205,6 +205,30 @@ async def test_empty_queue_is_a_no_op(client: AsyncClient) -> None:
     assert await worker_run.run_once(worker_id="test-worker") is False
 
 
+async def test_worker_carries_the_enqueue_trace_into_model_audit(
+    client: AsyncClient, worker_session, monkeypatch, tmp_path
+) -> None:
+    from packages.core.trace import correlated
+    from packages.llm import audit
+
+    entries = []
+
+    async def traced_handler(session, claimed):  # noqa: ANN001
+        entries.append(audit.record("stub", "system", "user"))
+
+    monkeypatch.setitem(worker_run.HANDLERS, "trace_test", traced_handler)
+    monkeypatch.setattr(audit, "audit_path", lambda: tmp_path / "llm-audit.jsonl")
+    trace_id = "c960a1f2-83cf-42da-b849-5f6ec2398e5c"
+    with correlated(trace_id=trace_id):
+        queued = await enqueue(worker_session, "trace_test", {})
+        await worker_session.commit()
+
+    assert await worker_run.run_once(worker_id="test-worker") is True
+    [entry] = entries
+    assert entry.trace_id == trace_id
+    assert entry.task_id == str(queued.id)
+
+
 async def test_worker_commits_retry_exhaustion_when_no_task_is_claimed(
     client: AsyncClient, worker_session
 ) -> None:

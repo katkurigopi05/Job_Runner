@@ -54,6 +54,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from packages.core.enums import ErrorCode
+from packages.core.trace import TRACE_HEADER, correlated, new_trace_id, normalize_trace_id
 
 
 def _is_loopback(host: str | None) -> bool:
@@ -167,3 +168,15 @@ class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
             return _refused("jobrunner accepts changes from its own dashboard only.")
 
         return await call_next(request)
+
+
+class TraceContextMiddleware(BaseHTTPMiddleware):
+    """Give each request a safe identifier and return it to the caller."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        trace_id = normalize_trace_id(request.headers.get(TRACE_HEADER)) or new_trace_id()
+        request.state.trace_id = trace_id
+        with correlated(trace_id=trace_id):
+            response = await call_next(request)
+        response.headers[TRACE_HEADER] = trace_id
+        return response
