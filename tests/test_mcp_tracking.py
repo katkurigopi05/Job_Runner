@@ -24,7 +24,7 @@ from packages.core.models import Application
 from packages.tracking.tasks import ensure_task_for_outcome
 
 # The binding to the ASGI app is the other file's, so the two cannot differ.
-from tests.test_mcp import _bind_tools_to_app, call  # noqa: F401
+from tests.test_mcp import _bind_tools_to_app, call, failed_call  # noqa: F401
 
 
 async def _submitted(worker_session, candidate: dict[str, str], job: int, days_ago: int = 0) -> str:
@@ -193,10 +193,10 @@ async def test_nothing_waiting_says_what_nothing_can_mean() -> None:
 
 @pytest.mark.parametrize("asked", [{"within_days": 400}, {"silent_after_days": 0}])
 async def test_a_number_the_api_refuses_is_refused_not_ignored(asked) -> None:
-    waiting = await call("follow_ups", **asked)
+    error = await failed_call("follow_ups", **asked)
 
-    assert waiting["code"] == "invalid_request"
-    assert "overdue" not in waiting
+    assert "invalid_request" in error
+    assert "overdue" not in error
 
 
 # --------------------------------------------------------------------------
@@ -259,9 +259,9 @@ async def test_one_applications_tasks_come_whole(client, app_id) -> None:
 
 
 async def test_an_application_that_does_not_exist_is_not_found() -> None:
-    tracking = await call("application_tracking", application_id=str(uuid.uuid4()))
+    error = await failed_call("application_tracking", application_id=str(uuid.uuid4()))
 
-    assert tracking["code"] == "not_found"
+    assert "not_found" in error
 
 
 # --------------------------------------------------------------------------
