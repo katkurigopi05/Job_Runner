@@ -1137,6 +1137,8 @@ Finish that application manually. Captcha solving, browser-fingerprint spoofing,
 ## 12. Safety rules worth remembering
 
 - Keep `.env`, `.secrets/`, and `storage/` out of Git.
+- If the checkout is in a synced folder, follow [PRIVATE_PATH_CUTOVER.md](PRIVATE_PATH_CUTOVER.md)
+  to stage and verify a private copy before switching paths.
 - Leave `AUTO_SUBMIT=false` until you explicitly decide otherwise.
 - Review work authorization, sponsorship, salary, and employment-history answers yourself.
 - Treat everything in `storage/` as personally identifiable information.
@@ -1252,4 +1254,3 @@ To recover onto a fresh machine: `make up`, create an empty database, then
 `pg_restore --no-owner --dbname <database> database.dump`, copy
 `artifacts/*` into `storage/`, restore `VAULT_KEY` from where you kept it, and
 run `make doctor`.
-

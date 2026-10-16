@@ -56,7 +56,7 @@ structlog.configure(
 
 
 def _from_env_file(key: str) -> str | None:
-    """Read one key out of `.env`, the way the app's Settings already does.
+    """Read one key out of the selected env file, the way Settings does.
 
     Without this the tests were the only part of the project that ignored
     `.env`. On a machine where port 5432 is taken by something else — which is
@@ -67,7 +67,14 @@ def _from_env_file(key: str) -> str | None:
 
     Deliberately not a dotenv dependency: one key, one file, no interpolation.
     """
-    path = Path(__file__).resolve().parent.parent / ".env"
+    configured = os.environ.get("JOBRUNNER_ENV_FILE", "").strip()
+    path = (
+        Path(configured).expanduser().resolve()
+        if configured
+        else Path(__file__).resolve().parent.parent / ".env"
+    )
+    if configured and not path.is_file():
+        raise pytest.UsageError("JOBRUNNER_ENV_FILE must point to a regular file")
     if not path.is_file():
         return None
     for line in path.read_text(encoding="utf-8").splitlines():

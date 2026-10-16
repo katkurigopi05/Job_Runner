@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching eval-retrieval fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -102,6 +102,14 @@ eval-tailor:
 doctor:
 	$(PY)/python -m scripts.doctor
 
+# make private-paths root=~/.local/share/jobrunner          # dry run
+# make private-paths root=~/.local/share/jobrunner apply=1  # verified copy
+# The source is retained. Switching JOBRUNNER_ENV_FILE and deleting the old
+# copy are separate owner decisions documented in docs/PRIVATE_PATH_CUTOVER.md.
+private-paths:
+	@test -n "$(root)" || (echo "set root=<private-directory>" && exit 1)
+	$(PY)/python -m scripts.private_paths --destination "$(root)" $(if $(filter 1,$(apply)),--apply,)
+
 # A fresh Fernet key for VAULT_KEY. Printed, never written: .env is
 # gitignored and stays that way, and appending blindly would leave two
 # VAULT_KEY lines with the stale one winning on some readers.
@@ -139,8 +147,12 @@ worktree:
 	@echo
 	@echo "cd /private/tmp/Job_Runner_$(NAME)"
 	@echo "Then export these before running make gate-0:"
-	@grep -E '^(DATABASE_URL|TEST_DATABASE_URL|VAULT_KEY)=' .env 2>/dev/null \
-		| sed 's/^/  export /' || echo "  (no .env found — copy from .env.example)"
+	@if test -n "$$JOBRUNNER_ENV_FILE"; then \
+		echo "  export JOBRUNNER_ENV_FILE=$$JOBRUNNER_ENV_FILE"; \
+	else \
+		grep -E '^(DATABASE_URL|TEST_DATABASE_URL|VAULT_KEY)=' .env 2>/dev/null \
+			| sed 's/^/  export /' || echo "  (no .env found — copy from .env.example)"; \
+	fi
 
 # Gate 0 — CLAUDE.md §9. All assertions covered:
 #   pytest green, POST /applications reaches submitted, invalid transition

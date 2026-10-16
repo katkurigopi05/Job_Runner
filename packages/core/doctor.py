@@ -45,7 +45,7 @@ from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlparse
 
-from packages.core.config import get_settings
+from packages.core.config import get_settings, settings_env_file
 
 #: How long any single check may take. A doctor that hangs is worse than a
 #: doctor that reports a timeout, because the owner cannot tell it apart from
@@ -394,7 +394,7 @@ def check_vault_key(*, env_file: Path | None = None) -> Check:
     settings = get_settings()
     raw = settings.vault_key or os.environ.get("VAULT_KEY")
     stored = stored_credentials(settings.vault_root)
-    lines = _env_key_lines(env_file or Path(".env"))
+    lines = _env_key_lines(env_file or settings_env_file())
     duplicate = (
         f" .env has {lines} VAULT_KEY lines; only one is read — delete the others."
         if lines > 1
@@ -678,7 +678,7 @@ def check_cloud_sync(
         "storage": Path(settings.storage_root),
         "vault": Path(settings.vault_root),
         "backups": Path(settings.backup_root),
-        ".env": env_file or Path(".env"),
+        ".env": env_file or settings_env_file(),
     }
     found = {
         name: folder
@@ -703,8 +703,9 @@ def check_cloud_sync(
             "Move the checkout out of the synced folder, for example to ~/Code/Job_Runner\n"
             "or turn off Desktop & Documents in System Settings > Apple Account > "
             "iCloud > iCloud Drive\n"
-            "or point STORAGE_ROOT, VAULT_ROOT and BACKUP_ROOT outside it "
-            "(.env is read from the folder the app starts in)"
+            "or run `make private-paths root=<private-directory>` to copy STORAGE_ROOT, "
+            "VAULT_ROOT and BACKUP_ROOT, then launch with the JOBRUNNER_ENV_FILE path "
+            "it prints"
         ),
         required=False,
     )
