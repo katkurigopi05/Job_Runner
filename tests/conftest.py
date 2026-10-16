@@ -74,7 +74,7 @@ def _from_env_file(key: str) -> str | None:
         else Path(__file__).resolve().parent.parent / ".env"
     )
     if configured and not path.is_file():
-        raise pytest.UsageError("JOBRUNNER_ENV_FILE must point to a readable regular file")
+        raise pytest.UsageError("JOBRUNNER_ENV_FILE must point to a regular file")
     if not path.is_file():
         return None
     for line in path.read_text(encoding="utf-8").splitlines():

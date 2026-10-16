@@ -30,7 +30,7 @@ def settings_env_file() -> Path:
     configured = os.environ.get(ENV_FILE_VARIABLE, "").strip()
     path = Path(configured or ".env").expanduser().resolve()
     if configured and not path.is_file():
-        raise SettingsEnvFileError(f"{ENV_FILE_VARIABLE} must point to a readable regular file")
+        raise SettingsEnvFileError(f"{ENV_FILE_VARIABLE} must point to a regular file")
     return path
 
 

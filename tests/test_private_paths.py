@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import stat
 from pathlib import Path
 
@@ -168,6 +169,18 @@ def test_apply_output_contains_no_env_value(
     assert "copied and verified" in output
     assert "JOBRUNNER_ENV_FILE=" in output
     assert "must-never-be-printed" not in output
+
+
+def test_a_configured_source_that_does_not_exist_becomes_an_empty_root(
+    private_sources: dict[str, Path], tmp_path: Path
+) -> None:
+    shutil.rmtree(private_sources["vault"])
+    destination = tmp_path / "Private" / "jobrunner"
+
+    migrate_private_paths(destination, managed=lambda _path: False, home=tmp_path)
+
+    assert (destination / "vault").is_dir()
+    assert list((destination / "vault").iterdir()) == []
 
 
 def test_verification_detects_a_changed_copy(
