@@ -208,7 +208,7 @@ async def test_an_id_the_api_does_not_know_is_still_the_apis_to_refuse() -> None
     async with Client(mcp_server.server) as client:
         result = await client.call_tool("application_status", {"application_id": "not-a-uuid"})
 
-    assert not result.is_error
+    assert result.is_error
     assert "invalid_request" in result.content[0].text
 
 
