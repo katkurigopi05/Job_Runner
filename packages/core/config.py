@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from packages.core.database_access import async_database_url
 from packages.core.enums import TailorMode
 
 
@@ -405,10 +406,7 @@ class Settings(BaseSettings):
     @property
     def async_database_url(self) -> str:
         """Normalize a psycopg-style URL to the asyncpg driver."""
-        url = self.database_url
-        if url.startswith("postgresql://"):
-            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-        return url
+        return async_database_url(self.database_url)
 
 
 @lru_cache

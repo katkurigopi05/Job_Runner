@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching eval-retrieval fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -452,6 +452,12 @@ backup:
 backup-verify:
 	@test -n "$(dir)" || (echo "set dir=<backup directory>" && exit 1)
 	$(PY)/python -m scripts.backup verify "$(dir)" $(if $(keep),--keep,)
+
+# Uses DATABASE_URL for the future runtime role and requires an explicitly
+# exported MAINTENANCE_DATABASE_URL. Dry-run unless apply=1. `deny` is a
+# whitespace-separated list of other environment databases.
+database-role:
+	$(PY)/python -m scripts.database_roles $(if $(filter 1,$(apply)),--apply,) $(foreach database,$(deny),--deny-database $(database))
 
 # Group stored listings that are confidently one requisition across sources.
 #   make canonicalize dry=1   # preview

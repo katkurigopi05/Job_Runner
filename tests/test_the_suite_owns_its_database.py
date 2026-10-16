@@ -16,6 +16,8 @@ anything reads the settings. These hold it there.
 
 from __future__ import annotations
 
+import os
+
 from sqlalchemy.engine import make_url
 
 from tests.conftest import TEST_DATABASE_URL
@@ -25,6 +27,10 @@ def test_the_configured_database_is_the_test_database() -> None:
     from packages.core.config import get_settings
 
     assert get_settings().async_database_url == TEST_DATABASE_URL
+
+
+def test_the_suite_does_not_inherit_an_operator_maintenance_url() -> None:
+    assert "MAINTENANCE_DATABASE_URL" not in os.environ
 
 
 def test_the_engine_code_reaches_for_is_bound_to_it() -> None:

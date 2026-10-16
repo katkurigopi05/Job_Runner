@@ -64,12 +64,13 @@ def _create(args: argparse.Namespace) -> int:
 def _verify(args: argparse.Namespace) -> int:
     from packages.backup.verify import verify_restore
     from packages.core.config import get_settings
+    from packages.core.database_access import maintenance_database_url
 
     settings = get_settings()
     report = asyncio.run(
         verify_restore(
             Path(args.dir),
-            database_url=settings.database_url,
+            database_url=maintenance_database_url(settings.database_url),
             storage_root=Path(settings.storage_root),
             tools=_tools(),
             keep=args.keep,
