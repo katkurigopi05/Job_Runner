@@ -283,9 +283,10 @@ class FallbackProvider:
         return build_provider(LOCAL_PROVIDER)
 
     def _should_retry(self, exc: Exception) -> bool:
+        from packages.llm.audit import AuditUnavailable
         from packages.llm.quota import QuotaExceeded
 
-        return isinstance(exc, (QuotaExceeded, LLMError))
+        return isinstance(exc, (AuditUnavailable, QuotaExceeded, LLMError))
 
     def _note(self, exc: Exception, local: LLMProvider) -> None:
         log.warning(

@@ -66,26 +66,35 @@ def used_today(provider: str) -> int:
     )
 
 
-def limit_for(provider: str) -> int | None:
+def limit_for(provider: str, *, left_machine: bool | None = None) -> int | None:
     """The daily ceiling, or None when the provider is unlimited."""
-    if provider in LOCAL_PROVIDERS:
+    if left_machine is False or (left_machine is None and provider in LOCAL_PROVIDERS):
         return None
     limit = get_settings().llm_daily_remote_calls
     return limit if limit > 0 else None
 
 
-def authorize(provider: str) -> None:
+def authorize(
+    provider: str,
+    *,
+    used: int | None = None,
+    left_machine: bool | None = None,
+) -> None:
     """Permit one call to `provider`, or refuse it.
 
     Raises:
         QuotaExceeded: the allowance is spent. Deliberate — see the module
             docstring on why this does not fall back.
     """
-    limit = limit_for(provider)
+    limit = (
+        limit_for(provider)
+        if left_machine is None
+        else limit_for(provider, left_machine=left_machine)
+    )
     if limit is None:
         return
 
-    used = used_today(provider)
+    used = used_today(provider) if used is None else used
     if used >= limit:
         log.warning("llm_quota_exceeded", provider=provider, used=used, limit=limit)
         raise QuotaExceeded(provider, used, limit)

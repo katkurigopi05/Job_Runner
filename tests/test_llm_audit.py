@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import json
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, replace
+from datetime import UTC, datetime, timedelta
+
+import httpx
 import pytest
 
-from packages.llm import audit
-from packages.llm.provider import StubProvider
+from packages.llm import audit, quota
+from packages.llm.audit import AuditUnavailable
+from packages.llm.provider import GeminiProvider, StubProvider
+from packages.llm.quota import QuotaExceeded
 
 
 @pytest.fixture(autouse=True)
@@ -110,6 +118,96 @@ async def test_a_cloud_model_is_recorded_as_having_left(tmp_path) -> None:
     assert entry.left_machine is True
     assert entry.model == "kimi-k2.6:cloud"
     assert audit.uploads_only([entry]) == [entry]
+
+
+def test_remote_call_fails_before_network_when_audit_cannot_persist(monkeypatch) -> None:
+    def unavailable():
+        raise OSError("private path must never appear in the public error")
+
+    monkeypatch.setattr(audit, "audit_path", unavailable)
+
+    with pytest.raises(AuditUnavailable) as excinfo:
+        audit.record("gemini", "system", "resume")
+
+    assert "private path" not in str(excinfo.value)
+
+
+async def test_remote_provider_is_not_contacted_when_audit_cannot_persist(monkeypatch) -> None:
+    contacted = False
+
+    def unavailable():
+        raise OSError("read-only")
+
+    async def post(*args, **kwargs):
+        nonlocal contacted
+        contacted = True
+        raise AssertionError("the request must not leave")
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(audit, "audit_path", unavailable)
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+
+    with pytest.raises(AuditUnavailable):
+        await GeminiProvider().complete("system", "resume")
+
+    assert contacted is False
+
+
+def test_local_call_continues_when_audit_cannot_persist(monkeypatch) -> None:
+    def unavailable():
+        raise OSError("read-only")
+
+    monkeypatch.setattr(audit, "audit_path", unavailable)
+
+    entry = audit.record("ollama", "system", "local prompt", model="qwen3:8b")
+
+    assert entry.left_machine is False
+
+
+def test_ollama_cloud_tag_uses_remote_failure_policy(monkeypatch) -> None:
+    def unavailable():
+        raise OSError("read-only")
+
+    monkeypatch.setattr(audit, "audit_path", unavailable)
+
+    with pytest.raises(AuditUnavailable):
+        audit.record("ollama", "system", "resume", model="kimi-k2.6:cloud")
+
+
+def test_concurrent_remote_calls_cannot_overspend_the_daily_limit(monkeypatch) -> None:
+    monkeypatch.setattr(
+        quota,
+        "limit_for",
+        lambda provider, *, left_machine=None: 3 if left_machine else None,
+    )
+
+    def call(number: int) -> str:
+        try:
+            audit.record("gemini", "system", f"resume-{number}")
+        except QuotaExceeded:
+            return "refused"
+        return "recorded"
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        outcomes = list(pool.map(call, range(8)))
+
+    assert outcomes.count("recorded") == 3
+    assert outcomes.count("refused") == 5
+    assert len(audit.read_trail()) == 3
+
+
+def test_audit_retention_keeps_only_the_last_365_days() -> None:
+    old = audit.record("stub", "system", "old")
+    recent = audit.record("stub", "system", "recent")
+    old_at = (datetime.now(UTC) - timedelta(days=366)).isoformat()
+    audit.audit_path().write_text(
+        "\n".join((json.dumps(asdict(replace(old, at=old_at))), json.dumps(asdict(recent)))) + "\n",
+        encoding="utf-8",
+    )
+
+    audit.enforce_retention()
+
+    assert [entry.user_sha256 for entry in audit.read_trail()] == [recent.user_sha256]
 
 
 def test_a_call_keeps_its_request_and_worker_correlation() -> None:

@@ -147,6 +147,31 @@ async def test_a_spent_quota_falls_back_to_the_local_model() -> None:
     assert fallback.answered_by == "ollama:llama3.1"
 
 
+async def test_an_unavailable_remote_audit_falls_back_to_the_local_model() -> None:
+    from packages.llm.audit import AuditUnavailable
+
+    class Unauditable:
+        name = "gemini"
+
+        async def complete(self, system, user, **kwargs):
+            raise AuditUnavailable()
+
+    class Local:
+        name = "ollama"
+        model = "qwen3:8b"
+
+        async def complete(self, system, user, **kwargs):
+            return "handled locally"
+
+    fallback = router.FallbackProvider(Unauditable(), "tailor_resume")
+    fallback._local = lambda: Local()
+
+    answer = await fallback.complete("sys", "user")
+
+    assert answer == "handled locally"
+    assert fallback.answered_by == "ollama:qwen3:8b"
+
+
 async def test_the_fallback_is_never_the_stub() -> None:
     """§7: canned text must not reach a real application.
 
