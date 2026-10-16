@@ -47,6 +47,16 @@ async def call(name: str, **arguments: Any) -> Any:
     return json.loads(result.content[0].text)
 
 
+async def failed_call(name: str, **arguments: Any) -> str:
+    """Invoke a tool that should fail and return its protocol error text."""
+    from mcp.client import Client
+
+    async with Client(mcp_server.server) as client:
+        result = await client.call_tool(name, arguments)
+    assert result.is_error, result.content
+    return result.content[0].text
+
+
 # --------------------------------------------------------------------------
 # Tool surface
 # --------------------------------------------------------------------------
@@ -570,10 +580,10 @@ async def test_an_empty_feed_says_what_empty_can_mean() -> None:
 
 async def test_a_role_the_feed_does_not_know_is_refused_not_ignored() -> None:
     """The feed's own rule (§18), reaching the tool: a typo is an error."""
-    listed = await call("my_matches", role="sofware enginer")
+    error = await failed_call("my_matches", role="sofware enginer")
 
-    assert listed["code"] == "invalid_request"
-    assert "role" in listed["error"]
+    assert "invalid_request" in error
+    assert "role" in error
 
 
 # --------------------------------------------------------------------------
@@ -588,15 +598,15 @@ async def test_apply_to_url_queues(complete_candidate) -> None:
 
 async def test_apply_surfaces_an_incomplete_profile(bare_candidate) -> None:
     """The completeness gate reaches the tool caller, not just HTTP."""
-    result = await call("apply_to_url", **bare_candidate, url=APPLY_URL)
-    assert result["code"] == "invalid_request"
-    assert "base_resume_id" in result["error"]
+    error = await failed_call("apply_to_url", **bare_candidate, url=APPLY_URL)
+    assert "invalid_request" in error
+    assert "base_resume_id" in error
 
 
 async def test_duplicate_application_surfaces(complete_candidate) -> None:
     await call("apply_to_url", **complete_candidate, url=APPLY_URL)
-    result = await call("apply_to_url", **complete_candidate, url=APPLY_URL)
-    assert result["code"] == "duplicate_application"
+    error = await failed_call("apply_to_url", **complete_candidate, url=APPLY_URL)
+    assert "duplicate_application" in error
 
 
 async def test_application_status_and_history(complete_candidate) -> None:
@@ -823,9 +833,9 @@ async def test_unreachable_api_is_reported_not_swallowed(monkeypatch) -> None:
 
     monkeypatch.setattr(mcp_server, "_client", _Dead())
 
-    result = await call("review_queue")
-    assert "Cannot reach" in result["error"]
-    assert "make api" in result["error"]
+    error = await failed_call("review_queue")
+    assert "Cannot reach" in error
+    assert "make api" in error
 
 
 @BOTH_PROTOCOLS
@@ -885,11 +895,10 @@ async def test_a_read_that_got_no_answer_says_so_and_can_be_asked_again(monkeypa
         mcp_server, "_client", JobrunnerClient(base_url="http://test", transport=_Silent(error))
     )
 
-    result = await call("review_queue")
-
-    assert result["code"] == "no_answer"
-    assert "did not answer" in result["error"]
-    assert "Nothing was changed" in result["error"]
+    error_text = await failed_call("review_queue")
+    assert "no_answer" in error_text
+    assert "did not answer" in error_text
+    assert "Nothing was changed" in error_text
 
 
 @pytest.mark.parametrize("error", [httpx.ReadTimeout, httpx.ReadError])
@@ -900,12 +909,11 @@ async def test_a_write_that_got_no_answer_may_have_happened(monkeypatch, error) 
         mcp_server, "_client", JobrunnerClient(base_url="http://test", transport=_Silent(error))
     )
 
-    result = await call("reject_application", application_id="app-1")
-
-    assert result["code"] == "no_answer"
-    assert "may have been carried out" in result["error"]
-    assert "before asking again" in result["error"]
-    assert "Nothing was changed" not in result["error"]
+    error_text = await failed_call("reject_application", application_id="app-1")
+    assert "no_answer" in error_text
+    assert "may have been carried out" in error_text
+    assert "before asking again" in error_text
+    assert "Nothing was changed" not in error_text
 
 
 #: The tools that put what the API returned under a name of their own.
@@ -931,17 +939,16 @@ async def test_a_failed_listing_is_an_error_and_not_a_list(monkeypatch, tool) ->
 
     monkeypatch.setattr(mcp_server, "_client", _Dead())
 
-    result = await call(tool, **_LISTING_TOOLS[tool])
+    error = await failed_call(tool, **_LISTING_TOOLS[tool])
 
-    assert "Cannot reach" in result["error"]
-    assert set(result) == {"error"}
+    assert "Cannot reach" in error
 
 
 async def test_not_found_surfaces_the_error_code() -> None:
     import uuid
 
-    result = await call("application_status", application_id=str(uuid.uuid4()))
-    assert result["code"] == "not_found"
+    error = await failed_call("application_status", application_id=str(uuid.uuid4()))
+    assert "not_found" in error
 
 
 # --------------------------------------------------------------------------
@@ -987,16 +994,15 @@ async def test_a_tool_edit_that_invents_a_fact_is_refused(client, complete_candi
     """
     application_id = await _parked_application(client, complete_candidate)
 
-    result = await call(
+    error = await failed_call(
         "edit_application_resume",
         application_id=application_id,
         sections={"experience": ["Principal Engineer at Netflix, cutting latency by 40%."]},
         contact_name="Ada Lovelace",
     )
 
-    assert "error" in result
-    assert "does not support" in result["error"]
-    assert "Netflix" in result["error"]
+    assert "does not support" in error
+    assert "Netflix" in error
 
 
 async def test_a_relayed_edit_is_stored_and_attached(client, complete_candidate) -> None:

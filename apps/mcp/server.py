@@ -108,22 +108,15 @@ async def _call(method: str, path: str, **kwargs: Any) -> Any:
     try:
         return await _client.request(method, path, **kwargs)
     except ApiUnavailable as exc:
-        return {"error": str(exc)}
+        raise ToolError(f"api_unavailable: {exc}") from exc
     except ApiDidNotAnswer as exc:
-        return {"error": str(exc), "code": "no_answer"}
+        raise ToolError(f"no_answer: {exc}") from exc
     except ApiCallFailed as exc:
-        return {"error": exc.message, "code": exc.code}
+        raise ToolError(f"{exc.code}: {exc.message}") from exc
 
 
 def _under(name: str, result: Any) -> dict[str, Any]:
-    """What the API returned, under a name of its own, unless it failed.
-
-    A failure is `{"error": ...}` at the top, as every other tool gives it.
-    Wrapped like a result it read `{"candidates": {"error": ...}}`: a dead API
-    under the name of a list.
-    """
-    if isinstance(result, dict) and "error" in result:
-        return result
+    """Put a successful API result under its tool-facing name."""
     return {name: result}
 
 

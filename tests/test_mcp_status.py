@@ -26,6 +26,7 @@ from tests.test_mcp import (  # noqa: F401
     _Owner,
     _wire,
     call,
+    failed_call,
 )
 
 SYSTEM = "You rewrite resume bullets."
@@ -100,10 +101,10 @@ async def test_nothing_uploaded_is_said_and_not_left_as_a_zero() -> None:
 
 
 async def test_a_window_the_api_refuses_is_refused_not_ignored() -> None:
-    left = await call("audit_trail", days=0)
+    error = await failed_call("audit_trail", days=0)
 
-    assert left["code"] == "invalid_request"
-    assert "uploads" not in left
+    assert "invalid_request" in error
+    assert "uploads" not in error
 
 
 # --------------------------------------------------------------------------
