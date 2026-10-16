@@ -167,6 +167,14 @@ def pytest_configure(config: pytest.Config) -> None:
 #: app itself are other processes and still read the real variable.
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
+#: Privileged commands may prefer this over DATABASE_URL. It belongs to an
+#: operator shell, never to pytest: migration tests replace DATABASE_URL with
+#: a disposable scratch database, and inheriting a maintenance URL would make
+#: Alembic touch that other database instead. Remove it before any test or
+#: subprocess can resolve a database credential. Tests of the resolver set it
+#: explicitly with monkeypatch and restore this absent state afterwards.
+os.environ.pop("MAINTENANCE_DATABASE_URL", None)
+
 #: Truncated between committing tests, children first is handled by CASCADE.
 _ALL_TABLES = (
     "applied_postings",

@@ -17,9 +17,11 @@ import asyncio
 from datetime import UTC, datetime
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from packages.core import db as core_db
 from packages.core.config import get_settings
+from packages.core.database_access import async_database_url, maintenance_database_url
 from packages.core.models import Base
 from packages.crawler.retention import prune
 
@@ -59,10 +61,18 @@ async def _size() -> str:
 
 async def _compact() -> None:
     # VACUUM cannot run inside a transaction block.
-    async with core_db.get_engine().connect() as connection:
-        autocommit = await connection.execution_options(isolation_level="AUTOCOMMIT")
-        for table in COMPACTED:
-            await autocommit.execute(text(f"VACUUM (FULL, ANALYZE) {table}"))
+    settings = get_settings()
+    engine = create_async_engine(
+        async_database_url(maintenance_database_url(settings.database_url)),
+        hide_parameters=True,
+    )
+    try:
+        async with engine.connect() as connection:
+            autocommit = await connection.execution_options(isolation_level="AUTOCOMMIT")
+            for table in COMPACTED:
+                await autocommit.execute(text(f"VACUUM (FULL, ANALYZE) {table}"))
+    finally:
+        await engine.dispose()
 
 
 async def run(max_age_days: int, apply: bool) -> int:

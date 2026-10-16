@@ -16,13 +16,21 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 from packages.core.config import get_settings  # noqa: E402
+from packages.core.database_access import (  # noqa: E402
+    async_database_url,
+    maintenance_database_url,
+)
 from packages.core.models import Base  # noqa: E402
 
 target_metadata = Base.metadata
 
 # The URL lives in the environment, not in alembic.ini — alembic.ini is
 # committed and must never carry credentials.
-config.set_main_option("sqlalchemy.url", get_settings().async_database_url)
+settings = get_settings()
+config.set_main_option(
+    "sqlalchemy.url",
+    async_database_url(maintenance_database_url(settings.database_url)),
+)
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
