@@ -54,6 +54,7 @@ async def failed_call(name: str, **arguments: Any) -> str:
     async with Client(mcp_server.server) as client:
         result = await client.call_tool(name, arguments)
     assert result.is_error, result.content
+    assert result.content, "error response has no content"
     return result.content[0].text
 
 
