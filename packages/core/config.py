@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -10,6 +12,26 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from packages.core.database_access import async_database_url
 from packages.core.enums import TailorMode
+
+ENV_FILE_VARIABLE = "JOBRUNNER_ENV_FILE"
+
+
+class SettingsEnvFileError(RuntimeError):
+    """An explicitly selected settings file cannot be read safely."""
+
+
+def settings_env_file() -> Path:
+    """Return the settings file selected by the process that launched Jobrunner.
+
+    The default keeps existing launches compatible. An explicit pointer fails
+    closed when it is missing so a typo cannot silently start against default
+    paths or credentials.
+    """
+    configured = os.environ.get(ENV_FILE_VARIABLE, "").strip()
+    path = Path(configured or ".env").expanduser().resolve()
+    if configured and not path.is_file():
+        raise SettingsEnvFileError(f"{ENV_FILE_VARIABLE} must point to a readable regular file")
+    return path
 
 
 class Settings(BaseSettings):
@@ -412,4 +434,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Get the cached settings instance."""
-    return Settings()
+    return Settings(_env_file=settings_env_file())

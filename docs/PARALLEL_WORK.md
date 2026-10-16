@@ -31,7 +31,8 @@ have already happened:
   `InvalidPasswordError` before a single test runs. Export `DATABASE_URL`,
   `TEST_DATABASE_URL`, and `VAULT_KEY` instead of copying the file: one secret,
   one location, and a second copy is a secret waiting to be committed from a
-  directory nobody is watching.
+  directory nobody is watching. If the installation uses an external settings
+  file, export its existing `JOBRUNNER_ENV_FILE` pointer instead.
 - **A system python that is not the project's 3.12.** An agent reported
   Playwright missing when it is installed and working; it had checked 3.14.
 

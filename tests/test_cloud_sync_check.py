@@ -86,6 +86,22 @@ def test_private_files_outside_every_synced_folder_pass(roots: Path) -> None:
     assert check.health is Health.OK
 
 
+def test_the_configured_external_env_file_is_checked(
+    roots: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desktop = roots / "Desktop"
+    env_file = desktop / "private" / "jobrunner.env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text("")
+    monkeypatch.setenv("JOBRUNNER_ENV_FILE", str(env_file))
+    get_settings.cache_clear()
+
+    check = check_cloud_sync(managed=lambda folder: folder == desktop, home=roots)
+
+    assert check.health is Health.FAIL
+    assert ".env" in check.detail
+
+
 def test_the_real_marker_is_read_without_raising_for_a_missing_path(tmp_path: Path) -> None:
     assert doctor._managed_by_file_provider(tmp_path / "does" / "not" / "exist") is False
 
