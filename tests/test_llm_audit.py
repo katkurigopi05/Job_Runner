@@ -174,6 +174,21 @@ def test_ollama_cloud_tag_uses_remote_failure_policy(monkeypatch) -> None:
         audit.record("ollama", "system", "resume", model="kimi-k2.6:cloud")
 
 
+def test_local_ollama_calls_do_not_consume_a_cloud_tagged_models_quota(monkeypatch) -> None:
+    monkeypatch.setattr(
+        quota,
+        "limit_for",
+        lambda provider, *, left_machine=None: 1 if left_machine else None,
+    )
+    audit.record("ollama", "system", "local", model="qwen3:8b")
+
+    remote = audit.record("ollama", "system", "remote", model="kimi-k2.6:cloud")
+
+    assert remote.left_machine is True
+    with pytest.raises(QuotaExceeded):
+        audit.record("ollama", "system", "another", model="kimi-k2.6:cloud")
+
+
 def test_concurrent_remote_calls_cannot_overspend_the_daily_limit(monkeypatch) -> None:
     monkeypatch.setattr(
         quota,

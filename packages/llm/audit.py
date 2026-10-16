@@ -229,7 +229,9 @@ def _persist(entry: AuditEntry) -> None:
             used = sum(
                 1
                 for recorded in entries
-                if recorded.provider == entry.provider and recorded.at.startswith(today)
+                if recorded.provider == entry.provider
+                and recorded.left_machine
+                and recorded.at.startswith(today)
             )
             authorize(entry.provider, used=used, left_machine=True)
         journal.prune_unlocked(path, retention_days=AUDIT_RETENTION_DAYS)
