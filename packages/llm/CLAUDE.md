@@ -391,3 +391,24 @@ which nothing does yet. Also left alone: 12,520 `stub` entries from
 2026-08-17 to 09-18, written by the suite before it got its own trail
 directory. They never left the machine, and quota counts today only.
 `tests/test_audit_attribution.py`.
+
+## Audit durability and retention (2026-10-16)
+
+The audit trail remains a local JSONL journal beside the vault. It is already
+the quota authority and its readers are public API/MCP behavior, so moving it
+into another production database would add a dual-write migration without
+making application, email, or note data more consistent. Those domain records
+remain authoritative in PostgreSQL.
+
+`journal.py` locks the file across processes. For a remote model, reading the
+day's usage, enforcing quota, appending the redacted audit entry, flushing and
+`fsync` all happen while that lock is held. Concurrent workers therefore cannot
+both spend the last allowance. If any of that fails, `AuditUnavailable` stops
+the remote request before network I/O. An explicitly enabled local fallback may
+continue, and a directly selected local model continues after logging the
+audit failure because no prompt leaves the machine.
+
+Audit records are retained for 365 days and optional timing records for 90.
+Pruning runs under the same lock and replaces a journal atomically; old v1
+JSONL records remain readable. The application never stores prompt, résumé, or
+answer text in either journal.

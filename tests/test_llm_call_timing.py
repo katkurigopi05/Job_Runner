@@ -329,3 +329,25 @@ async def test_the_newest_lines_are_the_ones_returned(daemon) -> None:
         await _local().complete(SYSTEM, USER)
 
     assert [kept.answer_tokens for kept in timing.read_timings(limit=2)] == [20, 30]
+
+
+def test_timing_retention_keeps_only_the_last_90_days() -> None:
+    kept = timing.from_ollama(
+        MEASURED,
+        provider="ollama",
+        model="old-model",
+        user=USER,
+        context_limit=4_096,
+    )
+    assert kept is not None
+    old = asdict(kept)
+    old["at"] = "2020-01-01T00:00:00+00:00"
+    recent = asdict(kept)
+    timing.timings_path().write_text(
+        json.dumps(old) + "\n" + json.dumps(recent) + "\n",
+        encoding="utf-8",
+    )
+
+    timing.enforce_retention()
+
+    assert [entry.at for entry in timing.read_timings()] == [kept.at]

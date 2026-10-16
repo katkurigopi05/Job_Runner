@@ -29,7 +29,6 @@ Counts, durations and that digest. Nothing of the prompt or the answer (§10).
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,13 +37,14 @@ from typing import Any
 import structlog
 
 from packages.core.trace import current_task_id, current_trace_id
-from packages.llm import audit
+from packages.llm import audit, journal
 
 log = structlog.get_logger(__name__)
 
 #: The daemon reports durations in nanoseconds.
 _NS_PER_MS = 1_000_000
 _MS_PER_S = 1_000
+TIMING_RETENTION_DAYS = 90
 
 #: Reply field -> what it is called here.
 _COUNTS = {"prompt_eval_count": "prompt_tokens", "eval_count": "answer_tokens"}
@@ -203,9 +203,9 @@ def note(
 
 def _append(kept: CallTiming) -> None:
     path = timings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(asdict(kept)) + "\n")
+    with journal.locked(path, exclusive=True):
+        journal.prune_unlocked(path, retention_days=TIMING_RETENTION_DAYS)
+        journal.append_unlocked(path, asdict(kept))
 
 
 def timings_path() -> Path:
@@ -218,5 +218,13 @@ def read_timings(limit: int | None = None) -> list[CallTiming]:
     path = timings_path()
     if not path.is_file():
         return []
-    kept = [CallTiming(**json.loads(line)) for line in path.read_text().splitlines() if line]
+    with journal.locked(path, exclusive=False):
+        kept = [CallTiming(**payload) for payload in journal.read_payloads_unlocked(path)]
     return kept[-limit:] if limit else kept
+
+
+def enforce_retention() -> int:
+    """Apply the approved 90-day policy immediately."""
+    path = timings_path()
+    with journal.locked(path, exclusive=True):
+        return journal.prune_unlocked(path, retention_days=TIMING_RETENTION_DAYS, force=True)

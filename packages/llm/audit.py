@@ -24,7 +24,6 @@ reveals nothing.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,6 +32,7 @@ import structlog
 
 from packages.core.config import get_settings
 from packages.core.trace import current_task_id, current_trace_id
+from packages.llm import journal
 from packages.llm.prompts import identify, task_of
 
 log = structlog.get_logger(__name__)
@@ -69,6 +69,16 @@ UNREGISTERED = "unregistered"
 LEGACY_UNSPECIFIED = "unspecified"
 
 CURRENT_EVENT_VERSION = 2
+AUDIT_RETENTION_DAYS = 365
+
+
+class AuditUnavailable(RuntimeError):
+    """A remote call was refused because its audit record was not durable."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Remote LLM call refused because its audit and quota record could not be saved."
+        )
 
 
 def is_local(provider: str, model: str | None = None) -> bool:
@@ -141,20 +151,16 @@ def record(
     task: str | None = None,
     model: str | None = None,
 ) -> AuditEntry:
-    """Authorize, then append one entry to the audit trail and return it.
+    """Atomically authorize and append one entry, then return it.
 
     Two kinds of failure, deliberately treated differently:
 
     - **Quota** raises. Called before the request goes out, so a refused call
       never reaches the network. See `packages/llm/quota.py` on why spending
       the allowance parks the work instead of downgrading it.
-    - **A broken audit file** does not raise. It must not stop an application,
-      and it must not pass silently either, so it is logged.
+    - **A broken audit file** refuses remote calls before their request leaves.
+      Local calls continue because no data leaves the machine.
     """
-    from packages.llm.quota import authorize
-
-    authorize(provider)
-
     prompt = identify(system)
     # What it was for: the caller's word, else the registered prompt's.
     # Every call site sends a registered prompt, so an unregistered one is
@@ -178,6 +184,22 @@ def record(
         task_id=current_task_id(),
     )
 
+    try:
+        _persist(entry)
+    except Exception as exc:
+        from packages.llm.quota import QuotaExceeded
+
+        if isinstance(exc, QuotaExceeded):
+            raise
+        log.error(
+            "llm_audit_write_failed",
+            error=type(exc).__name__,
+            left_machine=entry.left_machine,
+            trace_id=entry.trace_id,
+        )
+        if entry.left_machine:
+            raise AuditUnavailable() from exc
+
     # Digests and counts only — safe for the log. The prompt itself is not.
     log.info(
         "llm_call",
@@ -192,15 +214,28 @@ def record(
         task_id=entry.task_id,
     )
 
-    try:
-        path = audit_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(entry)) + "\n")
-    except OSError as exc:  # pragma: no cover - filesystem failure
-        log.error("llm_audit_write_failed", error=type(exc).__name__)
-
     return entry
+
+
+def _persist(entry: AuditEntry) -> None:
+    """Keep the remote quota check and durable append under one lock."""
+    from packages.llm.quota import authorize
+
+    path = audit_path()
+    with journal.locked(path, exclusive=True):
+        if entry.left_machine:
+            entries = _read_trail_unlocked(path)
+            today = datetime.now(UTC).date().isoformat()
+            used = sum(
+                1
+                for recorded in entries
+                if recorded.provider == entry.provider
+                and recorded.left_machine
+                and recorded.at.startswith(today)
+            )
+            authorize(entry.provider, used=used, left_machine=True)
+        journal.prune_unlocked(path, retention_days=AUDIT_RETENTION_DAYS)
+        journal.append_unlocked(path, asdict(entry))
 
 
 def audit_path() -> Path:
@@ -218,13 +253,20 @@ def read_trail(limit: int | None = None) -> list[AuditEntry]:
     path = audit_path()
     if not path.is_file():
         return []
-
-    entries = [
-        _attributed(AuditEntry(**json.loads(line)))
-        for line in path.read_text().splitlines()
-        if line
-    ]
+    with journal.locked(path, exclusive=False):
+        entries = _read_trail_unlocked(path)
     return entries[-limit:] if limit else entries
+
+
+def _read_trail_unlocked(path: Path) -> list[AuditEntry]:
+    return [_attributed(AuditEntry(**payload)) for payload in journal.read_payloads_unlocked(path)]
+
+
+def enforce_retention() -> int:
+    """Apply the approved 365-day policy immediately."""
+    path = audit_path()
+    with journal.locked(path, exclusive=True):
+        return journal.prune_unlocked(path, retention_days=AUDIT_RETENTION_DAYS, force=True)
 
 
 def _attributed(entry: AuditEntry) -> AuditEntry:

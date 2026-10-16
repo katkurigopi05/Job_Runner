@@ -139,8 +139,11 @@ def test_the_refusal_happens_before_the_request_leaves(tmp_path, monkeypatch) ->
     """record() runs at the top of every provider method, so a refused call
     never reaches the network."""
     monkeypatch.setattr(audit, "audit_path", lambda: tmp_path / "trail.jsonl")
-    monkeypatch.setattr(quota, "limit_for", lambda provider: 0 if provider == "x" else 1)
-    monkeypatch.setattr(quota, "used_today", lambda provider: 99)
+
+    def refuse(provider, **kwargs):
+        raise QuotaExceeded(provider, 1, 1)
+
+    monkeypatch.setattr(quota, "authorize", refuse)
 
     with pytest.raises(QuotaExceeded):
         audit.record("gemini", "system", "user")
