@@ -90,6 +90,8 @@ def test_history_is_attributed_when_read_and_the_file_is_untouched() -> None:
     tasks = [entry.task for entry in audit.read_trail()]
 
     assert tasks == ["tailor_resume", "assistant", "unregistered"]
+    assert all(entry.event_version == 1 for entry in audit.read_trail())
+    assert all(entry.trace_id is None and entry.task_id is None for entry in audit.read_trail())
     assert path.read_bytes() == before
 
 

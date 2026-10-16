@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.enums import QueueTaskStatus
 from packages.core.models import QueueTask
+from packages.core.trace import current_trace_id
 
 #: How long a claim stays valid without a heartbeat.
 DEFAULT_LEASE_SECONDS = 300
@@ -95,9 +96,14 @@ async def enqueue(
     run_after: datetime | None = None,
 ) -> QueueTask:
     """Add a task. Does not commit — the caller owns the transaction."""
+    kept_payload = dict(payload or {})
+    if trace_id := current_trace_id():
+        # Reserved metadata, carried in the existing JSON envelope so old
+        # workers continue to ignore it and no schema cutover is required.
+        kept_payload["_trace_id"] = trace_id
     task = QueueTask(
         kind=kind,
-        payload_json=payload or {},
+        payload_json=kept_payload,
         status=QueueTaskStatus.PENDING.value,
     )
     if run_after is not None:

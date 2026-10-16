@@ -21,6 +21,7 @@ call there would halve every provider's allowance.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from typing import Any
 
 import httpx
@@ -150,6 +151,20 @@ async def test_the_line_joins_to_the_audit_entry_for_the_same_call(daemon) -> No
     assert kept.user_sha256 == entry.user_sha256 == audit.digest_of(USER)
 
 
+async def test_the_timing_keeps_the_same_correlation_as_the_audit_entry(daemon) -> None:
+    from packages.core.trace import correlated
+
+    daemon(MEASURED)
+    with correlated(trace_id="c960a1f2-83cf-42da-b849-5f6ec2398e5c", task_id="task-7"):
+        await _local().complete(SYSTEM, USER)
+
+    [entry] = audit.read_trail()
+    [kept] = timing.read_timings()
+    assert kept.event_version == entry.event_version == 2
+    assert kept.trace_id == entry.trace_id == "c960a1f2-83cf-42da-b849-5f6ec2398e5c"
+    assert kept.task_id == entry.task_id == "task-7"
+
+
 async def test_timings_are_not_lines_in_the_audit_trail(daemon) -> None:
     """The quota counts the trail's lines, one per call."""
     daemon(MEASURED)
@@ -173,6 +188,7 @@ async def test_nothing_of_the_prompt_is_written_down(daemon) -> None:
     assert "Northwind" not in written
     assert "briefly" not in written
     assert set(json.loads(written)) == {
+        "event_version",
         "at",
         "provider",
         "model",
@@ -184,6 +200,8 @@ async def test_nothing_of_the_prompt_is_written_down(daemon) -> None:
         "answer_ms",
         "total_ms",
         "context_limit",
+        "trace_id",
+        "task_id",
     }
 
 
@@ -284,6 +302,25 @@ async def test_a_hosted_model_has_no_cap_of_ours_to_fill(daemon, logged) -> None
 
 def test_no_file_means_no_timings() -> None:
     assert timing.read_timings() == []
+
+
+def test_a_timing_from_before_correlation_remains_readable() -> None:
+    kept = timing.from_ollama(
+        MEASURED,
+        provider="ollama",
+        model="old-model",
+        user=USER,
+        context_limit=4_096,
+    )
+    assert kept is not None
+    old_line = asdict(kept)
+    for field in ("event_version", "trace_id", "task_id"):
+        old_line.pop(field)
+    timing.timings_path().write_text(json.dumps(old_line) + "\n", encoding="utf-8")
+
+    [read] = timing.read_timings()
+    assert read.event_version == 1
+    assert read.trace_id is None and read.task_id is None
 
 
 async def test_the_newest_lines_are_the_ones_returned(daemon) -> None:

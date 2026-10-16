@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from apps.api.errors import register_error_handlers
-from apps.api.middleware import LocalhostOnlyMiddleware
+from apps.api.middleware import LocalhostOnlyMiddleware, TraceContextMiddleware
 from apps.api.routers import (
     analytics,
     applications,
@@ -39,6 +39,9 @@ app = FastAPI(
 )
 
 app.add_middleware(LocalhostOnlyMiddleware, allow_non_local=get_settings().allow_non_local)
+# Added last so it wraps the boundary guard too: refused requests still get an
+# identifier the caller can use when reporting what happened.
+app.add_middleware(TraceContextMiddleware)
 
 register_error_handlers(app)
 

@@ -16,6 +16,8 @@ from typing import Any
 
 import httpx
 
+from packages.core.trace import TRACE_HEADER, new_trace_id, normalize_trace_id
+
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
 
@@ -37,10 +39,13 @@ class ApiDidNotAnswer(Exception):
 class ApiCallFailed(Exception):
     """The API returned an error envelope."""
 
-    def __init__(self, code: str, message: str, status: int) -> None:
+    def __init__(
+        self, code: str, message: str, status: int, *, trace_id: str | None = None
+    ) -> None:
         self.code = code
         self.message = message
         self.status = status
+        self.trace_id = trace_id
         super().__init__(f"{code}: {message}")
 
 
@@ -71,9 +76,12 @@ class JobrunnerClient:
         json: Any = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
+        trace_id = new_trace_id()
         try:
             async with self._client() as client:
-                response = await client.request(method, path, json=json, params=params)
+                response = await client.request(
+                    method, path, json=json, params=params, headers={TRACE_HEADER: trace_id}
+                )
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             raise ApiUnavailable(
                 f"Cannot reach the Jobrunner API at {self.base_url}. Start it with `make api`."
@@ -93,16 +101,26 @@ class JobrunnerClient:
                 "was meant to change before asking again, so it is not done twice."
             )
             raise ApiDidNotAnswer(
-                f"The Jobrunner API at {self.base_url} did not answer {waited}. {outcome}"
+                f"The Jobrunner API at {self.base_url} did not answer {waited}. {outcome} "
+                f"Trace ID: {trace_id}."
             ) from exc
 
         if response.status_code >= 400:
+            response_trace = normalize_trace_id(response.headers.get(TRACE_HEADER)) or trace_id
             try:
                 envelope = response.json()["error"]
-                raise ApiCallFailed(envelope["code"], envelope["message"], response.status_code)
+                raise ApiCallFailed(
+                    envelope["code"],
+                    envelope["message"],
+                    response.status_code,
+                    trace_id=response_trace,
+                )
             except (KeyError, ValueError) as exc:
                 raise ApiCallFailed(
-                    "internal_error", response.text[:500], response.status_code
+                    "internal_error",
+                    response.text[:500],
+                    response.status_code,
+                    trace_id=response_trace,
                 ) from exc
 
         if not response.content:

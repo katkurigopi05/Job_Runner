@@ -112,7 +112,8 @@ async def _call(method: str, path: str, **kwargs: Any) -> Any:
     except ApiDidNotAnswer as exc:
         raise ToolError(f"no_answer: {exc}") from exc
     except ApiCallFailed as exc:
-        raise ToolError(f"{exc.code}: {exc.message}") from exc
+        correlation = f" (trace_id={exc.trace_id})" if exc.trace_id else ""
+        raise ToolError(f"{exc.code}: {exc.message}{correlation}") from exc
 
 
 def _under(name: str, result: Any) -> dict[str, Any]:

@@ -43,6 +43,7 @@ from packages.core.queue import (
     fail_task,
     renew_lease,
 )
+from packages.core.trace import correlated, normalize_trace_id
 
 log = structlog.get_logger(__name__)
 
@@ -102,20 +103,23 @@ async def run_once(
         # A browser run can outlast the lease. Without renewal the task would
         # be reclaimed mid-flight and a second worker would start driving the
         # same form — the one way this design could double-submit.
-        try:
-            async with _keep_lease_alive(claimed, lease_seconds):
-                await _process(session, claimed)
-        except ClaimOwnershipLost:
-            await session.rollback()
-            log.warning(
-                "claim_ownership_lost",
-                task_id=str(claimed.task_id),
-                worker_id=worker_id,
-                attempt=claimed.attempt,
-            )
-            if heartbeat is not None:
-                await heartbeat.pulse(force=True, error_kind="ClaimOwnershipLost")
-            return True
+        task_id = str(claimed.task.id)
+        parent_trace = normalize_trace_id((claimed.task.payload_json or {}).get("_trace_id"))
+        with correlated(trace_id=parent_trace or task_id, task_id=task_id):
+            try:
+                async with _keep_lease_alive(claimed, lease_seconds):
+                    await _process(session, claimed)
+            except ClaimOwnershipLost:
+                await session.rollback()
+                log.warning(
+                    "claim_ownership_lost",
+                    task_id=str(claimed.task_id),
+                    worker_id=worker_id,
+                    attempt=claimed.attempt,
+                )
+                if heartbeat is not None:
+                    await heartbeat.pulse(force=True, error_kind="ClaimOwnershipLost")
+                return True
         if heartbeat is not None:
             await heartbeat.pulse(completed=True)
         return True

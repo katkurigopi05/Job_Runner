@@ -110,3 +110,14 @@ async def test_a_cloud_model_is_recorded_as_having_left(tmp_path) -> None:
     assert entry.left_machine is True
     assert entry.model == "kimi-k2.6:cloud"
     assert audit.uploads_only([entry]) == [entry]
+
+
+def test_a_call_keeps_its_request_and_worker_correlation() -> None:
+    from packages.core.trace import correlated
+
+    with correlated(trace_id="c960a1f2-83cf-42da-b849-5f6ec2398e5c", task_id="task-7"):
+        entry = audit.record("stub", "system", "user")
+
+    assert entry.event_version == 2
+    assert entry.trace_id == "c960a1f2-83cf-42da-b849-5f6ec2398e5c"
+    assert entry.task_id == "task-7"
