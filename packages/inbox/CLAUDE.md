@@ -141,3 +141,28 @@ implementation too, because `bytes()` on a bytes input returns the same object
 in CPython, so the two addresses matched. Round-tripping through a bytearray
 forces a separate allocation. A test that cannot fail is the thing this file
 keeps finding.
+
+### The mailbox checkpoint commits with the routed mail
+
+`UNSEEN` plus `FETCH (RFC822)` marked messages seen before the worker's
+database transaction committed. A crash in that window removed the message
+from the next poll without recording it here. The unique Message-ID fence
+prevents duplicates; it cannot recover a message the mailbox never returns.
+
+IMAP now uses stable UIDs and `BODY.PEEK[]`, so polling changes no mailbox
+flags. `mailbox_checkpoints` stores a high-water UID and UIDVALIDITY under a
+digest of the configured host, port, username and mailbox. The routed messages and
+checkpoint commit in one PostgreSQL transaction. A crash before the commit
+replays the batch; a crash after it resumes above the committed UID. The row is
+locked during a poll, so concurrent inbox tasks for one source serialize.
+
+The first poll after migration keeps compatibility by scanning only unread
+mail. Once that finite backlog is drained, every newer UID is fetched whether
+another mail client marked it read or not. A UIDVALIDITY change restarts that
+bootstrap; Message-ID uniqueness makes the replay harmless.
+
+The checkpoint is operational state and is retained while the mailbox is
+configured. It contains no credential, subject or body. It lives in the main
+database because moving it to a separate database would split the transaction
+whose atomicity fixes the loss window. Deleting it is an explicit reset that
+replays unread mail, not automatic retention cleanup.

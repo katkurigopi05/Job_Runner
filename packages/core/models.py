@@ -11,6 +11,7 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -964,6 +965,35 @@ class InboundMessage(Base):
             unique=True,
             postgresql_where=text("message_id IS NOT NULL"),
         ),
+    )
+
+
+class MailboxCheckpoint(Base):
+    """Durable high-water mark for one configured IMAP mailbox.
+
+    The key is a digest of host, port, username and mailbox. Credentials and
+    message content never belong here. This row lives beside inbound_messages
+    so routing and advancing the checkpoint can commit in one transaction.
+    """
+
+    __tablename__ = "mailbox_checkpoints"
+
+    source_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    uid_validity: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    last_uid: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    #: False while the one-time compatibility scan of unread mail is not yet
+    #: drained. Once true, every later UID is read regardless of Seen state.
+    initialized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("uid_validity >= 0", name="ck_mailbox_checkpoints_uid_validity"),
+        CheckConstraint("last_uid >= 0", name="ck_mailbox_checkpoints_last_uid"),
     )
 
 
