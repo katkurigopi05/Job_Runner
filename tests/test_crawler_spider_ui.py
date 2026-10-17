@@ -84,5 +84,6 @@ def test_the_component_renders_the_shared_state_instead_of_hiding_failures() -> 
 
     assert 'from "@/lib/crawler-state"' in source
     assert "crawlerView(status, reachable)" in source
+    assert "if (mounted) setReachable(false)" in source
     assert "if (!reachable" not in source
     assert 'aria-live="polite"' in source

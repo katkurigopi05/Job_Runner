@@ -39,28 +39,28 @@ export function CrawlerSpider() {
   const [reachable, setReachable] = useState(true);
 
   useEffect(() => {
-    let live = true;
+    let mounted = true;
 
     const check = async () => {
       try {
         const res = await fetch("/api/crawl/status", { cache: "no-store" });
         if (!res.ok) throw new Error(String(res.status));
         const body = (await res.json()) as CrawlStatus;
-        if (live) {
+        if (mounted) {
           setStatus(body);
           setReachable(true);
         }
       } catch {
         // Do not leave the previous moving state on screen. An explicit quiet
         // failure is the only honest answer when the queue cannot be read.
-        if (live) setReachable(false);
+        if (mounted) setReachable(false);
       }
     };
 
     void check();
     const timer = setInterval(check, POLL_MS);
     return () => {
-      live = false;
+      mounted = false;
       clearInterval(timer);
     };
   }, []);
