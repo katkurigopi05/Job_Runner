@@ -6,6 +6,17 @@ the root file, which keeps every heading and says where each section went.
 
 - The review screen's document panels are in `packages/tailor/CLAUDE.md`.
 
+## The crawler indicator does not guess through a disconnect
+
+`crawler-spider.tsx` polls the queue status rather than inferring activity from
+an old crawl row. Its rendering decision lives in `lib/crawler-state.ts`, where
+controlled fixtures hold five distinct states: checking, working, stalled,
+idle and unavailable. A failed refresh replaces any earlier walking state with
+`crawl status unavailable`; it never keeps animating stale work or disappears
+as though the queue were idle. The API's lease/heartbeat tests remain the
+authority for whether work is running or stalled; the browser only renders that
+verdict.
+
 ## §3: the frontend row, and the two effect libraries
 
 The frontend line originally said shadcn/ui. It was built without it, and the
