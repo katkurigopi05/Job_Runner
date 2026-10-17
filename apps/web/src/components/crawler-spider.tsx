@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { CrawlStatus } from "@/lib/api";
+import { crawlerView } from "@/lib/crawler-state";
 
 /** Slow: this is a local queue, and a crawl runs for minutes, not milliseconds. */
 const POLL_MS = 10_000;
@@ -15,7 +16,7 @@ const POLL_MS = 10_000;
  * That is how an empty "posted in the last day" search reads as "the market is
  * quiet" instead of "nothing has been looked for".
  *
- * Three states, because each needs a different thing from the owner:
+ * Five states, because each needs a different thing from the owner:
  *
  * - **working** — a sweep or company task is running, or unfinished work has
  *   a live worker. The spider keeps walking through handoffs and rate-limit waits.
@@ -26,86 +27,45 @@ const POLL_MS = 10_000;
  *   spider on its own reads the same as a broken one. The label carries the age
  *   of the newest posting, which is the number that actually answers "are my
  *   results current".
+ * - **checking** — the first status request has not returned yet.
+ * - **unavailable** — polling failed. The last response is not shown as current
+ *   and the spider never keeps walking from stale data.
  *
  * Only genuinely idle sleeps. `queued` is waiting on a worker — a thing to fix,
  * not a thing to rest through — so it stays awake and amber.
  */
-function ageInWords(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return null;
-
-  const hours = Math.floor((Date.now() - then) / 3_600_000);
-  if (hours < 1) return "just now";
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
 export function CrawlerSpider() {
   const [status, setStatus] = useState<CrawlStatus | null>(null);
   const [reachable, setReachable] = useState(true);
 
   useEffect(() => {
-    let live = true;
+    let mounted = true;
 
     const check = async () => {
       try {
         const res = await fetch("/api/crawl/status", { cache: "no-store" });
         if (!res.ok) throw new Error(String(res.status));
         const body = (await res.json()) as CrawlStatus;
-        if (live) {
+        if (mounted) {
           setStatus(body);
           setReachable(true);
         }
       } catch {
-        // The API being down is already reported by the health pill beside
-        // this one. Saying it twice would be noise, so this just goes quiet.
-        if (live) setReachable(false);
+        // Do not leave the previous moving state on screen. An explicit quiet
+        // failure is the only honest answer when the queue cannot be read.
+        if (mounted) setReachable(false);
       }
     };
 
     void check();
     const timer = setInterval(check, POLL_MS);
     return () => {
-      live = false;
+      mounted = false;
       clearInterval(timer);
     };
   }, []);
 
-  if (!reachable || status === null) return null;
-
-  const freshness = ageInWords(status.newest_posting_at);
-
-  const { label, tone, moving, asleep, title } = status.running
-    ? {
-        label: "crawling",
-        tone: "text-go",
-        moving: true,
-        asleep: false,
-        title: "The crawler is discovering boards, fetching postings, or waiting between requests. It stays active until the current work finishes.",
-      }
-    : status.stalled
-      ? {
-          label: `${status.pending} queued`,
-          tone: "text-attn",
-          // Waiting, not resting. A crawl that nobody is draining is a problem
-          // to fix, and drawing it asleep would make it look like a state the
-          // owner chose.
-          moving: false,
-          asleep: false,
-          title:
-            "A crawl is queued but no worker is draining it. Start one with: make worker",
-        }
-      : {
-          label: freshness ? `postings ${freshness}` : "idle",
-          tone: "text-ink-faint",
-          moving: false,
-          asleep: true,
-          title: freshness
-            ? `Nothing is crawling. The newest posting was first seen ${freshness}. Queue a crawl with: make crawl`
-            : "Nothing is crawling and no postings have been seen yet.",
-        };
+  const { label, tone, moving, asleep, title } = crawlerView(status, reachable);
 
   return (
     <>
@@ -175,7 +135,11 @@ export function CrawlerSpider() {
         </div>
       ) : null}
 
-      <p className={`flex items-center gap-1.5 font-mono text-xs ${tone}`} title={title}>
+      <p
+        className={`flex items-center gap-1.5 font-mono text-xs ${tone}`}
+        title={title}
+        aria-live="polite"
+      >
         {/* The header keeps a small spider as the label's marker. The one that
             walks the top of the window is the signal; this is its legend.
 

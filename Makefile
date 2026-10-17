@@ -179,6 +179,7 @@ GATE4_TESTS := tests/test_mcp.py tests/test_mcp_tracking.py tests/test_mcp_ids.p
   tests/test_mcp_status.py tests/test_mcp_grading.py
 GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
   tests/test_bespoke_probe.py tests/test_labeling_loop.py \
+  tests/test_crawl_status.py tests/test_crawler_spider_ui.py \
   tests/test_posting_url_is_reachable.py \
   tests/test_crawl_store.py tests/test_crawl_runs.py tests/test_crawl_dispatch.py \
   tests/test_crawl_scheduler.py tests/test_shared_ratelimit.py \
