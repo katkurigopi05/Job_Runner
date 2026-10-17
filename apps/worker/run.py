@@ -26,7 +26,7 @@ from apps.worker.discover_company_job import (
     handle_discover_company,
 )
 from apps.worker.discover_job import DISCOVER_TASK_KIND, handle_discover
-from apps.worker.inbox_job import INBOX_TASK_KIND, handle_inbox
+from apps.worker.inbox_job import INBOX_TASK_KIND, ensure_inbox_poll, handle_inbox
 from packages.core import db as core_db
 from packages.core.config import get_settings
 from packages.core.enums import FailureReason
@@ -49,6 +49,10 @@ log = structlog.get_logger(__name__)
 
 #: How long to wait when the queue is empty before asking again.
 IDLE_SLEEP_SECONDS = 1.0
+
+#: The durable task carries the real mailbox cadence. This is only a repair
+#: pass for startup and exhausted retries, so once a minute is enough.
+INBOX_SCHEDULE_TICK_SECONDS = 60.0
 
 APPLY_TASK_KIND = "apply"
 
@@ -338,6 +342,7 @@ async def run_forever(
     worker_id: str | None = None,
     lease_seconds: int | None = None,
     stop: asyncio.Event | None = None,
+    schedule_inbox: bool = True,
 ) -> None:
     settings = get_settings()
     # A configured WORKER_ID is what lets a restarted worker recognize the
@@ -351,28 +356,53 @@ async def run_forever(
     heartbeat = Heartbeat(wid, core_db.get_sessionmaker())
     await heartbeat.pulse(force=True)
     last_reminder_tick = 0.0
+    inbox_scheduler = (
+        asyncio.create_task(_maintain_inbox_schedule(stop)) if schedule_inbox else None
+    )
 
-    while not stop.is_set():
-        try:
-            did_work = await run_once(
-                worker_id=wid, lease_seconds=lease_seconds, heartbeat=heartbeat
-            )
-        except Exception as exc:  # noqa: BLE001 - a bad claim must not kill the loop
-            log.error("claim_failed", error=type(exc).__name__)
-            await heartbeat.pulse(error_kind=type(exc).__name__)
-            did_work = False
+    try:
+        while not stop.is_set():
+            try:
+                did_work = await run_once(
+                    worker_id=wid, lease_seconds=lease_seconds, heartbeat=heartbeat
+                )
+            except Exception as exc:  # noqa: BLE001 - a bad claim must not kill the loop
+                log.error("claim_failed", error=type(exc).__name__)
+                await heartbeat.pulse(error_kind=type(exc).__name__)
+                did_work = False
 
-        if not did_work:
-            # Throttled inside: an idle loop turns every second and writes
-            # every HEARTBEAT_INTERVAL_S.
-            await heartbeat.pulse()
-            last_reminder_tick = await _ring_reminders(last_reminder_tick)
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=IDLE_SLEEP_SECONDS)
+            if not did_work:
+                # Throttled inside: an idle loop turns every second and writes
+                # every HEARTBEAT_INTERVAL_S.
+                await heartbeat.pulse()
+                last_reminder_tick = await _ring_reminders(last_reminder_tick)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), timeout=IDLE_SLEEP_SECONDS)
+    finally:
+        if inbox_scheduler is not None:
+            inbox_scheduler.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await inbox_scheduler
 
     # A goodbye, so the setup page can tell a clean stop from a crash.
     await heartbeat.pulse(force=True, stopped=True)
     log.info("worker_stopped", worker_id=wid)
+
+
+async def _maintain_inbox_schedule(stop: asyncio.Event) -> None:
+    """Seed and repair the durable inbox loop without touching mail itself."""
+    while not stop.is_set():
+        try:
+            async with core_db.get_sessionmaker()() as session:
+                queued = await ensure_inbox_poll(session)
+                await session.commit()
+            if queued is not None:
+                log.info("inbox_poll_scheduled", task_id=str(queued.id))
+        except Exception as exc:  # noqa: BLE001 - email must not stop other work
+            log.warning("inbox_schedule_failed", error=type(exc).__name__)
+
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=INBOX_SCHEDULE_TICK_SECONDS)
 
 
 #: How often an idle worker checks for task reminders that are due.
@@ -425,7 +455,12 @@ async def run_pool(count: int, *, lease_seconds: int | None = None) -> None:
 
     await asyncio.gather(
         *(
-            run_forever(worker_id=f"{base}-{index}", lease_seconds=lease_seconds, stop=stop)
+            run_forever(
+                worker_id=f"{base}-{index}",
+                lease_seconds=lease_seconds,
+                stop=stop,
+                schedule_inbox=index == 0,
+            )
             for index in range(count)
         )
     )

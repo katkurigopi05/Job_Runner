@@ -193,6 +193,7 @@ GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py
   tests/test_experience_requirements.py tests/test_sponsorship_filter.py \
   tests/test_hybrid_retrieval.py
 GATE6_TESTS := tests/test_inbox.py tests/test_inbox_duplicates.py \
+  tests/test_inbox_schedule.py \
   tests/test_imap_checkpoint.py tests/test_tracker_columns.py
 
 gate-0: lint typecheck check-migrations

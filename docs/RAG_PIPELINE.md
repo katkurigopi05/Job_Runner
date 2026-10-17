@@ -174,10 +174,11 @@ writes what a poisoned posting asks for is refused), or forge the record.
    of titles that say nothing.
 4. **Rates from rows already kept**: ingestion failures, stale postings,
    cache hits, approvals against rejections.
-5. **The inbox reads only unread mail in one folder.** `inbox/imap.py`
-   searches `UNSEEN` in `INBOX`, so a reply opened on a phone before the next
-   poll is never ingested. The owner's to decide, since the fix changes what
-   is left marked read, and untestable until a real mailbox has been read.
+5. **The inbox reads one folder.** Its first checkpointed scan reads unread
+   mail in `INBOX`; after that it reads every newer UID with `BODY.PEEK[]`, so
+   opening a reply on a phone neither hides it nor changes its flags. A filter
+   that archives mail out of `INBOX` before the poll can still hide it. This
+   remains fixture-tested because no real mailbox is configured.
 
 ## What is not going to be built
 

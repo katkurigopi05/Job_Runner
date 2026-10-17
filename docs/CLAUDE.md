@@ -175,18 +175,14 @@ result as a parser that stopped reading it. Here each extractor has tests of
 its own in `tests/test_crawler.py` and nothing holds them to one contract
 across all six. No defect was found by looking; no test was written either.
 
-**Asked, found, and not changed: the inbox poll reads only unread mail in
-`INBOX`.** Its `test_gmail_sync_command.py` is about a query that meant
-"everything employers sent" and matched only what was still in the inbox.
-`inbox/imap.py` searches `UNSEEN` in one folder. A reply the owner opens on
-their phone before the next poll is never ingested, and nor is one a Gmail
-filter labelled and archived. Fixing it changes what the poll costs and what
-it leaves marked read, the module's docstring chose the present footprint on
-purpose, and no real mailbox has ever been read here to test a new query
-against (`inbound_messages` holds 0 rows). The owner's to decide. One shape
-that keeps today's results and adds the alias mail whatever its flags:
-`OR UNSEEN (SINCE <date> TO "+app")`, relying on the duplicate guard that
-already exists.
+**The inbox poll no longer loses mail merely because it was opened elsewhere.**
+The first checkpointed scan preserves the old `UNSEEN` footprint. Once that
+backlog drains, `inbox/imap.py` requests every UID newer than the committed
+high-water mark with `BODY.PEEK[]`, so another client can mark a new reply seen
+without hiding it or having this process change its flags. Mail filtered out of
+`INBOX` before the poll remains outside this one-folder source. No real mailbox
+has been read here (`inbound_messages` held 0 rows at the audit), so the path
+remains proven with controlled IMAP fixtures.
 
 ### What two outside specs were worth
 
