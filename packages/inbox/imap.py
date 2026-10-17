@@ -4,9 +4,9 @@ The connection is injectable so the ingest path is testable without a mailbox
 — the same reason the browser and the GitHub client are. `imaplib` is
 synchronous, so calls run in a thread rather than blocking the event loop.
 
-Messages are read, never deleted. The mailbox is the owner's, and an agent
-that prunes someone's inbox on their behalf is doing more than it was asked
-to. Fetched messages are marked seen; that is the whole footprint.
+Messages are read with BODY.PEEK and never deleted or marked seen. A durable
+UID checkpoint, committed with the routed database rows, owns progress without
+changing the owner's mailbox state.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import email.utils
 import hashlib
 import imaplib
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -33,9 +34,35 @@ DEFAULT_BATCH = 50
 
 
 class MailSource(Protocol):
-    """Anything that can hand over unread messages."""
+    """Anything that can hand over messages after a durable position."""
 
-    async def fetch_unread(self, limit: int = DEFAULT_BATCH) -> list[InboundEmail]: ...
+    source_key: str
+
+    async def fetch_after(
+        self,
+        *,
+        last_uid: int,
+        initialized: bool,
+        uid_validity: int,
+        limit: int = DEFAULT_BATCH,
+    ) -> MailBatch: ...
+
+
+@dataclass(frozen=True)
+class FetchedEmail:
+    uid: int
+    message: InboundEmail
+
+
+@dataclass(frozen=True)
+class MailBatch:
+    """One ordered, gap-free slice and the mailbox identity it came from."""
+
+    uid_validity: int
+    high_water: int
+    messages: tuple[FetchedEmail, ...]
+    #: True only when every identifier in the search snapshot was fetched.
+    drained: bool
 
 
 def _synthetic_id(raw: bytes) -> str:
@@ -120,7 +147,7 @@ def parse_message(raw: bytes) -> InboundEmail:
 
 
 class ImapMailSource:
-    """Reads unread mail from one IMAP mailbox."""
+    """Reads one checkpointed batch from an IMAP mailbox."""
 
     def __init__(
         self,
@@ -137,52 +164,153 @@ class ImapMailSource:
         self.username = username
         self.password = password
         self.mailbox = mailbox
+        self.source_key = hashlib.sha256(
+            f"{host}\0{port}\0{username}\0{mailbox}".encode()
+        ).hexdigest()
         #: Injected in tests. Defaults to a real TLS connection.
         self._connector = connector or (lambda: imaplib.IMAP4_SSL(host, port))
 
-    def _fetch_sync(self, limit: int) -> list[InboundEmail]:
-        connection = self._connector()
+    @staticmethod
+    def _identifiers(data: list[bytes] | tuple[bytes, ...] | None) -> list[int]:
+        raw = data[0] if data else b""
+        return [int(value) for value in (raw or b"").split()]
+
+    @staticmethod
+    def _response_int(connection: Any, name: str) -> int:
+        _, data = connection.response(name)
+        if not data or not data[0]:
+            raise RuntimeError(f"IMAP server did not report {name}")
+        return int(data[0])
+
+    def _fetch_sync(
+        self,
+        *,
+        last_uid: int,
+        initialized: bool,
+        uid_validity: int,
+        limit: int,
+    ) -> MailBatch:
+        connection: Any = self._connector()
         try:
             connection.login(self.username, self.password)
-            connection.select(self.mailbox)
+            status, _ = connection.select(self.mailbox, readonly=True)
+            if status != "OK":
+                raise RuntimeError("IMAP mailbox could not be selected")
 
-            status, data = connection.search(None, "UNSEEN")
+            current_validity = self._response_int(connection, "UIDVALIDITY")
+            same_mailbox = uid_validity == current_validity
+            resume_uid = last_uid if same_mailbox else 0
+            bootstrap = not initialized or not same_mailbox
+
+            # SELECT supplies UIDNEXT without scanning every historical UID.
+            # Capture it before SEARCH: mail arriving later gets a larger UID
+            # and is deliberately left for the next poll.
+            high_water = max(0, self._response_int(connection, "UIDNEXT") - 1)
+
+            if high_water <= resume_uid:
+                return MailBatch(
+                    uid_validity=current_validity,
+                    high_water=high_water,
+                    messages=(),
+                    drained=True,
+                )
+
+            criterion = "UNSEEN" if bootstrap else f"UID {resume_uid + 1}:{high_water}"
+            status, data = connection.uid("search", None, criterion)
             if status != "OK":
                 log.warning("imap_search_failed", status=status)
-                return []
+                raise RuntimeError("IMAP message search failed")
 
-            identifiers: Iterable[bytes] = (data[0] or b"").split()
-            messages: list[InboundEmail] = []
+            identifiers: Iterable[int] = (
+                uid for uid in self._identifiers(data) if resume_uid < uid <= high_water
+            )
+            pending = list(identifiers)
+            selected = pending[:limit]
+            messages: list[FetchedEmail] = []
+            drained = len(pending) <= limit
 
-            for identifier in list(identifiers)[:limit]:
-                # imaplib returns ids as bytes but wants str back.
-                status, payload = connection.fetch(identifier.decode(), "(RFC822)")
+            for uid in selected:
+                status, payload = connection.uid("fetch", str(uid), "(BODY.PEEK[])")
                 if status != "OK" or not payload:
-                    continue
+                    drained = False
+                    break
                 for part in payload:
                     if isinstance(part, tuple) and len(part) > 1:
-                        messages.append(parse_message(part[1]))
+                        messages.append(FetchedEmail(uid=uid, message=parse_message(part[1])))
                         break
+                else:
+                    drained = False
+                    break
 
-            return messages
+            return MailBatch(
+                uid_validity=current_validity,
+                high_water=high_water,
+                messages=tuple(messages),
+                drained=drained,
+            )
         finally:
-            # A failed logout is not interesting; the messages are already read.
+            # A failed logout is not interesting; the checkpoint owns progress.
             with contextlib.suppress(Exception):
                 connection.logout()
 
-    async def fetch_unread(self, limit: int = DEFAULT_BATCH) -> list[InboundEmail]:
-        """Unread messages, oldest first. imaplib is sync, so this threads."""
-        return await asyncio.to_thread(self._fetch_sync, limit)
+    async def fetch_after(
+        self,
+        *,
+        last_uid: int,
+        initialized: bool,
+        uid_validity: int,
+        limit: int = DEFAULT_BATCH,
+    ) -> MailBatch:
+        """Messages after a checkpoint, oldest first, without changing flags."""
+        return await asyncio.to_thread(
+            self._fetch_sync,
+            last_uid=last_uid,
+            initialized=initialized,
+            uid_validity=uid_validity,
+            limit=limit,
+        )
 
 
 class StaticMailSource:
     """A fixed list of messages. What tests use in place of a mailbox."""
 
-    def __init__(self, messages: list[InboundEmail]) -> None:
+    def __init__(
+        self,
+        messages: list[InboundEmail],
+        *,
+        source_key: str = "static",
+        uid_validity: int = 1,
+    ) -> None:
         self.messages = messages
+        self.source_key = source_key
+        self.uid_validity = uid_validity
+        self._legacy_offset = 0
+
+    async def fetch_after(
+        self,
+        *,
+        last_uid: int,
+        initialized: bool,
+        uid_validity: int,
+        limit: int = DEFAULT_BATCH,
+    ) -> MailBatch:
+        resume_uid = last_uid if uid_validity == self.uid_validity else 0
+        pending = [
+            FetchedEmail(uid=index, message=message)
+            for index, message in enumerate(self.messages, start=1)
+            if index > resume_uid
+        ]
+        return MailBatch(
+            uid_validity=self.uid_validity,
+            high_water=len(self.messages),
+            messages=tuple(pending[:limit]),
+            drained=len(pending) <= limit,
+        )
 
     async def fetch_unread(self, limit: int = DEFAULT_BATCH) -> list[InboundEmail]:
-        batch, self.messages = self.messages[:limit], self.messages[limit:]
+        """Compatibility helper for parser/source unit tests."""
+        batch = self.messages[self._legacy_offset : self._legacy_offset + limit]
+        self._legacy_offset += len(batch)
         return batch
 
 
