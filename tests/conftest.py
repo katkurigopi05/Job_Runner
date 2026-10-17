@@ -190,6 +190,9 @@ _ALL_TABLES = (
     "contacts",
     "application_events",
     "inbound_messages",
+    # Operational state with no foreign key. A checkpoint left by a committing
+    # test changes the next test from its bootstrap scan to an incremental one.
+    "mailbox_checkpoints",
     "applications",
     "matches",
     "posting_labels",

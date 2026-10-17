@@ -220,6 +220,9 @@ class Settings(BaseSettings):
     imap_port: int = 993
     imap_username: str | None = None
     imap_password: str | None = None
+    #: Delay between completed mailbox polls. The queue stores the next wakeup,
+    #: so a restart does not reset this into a tight process-local loop.
+    inbox_poll_seconds: int = Field(default=60, ge=10, le=86_400)
     #: The bare address aliases are built from: you@gmail.com.
     inbox_alias_base: str | None = None
 

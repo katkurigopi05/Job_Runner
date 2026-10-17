@@ -166,3 +166,23 @@ configured. It contains no credential, subject or body. It lives in the main
 database because moving it to a separate database would split the transaction
 whose atomicity fixes the loss window. Deleting it is an explicit reset that
 replays unread mail, not automatic retention cleanup.
+
+### The worker keeps one inbox poll alive
+
+Registering `handle_inbox` did not make it run: only tests inserted inbox queue
+rows. A configured worker now supervises one durable inbox task. The first pool
+member seeds it at startup and checks once a minute for a schedule lost after
+all retries failed; the other pool members do not repeat that database query.
+A PostgreSQL transaction advisory lock makes the count-and-enqueue operation a
+singleton across processes.
+
+After a successful poll, its successor is written with `run_after` in the same
+transaction as the routed messages and mailbox checkpoint. The delay is
+`INBOX_POLL_SECONDS` (60 seconds by default, bounded to 10 seconds through one
+day). A crash before the commit replays the current task; a crash after it
+leaves the successor durable. Multiple current inbox tasks serialize on the
+checkpoint and still create only one pending successor.
+
+This schedule also belongs in the main PostgreSQL database. A separate timer
+database would add a second durability boundary and could lose the next poll
+after committing mail, or poll twice after committing only the timer.

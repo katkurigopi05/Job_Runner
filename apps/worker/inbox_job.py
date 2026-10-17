@@ -8,13 +8,17 @@ records nothing twice.
 
 from __future__ import annotations
 
+import uuid
+
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.core.models import Candidate, MailboxCheckpoint
-from packages.core.queue import ClaimedTask
+from packages.core.config import get_settings
+from packages.core.enums import QueueTaskStatus
+from packages.core.models import Candidate, MailboxCheckpoint, QueueTask
+from packages.core.queue import ClaimedTask, db_now_plus, enqueue
 from packages.inbox.imap import DEFAULT_BATCH, build_mail_source
 from packages.inbox.route import route_message
 from packages.llm.provider import LLMError, build_provider
@@ -22,6 +26,63 @@ from packages.llm.provider import LLMError, build_provider
 log = structlog.get_logger(__name__)
 
 INBOX_TASK_KIND = "inbox"
+
+_UNFINISHED = (QueueTaskStatus.PENDING.value, QueueTaskStatus.RUNNING.value)
+
+#: Distinct from the crawler and test-suite advisory locks. It serializes the
+#: count-then-enqueue invariant across processes and is released at transaction
+#: end, including when a worker loses its database connection.
+_QUEUE_GUARD_LOCK_KEY = 4_917_206
+
+
+async def ensure_inbox_poll(
+    session: AsyncSession,
+    *,
+    exclude_task_id: uuid.UUID | None = None,
+    delay_seconds: int = 0,
+    source_configured: bool | None = None,
+) -> QueueTask | None:
+    """Ensure one durable mailbox poll exists, returning it when newly queued.
+
+    The worker supervisor calls this at startup and periodically to repair a
+    schedule whose task exhausted its retries. A successful handler calls it
+    before committing the mailbox checkpoint, which makes the next wakeup
+    durable at the same boundary as the mail it just routed.
+
+    Does not commit. The caller owns the transaction.
+    """
+    if source_configured is None:
+        source_configured = build_mail_source() is not None
+    if not source_configured:
+        return None
+
+    await session.execute(select(func.pg_advisory_xact_lock(_QUEUE_GUARD_LOCK_KEY)))
+    # A handler ignores other running polls: they are current work, not the
+    # future successor it must leave behind. The supervisor counts both states
+    # because it must not seed a second current poll.
+    guarded_statuses = (
+        (QueueTaskStatus.PENDING.value,) if exclude_task_id is not None else _UNFINISHED
+    )
+    conditions = [
+        QueueTask.kind == INBOX_TASK_KIND,
+        QueueTask.status.in_(guarded_statuses),
+    ]
+    if exclude_task_id is not None:
+        conditions.append(QueueTask.id != exclude_task_id)
+    waiting = await session.scalar(select(func.count()).select_from(QueueTask).where(*conditions))
+    if waiting:
+        return None
+
+    task = await enqueue(session, INBOX_TASK_KIND, {})
+    if delay_seconds:
+        # Claims compare against the database clock. Write this deadline from
+        # that same clock so host drift cannot make a poll early or late.
+        await session.execute(
+            update(QueueTask)
+            .where(QueueTask.id == task.id)
+            .values(run_after=db_now_plus(delay_seconds))
+        )
+    return task
 
 
 async def handle_inbox(session: AsyncSession, claimed: ClaimedTask) -> None:
@@ -109,9 +170,17 @@ async def handle_inbox(session: AsyncSession, claimed: ClaimedTask) -> None:
         checkpoint.last_uid = max(checkpoint.last_uid, batch.high_water)
         checkpoint.initialized = True
 
+    await ensure_inbox_poll(
+        session,
+        exclude_task_id=claimed.task.id,
+        delay_seconds=get_settings().inbox_poll_seconds,
+        source_configured=True,
+    )
+
     # This is the durability boundary: routed rows and the exact UID position
-    # become visible together. A crash before it replays; a crash after it
-    # resumes strictly above the committed high-water mark.
+    # and the next poll become visible together. A crash before it replays; a
+    # crash after it resumes strictly above the committed high-water mark and
+    # the queue still knows when to poll again.
     await session.commit()
 
     log.info(

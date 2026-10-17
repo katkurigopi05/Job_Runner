@@ -333,13 +333,19 @@ async def test_pool_members_get_distinct_worker_ids(monkeypatch) -> None:
 
     seen: list[str] = []
 
-    async def fake_run_forever(*, worker_id=None, lease_seconds=None, stop=None):
+    schedulers: list[bool] = []
+
+    async def fake_run_forever(
+        *, worker_id=None, lease_seconds=None, stop=None, schedule_inbox=True
+    ):
         seen.append(worker_id)
+        schedulers.append(schedule_inbox)
 
     monkeypatch.setattr(worker_run, "run_forever", fake_run_forever)
     await worker_run.run_pool(3)
 
     assert len(set(seen)) == 3
+    assert schedulers.count(True) == 1
 
 
 async def test_one_signal_stops_every_worker_in_the_pool(monkeypatch) -> None:
@@ -376,6 +382,7 @@ async def test_one_signal_stops_every_worker_in_the_pool(monkeypatch) -> None:
     monkeypatch.setattr(worker_run, "Heartbeat", QuietHeartbeat)
     monkeypatch.setattr(worker_run, "run_once", idle)
     monkeypatch.setattr(worker_run, "_ring_reminders", no_reminders)
+    monkeypatch.setattr(worker_run, "_maintain_inbox_schedule", lambda stop: stop.wait())
     monkeypatch.setattr(worker_run, "IDLE_SLEEP_SECONDS", 0.01)
 
     loop = asyncio.get_running_loop()
