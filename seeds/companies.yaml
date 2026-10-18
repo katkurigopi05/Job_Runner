@@ -157,10 +157,8 @@ companies:
   state: api
 - name: Amplitude
   slug: amplitude
-  ats: greenhouse
+  ats: ashby
   poll_interval_s: 21600
-  checked: '2026-09-07'
-  state: api
 - name: Mixpanel
   slug: mixpanel
   ats: greenhouse
@@ -399,9 +397,7 @@ companies:
   state: api
 - name: Wayve
   slug: wayve
-  ats: greenhouse
-  checked: '2026-09-07'
-  state: api
+  ats: ashby
 - name: Isomorphic Labs
   slug: isomorphiclabs
   ats: greenhouse
@@ -473,10 +469,8 @@ companies:
   checked: '2026-09-07'
   state: api
 - name: Hightouch
-  slug: hightouch
-  ats: greenhouse
-  checked: '2026-09-07'
-  state: api
+  slug: hightouch-inc
+  ats: ashby
 - name: WorkOS
   slug: workos
   ats: ashby
@@ -668,7 +662,7 @@ companies:
   ats: greenhouse
 - name: ClickHouse
   slug: clickhouse
-  ats: greenhouse
+  ats: ashby
 - name: Cockroach Labs
   slug: cockroachlabs
   ats: greenhouse
