@@ -711,3 +711,48 @@ listed three senior postings and "internships in data science" nothing.
   "Senior". Each of those was a benchmark target lost when it was not.
 
 `tests/test_chat_sponsorship.py` and `tests/test_chat_seniority.py` hold them.
+
+## A filter runs before the cut
+
+Added 2026-10-18, Phase 5 of `docs/HARNESS_AUDIT_2026-10-15.md` (finding F,
+"filter-before-limit starvation"). Each pool above was read to a fixed size,
+best first, and only then asked about the area or the level: 120 keyword
+matches for the area, 500 for a level, 500 for a sponsorship question, the
+newest 30 whole titles, the nearest 200 chunks, the nearest 40 posting
+vectors. More dropped candidates than that, all ranked above one kept, and
+the kept one was never read. The answer said "none in the search area" or
+"0 state they sponsor".
+
+`_read_until` (ids in order) and `_nearest_kept` (chunks by distance) read
+the old size first and then on, doubling, until enough candidates are ones
+the filters keep, or there are none left. `tests/test_retrieval_candidate_limits.py`
+aims one test at each pool, and each failed before the change.
+
+What a later change could undo:
+
+- **The old size is read first, whatever it holds.** A search that was not
+  short reads exactly what it did, so its counts and order are unchanged.
+- **Every posting read is returned, kept or not.** The area's "left out"
+  count and the level's count are of what was read, as they always were; a
+  longer read makes them larger and nearer the truth.
+- **A level counts only titles at that level**, not the ones naming none
+  that `CHAT_ALLOW_UNKNOWN_SENIORITY` keeps. Those are listed after, so they
+  cannot fill the thirty in place of one at the level.
+- **A sponsorship question reads every posting that says its word**, as the
+  role and mention paths already did. Its counts are of that set.
+- **A question asked only by a title abroad is still a question.** The
+  whole-title lookup returns what it read, abroad included, so the gate that
+  asks whether anything was named is unchanged.
+
+Measured on the live database on 2026-10-18 in one read-only snapshot, the
+old and new search over 216 everyday questions (30 skills in seven forms,
+six with no rare word): 176 unchanged, 5 empty answers now answered (four
+sponsorship questions and "internships using kubernetes"), 20 more with a
+different five, 2 reordered, 13 with only their counts changed. No question
+shows fewer postings, and no posting the old search showed is missing from
+the new answer or its further list. The changes are in junior, entry-level,
+internship and sponsorship questions, where the filter keeps few: "junior
+python jobs" found 4 at the level and now 34. The known-target benchmark
+(`make eval-retrieval`) is identical on both sets. Median time 0.56 s to
+0.58 s, slowest 1.5 s to 1.2 s. The report is
+`docs/harness-audit/phase-5-retrieval.md`.

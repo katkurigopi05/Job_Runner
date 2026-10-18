@@ -16,7 +16,7 @@ this note was written.
 | Phase 2 — fence worker ownership and bound retries | #169 `fix(worker): fence queue claim settlement` (`4bccd1f`) |
 | Phase 3 — separate credentials and private runtime paths | #170 `fix(db): separate runtime credentials` (`c937f6f`); #171 `feat(core): stage private runtime paths` (`5d9c02a`) |
 | Phase 4 — truthful outcomes and operational evidence | #172 `fix(mcp): flag API failures in protocol` (`5000254`); #173 `feat(harness): correlate requests and worker calls` (`0e7a3b3`); #174 `fix(harness): make remote audit reservations durable` (`5e4eb15`); #175 `fix(inbox): checkpoint IMAP ingestion atomically` (`a7601ba`); #176 `fix(web): show crawl status disconnects` (`efc5a44`); #177 `fix(inbox): sustain mailbox polling loop` (`8a3ef3c`) |
-| Phase 5 — retrieval evaluation | Not started. It still requires owner grades and approval before candidate tuning. |
+| Phase 5 — retrieval evaluation | Started 2026-10-18 on `fix/retrieval-filter-before-limit`: filter-before-limit starvation fixed and measured ([report](harness-audit/phase-5-retrieval.md)). The owner-graded baseline and the switch evaluations still require owner grades (0 today) and approved thresholds. |
 
 The root checkout, API and four-worker pool now run `main` at `8a3ef3c`, and
 the live schema is at `c4e8a1b7d290`. The runtime role from #170 has not been
