@@ -95,12 +95,15 @@ async def save_edit(
     edited = apply_edit(parsed, contact=contact, sections=sections)
 
     from packages.tailor.assemble import assemble_pdf
+    from packages.tailor.publish import house_options
 
     try:
         # Projects are excluded here. They are rebuilt per posting at tailoring
         # time from the GitHub inventory, so baking today's set into a stored
         # document would freeze a section that is supposed to follow the job.
-        pdf = assemble_pdf(edited, None, None)
+        # Set like a tailored résumé, since this file is the one an employer
+        # receives.
+        pdf = assemble_pdf(edited, None, house_options())
     except Exception as exc:  # noqa: BLE001 - WeasyPrint needs system libraries
         raise ReviseError(
             f"the edit could not be rendered to PDF ({type(exc).__name__}), so it was not "

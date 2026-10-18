@@ -11,7 +11,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from packages.core.database_access import async_database_url
-from packages.core.enums import TailorMode
+from packages.core.enums import ResumeFont, TailorMode
 
 ENV_FILE_VARIABLE = "JOBRUNNER_ENV_FILE"
 
@@ -197,6 +197,16 @@ class Settings(BaseSettings):
     #: nothing to gain. An enum, so a typo refuses to start: read as a string,
     #: "targetted" would have been neither and rewritten everything.
     tailor_mode: TailorMode = TailorMode.REWRITE
+    #: The face a tailored résumé and its cover letter are set in
+    #: (`packages/tailor/style.py`). An enum of faces macOS installs, so
+    #: "calibri" refuses to start rather than printing in Verdana.
+    resume_font: ResumeFont = ResumeFont.DEFAULT
+    #: Tighten a tailored résumé's type, within fixed limits, when a few lines
+    #: spill onto a last page. Spacing and size change; words never do.
+    resume_fit_pages: bool = True
+    #: At most this many pages, when tightening within the limits can reach
+    #: it. Unset leaves the length to the content.
+    resume_max_pages: int | None = Field(default=None, ge=1, le=3)
     llm_task_cover_letter: str = "auto"
     llm_task_open_ended: str = "auto"
     #: On a spent quota or an unreachable remote provider, answer with the

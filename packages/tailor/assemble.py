@@ -17,7 +17,9 @@ Two constraints shape the output:
 from __future__ import annotations
 
 import html
+from dataclasses import replace
 
+import structlog
 from pydantic import BaseModel, Field
 
 from packages.core.models import Project
@@ -27,6 +29,18 @@ from packages.tailor.projects import (
     LinkStyle,
     render_section_html,
 )
+from packages.tailor.style import (
+    FONT_FACES,
+    Rendered,
+    ResumeFont,
+    ResumeStyle,
+    fit_to_pages,
+    page_count,
+    resume_css,
+    uses_face,
+)
+
+log = structlog.get_logger(__name__)
 
 #: Order sections appear in. Anything parsed but not listed is appended after,
 #: in document order, so an unusual section is never silently dropped.
@@ -91,36 +105,10 @@ SECTION_TITLES: dict[str, str] = {
 #: two bullets, so no entry is one block that has to move whole and leave a
 #: hole behind it. A section heading needs no rule: WeasyPrint's own
 #: stylesheet keeps `h2` with what follows it.
-RESUME_CSS = """
-@page { size: Letter; margin: 0.55in; }
-body { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
-       font-size: 10pt; line-height: 1.34; color: #111; }
-header { margin-bottom: 12pt; }
-h1 { font-size: 17pt; font-weight: 700; margin: 0 0 6pt;
-     letter-spacing: 0.01em; line-height: 1.2; }
-.contact { font-size: 9pt; color: #333; line-height: 1.5; }
-.contact a { color: #1a4d8f; text-decoration: none; }
-h2 { font-size: 9.5pt; font-weight: 700; margin: 13pt 0 5pt;
-     text-transform: uppercase; letter-spacing: 0.08em; color: #222;
-     border-bottom: 0.7pt solid #888; padding-bottom: 2.5pt; }
-p { margin: 0 0 4pt; }
-.entry { margin: 6pt 0 2pt; break-after: avoid; }
-.entry:first-child { margin-top: 0; }
-.entry-meta + ul { break-before: avoid; }
-li { break-inside: avoid; }
-.entry-name { font-weight: 700; }
-.entry-date { font-size: 9pt; color: #444; font-weight: 400; }
-.entry-date::before { content: "  \\00b7  "; color: #999; }
-.entry-meta { font-style: italic; color: #444; font-size: 9pt; margin: 0 0 3pt; }
-ul { list-style: none; padding: 0; margin: 0 0 2pt; }
-li { margin: 0 0 3pt; padding-left: 11pt; text-indent: -11pt; }
-li::before { content: "\\2022  "; color: #555; }
-.plain { list-style: none; padding: 0; margin: 0; }
-.plain li { padding-left: 0; text-indent: 0; }
-.plain li::before { content: ""; }
-.project-name { font-weight: 700; }
-.project-link { color: #1a4d8f; text-decoration: none; white-space: nowrap; }
-"""
+#:
+#: The face and the sizes are `packages/tailor/style.py`'s. This is the
+#: template at its defaults, which is the document every layout test measured.
+RESUME_CSS = resume_css(ResumeStyle())
 
 
 class AssemblyOptions(BaseModel):
@@ -140,6 +128,14 @@ class AssemblyOptions(BaseModel):
     #: off when Projects is the section that was tailored.
     replace_source_projects: bool = True
     sections: tuple[str, ...] = SECTION_ORDER
+    #: The face and sizes. The default is the template as it has always been.
+    style: ResumeStyle = Field(default_factory=ResumeStyle)
+    #: Tighten the type within `style.FIT_FLOOR` when a few lines spill onto a
+    #: last page. Off here so a bare render is the template; tailoring turns it
+    #: on from settings (`publish.house_options`).
+    fit: bool = False
+    #: Fit into at most this many pages, when the floor allows it.
+    max_pages: int | None = Field(default=None, ge=1)
 
 
 def _render_contact(resume: ParsedResume) -> str:
@@ -389,17 +385,53 @@ def assemble_html(
     return "\n".join(parts)
 
 
+def render_resume(
+    resume: ParsedResume,
+    projects: list[Project] | None = None,
+    options: AssemblyOptions | None = None,
+) -> Rendered:
+    """Render the assembled résumé, set in its face and fitted if asked.
+
+    A face the PDF does not embed is not used. fontconfig answers a missing
+    family with whatever it likes, so the document is set in the default face
+    instead, and the note says which face was asked for.
+    """
+    from weasyprint import CSS, HTML
+
+    opts = options or AssemblyOptions()
+    body = assemble_html(resume, projects, opts)
+    document = HTML(string=f"<body>{body}</body>")
+
+    def render(style: ResumeStyle) -> bytes:
+        return bytes(document.write_pdf(stylesheets=[CSS(string=resume_css(style))]))
+
+    style = opts.style
+    first = render(style)
+    missing_face: str | None = None
+    if not uses_face(first, style.font):
+        missing_face = FONT_FACES[style.font].label
+        log.warning("resume_face_unavailable", font=str(style.font))
+        style = style.model_copy(update={"font": ResumeFont.DEFAULT})
+        first = render(style)
+
+    if opts.fit:
+        rendered = fit_to_pages(render, style, max_pages=opts.max_pages, first=first)
+    else:
+        count = page_count(first)
+        rendered = Rendered(pdf=first, style=style, pages=count, pages_before=count)
+    if missing_face is None:
+        return rendered
+    said = f"{missing_face} is not installed here, so the résumé is set in the default face."
+    return replace(rendered, note=f"{said} {rendered.note}" if rendered.note else said)
+
+
 def assemble_pdf(
     resume: ParsedResume,
     projects: list[Project] | None = None,
     options: AssemblyOptions | None = None,
 ) -> bytes:
     """Render the assembled résumé to PDF bytes."""
-    from weasyprint import CSS, HTML
-
-    body = assemble_html(resume, projects, options)
-    document = HTML(string=f"<body>{body}</body>")
-    return bytes(document.write_pdf(stylesheets=[CSS(string=RESUME_CSS)]))
+    return render_resume(resume, projects, options).pdf
 
 
 class AssemblyReport(BaseModel):

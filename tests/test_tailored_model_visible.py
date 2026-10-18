@@ -33,8 +33,20 @@ from packages.core.models import (
 from packages.core.storage import get_storage, resume_key
 from packages.tailor.parse import Contact, ParsedResume
 from packages.tailor.rewrite import BulletRewrite, TailorResult
+from packages.tailor.style import Rendered, ResumeStyle
 
 JOB = "Backend engineer. Python services, Postgres, and queueing."
+
+
+def _rendered(*_args, **_kwargs) -> Rendered:
+    """A render without WeasyPrint, fitted the way a spilling résumé would be."""
+    return Rendered(
+        pdf=b"%PDF-1.4 tailored",
+        style=ResumeStyle(line_height=1.28, margin_in=0.5, section_gap_pt=11.0),
+        pages=2,
+        pages_before=3,
+        note="Set at 10pt type, 1.28 line spacing and 0.5in margins so it ends on page 2.",
+    )
 
 
 async def _candidate(db_session) -> Candidate:
@@ -132,7 +144,7 @@ async def test_publish_writes_down_the_model_that_wrote_the_document(
     """
     from packages.tailor import publish as publish_mod
 
-    monkeypatch.setattr(publish_mod, "assemble_pdf", lambda *a, **k: b"%PDF-1.4 tailored")
+    monkeypatch.setattr(publish_mod, "render_resume", _rendered)
     candidate = await _candidate(db_session)
 
     published = await publish_mod.publish_tailored(
@@ -148,11 +160,33 @@ async def test_publish_writes_down_the_model_that_wrote_the_document(
 
 
 @pytest.mark.asyncio
+async def test_publish_records_how_the_document_was_set(db_session, monkeypatch) -> None:
+    """Beside the mode stamp: the face, the sizes fitting chose, and why, so
+    the review screen can say a résumé was tightened to fit."""
+    from packages.tailor import publish as publish_mod
+
+    monkeypatch.setattr(publish_mod, "render_resume", _rendered)
+    candidate = await _candidate(db_session)
+
+    published = await publish_mod.publish_tailored(
+        db_session, candidate_id=candidate.id, parsed=_parsed(), result=_result()
+    )
+
+    assert published is not None
+    stamp = published.parsed_json[publish_mod.STYLE_STAMP]
+    assert stamp["line_height"] == 1.28
+    assert stamp["pages"] == 2
+    assert "page 2" in stamp["note"]
+    # And it is still a résumé: a key ParsedResume does not know is ignored.
+    assert ParsedResume.model_validate(published.parsed_json).contact.name
+
+
+@pytest.mark.asyncio
 async def test_publish_leaves_it_null_when_the_caller_did_not_say(db_session, monkeypatch) -> None:
     """A guess here is worse than a blank. NULL means "unrecorded", not a model."""
     from packages.tailor import publish as publish_mod
 
-    monkeypatch.setattr(publish_mod, "assemble_pdf", lambda *a, **k: b"%PDF-1.4 tailored")
+    monkeypatch.setattr(publish_mod, "render_resume", _rendered)
     candidate = await _candidate(db_session)
 
     published = await publish_mod.publish_tailored(
