@@ -1,0 +1,1110 @@
+[
+  {
+    "name": "detect_ats",
+    "description": "Identify which applicant tracking system is behind a posting URL.\n\n    Pure URL-pattern matching, no network call. Returns the ATS name and\n    whether Jobrunner has an adapter for it.\n    ",
+    "inputSchema": {
+      "properties": {
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "detect_atsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "detect_atsDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "supported_ats",
+    "description": "List the applicant tracking systems Jobrunner can drive.",
+    "inputSchema": {
+      "properties": {},
+      "title": "supported_atsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "supported_atsDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "search_postings",
+    "description": "Search postings Jobrunner has indexed.\n\n    The index is filled by the crawler polling the company registry. An\n    empty result means nothing matched, or no crawl has run yet \u2014 `make crawl`\n    runs one, and the setup page reports when the last one finished. A URL\n    can always be applied to directly with `apply_to_url`.\n    ",
+    "inputSchema": {
+      "properties": {
+        "query": {
+          "default": "",
+          "title": "Query",
+          "type": "string"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Location"
+        },
+        "ats": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ats"
+        },
+        "limit": {
+          "default": 20,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "search_postingsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "search_postingsDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "my_matches",
+    "description": "The owner's scored feed: postings matched to their profile, best first.\n\n    Not `search_postings`, which searches everything crawled. This is what the\n    dashboard's matches page shows, with the same filters. A filter narrows\n    what is listed and is never typed onto an application.\n\n    `keywords`, `locations` and `wanted_skills` are comma-separated. `role` is\n    one of the feed's role names and a misspelt one is refused. `sponsorship`\n    takes `available`, which keeps only postings that state it; add\n    `include_unknown_sponsorship` to drop only the ones that refuse it.\n    `rank` is `base` or `personalized`. Leave a filter out to keep the owner's\n    standing preference for it, such as their search area.\n\n    `score` is a similarity and is low by construction: a strong match can be\n    under 0.1. Say where a posting ranks, not a percentage. `eligibility` is\n    what the posting itself states about sponsorship and citizenship;\n    \"unstated\" means it said nothing, not that it is available.\n    ",
+    "inputSchema": {
+      "properties": {
+        "profile_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Id"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "keywords": {
+          "default": "",
+          "title": "Keywords",
+          "type": "string"
+        },
+        "locations": {
+          "default": "",
+          "title": "Locations",
+          "type": "string"
+        },
+        "remote": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remote"
+        },
+        "posted_within_days": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Posted Within Days"
+        },
+        "min_salary": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Salary"
+        },
+        "wanted_skills": {
+          "default": "",
+          "title": "Wanted Skills",
+          "type": "string"
+        },
+        "sponsorship": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sponsorship"
+        },
+        "include_unknown_sponsorship": {
+          "default": false,
+          "title": "Include Unknown Sponsorship",
+          "type": "boolean"
+        },
+        "exclude_citizenship_restricted": {
+          "default": false,
+          "title": "Exclude Citizenship Restricted",
+          "type": "boolean"
+        },
+        "include_applied": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Include Applied"
+        },
+        "undecided_only": {
+          "default": false,
+          "title": "Undecided Only",
+          "type": "boolean"
+        },
+        "rank": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rank"
+        },
+        "limit": {
+          "default": 10,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "my_matchesArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "my_matchesDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "apply_to_url",
+    "description": "Queue an application for a posting URL.\n\n    This only enqueues work. The worker fills the form and stops at a review\n    screen; nothing reaches the employer without approval.\n\n    Fails with `invalid_request` if the profile is missing anything an ATS form\n    requires (phone, location, work authorization, r\u00e9sum\u00e9) \u2014 those are knowable\n    now, so an application that cannot be completed is never created.\n    ",
+    "inputSchema": {
+      "properties": {
+        "candidate_id": {
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "profile_id": {
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "profile_id",
+        "url"
+      ],
+      "title": "apply_to_urlArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "apply_to_urlDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "application_status",
+    "description": "Current status of one application, with its review record.",
+    "inputSchema": {
+      "properties": {
+        "application_id": {
+          "title": "Application Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "application_id"
+      ],
+      "title": "application_statusArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "application_statusDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "application_history",
+    "description": "The append-only event log for an application \u2014 every state change.",
+    "inputSchema": {
+      "properties": {
+        "application_id": {
+          "title": "Application Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "application_id"
+      ],
+      "title": "application_historyArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "application_historyDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_applications",
+    "description": "List applications, optionally filtered by status.\n\n    Statuses: queued, running, needs_review, needs_otp, submitted, failed.\n    ",
+    "inputSchema": {
+      "properties": {
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "limit": {
+          "default": 50,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "list_applicationsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "list_applicationsDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "review_queue",
+    "description": "Applications parked and waiting for a decision.\n\n    Each carries the employer's questions in their original wording under\n    `review.unanswered`. Answer those exactly \u2014 a paraphrase is not something\n    the owner can safely stand behind.\n    ",
+    "inputSchema": {
+      "properties": {},
+      "title": "review_queueArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "review_queueDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "approve_application",
+    "description": "Approve a parked application. The owner supplies any missing answers.\n\n    If the application was left with unanswered questions, the owner is shown\n    a form carrying the employer's wording and types the answers. You do not\n    pass them, and there is no argument to pass them in. This is the human\n    approval gate \u2014 only call it when the owner has actually decided.\n    Approving resumes the run; it does not itself submit anything.\n    ",
+    "inputSchema": {
+      "properties": {
+        "application_id": {
+          "title": "Application Id",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "application_id"
+      ],
+      "title": "approve_applicationArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "approve_applicationDictOutput",
+      "type": "object"
+    },
+    "_meta": {
+      "anthropic/requiresUserInteraction": true
+    }
+  },
+  {
+    "name": "reject_application",
+    "description": "Reject a parked application. Terminal \u2014 it fails as rejected_at_review.",
+    "inputSchema": {
+      "properties": {
+        "application_id": {
+          "title": "Application Id",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "application_id"
+      ],
+      "title": "reject_applicationArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "reject_applicationDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "submit_otp",
+    "description": "Resume an application parked at needs_otp. The owner types the code.\n\n    The code is asked for in a form; you do not pass it.\n    ",
+    "inputSchema": {
+      "properties": {
+        "application_id": {
+          "title": "Application Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "application_id"
+      ],
+      "title": "submit_otpArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "submit_otpDictOutput",
+      "type": "object"
+    },
+    "_meta": {
+      "anthropic/requiresUserInteraction": true
+    }
+  },
+  {
+    "name": "compare_tailoring",
+    "description": "Tailor this posting with the local model and the cloud one, for a choice.\n\n    Answers \"would the other model have written a better r\u00e9sum\u00e9 for this job\",\n    which is otherwise only answerable by editing `.env` and re-running.\n\n    Costs a real upload. Each remote side sends the owner's r\u00e9sum\u00e9 to a third\n    party, so call it when the owner has asked to compare \u2014 not routinely, and\n    not to explore. Asking twice for the same posting sends nothing: the\n    tailoring cache is keyed per provider.\n\n    Both sides are checked by the fabrication guard before either is returned,\n    and `rejected` counts what it refused. A side that could not run \u2014 no key,\n    spent allowance, Ollama not started \u2014 comes back with `error` set rather\n    than missing, because a comparison silently down to one column reads as a\n    verdict on the column that is there.\n\n    `cloud` names the remote half \u2014 \"gemini\", \"anthropic\", \"openrouter\" \u2014 for\n    this comparison only. Leave it out for whatever real tailoring would use,\n    which answers the usual question. Naming one moves no setting: the next\n    application tailors exactly as it did before. It exists because OpenRouter\n    is deliberately not in the automatic order, so comparing against it\n    otherwise meant adopting it for everything first.\n\n    Requires the application to be parked at needs_review. Nothing here changes\n    which r\u00e9sum\u00e9 is sent; `select_tailoring` does that.\n    ",
+    "inputSchema": {
+      "properties": {
+        "application_id": {
+          "title": "Application Id",
+          "type": "string"
+        },
+        "cloud": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cloud"
+        }
+      },
+      "required": [
+        "application_id"
+      ],
+      "title": "compare_tailoringArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "compare_tailoringDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "select_tailoring",
+    "description": "Choose which compared r\u00e9sum\u00e9 this application will upload.\n\n    `resume_id` comes from `compare_tailoring`. The API refuses anything that\n    was not one of the compared versions \u2014 this decides the file an employer\n    receives, and the screen only ever offers two.\n\n    Selecting is not approving. The application stays parked until\n    `approve_application` is called.\n    ",
+    "inputSchema": {
+      "properties": {
+        "application_id": {
+          "title": "Application Id",
+          "type": "string"
+        },
+        "resume_id": {
+          "title": "Resume Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "application_id",
+        "resume_id"
+      ],
+      "title": "select_tailoringArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "select_tailoringDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "inspect_application_resume",
+    "description": "The r\u00e9sum\u00e9 this application will actually upload, line by line.\n\n    The tailored one when tailoring has run, otherwise the profile's base \u2014 the\n    same rule the uploader applies, answered by the API rather than worked out\n    here, so a tool and the worker cannot disagree about which document is\n    being sent.\n\n    Call this before `edit_application_resume`: sections are replaced whole, so\n    an edit has to be built from the current set rather than guessed.\n    ",
+    "inputSchema": {
+      "properties": {
+        "application_id": {
+          "title": "Application Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "application_id"
+      ],
+      "title": "inspect_application_resumeArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "inspect_application_resumeDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "edit_application_resume",
+    "description": "Edit the r\u00e9sum\u00e9 an application is about to send. Guarded \u2014 see below.\n\n    **Relay the owner's words; do not compose r\u00e9sum\u00e9 content.** This writes a\n    document that goes to a real employer under the owner's name. Use it when\n    they have told you what to change \u2014 a line to drop, a phrasing they dictated,\n    a typo to fix \u2014 not to improve their r\u00e9sum\u00e9 on their behalf.\n\n    The fabrication guard runs on every edit that arrives through this tool, and\n    it is not optional here. \u00a72.1 permits rephrasing, reordering and\n    re-emphasis; it forbids adding a skill, employer, date, credential or metric\n    the r\u00e9sum\u00e9 does not already support. A refused edit comes back naming the\n    lines and the unsupported claims.\n\n    That refusal is not always a verdict on the fact. If the owner says it is\n    true and the guard still refuses, the answer is for them to type it on the\n    `/review` screen \u2014 an edit made there is theirs, and is deliberately not\n    guarded. Do not try to reword it past the check.\n\n    `sections` replaces the whole set, so start from `inspect_application_resume`\n    and send it back modified. The `contact_*` fields do the same \u2014 one left as\n    None is *cleared*, not kept, so pass back every one the r\u00e9sum\u00e9 should keep.\n\n    Only applications parked at needs_review may be edited, and the edit is\n    attached to this application alone \u2014 `adopt=True` also makes it the\n    profile's base, which is only right for a fix that is true for every future\n    application.\n\n    Editing does not approve. The application stays parked, and the edit\n    survives approval rather than being re-tailored over.\n    ",
+    "inputSchema": {
+      "properties": {
+        "application_id": {
+          "title": "Application Id",
+          "type": "string"
+        },
+        "sections": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Sections",
+          "type": "object"
+        },
+        "contact_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contact Name"
+        },
+        "contact_email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contact Email"
+        },
+        "contact_phone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contact Phone"
+        },
+        "contact_links": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contact Links"
+        },
+        "adopt": {
+          "default": false,
+          "title": "Adopt",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "application_id",
+        "sections"
+      ],
+      "title": "edit_application_resumeArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "edit_application_resumeDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "follow_ups",
+    "description": "What is waiting on the owner in the tracker: tasks, and unanswered applications.\n\n    Open tasks come in groups: `overdue`, `due` in the next `within_days`,\n    `undated`, and a count of the ones due `later`. An undated task is not a\n    low priority. An interview or assessment task made from a recruiter's\n    reply has no date until the owner reads it out of the message and sets it.\n\n    `silent` is the submitted applications no employer has answered, longest\n    wait first. `has_follow_up_task` means the owner already has it in hand.\n    `stale` counts the ones too old for a follow-up to be worth sending.\n    `silent_after_days` moves how long an application waits before it is\n    listed; leave it out for the report's own. `suggested_silent_after_days`\n    is that wait worked out from the owner's own history, and is null until\n    enough employers have answered.\n\n    Reports only. Jobrunner sends nothing to an employer: a follow-up is the\n    owner's to write and to send.\n    ",
+    "inputSchema": {
+      "properties": {
+        "within_days": {
+          "default": 7,
+          "title": "Within Days",
+          "type": "integer"
+        },
+        "silent_after_days": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Silent After Days"
+        }
+      },
+      "title": "follow_upsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "follow_upsDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "application_tracking",
+    "description": "One application's tasks, and the people the owner is in touch with about it.\n\n    A task comes whole: its checklist, its notes, where the interview is. A\n    contact is cut to name, relationship, company and role. Their email,\n    phone and profile link, and the owner's notes on them, are on the\n    dashboard and are not sent here.\n    ",
+    "inputSchema": {
+      "properties": {
+        "application_id": {
+          "title": "Application Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "application_id"
+      ],
+      "title": "application_trackingArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "application_trackingDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "audit_trail",
+    "description": "What left this machine in the last `days`: how many calls, to whom, for what.\n\n    Every call to a model is recorded, local ones too. `uploads` are the ones\n    whose text went to a third party, `uploaded_chars` is how much, and\n    `by_provider` and `by_task` count those uploads. Tailoring a r\u00e9sum\u00e9 is the\n    upload the owner agreed to; one under another task is worth pointing out.\n\n    Sizes and counts only. The trail holds no prompt text, so none can be\n    shown, and this cannot say what a call contained.\n    ",
+    "inputSchema": {
+      "properties": {
+        "days": {
+          "default": 7,
+          "title": "Days",
+          "type": "integer"
+        }
+      },
+      "title": "audit_trailArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "audit_trailDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "setup_health",
+    "description": "Whether this installation is working, and what to do about what is not.\n\n    `overall` is the worst state of anything checked. `needs_attention` is\n    each thing that is not fine, with why and the steps to try in order; the\n    steps are for the owner to run. `ok` names what is fine. No check repeats\n    a password or a key.\n    ",
+    "inputSchema": {
+      "properties": {},
+      "title": "setup_healthArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "setup_healthDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "weekly_digest",
+    "description": "The last week in numbers: postings seen, applications made, replies, what is waiting.\n\n    `window_days` changes the week to another length. `quiet_week` is true\n    when nothing happened at all, which more often means the crawler stopped\n    than that the market did: check `crawl_status`. A rate under `funnel` is\n    null until enough applications stand behind it.\n    ",
+    "inputSchema": {
+      "properties": {
+        "window_days": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Window Days"
+        },
+        "profile_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Id"
+        }
+      },
+      "title": "weekly_digestArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "weekly_digestDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "crawl_status",
+    "description": "Whether the crawler is working, and how fresh the postings are.\n\n    `stalled` means a crawl is waiting and no worker is running to do it: the\n    owner starts one with `make worker`. `newest_posting_at` is what answers\n    \"are my postings current\"; a crawl that ran and found nothing leaves it\n    unchanged.\n    ",
+    "inputSchema": {
+      "properties": {},
+      "title": "crawl_statusArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "crawl_statusDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "start_crawl",
+    "description": "Start a crawl of the company registry, so new postings reach the feed.\n\n    Only when the owner asks for one. Do not start one because a search or the\n    feed came back empty: say so and let them decide. A crawl makes real\n    requests to employers' sites, inside the rate limits, and takes a while.\n\n    One crawl runs at a time. If one is already waiting or running, nothing is\n    queued and `queued` is false.\n    ",
+    "inputSchema": {
+      "properties": {},
+      "title": "start_crawlArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "start_crawlDictOutput",
+      "type": "object"
+    },
+    "_meta": {
+      "anthropic/requiresUserInteraction": true
+    }
+  },
+  {
+    "name": "next_to_grade",
+    "description": "The next postings for the owner to grade, a few at a time.\n\n    The owner's grades are how the ranker is checked, so they have to be the\n    owner's own. Show each posting as it is: title, place, link, what it asks\n    for. Do not say how well you think it fits and do not suggest a grade.\n    Then call `grade_posting`, which asks them.\n\n    The postings are drawn on purpose from ones the ranker rated high, ones it\n    was unsure of and ones it never rated, so a posting that looks off-target\n    belongs here as much as a good one. `profile_id` is only needed when there\n    is more than one profile.\n    ",
+    "inputSchema": {
+      "properties": {
+        "size": {
+          "default": 3,
+          "title": "Size",
+          "type": "integer"
+        },
+        "profile_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Id"
+        }
+      },
+      "title": "next_to_gradeArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "next_to_gradeDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "grade_posting",
+    "description": "Record the owner's grade for a posting `next_to_grade` offered.\n\n    The owner is shown a form with the four grades and picks one. You do not\n    pass a grade, and there is no argument to pass one in. Show them the\n    posting first, and do not tell them which grade you would choose.\n\n    A posting is offered for one profile. If you gave `next_to_grade` a\n    `profile_id`, give the same one here; if you gave none, give none.\n\n    Grading applies to nothing: no application is made and no match is decided.\n    Asking again for the same posting replaces its grade.\n    ",
+    "inputSchema": {
+      "properties": {
+        "posting_id": {
+          "title": "Posting Id",
+          "type": "string"
+        },
+        "profile_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Id"
+        }
+      },
+      "required": [
+        "posting_id"
+      ],
+      "title": "grade_postingArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "grade_postingDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "grading_progress",
+    "description": "How many postings the owner has graded, and what the set still lacks.\n\n    `usable` is true once the grades can support a ranking measurement: enough\n    of them, more than one grade used, and at least one posting the ranker\n    never rated. `notes` says which of those is missing.\n    ",
+    "inputSchema": {
+      "properties": {
+        "profile_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Id"
+        }
+      },
+      "title": "grading_progressArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "grading_progressDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_candidates",
+    "description": "List candidates. Most operations need a candidate_id from here.",
+    "inputSchema": {
+      "properties": {},
+      "title": "list_candidatesArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "list_candidatesDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_profiles",
+    "description": "List profiles \u2014 the reusable answer sets applications are made from.",
+    "inputSchema": {
+      "properties": {},
+      "title": "list_profilesArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "list_profilesDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_resumes",
+    "description": "List uploaded r\u00e9sum\u00e9s for a candidate, newest version first.",
+    "inputSchema": {
+      "properties": {
+        "candidate_id": {
+          "title": "Candidate Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidate_id"
+      ],
+      "title": "list_resumesArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "list_resumesDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "inspect_resume",
+    "description": "What the parser extracted from a r\u00e9sum\u00e9, section by section.\n\n    Worth checking before applying: a section missing here is one an ATS\n    reading the same file may also miss.\n    ",
+    "inputSchema": {
+      "properties": {
+        "resume_id": {
+          "title": "Resume Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resume_id"
+      ],
+      "title": "inspect_resumeArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "inspect_resumeDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "preview_resume",
+    "description": "What an assembled r\u00e9sum\u00e9 would contain for a given posting.\n\n    Shows which sections survived parsing, which GitHub projects the ranking\n    picked, and exactly how each project link will read.\n\n    This is assembly, not tailoring: the source r\u00e9sum\u00e9's text is reproduced\n    verbatim and only the Projects section is generated. Tailoring itself runs\n    in the apply pipeline behind the fabrication guard; review its output with\n    `inspect_application_resume` or `compare_tailoring`.\n    ",
+    "inputSchema": {
+      "properties": {
+        "resume_id": {
+          "title": "Resume Id",
+          "type": "string"
+        },
+        "job_text": {
+          "default": "",
+          "title": "Job Text",
+          "type": "string"
+        },
+        "limit": {
+          "default": 4,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "resume_id"
+      ],
+      "title": "preview_resumeArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "preview_resumeDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "sync_github_projects",
+    "description": "Import the owner's GitHub repositories as r\u00e9sum\u00e9 project material.\n\n    Re-running updates in place. Your `pinned` and `include` choices are never\n    overwritten by a sync.\n    ",
+    "inputSchema": {
+      "properties": {
+        "candidate_id": {
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "username": {
+          "title": "Username",
+          "type": "string"
+        },
+        "include_private": {
+          "default": false,
+          "title": "Include Private",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "username"
+      ],
+      "title": "sync_github_projectsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "sync_github_projectsDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_projects",
+    "description": "List imported projects for a candidate.",
+    "inputSchema": {
+      "properties": {
+        "candidate_id": {
+          "title": "Candidate Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidate_id"
+      ],
+      "title": "list_projectsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "list_projectsDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "preview_projects",
+    "description": "Which projects would go on a r\u00e9sum\u00e9 for this posting, and why.\n\n    Returns each project's score so the ranking is inspectable rather than\n    something you have to trust.\n    ",
+    "inputSchema": {
+      "properties": {
+        "candidate_id": {
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "job_text": {
+          "default": "",
+          "title": "Job Text",
+          "type": "string"
+        },
+        "limit": {
+          "default": 4,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "candidate_id"
+      ],
+      "title": "preview_projectsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "preview_projectsDictOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "curate_project",
+    "description": "Pin a project onto every r\u00e9sum\u00e9, or exclude it from all of them.\n\n    `pinned=True` guarantees it appears; `include=False` removes it from\n    consideration regardless of ranking.\n    ",
+    "inputSchema": {
+      "properties": {
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "pinned": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pinned"
+        },
+        "include": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Include"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "curate_projectArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "curate_projectDictOutput",
+      "type": "object"
+    }
+  }
+]

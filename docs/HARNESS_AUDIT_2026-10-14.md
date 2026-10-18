@@ -23,15 +23,30 @@ Status words used below:
 Kept current at the end of every phase, so a session that has to stop can be
 picked up by another. Each phase is built, tested, pushed and reported before
 the next one starts. Phases are in section H.
-Phases 2 to 4 each add their own report under `docs/harness-audit/`, so
-the open PRs do not edit one shared file; this table is updated by the last.
+Phases 2 to 4 each have their own report under `docs/harness-audit/`.
+Merge state below was checked on 2026-10-15. Sections A–G retain the original
+audit observations; they are not a fresh description of the running system.
 
 | Phase | Branch / PR | State | What is left |
 |---|---|---|---|
-| 1. Submission truth, test-database isolation | #164 `fix/unconfirmed-submit-is-uncertain` | Merged 2026-10-15 | Restart workers on the merged code (`make workers n=…`); the pool was stopped on 2026-10-15 07:42 UTC |
-| 2. Local network boundary | #165 `fix/local-network-boundary` | Done, open; report `docs/harness-audit/phase-2.md` | Merge. Owner: where private files live (iCloud); a non-superuser database role |
-| 3. Status truth and reconciliation | #166 `fix/status-truth-and-reconciliation` | Done, open; report `docs/harness-audit/phase-3.md` | Merge. Owner: settle the 5 fences on `/finish`; `NOTIFY_BACKENDS=desktop` |
-| 4. Audit attribution, derived-data versioning | `fix/audit-attribution` | Done; report `docs/harness-audit/phase-4.md` | Merge |
+| 1. Submission truth, test-database isolation | #164 `fix/unconfirmed-submit-is-uncertain` | Merged 2026-10-15; deployed from `main` 2026-10-18 | Four claimants restarted with `make workers n=4`; see [production state](harness-audit/production-state-2026-10-17.md) |
+| 2. Local network boundary | #165 `fix/local-network-boundary` | Merged 2026-10-15; report `docs/harness-audit/phase-2.md` | Owner: where private files live (iCloud); a non-superuser database role |
+| 3. Status truth and reconciliation | #166 `fix/status-truth-and-reconciliation` | Merged 2026-10-15; report `docs/harness-audit/phase-3.md` | Owner: settle or keep the 5 fences on `/finish`; choose notifications |
+| 4. Audit attribution, derived-data versioning | #167 `fix/audit-attribution` | Merged 2026-10-15; report `docs/harness-audit/phase-4.md` | No remaining merge step; historical unregistered uploads and stub records remain as documented |
+
+**Follow-up verification (2026-10-15).** Phases 3 and 4 passed their merge
+CI, and the local implementations match those merged revisions. A combined
+run with `REQUIRE_DB=1` passed **63 tests, 0 skipped** across
+`test_crawl_status.py`, `test_submission_reconciliation.py`,
+`test_matches_board_health.py`, `test_audit_attribution.py` and
+`test_chunk_model_stamp.py`, against the guarded `jobrunner_test` database.
+No live submission was reconciled by that run.
+
+PR #165 includes the Origin-check follow-up, security regression artifacts
+and an advisory-review step timeout (`d6f34da`) and is merged on `main`.
+The next proposed operational change is described in
+[the database-role migration plan](harness-audit/database-role-migration.md).
+That plan has not been applied.
 
 **Phase 1 report (2026-10-15).**
 
