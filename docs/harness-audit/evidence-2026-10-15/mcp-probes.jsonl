@@ -1,0 +1,3 @@
+{"case": "approval_without_owner_form", "is_error": false, "posted_approval": true}
+{"case": "crawl_without_owner_form", "is_error": false, "posted_crawl": true}
+{"case": "api_failure_flag", "is_error": false, "content": ["{\n  \"error\": \"Synthetic unavailable API; no connection attempted\"\n}"]}

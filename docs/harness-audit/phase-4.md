@@ -30,10 +30,12 @@ SHA-256 was the same before and after): **732 uploads = 429 `tailor_resume`
 
 | Phase | PR | Owner actions still open |
 |---|---|---|
-| 1 Submission truth, test-DB isolation | #164 | Merge; restart workers |
-| 2 Network boundary | #165 | Decide where private files live (iCloud); a non-superuser DB role |
-| 3 Status truth, reconciliation | #166 | Settle the 5 fences on `/finish`; `NOTIFY_BACKENDS=desktop` |
-| 4 Audit attribution | this PR | — |
+| 1 Submission truth, test-DB isolation | #164 (merged) | Confirm worker restart on the merged code |
+| 2 Network boundary | #165 (merged as `50a7eed`) | Decide where private files live (iCloud); a non-superuser DB role |
+| 3 Status truth, reconciliation | #166 (merged) | Settle or keep the 5 fences on `/finish`; choose notifications |
+| 4 Audit attribution | #167 (merged) | — |
 
-The phase PRs are independent: each is based on `main`, so any order of
-merging works. #164 also carries the audit document itself.
+Merge state checked again on 2026-10-18: #164–#167 are merged; #165 merged
+as `50a7eed`. The phase PRs were based independently on `main`. #164 also
+carries the audit document itself. Current handoff and verification results
+are in `docs/HARNESS_AUDIT_2026-10-14.md`.

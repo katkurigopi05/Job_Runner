@@ -27,9 +27,9 @@ them naming the same tools:
 
 What this does not cover: another MCP client reads neither, and
 `reject_application` is not marked. It is terminal but sends nothing, and a
-prompt on every tool the review gate has would be read past. Not seen live:
-the server is switched off in this machine's `settings.local.json`, so the
-prompt itself has not been watched appearing. The mark is asserted on the
+prompt on every tool the review gate has would be read past. This machine's
+`.claude/settings.local.json` enables the `jobrunner` server. The prompt itself
+has not been watched appearing in Claude Code; the mark is asserted on the
 wire entry, which is what the client reads.
 
 This came out of looking at Sentience Governor, which records what an agent
@@ -60,8 +60,8 @@ there is no argument for a model to fill. Four things to keep:
   `NoBackChannelError` on 2026-07-28, in process and over stdio; the resolver
   form is carried by both. `tests/test_mcp.py` runs every case under both.
 
-Not seen: Claude Code's own dialog. The server is switched off on this machine,
-so what was run is the library's client answering the form in both protocols.
+Not seen: Claude Code's own dialog. The server is enabled on this machine, but
+what was run is the library's client answering the form in both protocols.
 
 **The tracker over MCP reads and does not write** (2026-10-07). "What needs a
 follow-up this week?" had no tool. The tracking API has eleven routes and the
