@@ -154,10 +154,12 @@ KEYWORD_POOL = 30
 #: there is; the dashboard shows these ten at a time.
 MORE_LIMIT = 100
 
-#: Keyword matches read when the owner's search area applies, before the area
-#: cuts them back to `KEYWORD_POOL`. On the owner's database 11 of 25 answers
-#: were abroad, so filtering the 30 best would leave the re-ranking about half
-#: a pool, and a posting the area keeps could sit just below 30 foreign ones.
+#: Keyword matches read first when the owner's search area applies, before the
+#: area cuts them back to `KEYWORD_POOL`. On the owner's database 11 of 25
+#: answers were abroad, so filtering the 30 best would leave the re-ranking
+#: about half a pool. When this many still keep fewer than thirty, more are
+#: read until they do (`_read_until`): 120 foreign postings above the one here
+#: are otherwise an answer of "none in the search area".
 _AREA_POOL = 4 * KEYWORD_POOL
 
 #: The same widening for the vector-only path, as a multiple of the answer.
@@ -279,14 +281,16 @@ _FRAMING_WORDS = _POSTING_WORDS | frozenset(_FRAMING_WORDS_TEXT.split())
 #: of the top 10 chunked postings.
 _QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
-#: Chunks read per chunk-level search before keeping the best per posting.
-#: A posting has about fourteen, so this leaves room for `limit` distinct ones.
+#: Chunks read first per chunk-level search before keeping the best per
+#: posting. A posting has about fourteen, so this leaves room for `limit`
+#: distinct ones. Where the area or a level decides which count, the window
+#: widens until enough do (`_nearest_kept`).
 _CHUNK_POOL = 200
 
-#: Chunks read when a model that judges is handed the postings nearest the
-#: question (`_nearest_unfound`). Enough for a few hundred distinct postings:
-#: the area keeps about half of what is found, and the nearest are often the
-#: ones the keywords already have.
+#: Chunks read first when a model that judges is handed the postings nearest
+#: the question (`_nearest_unfound`). Enough for a few hundred distinct
+#: postings: the area keeps about half of what is found, and the nearest are
+#: often the ones the keywords already have. Widened as `_CHUNK_POOL` is.
 _WIDEN_CHUNKS = 1500
 
 #: Words a company name may drop and still name it: "Mistral" for Mistral AI,
@@ -846,7 +850,11 @@ async def _names_a_title(session: AsyncSession, subject: list[str]) -> bool:
 
 
 async def _titles_in_question(
-    session: AsyncSession, question: str, companies: list[uuid.UUID]
+    session: AsyncSession,
+    question: str,
+    companies: list[uuid.UUID],
+    *,
+    counts: Callable[[_Hit], bool] | None = None,
 ) -> list[_Hit]:
     """Open postings whose whole title, words only, is in the question.
 
@@ -855,30 +863,27 @@ async def _titles_in_question(
     Director and Operations titles tied for the 30 keyword places ahead of
     it. Two words at least, or a posting titled "Engineer" would claim every
     question naming an engineer. Longest first, so the most specific wins.
+
+    `KEYWORD_POOL` of them, or with `counts`, read on until that many count:
+    the newest thirty with a title may all be abroad (`_read_until`).
     """
     asked = " " + " ".join(_NON_ALNUM.split(question.lower())).strip() + " "
     title = func.trim(func.regexp_replace(func.lower(Posting.title), "[^a-z0-9]+", " ", "g"))
     query = (
-        select(
-            Posting.id,
-            Posting.title,
-            Posting.location,
-            Posting.url,
-            Posting.description_raw,
-            Company.name,
-        )
-        .outerjoin(Company, Company.id == Posting.company_id)
+        select(Posting.id)
         .where(
             Posting.closed_at.is_(None),
             func.strpos(title, " ") > 0,
             func.strpos(literal(asked), func.concat(" ", title, " ")) > 0,
         )
         .order_by(func.length(title).desc(), Posting.first_seen_at.desc(), Posting.id)
-        .limit(KEYWORD_POOL)
     )
     if companies:
         query = query.where(Posting.company_id.in_(companies))
-    return [_Hit(*row) for row in (await session.execute(query)).all()]
+    if counts is None:
+        query = query.limit(KEYWORD_POOL)
+    ranking = list((await session.scalars(query)).all())
+    return await _read_until(session, ranking, first=KEYWORD_POOL, counts=counts, want=KEYWORD_POOL)
 
 
 @lru_cache(maxsize=50_000)
@@ -1033,10 +1038,69 @@ async def _keyword_hits(
     frequencies: idf.DocumentFrequencies,
     companies: list[uuid.UUID],
     *,
-    pool: int = KEYWORD_POOL,
+    pool: int | None = KEYWORD_POOL,
     only: list[uuid.UUID] | None = None,
 ) -> list[_Hit]:
     """Open postings containing a question term, rarest matches first.
+
+    The best `pool` of them, or every one with `pool=None`.
+    """
+    ranking = await _keyword_ranking(session, terms, frequencies, companies, limit=pool, only=only)
+    return await _read_until(session, ranking, first=len(ranking))
+
+
+async def _read_until(
+    session: AsyncSession,
+    ranking: list[uuid.UUID],
+    *,
+    first: int,
+    counts: Callable[[_Hit], bool] | None = None,
+    want: int = 0,
+) -> list[_Hit]:
+    """`ranking`'s postings in its order, read until `want` of them `counts`.
+
+    The first `first` are read whatever they are, and then twice as many
+    again each time, until enough count or the ranking runs out. Every
+    posting read is returned, counted or not, so the caller's filters and
+    their counts of what was left out work on it as on any pool.
+
+    This is how a filter runs before a cut. A pool cut first and filtered
+    after is a posting the filter would keep and the answer says does not
+    exist. Reading `first` before anything else keeps a search that was not
+    short exactly as it was.
+    """
+    read: list[_Hit] = []
+    kept = 0
+    start, size = 0, max(first, 1)
+    while start < len(ranking):
+        batch = ranking[start : start + size]
+        found = await _hits_for(session, batch)
+        hits = [found[posting_id] for posting_id in batch if posting_id in found]
+        read.extend(hits)
+        start += len(batch)
+        if counts is None:
+            continue
+        kept += sum(1 for hit in hits if counts(hit))
+        if kept >= want:
+            break
+        size *= 2
+    return read
+
+
+async def _keyword_ranking(
+    session: AsyncSession,
+    terms: list[str],
+    frequencies: idf.DocumentFrequencies,
+    companies: list[uuid.UUID],
+    *,
+    limit: int | None = None,
+    only: list[uuid.UUID] | None = None,
+) -> list[uuid.UUID]:
+    """Every open posting containing a question term, rarest matches first: ids.
+
+    Ids, so a caller that filters can read as far down as its filter needs
+    (`_read_until`). Scoring has to reach every match to order them, so the
+    whole order costs what its head did.
 
     Two passes, because the obvious single query cost 3.1s for eight terms on
     the owner's 19,018 postings: Postgres rebuilt the concatenated text and ran
@@ -1044,6 +1108,8 @@ async def _keyword_hits(
     the matched text is materialised once, and the per-term scoring runs only
     over those rows — 0.8s for the same eight terms.
     """
+    if not terms:
+        return []
     searchable = func.concat_ws(
         " ", Posting.title, Posting.location, Company.name, Posting.description_raw
     )
@@ -1081,20 +1147,12 @@ async def _keyword_hits(
         )
 
     query = (
-        select(
-            Posting.id,
-            Posting.title,
-            Posting.location,
-            Posting.url,
-            Posting.description_raw,
-            Company.name,
-        )
+        select(Posting.id)
         .join(matched, matched.c.posting_id == Posting.id)
-        .outerjoin(Company, Company.id == Posting.company_id)
         .order_by(score.desc(), Posting.first_seen_at.desc(), Posting.id)
-        .limit(pool)
+        .limit(limit)
     )
-    return [_Hit(*row) for row in (await session.execute(query)).all()]
+    return list((await session.scalars(query)).all())
 
 
 def _space_filter(model: str, revision: int | None) -> list[ColumnElement[bool]]:
@@ -1112,26 +1170,44 @@ async def _nearest(
     vector: list[float],
     limit: int,
     companies: list[uuid.UUID],
+    *,
+    counts: Callable[[_Hit], bool] | None = None,
+    want: int = 0,
 ) -> list[_Hit]:
-    """The nearest open postings in one space, sharing at least something."""
+    """The nearest open postings in one space, sharing at least something.
+
+    `limit` of them. With `counts`, read on past `limit` until `want` of them
+    count, for the reason `_nearest_kept` does, and every posting read is
+    returned.
+    """
     distance = Posting.description_embedding.cosine_distance(vector)
-    query = (
-        select(
-            Posting.id,
-            Posting.title,
-            Posting.location,
-            Posting.url,
-            Posting.description_raw,
-            Company.name,
+    window = limit
+    while True:
+        query = (
+            select(
+                Posting.id,
+                Posting.title,
+                Posting.location,
+                Posting.url,
+                Posting.description_raw,
+                Company.name,
+            )
+            .outerjoin(Company, Company.id == Posting.company_id)
+            .where(*_space_filter(*space), distance < _NO_OVERLAP)
+            .order_by(distance, Posting.id)
+            .limit(window)
         )
-        .outerjoin(Company, Company.id == Posting.company_id)
-        .where(*_space_filter(*space), distance < _NO_OVERLAP)
-        .order_by(distance, Posting.id)
-        .limit(limit)
-    )
-    if companies:
-        query = query.where(Posting.company_id.in_(companies))
-    return [_Hit(*row) for row in (await session.execute(query)).all()]
+        if companies:
+            query = query.where(Posting.company_id.in_(companies))
+        hits = [_Hit(*row) for row in (await session.execute(query)).all()]
+        if counts is None or len(hits) < window:
+            return hits
+        kept = 0
+        for index, hit in enumerate(hits):
+            kept += int(counts(hit))
+            if kept >= want and index + 1 >= limit:
+                return hits[: index + 1]
+        window *= _WIDEN_BY
 
 
 async def _order_in_space(
@@ -1174,6 +1250,22 @@ async def _best_chunks(
     Without it, the nearest chunks of the whole corpus, then the best per
     posting, above a similarity of zero like `_nearest`.
     """
+    best, _ = await _chunk_ranking(
+        session, model, vector, among=among, companies=companies, limit=limit
+    )
+    return best
+
+
+async def _chunk_ranking(
+    session: AsyncSession,
+    model: str,
+    vector: list[float],
+    *,
+    among: list[uuid.UUID] | None,
+    companies: list[uuid.UUID] | None,
+    limit: int,
+) -> tuple[list[tuple[uuid.UUID, int, int]], bool]:
+    """`_best_chunks`, and whether every chunk it could have read was read."""
     distance = PostingChunk.embedding.cosine_distance(vector)
     query = (
         select(PostingChunk.posting_id, PostingChunk.start, PostingChunk.length, distance)
@@ -1183,15 +1275,81 @@ async def _best_chunks(
     if among is not None:
         query = query.where(PostingChunk.posting_id.in_(among))
     else:
-        query = query.where(distance < _NO_OVERLAP).order_by(distance).limit(limit)
+        # A total order, so a wider window starts with the narrower one.
+        query = (
+            query.where(distance < _NO_OVERLAP)
+            .order_by(distance, PostingChunk.posting_id, PostingChunk.ordinal)
+            .limit(limit)
+        )
     if companies:
         query = query.where(Posting.company_id.in_(companies))
+    rows = (await session.execute(query)).all()
     best: dict[uuid.UUID, tuple[float, int, int]] = {}
-    for posting_id, start, length, dist in (await session.execute(query)).all():
+    for posting_id, start, length, dist in rows:
         if posting_id not in best or dist < best[posting_id][0]:
             best[posting_id] = (dist, start, length)
     ranked = sorted(best.items(), key=lambda item: (item[1][0], str(item[0])))
-    return [(posting_id, start, length) for posting_id, (_, start, length) in ranked]
+    every = among is not None or len(rows) < limit
+    return [(posting_id, start, length) for posting_id, (_, start, length) in ranked], every
+
+
+#: How much wider each look at the nearest chunks is than the one before.
+_WIDEN_BY = 4
+
+
+async def _nearest_kept(
+    session: AsyncSession,
+    model: str,
+    vector: list[float],
+    *,
+    companies: list[uuid.UUID] | None,
+    want: int,
+    counts: Callable[[_Hit], bool],
+    skip: set[uuid.UUID] | frozenset[uuid.UUID] = frozenset(),
+    window: int = _CHUNK_POOL,
+    at_least: int = 0,
+) -> tuple[list[_Hit], dict[uuid.UUID, tuple[int, int]]]:
+    """Postings by their best chunk, nearest first, until `want` of them count.
+
+    Every posting read is returned, counted or not, with the chunk it is
+    nearest by. `skip` is left out before anything is read or counted, and
+    `at_least` postings are read whatever they are, as a pool of that size
+    was read before.
+
+    The nearest `window` chunks first, as `_best_chunks` reads them. When
+    those hold too few postings that count, the window is widened until
+    enough do or every chunk has been read. Two hundred chunks of postings
+    abroad otherwise leave the posting here unread, and the answer says there
+    is none in the search area.
+    """
+    hydrated: dict[uuid.UUID, _Hit] = {}
+    while True:
+        best, every = await _chunk_ranking(
+            session, model, vector, among=None, companies=companies, limit=window
+        )
+        order = [(pid, start, length) for pid, start, length in best if pid not in skip]
+        read: list[_Hit] = []
+        spans: dict[uuid.UUID, tuple[int, int]] = {}
+        kept = 0
+        for index, (posting_id, start, length) in enumerate(order):
+            if posting_id not in hydrated:
+                # Read a batch ahead, not one posting per query.
+                ahead = order[index : index + max(want, at_least, 1)]
+                batch = [pid for pid, _, _ in ahead if pid not in hydrated]
+                hydrated.update(await _hits_for(session, batch))
+            hit = hydrated.get(posting_id)
+            if hit is None:
+                continue
+            read.append(hit)
+            spans[posting_id] = (start, length)
+            kept += int(counts(hit))
+            if kept >= want and len(read) >= at_least:
+                return read, spans
+        # A window holding fewer than `at_least` postings is all a pool of
+        # that size ever had; it is widened only for want of ones that count.
+        if every or kept >= want:
+            return read, spans
+        window *= _WIDEN_BY
 
 
 async def _hits_for(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, _Hit]:
@@ -1270,23 +1428,29 @@ async def _nearest_unfound(
     want = _widen_pool()
     if want <= 0:
         return [], {}
+
+    def counts(hit: _Hit) -> bool:
+        return not (in_area and _outside_area(hit))
+
     spans: dict[uuid.UUID, tuple[int, int]] = {}
+    hits: dict[uuid.UUID, _Hit] = {}
     for model, vector in chunk_vectors.items():
-        nearest = await _best_chunks(
-            session, model, vector, companies=companies, limit=_WIDEN_CHUNKS
+        # Read until `want` are in the area, not the first 200 and then the
+        # area: those can all be abroad.
+        read, nearest = await _nearest_kept(
+            session,
+            model,
+            vector,
+            companies=companies,
+            want=want,
+            counts=counts,
+            skip=found,
+            window=_WIDEN_CHUNKS,
         )
-        for posting_id, start, length in nearest:
-            if posting_id not in found:
-                spans.setdefault(posting_id, (start, length))
-    # Read no more descriptions than could be wanted: the area keeps about
-    # half of what is found, as `_AREA_POOL` allows for.
-    read = list(spans)[: want * (4 if in_area else 1)]
-    hits = await _hits_for(session, read)
-    kept = [
-        hits[posting_id]
-        for posting_id in read
-        if posting_id in hits and not (in_area and _outside_area(hits[posting_id]))
-    ][:want]
+        for hit in read:
+            spans.setdefault(hit.posting_id, nearest[hit.posting_id])
+            hits.setdefault(hit.posting_id, hit)
+    kept = [hits[posting_id] for posting_id in spans if counts(hits[posting_id])][:want]
     return kept, {hit.posting_id: spans[hit.posting_id] for hit in kept}
 
 
@@ -1377,23 +1541,21 @@ async def _semantic_candidates(
     vector = chunk_vectors.get(model)
     if vector is None:
         return [], {}, set()
-    best = await _best_chunks(session, model, vector, companies=companies)
-    hits = await _hits_for(session, [pid for pid, _, _ in best])
-    kept: list[_Hit] = []
-    spans: dict[uuid.UUID, tuple[int, int]] = {}
-    outside: set[uuid.UUID] = set()
-    for pid, start, length in best:
-        hit = hits.get(pid)
-        if hit is None:
-            continue
-        if area and _outside_area(hit):
-            outside.add(pid)
-            continue
-        kept.append(hit)
-        spans[pid] = (start, length)
-        if len(kept) == KEYWORD_POOL:
-            break
-    return kept, spans, outside
+    # Each posting's verdict, asked once while reading and reused below.
+    away: dict[uuid.UUID, bool] = {}
+
+    def counts(hit: _Hit) -> bool:
+        away[hit.posting_id] = bool(area) and _outside_area(hit)
+        return not away[hit.posting_id]
+
+    # The area is asked while reading, so two hundred chunks abroad do not
+    # leave nothing to keep.
+    read, nearest = await _nearest_kept(
+        session, model, vector, companies=companies, want=KEYWORD_POOL, counts=counts
+    )
+    kept = [hit for hit in read if not away[hit.posting_id]][:KEYWORD_POOL]
+    outside = {hit.posting_id for hit in read if away[hit.posting_id]}
+    return kept, {hit.posting_id: nearest[hit.posting_id] for hit in kept}, outside
 
 
 def _named_by_its_title(hit: _Hit, terms: list[str]) -> bool:
@@ -1428,10 +1590,11 @@ def _fuse_candidates(*rankings: list[uuid.UUID]) -> dict[uuid.UUID, float]:
     return scores
 
 
-#: Keyword matches read for their level when a question names one. Wider
-#: than `KEYWORD_POOL` for the reason `_AREA_POOL` is: what is cut off before
-#: it is filtered is a posting the answer says does not exist, and of thirty
-#: postings that say "backend" one was junior.
+#: Keyword matches read first for their level when a question names one.
+#: Wider than `KEYWORD_POOL` for the reason `_AREA_POOL` is: what is cut off
+#: before it is filtered is a posting the answer says does not exist, and of
+#: thirty postings that say "backend" one was junior. Read on past it, as
+#: `_AREA_POOL` is, until thirty are at the level.
 _LEVEL_POOL = 500
 
 
@@ -1449,13 +1612,6 @@ def _at_level(hits: list[_Hit], level: AskedLevel | None) -> tuple[list[_Hit], L
         allow_unknown=get_settings().chat_allow_unknown_seniority,
         title=lambda hit: hit.title,
     )
-
-
-#: Keyword matches read for their verdict when a question asks which jobs
-#: sponsor and also names something to look for. Wider than `KEYWORD_POOL`:
-#: an offer is rare (15 of 5,204 in the owner's area), and one cut off by a
-#: pool of thirty is one the answer says does not exist.
-_SPONSOR_POOL = 500
 
 
 async def _stating_sponsorship(
@@ -1510,7 +1666,11 @@ async def _stating_sponsorship(
             )
             over += " that say " + " or ".join(f'"{term}"' for term in terms)
     elif terms:
-        pool = await _keyword_hits(session, terms, frequencies, companies, pool=_SPONSOR_POOL)
+        # Every posting that says it, as a role's are all read above and every
+        # mention below. An offer is rare (15 of 5,204 in the owner's area),
+        # the counts are of this set, and a pool of 500 cut it short: an offer
+        # below the newest 500 refusals was one the answer said did not exist.
+        pool = await _keyword_hits(session, terms, frequencies, companies, pool=None)
         over = "postings that say " + " or ".join(f'"{term}"' for term in terms)
     else:
         mentions_only = True
@@ -1627,9 +1787,32 @@ async def retrieve(
         or (not about_my_applications and await _names_a_title(session, subject_terms))
     ):
         return Retrieval(attempted=False)
+    area = _search_area(question)
+    allow_unknown = get_settings().chat_allow_unknown_seniority
+
+    def in_area(hit: _Hit) -> bool:
+        return not (area and _outside_area(hit))
+
+    def passes(hit: _Hit) -> bool:
+        """Whether the area and the level asked would both keep it.
+
+        Asked while a pool is read, so they cut what was read and never what
+        was not: thirty postings abroad, or five hundred at another level,
+        otherwise fill a pool and the answer says there is none.
+        """
+        if not in_area(hit):
+            return False
+        if level is None:
+            return True
+        place = standing(hit.title, level)
+        return place < 2 or (allow_unknown and place == 2)
+
+    filtering = area is not None or level is not None
     # Asked for by its whole title, whatever its words are: found before the
     # check below, so a posting titled "Open Application" is still a subject.
-    titled = await _titles_in_question(session, question, companies)
+    titled = await _titles_in_question(
+        session, question, companies, counts=passes if filtering else None
+    )
     # A level alone names something: "internships" is every intern posting.
     if not (subject_terms or companies or titled or level is not None):
         return Retrieval(attempted=False, unnamed=True)
@@ -1716,7 +1899,6 @@ async def retrieve(
         role_words = {word for alias in typed_aliases for word in alias.split()}
         terms = _search_terms(question, frequencies, exclude=company_words | role_words | aside)
 
-    area = _search_area(question)
     outside = 0
     # By id, because one posting can be found two ways (its role and its exact
     # title) and is still one posting the area left out.
@@ -1799,7 +1981,28 @@ async def retrieve(
         pool = _AREA_POOL if area else KEYWORD_POOL
         if level is not None:
             pool = max(pool, _LEVEL_POOL)
-        if role_pool is None:
+        if role_pool is None and filtering:
+            # At least `pool`, as before, and on until thirty are kept. At the
+            # level asked by title, not only kept: a title naming no level is
+            # listed after them (below), so it cannot stand in for one.
+            asked_for = level
+            set_apart = {hit.posting_id for hit in titled}
+
+            def counts(hit: _Hit) -> bool:
+                return (
+                    hit.posting_id not in set_apart
+                    and in_area(hit)
+                    and (asked_for is None or at_the_level(hit.title, asked_for))
+                )
+
+            scanned = await _read_until(
+                session,
+                await _keyword_ranking(session, terms, frequencies, companies),
+                first=pool,
+                counts=counts,
+                want=KEYWORD_POOL,
+            )
+        elif role_pool is None:
             scanned = (
                 await _keyword_hits(session, terms, frequencies, companies, pool=pool)
                 if terms
@@ -2010,22 +2213,30 @@ async def retrieve(
             # Enough candidates for the re-ranker to have something to order.
             width = max(width, _rerank_pool())
         per_space: list[list[_Hit]] = []
+        # `width` from each space, as before, and on until the answer's
+        # `limit` are ones the area and the level keep: forty postings abroad
+        # are otherwise an answer of none.
         for model, vector in chunk_vectors.items():
-            best = (await _best_chunks(session, model, vector, companies=companies))[:width]
-            chunk_spans.update({posting_id: (start, length) for posting_id, start, length in best})
-            found = await _hits_for(session, [posting_id for posting_id, _, _ in best])
-            per_space.append(
-                [found[posting_id] for posting_id, _, _ in best if posting_id in found]
+            read, spans = await _nearest_kept(
+                session,
+                model,
+                vector,
+                companies=companies,
+                want=limit,
+                counts=passes,
+                at_least=width,
             )
+            chunk_spans.update(spans)
+            per_space.append(read)
         per_space += [
-            await _nearest(session, space, vector, width, companies)
+            await _nearest(session, space, vector, width, companies, counts=passes, want=limit)
             for space, vector in vectors.items()
         ]
         # Rank 1 of every space before rank 2 of any: distances from different
         # models share no scale, and ranks are all they have in common. A
         # posting in both a chunk space and a posting space is taken once.
         ranked, taken = [], set()
-        for rank in range(width):
+        for rank in range(max((len(hits) for hits in per_space), default=0)):
             for hits in per_space:
                 if rank < len(hits) and hits[rank].posting_id not in taken:
                     taken.add(hits[rank].posting_id)
