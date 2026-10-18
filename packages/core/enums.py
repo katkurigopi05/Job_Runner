@@ -222,3 +222,21 @@ class TailorMode(StrEnum):
     #: Only the bullets with a supported term to gain go, and none when there
     #: is nothing to gain.
     TARGETED = "targeted"
+
+
+class ResumeFont(StrEnum):
+    """The face a résumé and its cover letter are set in. `RESUME_FONT` picks one.
+
+    Only faces macOS installs. Calibri and Garamond are what résumé sites
+    offer, and neither is on this machine: fontconfig answers a request for
+    Calibri with Verdana and one for Garamond with Times New Roman, so
+    offering them would print a document in a face nobody chose.
+    """
+
+    #: The template as it has always been: "DejaVu Sans" first, which this Mac
+    #: does not have, so it renders in Helvetica.
+    DEFAULT = "default"
+    HELVETICA = "helvetica"
+    ARIAL = "arial"
+    GEORGIA = "georgia"
+    TIMES = "times"

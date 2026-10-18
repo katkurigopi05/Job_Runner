@@ -30,13 +30,18 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.core.config import Settings, get_settings
 from packages.core.models import Project, Resume
 from packages.core.storage import cover_letter_key, get_storage, resume_key
-from packages.tailor.assemble import AssemblyOptions, assemble_pdf
+from packages.tailor.assemble import AssemblyOptions, render_resume
 from packages.tailor.cache import MODE_STAMP
 from packages.tailor.parse import ParsedResume
 from packages.tailor.rewrite import TailorResult
 from packages.tailor.skills import reorder_skills
+from packages.tailor.style import ResumeFont, ResumeStyle, letter_css, uses_face
+
+#: The key beside `MODE_STAMP` that records how a stored résumé was set.
+STYLE_STAMP = "resume_style"
 
 log = structlog.get_logger(__name__)
 
@@ -120,9 +125,27 @@ async def _next_version(session: AsyncSession, candidate_id: uuid.UUID) -> int:
     return int(highest or 0) + 1
 
 
+def house_options(settings: Settings | None = None) -> AssemblyOptions:
+    """The face, and whether to fit, for a document an employer receives.
+
+    From settings (`RESUME_FONT`, `RESUME_FIT_PAGES`, `RESUME_MAX_PAGES`), so
+    a tailored résumé, an edit made at review and the cover letter beside
+    them are set alike.
+    """
+    configured = settings or get_settings()
+    return AssemblyOptions(
+        style=ResumeStyle(font=configured.resume_font),
+        fit=configured.resume_fit_pages,
+        max_pages=configured.resume_max_pages,
+    )
+
+
 def assembly_options(
-    parsed: ParsedResume, options: AssemblyOptions | None = None
-) -> AssemblyOptions | None:
+    parsed: ParsedResume,
+    options: AssemblyOptions | None = None,
+    *,
+    settings: Settings | None = None,
+) -> AssemblyOptions:
     """The options a tailoring of `parsed` is rendered with.
 
     A résumé tailored on its Projects section keeps that section. The GitHub
@@ -134,12 +157,18 @@ def assembly_options(
 
     Its own function so that whoever renders the *base* for a like-for-like
     comparison (`scripts/tailor_targeted.py`) gets the same template.
+    Options a caller passes are used as given.
     """
     from packages.tailor.bullets import tailorable_section
 
-    if options is None and tailorable_section(parsed) == "projects":
-        return AssemblyOptions(include_projects=False, replace_source_projects=False)
-    return options
+    if options is not None:
+        return options
+    house = house_options(settings)
+    if tailorable_section(parsed) == "projects":
+        return house.model_copy(
+            update={"include_projects": False, "replace_source_projects": False}
+        )
+    return house
 
 
 async def publish_tailored(
@@ -172,10 +201,13 @@ async def publish_tailored(
     options = assembly_options(parsed, options)
 
     try:
-        pdf = assemble_pdf(tailored, projects, options)
+        rendered = render_resume(tailored, projects, options)
     except Exception as exc:  # noqa: BLE001 - a render failure must not fail the run
         log.warning("tailored_render_failed", error=type(exc).__name__)
         return None
+    pdf = rendered.pdf
+    if rendered.note:
+        log.info("tailored_resume_styled", pages=rendered.pages, note=rendered.note)
 
     version = await _next_version(session, candidate_id)
     key = resume_key(str(candidate_id), version, "tailored.pdf")
@@ -193,6 +225,9 @@ async def publish_tailored(
     # (`cache.mode_of`); the cache key says the same and cannot be read back.
     stored_json = tailored.model_dump(mode="json")
     stored_json[MODE_STAMP] = str(mode)
+    # The same, for how it was set: the face, the sizes fitting chose, and
+    # why, so the review screen can say a résumé was tightened to fit.
+    stored_json[STYLE_STAMP] = rendered.stamp()
 
     resume = Resume(
         candidate_id=candidate_id,
@@ -233,21 +268,19 @@ async def publish_tailored(
     return resume
 
 
-#: A letter is prose, not a résumé — no rules, no small caps, wider leading.
-#: Same face and page box as RESUME_CSS so the two documents an employer opens
-#: together do not look like they came from different people.
-LETTER_CSS = """
-@page { size: Letter; margin: 1in; }
-body { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
-       font-size: 10.5pt; line-height: 1.5; color: #111; }
-p { margin: 0 0 10pt; }
-"""
+#: The letter's stylesheet in the default face (`style.letter_css`).
+LETTER_CSS = letter_css(ResumeFont.DEFAULT)
 
 
-def render_cover_letter(text: str) -> bytes:
-    """The letter as a PDF, laid out one paragraph per blank-line block."""
+def render_cover_letter(text: str, *, font: ResumeFont | None = None) -> bytes:
+    """The letter as a PDF, laid out one paragraph per blank-line block.
+
+    Set in the résumé's face (`RESUME_FONT` unless `font` names one), and in
+    the default face when that one is not installed, as the résumé is.
+    """
     from weasyprint import CSS, HTML
 
+    chosen = font if font is not None else get_settings().resume_font
     paragraphs = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
     body = "\n".join(
         # Single newlines inside a block are the letter's own line breaks —
@@ -256,6 +289,10 @@ def render_cover_letter(text: str) -> bytes:
         for block in paragraphs
     )
     document = HTML(string=f"<body>{body}</body>")
+    pdf = bytes(document.write_pdf(stylesheets=[CSS(string=letter_css(chosen))]))
+    if uses_face(pdf, chosen):
+        return pdf
+    log.warning("cover_letter_face_unavailable", font=str(chosen))
     return bytes(document.write_pdf(stylesheets=[CSS(string=LETTER_CSS)]))
 
 

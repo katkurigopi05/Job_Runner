@@ -495,3 +495,51 @@ does; the employer's own name is still a term.
 The plan for putting the targeted revision behind apply and the nightly
 batch is `docs/TARGETED_TAILORING_INTEGRATION.md`, which also says how much
 of it is built.
+
+## The face, and fitting a résumé to its pages
+
+Added 2026-10-18, at the owner's asking, after a look at what Tsenta's app
+offers: five faces, a "One page" toggle and justified text. `style.py`;
+`tests/test_resume_style.py`.
+
+Two defects it answers. The owner's `v4/tailored.pdf` ran to three pages with
+7 lines on the third, and `layout.py` could only report it. And the template
+asked for "DejaVu Sans", which this Mac does not have, so every PDF printed in
+Helvetica while the stylesheet said otherwise.
+
+What a later change could quietly undo:
+
+- **The default style is the template as it was, character for character.**
+  `RESUME_CSS` is `resume_css(ResumeStyle())`, and the test compares it with
+  the old literal. Every page-layout fixture counts lines on that document.
+  `AssemblyOptions.fit` is off for the same reason: a bare `assemble_pdf` is
+  the template. Tailoring, an edit at review and the cover letter take the
+  face and fitting from settings (`publish.house_options`).
+- **Fitting changes spacing and size, never a word.** Steps in `FIT_STEPS`,
+  spacing before type, down to `FIT_FLOOR`: 9.5pt body, 1.2 line spacing,
+  0.5in margins. A target the floor cannot reach keeps the ordinary type and
+  says so: squeezing to the floor and still running over costs the reader
+  and buys nothing. Cutting stays the owner's call, on the review screen.
+- **A spill is up to a quarter of a page** (`SPILL_SHARE`), wider than the
+  6 lines `layout.py` reports as thin. The `v4` résumé's 7 lines were one
+  over that, and one step pulled them back to two pages at 10pt.
+- **The gap under a bullet is part of the style.** Fixed at 3pt while
+  everything else tightened, it held a bullet-heavy page to 14% more lines
+  at the floor, short of a 7-line spill on page 2.
+- **Only faces macOS installs are offered.** fontconfig answers Calibri with
+  Verdana and Garamond with Times New Roman.
+- **A face is checked in the PDF, by letters.** WeasyPrint names an embedded
+  font after its family, so Times New Roman arrives as
+  `Times-New-Roman,-Bold`. A prefix check written against Georgia passed and
+  read Times as not installed on the owner's résumé. The test asks every
+  face fontconfig has, with fontconfig as the judge, because asking
+  `face_available` would skip exactly when the check is wrong. A face that is
+  not embedded falls back to the default face and the note says which one
+  was asked for.
+- **How a stored résumé was set is recorded** beside `MODE_STAMP`, as
+  `STYLE_STAMP`: the face, the sizes and the note. Not yet shown on the
+  review screen.
+
+Not taken from Tsenta: justified text (uneven word spacing for no parsing
+gain) and its "Aggressive tailoring … may stretch the truth" mode, which is
+§2.1's line.
