@@ -308,6 +308,6 @@ async def test_a_portfolio_page_says_so_in_the_reason() -> None:
 
     assert not isinstance(outcome, Resolved)
     reason = outcome[1]
-    assert "https://jobs.vc.com/" in reason
+    assert reason.startswith("careers page https://jobs.vc.com/ lists jobs from ")
     assert "2 different companies" in reason
     assert "lever/cyderes" in reason
