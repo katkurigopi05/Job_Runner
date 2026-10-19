@@ -22,8 +22,9 @@ What the numbers are, and are not:
 - **"None" and "not a search" questions are scored on what was said**: right
   when the mode returned nothing, or did not search.
 
-It never says one mode is better. Comparing them, with the held-out half read
-once, is part 3.
+`compare` pairs each candidate question with the shipped search's same
+question. It resamples differences, not two independent means. Dev is the
+default; the held-out half must be requested explicitly for the final decision.
 """
 
 from __future__ import annotations
@@ -247,14 +248,139 @@ def as_dict(scores: Sequence[QuestionScore]) -> list[dict[str, Any]]:
     return [asdict(score) for score in scores]
 
 
+PAIRED_METRICS = ("reciprocal_rank", "ndcg_at_depth", "recall_at_5", "precision_at_5")
+
+
+@dataclass
+class Comparison:
+    candidate: str
+    split: str
+    stratum: str | None
+    paired: int
+    unanswerable: int
+    differences: dict[str, dict[str, float]]
+    means: dict[str, float]
+    intervals: dict[str, tuple[float, float]]
+    abstention_lost: list[str]
+    abstention_gained: list[str]
+    routing_lost: list[str]
+    routing_gained: list[str]
+    shipped: Row
+    candidate_summary: Row
+
+
+def compare(
+    scores: Sequence[QuestionScore],
+    candidate: str,
+    *,
+    split: str = "dev",
+    stratum: str | None = None,
+    seed: int = 0,
+) -> Comparison:
+    """Candidate minus shipped, paired by question, with a seeded 95% CI.
+
+    Both modes must have exactly the same questions and relevant set. A pair
+    with no relevant postings is counted, not averaged. Latency covers every
+    selected question; coverage covers answer questions, as in `summarise`.
+    Nothing is rounded here: rounding an interval can hide whether it includes
+    zero. The caller can format it for a table after making that decision.
+    """
+    if split not in {"dev", "held_out"}:
+        raise ValueError("split must be dev or held_out")
+    if candidate == "shipped":
+        raise ValueError("candidate must differ from shipped")
+    chosen = [
+        s
+        for s in scores
+        if s.mode in {"shipped", candidate}
+        and s.held_out == (split == "held_out")
+        and (stratum is None or s.stratum == stratum)
+    ]
+    modes: dict[str, dict[str, QuestionScore]] = {"shipped": {}, candidate: {}}
+    for score in chosen:
+        if score.key in modes[score.mode]:
+            raise ValueError(f"duplicate question {score.key!r} in {score.mode}")
+        modes[score.mode][score.key] = score
+    shipped, other = modes["shipped"], modes[candidate]
+    if not shipped or shipped.keys() != other.keys():
+        raise ValueError("both modes must contain the same nonempty question set")
+    differences: dict[str, dict[str, float]] = {}
+    unanswerable = 0
+    flips: dict[str, list[str]] = {
+        f"{kind}_{way}": [] for kind in ("abstention", "routing") for way in ("lost", "gained")
+    }
+    for key in sorted(shipped):
+        left, right = shipped[key], other[key]
+        metadata = ("stratum", "expect", "held_out", "relevant", "gone")
+        if any(getattr(left, name) != getattr(right, name) for name in metadata):
+            raise ValueError(f"incomparable metadata for question {key!r}")
+        if left.expect != "answer":
+            if left.correct is None or right.correct is None:
+                raise ValueError(f"missing abstention verdict for question {key!r}")
+            kind = "abstention" if left.expect == "none" else "routing"
+            if left.correct and not right.correct:
+                flips[f"{kind}_lost"].append(key)
+            elif right.correct and not left.correct:
+                flips[f"{kind}_gained"].append(key)
+            continue
+        left_values = [getattr(left, metric) for metric in PAIRED_METRICS]
+        right_values = [getattr(right, metric) for metric in PAIRED_METRICS]
+        if all(value is None for value in left_values + right_values):
+            unanswerable += 1
+            continue
+        if any(value is None for value in left_values + right_values):
+            raise ValueError(f"missing paired metric for question {key!r}")
+        differences[key] = {
+            metric: float(b) - float(a)
+            for metric, a, b in zip(PAIRED_METRICS, left_values, right_values, strict=True)
+        }
+    means = {}
+    intervals = {}
+    for metric in PAIRED_METRICS:
+        values = [delta[metric] for delta in differences.values()]
+        if values:
+            means[metric] = statistics.fmean(values)
+            intervals[metric] = bootstrap_ci(
+                values, lambda xs: statistics.fmean(cast(Sequence[float], xs)), seed=seed
+            )
+    summaries = {row.mode: row for row in summarise(chosen, split)}
+    # Coverage and timing are thresholds too. Keep their full precision here,
+    # even though the legacy display rounds them to three decimal places.
+    for name, mine in modes.items():
+        row = summaries[name]
+        answers = [s for s in mine.values() if s.expect == "answer"]
+        returned = sum(s.returned for s in answers)
+        row.coverage = sum(s.judged for s in answers) / returned if returned else 1.0
+        row.median_seconds = statistics.median(s.seconds for s in mine.values())
+    return Comparison(
+        candidate=candidate,
+        split=split,
+        stratum=stratum,
+        paired=len(differences),
+        unanswerable=unanswerable,
+        differences=differences,
+        means=means,
+        intervals=intervals,
+        abstention_lost=flips["abstention_lost"],
+        abstention_gained=flips["abstention_gained"],
+        routing_lost=flips["routing_lost"],
+        routing_gained=flips["routing_gained"],
+        shipped=summaries["shipped"],
+        candidate_summary=summaries[candidate],
+    )
+
+
 __all__ = [
     "CLAUDE_NOTE",
+    "Comparison",
     "METRICS",
+    "PAIRED_METRICS",
     "RELEVANT",
     "SHOWN",
     "QuestionScore",
     "Row",
     "as_dict",
+    "compare",
     "score",
     "score_ranking",
     "summarise",

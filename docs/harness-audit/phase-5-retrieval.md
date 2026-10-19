@@ -9,7 +9,7 @@ Phase 5 has three parts.
 |---|---|
 | 1. Fix proven filter-before-limit starvation (finding F, medium) | Merged in #180, measured on the live database |
 | 2. Owner relevance on a frozen, held-out set | Done 2026-10-19: 330 graded (33 by the owner, 297 by Claude at the owner's request), thresholds approved, baseline frozen. Answer support is not built |
-| 3. Evaluate the re-ranker and semantic switches, each on its own | Ready to start against `chat-v1-baseline-20261019T071358Z.json` |
+| 3. Evaluate the re-ranker and semantic switches, each on its own | Completed 2026-10-19: semantic fails dev abstention; cross-encoder fails paired held-out improvement. Keep shipped; both switches off |
 
 ## Part 1: a filter runs before the cut
 
@@ -224,8 +224,8 @@ baseline from here on. Dev questions only, 15 that have something relevant:
 
 Every interval overlaps every other: on 15 questions none of the three is
 distinguishable from another on relevance. The semantic mode answered two
-more "should find nothing" questions with results. The held-out half is in
-the file and has not been read; part 3 reads it once.
+more "should find nothing" questions with results. At freeze time the
+held-out half had not been read; Part 3 below records the final read.
 
 **The grading page cut short.** It serves 20 at a time, and when a batch
 ran out it said only "reload for the next batch": the owner read the screen
@@ -250,9 +250,210 @@ and where. A change to them is a new approval, recorded here:
 | time | median at most 1.0 s above the baseline's |
 | coverage | at least 0.9 of a candidate's results graded, or grade more first |
 
-## Part 3
+## Part 3: paired comparison of the two switches
 
-The cross-encoder with candidates and the semantic switch, each measured
-against part 2's frozen baseline, one switch at a time, the held-out half
-read once at the end. Not shipped unless it beats the baseline under the
-approved thresholds.
+Measured 2026-10-19, branch `feat/chat-paired-comparison` from `origin/main`
+`2a01f44`. No search rule or default changed. The two candidates are the
+already pooled modes: `cross_encoder` sets only
+`CHAT_RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-12-v2`, with its existing
+50-candidate widening and above-zero admission; `semantic` sets only
+`CHAT_SEMANTIC_CANDIDATES=true`. They were never combined.
+
+### Preconditions and measurement
+
+- Part 2 merged in #181; the live database reports `d3a9f6c1b742`.
+- `make score-judgments` exits 0: **330 of 330 graded**, 33 by the owner,
+  297 by Claude at the owner's request. No grade was made or changed here.
+  Part 2 records the 88% binary and 67% exact agreement on the owner's 33;
+  these are mixed-source grades, not 330 independent owner judgements.
+- Frozen file: `storage/evaluation/chat-v1-baseline-20261019T071358Z.json`,
+  kind `baseline`, measured at `2026-10-19T07:13:58+00:00`, code `05440be`,
+  12,292 open postings. Its hashes are:
+
+  ```text
+  set:    0f1aca292a1ca2108f357a17e1de72a32c1ccab241d722acd1f34c2050793b88
+  grades: a63743e85d5329349f6dc9d88008c4ad5dbfb30356fbace11862588ac75fa07f
+  ```
+
+  The current set bytes and read-only live grades reproduce both hashes.
+- Threshold approval is recorded in **Part 2, “Thresholds, approved by the
+  owner on 2026-10-19, as proposed”**: the Claude Code answer “approve as
+  proposed”, also recorded by the frozen file's `thresholds_approved`.
+
+The comparison uses each mode's per-question scores **from that same frozen
+snapshot**, including its timings. The prerequisite's fresh run reproduced
+the displayed dev relevance metrics; its faster timings (0.45/0.48/0.83 s
+medians for shipped/semantic/cross-encoder) are not substituted into the
+frozen comparison. Available memory was 58%, above the 25% floor. Only one
+scoring process ran; Ollama's server held no loaded model. Downloads were
+disabled with `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`.
+
+`judged_scores.compare` pairs by question key, then bootstraps the mean of
+**candidate minus shipped** differences, 1,000 draws, seed 0, percentile
+95% intervals from `metrics.bootstrap_ci`. It refuses missing, duplicate or
+incomparable pairs. Relevant means grade 1 or 2; nDCG uses `2**grade - 1`.
+No relevant postings means counted but omitted from ranking means. Coverage
+is the fraction of returned answer postings carrying grades. Abstention and
+routing flips are named separately; times cover all selected questions.
+Intervals retain full precision for decisions and are rounded only in the
+tables. An endpoint of zero includes zero.
+
+Reproduce each dev comparison, separately, without models or a database:
+
+```sh
+python -m scripts.score_judgments --compare storage/evaluation/chat-v1-baseline-20261019T071358Z.json --candidate cross_encoder
+python -m scripts.score_judgments --compare storage/evaluation/chat-v1-baseline-20261019T071358Z.json --candidate semantic
+```
+
+The JSON includes per-question differences, aggregate scores, latency,
+coverage, flips, and the same breakdown by stratum. It prints dev only by
+default. `--split held_out` is the explicit final comparison.
+
+### Dev, before the final comparison
+
+21 questions: 15 answerable, 4 expecting none, 2 not a search. All 15 answer
+questions had relevant postings; none were omitted. Every overall interval
+below includes zero. A higher mean alone establishes no improvement.
+
+| Candidate | Paired n | ΔMRR [95% CI] | ΔnDCG@8 [95% CI] | ΔR@5 [95% CI] | ΔP@5 [95% CI] |
+|---|---:|---|---|---|---|
+| cross_encoder | 15 | -0.009 [-0.027, +0.000] | +0.024 [-0.050, +0.102] | -0.014 [-0.037, +0.000] | -0.027 [-0.067, +0.000] |
+| semantic | 15 | +0.011 [+0.000, +0.033] | +0.041 [-0.027, +0.122] | +0.029 [-0.015, +0.084] | +0.013 [-0.053, +0.080] |
+
+| Mode | Median s | p90 s | Judged coverage | Correct none / routing |
+|---|---:|---:|---:|---|
+| shipped | 0.925 | 2.054 | 1.000 | 5/6 |
+| cross_encoder | 1.394 | 2.014 | 1.000 | 5/6 |
+| semantic | 1.005 | 1.614 | 1.000 | 3/6 |
+
+**cross_encoder, dev by stratum.**
+
+| Stratum | Paired n | ΔMRR [95% CI] | ΔnDCG@8 [95% CI] | ΔR@5 [95% CI] | ΔP@5 [95% CI] |
+|---|---:|---|---|---|---|
+| level | 3 | +0.000 [+0.000, +0.000] | -0.009 [-0.084, +0.116] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+| paraphrase | 3 | -0.044 [-0.089, +0.000] | -0.144 [-0.312, -0.040] | -0.048 [-0.143, +0.000] | -0.067 [-0.200, +0.000] |
+| place | 2 | +0.000 [+0.000, +0.000] | +0.148 [+0.000, +0.295] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+| role | 2 | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+| skill | 4 | +0.000 [+0.000, +0.000] | +0.133 [+0.027, +0.266] | -0.017 [-0.050, +0.000] | -0.050 [-0.150, +0.000] |
+| sponsorship | 1 | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+
+**semantic, dev by stratum.**
+
+| Stratum | Paired n | ΔMRR [95% CI] | ΔnDCG@8 [95% CI] | ΔR@5 [95% CI] | ΔP@5 [95% CI] |
+|---|---:|---|---|---|---|
+| level | 3 | +0.000 [+0.000, +0.000] | -0.016 [-0.048, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+| paraphrase | 3 | +0.056 [+0.000, +0.111] | +0.123 [-0.048, +0.275] | +0.194 [+0.000, +0.306] | +0.200 [+0.000, +0.333] |
+| place | 2 | +0.000 [+0.000, +0.000] | -0.053 [-0.106, +0.000] | -0.038 [-0.077, +0.000] | -0.100 [-0.200, +0.000] |
+| role | 2 | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+| skill | 4 | +0.000 [+0.000, +0.000] | +0.099 [-0.103, +0.291] | -0.019 [-0.058, +0.000] | -0.050 [-0.150, +0.000] |
+| sponsorship | 1 | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+
+The “correct none / routing” column combines the four none questions with
+the two routing questions, matching Part 2's display. Separately:
+
+| Dev stratum | Questions | Shipped correct | Cross-encoder correct | Semantic correct |
+|---|---:|---:|---:|---:|
+| absent | 3 | 2 | 2 | 0 |
+| company (expecting none) | 1 | 1 | 1 | 1 |
+| not a search | 2 | 2 | 2 | 2 |
+
+These small stratum intervals are descriptive, without multiple-comparison
+correction. In particular the single sponsorship question cannot establish
+uncertainty over other sponsorship questions. There are no dev answer
+questions in the company stratum.
+
+### Which dev questions moved, read against the postings
+
+The pool's stored `surfaced_by` ranks reconstruct all 45 frozen dev
+answer rankings (15 questions × 3 modes) and reproduce every metric. The
+posting text was read in a read-only transaction restricted to dev. The
+explanations below interpret those existing grades; they do not replace them.
+
+| Question | Cross ΔnDCG@8 | Semantic ΔnDCG@8 | What the postings show |
+|---|---:|---:|---|
+| Which open roles use Kafka? | +0.338 | +0.360 | Both move Sentry's Streaming Platform engineer from 7 to 1. It explicitly builds and operates Kafka, whereas the former first, Chime Staff AI/ML Engineer, lists Kafka among many tools (grade 1). |
+| jobs using PyTorch | +0.053 | +0.133 | Cross puts Fireworks Employment Counsel at 2: PyTorch appears in the company's founding story, not the legal role (grade 0), costing one relevant top-five result. Semantic brings Constellation's Research Engineer to 2, requiring deep PyTorch internals (grade 2). |
+| roles that need Terraform | +0.141 | +0.084 | Cross adds Elastic's Lead Data Engineer, provisioning GCP with Terraform, and Decagon platform security roles. Semantic moves 15Five DevOps from 7 to 1 and adds HeartFlow's CDK-to-Terraform migration role. All are graded 2; relevance counts remain unchanged in the five. |
+| entry level software engineer jobs | +0.116 | 0.000 | Cross promotes Quora's New Grad ML Platform engineer from 2 to 1 and Scale's Public Sector New Grad from 5 to 2 (both grade 2), ahead of the grade-1 Nuro new-grad role. Same relevant five. |
+| junior python jobs | -0.034 | -0.048 | Both put Avast's thesis role first, where Python is an example alongside R/Excel (grade 1), ahead of Quora's Python-stack new-grad role (grade 2), now 3. All five still count relevant. |
+| senior data engineer jobs | -0.109 | 0.000 | Cross replaces Samsara's grade-2 data-pipeline roles at 7–8 with grade-1 analytics roles, including Temporal's reusable analytical models. Top five remain relevant. |
+| machine learning jobs in San Francisco | +0.295 | -0.106 | Both put OpenAI's Growth ML engineer in San Francisco first. Cross adds OpenAI's Implicit Signals role at 3; semantic inserts Cloudflare’s Customer Engineer AI at 4 (grade 0) and loses one relevant top-five posting. Spotify's New York role carries an owner grade of 2; that grade is preserved. |
+| roles building tools that help developers ship code faster | -0.312 | +0.011 | Cross puts a Process Street SaaS role at 5 (grade 0); the text emphasizes using Claude Code/Codex to develop, while GitLab's code-security role drops out. Semantic promotes Anthropic Platform Acceleration, building tooling other engineers rely on, from 8 to 3 (grade 2). |
+| roles grounding language model answers in company documents | -0.122 | -0.048 | Starburst's grounded-data agent role stays first (grade 2). Cross promotes Cloudflare GTM analytics above Coinbase ML and adds deal-desk/UX noise. Semantic adds Decagon's Agent UX Designer at 4 (grade 1): P@5 rises by 0.2, while moving a grade-2 Coinbase role down and losing the owner's grade-1 Datavant records role at 8 lowers nDCG. |
+| jobs teaching robots to see and move | +0.001 | +0.407 | Cross puts a 1X production supervisor first (grade 0) and shifts Figure's deployment internship, the first relevant result, from 3 to 5: MRR falls 1/3 to 1/5. Semantic finds MaxInsights robot-learning research at 2 and Agility perception engineering at 4 (grade 2), raising MRR to 1/2 and P@5 by 0.4. The owner's grade-2 assembly technician stays as graded. |
+| Which roles mention RAG? | 0.000 | -0.182 | Semantic moves Cresta's RAG-qualified Growth Engineer to 1 but also puts Elastic's Developer Advocate at 5 (grade 0, no RAG mention), losing a relevant slot; it also includes Carvana automotive parts at 7. Cross changes postings but all eight remain grade 2, so metrics do not move. |
+
+The other four dev answer questions have unchanged metrics: “any roles with AI”,
+forward-deployed engineer, software engineer in London, and visa sponsorship. Metric
+identity does not imply identical postings or order.
+
+**Semantic is rejected on dev, without opening its held-out scores.**
+“blacksmith jobs” and “roles using Zig?” each return eight results where
+shipped correctly returns none. Its other dev abstention and routing
+verdicts are unchanged, including the shared wrong answer to “COBOL
+developer jobs”. This fails the approved no-new-false-answer condition and
+§20's empty-keyword rule. No fix was attempted: a fix would be a new mode
+requiring the owner's consent to grade newly pooled rows. No pool writes
+were made.
+
+**Cross-encoder advances unchanged for the single final comparison.**
+Its dev mean MRR is lower, with an interval touching zero; nDCG is higher,
+with an interval spanning zero. It loses no dev abstention, has coverage
+1.0, and adds 0.469 s to the frozen median, within the approved 1.0 s.
+The final read is solely to decide this pre-existing candidate; no choice of
+rule, model, weight, or threshold was made from held-out results.
+
+### Single final held-out comparison and decision
+
+After completing the dev analysis, the held-out scores were opened once,
+**for cross-encoder against shipped only**, using the command above with
+`--split held_out`. Semantic was already rejected on dev. No tuning or new
+pooling followed this read. There are 14 held-out questions: 13 answerable,
+none omitted for lack of relevant postings, and one expecting none.
+
+| Candidate | Paired n | ΔMRR [95% CI] | ΔnDCG@8 [95% CI] | ΔR@5 [95% CI] | ΔP@5 [95% CI] |
+|---|---:|---|---|---|---|
+| cross_encoder | 13 | +0.038 [+0.000, +0.115] | +0.073 [-0.002, +0.183] | +0.055 [+0.000, +0.143] | +0.077 [+0.000, +0.200] |
+
+| Held-out mode | MRR | nDCG@8 | R@5 | P@5 | Median s | p90 s | Coverage | None correct |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| shipped | 0.962 | 0.843 | 0.510 | 0.862 | 0.7885 | 2.010 | 1.000 | 1/1 |
+| cross_encoder | 1.000 | 0.916 | 0.565 | 0.938 | 1.0810 | 2.737 | 1.000 | 1/1 |
+
+The higher cross-encoder means are not sufficient. The unrounded nDCG
+interval is **[-0.0017392258362458784, 0.18274606381805597]**; MRR is
+**[0, 0.11538461538461539]**. Neither excludes zero. One question changes
+MRR, the other twelve do not; this is a small question set, not proof the
+cross-encoder is equivalent or worse. It is not established as better.
+
+| Approved condition | Cross-encoder final held-out | Semantic dev screen |
+|---|---|---|
+| MRR no lower than shipped | Pass: +0.038 | Final not opened |
+| nDCG@8 no lower than shipped | Pass: +0.073 | Final not opened |
+| Better: paired 95% difference interval excludes zero | **Fail:** both include zero | No overall dev interval excludes zero; final not opened |
+| No newly wrong abstention | Pass: no flips, 1/1 correct | **Fail:** blacksmith and Zig, two lost |
+| Median increase ≤1.0 s | Pass: +0.2925 s | Dev +0.080 s; final not opened |
+| Judged coverage ≥0.9 | Pass: 1.000 | Dev 1.000; final not opened |
+
+**Decision: keep the shipped search. Neither switch replaces it.** Semantic
+fails abstention on dev; cross-encoder fails the approved paired held-out
+improvement threshold. Both remain off, and the owner's `.env` is untouched.
+No owner action is needed to retain the shipped search. A future retrieval
+fix would need a new pooled mode, consent to grade new rows, coverage at
+least 0.9 and an evaluation plan that does not tune on this now-read held-out
+half. Answer support and the feed's separate relevance evaluation remain
+outside this switch decision.
+
+### Verification
+
+Ten new tests failed before the comparison existed (missing `compare` and
+unrecognized comparison flags). All 21 judgment-score tests now pass,
+including keyed pairing, bootstrap precision, split/stratum isolation,
+abstention/routing flips, coverage and timing, rejected incomplete pairs,
+and an offline CLI test with a held-out sentinel that never appears by
+default. Ruff and `ruff format --check` pass; `make typecheck` checks 162
+source files without errors. Full suite: **4,655 passed, 2 skipped**, exit 0.
+The worktree uses ignored symlinks for `.venv` and `.env`; the full run
+unsets `JOBRUNNER_ENV_FILE` so the existing no-configuration test can leave
+the configured directory. The live database was only read. The root branch,
+search code, grades, pool, feed and defaults were not changed.

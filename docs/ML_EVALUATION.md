@@ -2259,3 +2259,88 @@ assistant:
 
 The last is the blocker it has been since 2026-10-10: relevance grades, of
 which there are none.
+
+
+## Phase 5 part 3: owner-approved paired switch comparison (2026-10-19)
+
+Baseline `chat-v1-baseline-20261019T071358Z.json`, kind `baseline`, 330/330
+grades (33 owner, 297 Claude at the owner's request). This is mixed-source
+relevance evidence; the owner audit agrees on relevant/not in 88% of 33
+pairs, on exact 0–2 grade in 67%. The baseline's set hash is
+`0f1aca292a1ca2108f357a17e1de72a32c1ccab241d722acd1f34c2050793b88`, grades
+hash `a63743e85d5329349f6dc9d88008c4ad5dbfb30356fbace11862588ac75fa07f`.
+Threshold approval: [Phase 5 report, Part 2](harness-audit/phase-5-retrieval.md).
+
+Paired candidate minus shipped differences, question bootstrap, 1,000 draws,
+seed 0, percentile 95% intervals. Frozen snapshot scores and timings; dev is
+15 answerable questions, 4 none and 2 routing questions. Endpoints of zero
+include zero. Small strata are descriptive, without multiplicity correction.
+
+| Candidate | Paired n | ΔMRR [95% CI] | ΔnDCG@8 [95% CI] | ΔR@5 [95% CI] | ΔP@5 [95% CI] |
+|---|---:|---|---|---|---|
+| cross_encoder | 15 | -0.009 [-0.027, +0.000] | +0.024 [-0.050, +0.102] | -0.014 [-0.037, +0.000] | -0.027 [-0.067, +0.000] |
+| semantic | 15 | +0.011 [+0.000, +0.033] | +0.041 [-0.027, +0.122] | +0.029 [-0.015, +0.084] | +0.013 [-0.053, +0.080] |
+
+| Mode | Median s | p90 s | Judged coverage | Correct none / routing |
+|---|---:|---:|---:|---|
+| shipped | 0.925 | 2.054 | 1.000 | 5/6 |
+| cross_encoder | 1.394 | 2.014 | 1.000 | 5/6 |
+| semantic | 1.005 | 1.614 | 1.000 | 3/6 |
+
+**cross_encoder, dev by stratum.**
+
+| Stratum | Paired n | ΔMRR [95% CI] | ΔnDCG@8 [95% CI] | ΔR@5 [95% CI] | ΔP@5 [95% CI] |
+|---|---:|---|---|---|---|
+| level | 3 | +0.000 [+0.000, +0.000] | -0.009 [-0.084, +0.116] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+| paraphrase | 3 | -0.044 [-0.089, +0.000] | -0.144 [-0.312, -0.040] | -0.048 [-0.143, +0.000] | -0.067 [-0.200, +0.000] |
+| place | 2 | +0.000 [+0.000, +0.000] | +0.148 [+0.000, +0.295] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+| role | 2 | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+| skill | 4 | +0.000 [+0.000, +0.000] | +0.133 [+0.027, +0.266] | -0.017 [-0.050, +0.000] | -0.050 [-0.150, +0.000] |
+| sponsorship | 1 | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+
+**semantic, dev by stratum.**
+
+| Stratum | Paired n | ΔMRR [95% CI] | ΔnDCG@8 [95% CI] | ΔR@5 [95% CI] | ΔP@5 [95% CI] |
+|---|---:|---|---|---|---|
+| level | 3 | +0.000 [+0.000, +0.000] | -0.016 [-0.048, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+| paraphrase | 3 | +0.056 [+0.000, +0.111] | +0.123 [-0.048, +0.275] | +0.194 [+0.000, +0.306] | +0.200 [+0.000, +0.333] |
+| place | 2 | +0.000 [+0.000, +0.000] | -0.053 [-0.106, +0.000] | -0.038 [-0.077, +0.000] | -0.100 [-0.200, +0.000] |
+| role | 2 | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+| skill | 4 | +0.000 [+0.000, +0.000] | +0.099 [-0.103, +0.291] | -0.019 [-0.058, +0.000] | -0.050 [-0.150, +0.000] |
+| sponsorship | 1 | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] | +0.000 [+0.000, +0.000] |
+
+Dev abstention strata (cross / semantic correct): absent 2/3 vs 0/3,
+company 1/1 vs 1/1, routing 2/2 vs 2/2. Shipped is 2/3, 1/1 and 2/2.
+Semantic is rejected on dev for newly answering “blacksmith jobs” and “roles
+using Zig?” (eight results each). Its held-out scores remain unopened.
+Cross-encoder alone advances, unchanged, to the single final comparison.
+[The report](harness-audit/phase-5-retrieval.md#which-dev-questions-moved-read-against-the-postings)
+names every dev question whose metrics move and explains it from posting text.
+
+**Final held-out read:** cross-encoder only, after dev analysis, unchanged;
+semantic excluded after its dev abstention failure. Thirteen answerable
+questions plus one none question. No unanswerable question was omitted.
+
+| Candidate | Paired n | ΔMRR [95% CI] | ΔnDCG@8 [95% CI] | ΔR@5 [95% CI] | ΔP@5 [95% CI] |
+|---|---:|---|---|---|---|
+| cross_encoder | 13 | +0.038 [+0.000, +0.115] | +0.073 [-0.002, +0.183] | +0.055 [+0.000, +0.143] | +0.077 [+0.000, +0.200] |
+
+| Held-out mode | MRR | nDCG@8 | R@5 | P@5 | Median s | p90 s | Coverage | None correct |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| shipped | 0.962 | 0.843 | 0.510 | 0.862 | 0.7885 | 2.010 | 1.000 | 1/1 |
+| cross_encoder | 1.000 | 0.916 | 0.565 | 0.938 | 1.0810 | 2.737 | 1.000 | 1/1 |
+
+| Approved condition | Cross-encoder final held-out | Semantic dev screen |
+|---|---|---|
+| MRR no lower than shipped | Pass: +0.038 | Final not opened |
+| nDCG@8 no lower than shipped | Pass: +0.073 | Final not opened |
+| Better: paired 95% difference interval excludes zero | **Fail:** both include zero | No overall dev interval excludes zero; final not opened |
+| No newly wrong abstention | Pass: no flips, 1/1 correct | **Fail:** blacksmith and Zig, two lost |
+| Median increase ≤1.0 s | Pass: +0.2925 s | Dev +0.080 s; final not opened |
+| Judged coverage ≥0.9 | Pass: 1.000 | Dev 1.000; final not opened |
+
+**Keep shipped; leave both switches off.** The held-out nDCG interval's
+unrounded lower endpoint is -0.0017392258362458784, and the MRR interval
+starts at exactly zero. Higher means do not pass the approved “better” test.
+No `.env`, grades, search behavior, `Match.score`, or feed changes. No new
+pooling. Answer support remains unevaluated; this result concerns retrieval.
