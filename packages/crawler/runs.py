@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.enums import SourceStatus
 from packages.core.models import Company, CompanyCrawlState, CrawlRun
+from packages.crawler import issues
 from packages.crawler.crawl import CompanyResult, CrawlReport, ResultHook
 
 log = structlog.get_logger(__name__)
@@ -154,6 +155,15 @@ class AttemptOutcome:
     recorded: bool = True
 
 
+#: What a crawl failure with no error text of its own was.
+_CRAWL_REASONS = {
+    "board_gone": "the board no longer exists",
+    "board_error": "the board failed",
+    "board_blocked": "the board disallows crawling",
+    "board_reads_empty": "the board parsed to nothing while open postings are held for it",
+}
+
+
 async def record_attempt(
     session: AsyncSession,
     company: Company,
@@ -179,6 +189,7 @@ async def record_attempt(
         return AttemptOutcome(status, state.consecutive_failures, state.next_due_at, recorded=False)
 
     current = now or datetime.now(UTC)
+    failing_before = state.consecutive_failures
     state.last_attempt_at = current
     state.last_status = status
     state.last_error = result.error or (result.skipped_reason if result.blocked else None)
@@ -193,6 +204,22 @@ async def record_attempt(
 
     state.next_due_at = current + backoff_for(company.poll_interval_s, state.consecutive_failures)
     await session.flush()
+
+    # A board that keeps failing is noted for the deep dive, and the note
+    # closes when it answers again (`issues.py`). Backing off alone retried a
+    # moved board every few hours for ever, and told no one.
+    category = issues.crawl_category(result)
+    if category and state.consecutive_failures >= issues.CRAWL_FAILURES_BEFORE_NOTED:
+        await issues.note(
+            session,
+            company.id,
+            stage="crawl",
+            category=category,
+            reason=state.last_error or _CRAWL_REASONS[category],
+            now=current,
+        )
+    elif failing_before and not state.consecutive_failures:
+        await issues.resolve(session, company.id, stage="crawl", by="crawl", now=current)
 
     if state.consecutive_failures:
         log.info(

@@ -486,6 +486,20 @@ async def test_among_themselves_yielding_tasks_keep_their_order(db_session) -> N
     assert claimed is not None and claimed.task.payload_json == {"company_id": "earlier"}
 
 
+async def test_a_later_yielding_kind_waits_for_an_earlier_one(db_session) -> None:
+    """The deep dive comes after discovery too: "after all the jobs are done"
+    was the owner's word for it (2026-10-19)."""
+    long_ago = datetime.now(UTC) - timedelta(hours=1)
+    await enqueue(db_session, "deep_dive_company", {"issue_id": "a"}, run_after=long_ago)
+    await enqueue(db_session, BULK, {"company_id": "b"})
+    await enqueue(db_session, "crawl_company", {"company_id": "c"})
+    order = [BULK, "deep_dive_company"]
+
+    claimed = [await claim_task(db_session, worker_id=WORKER_A, after_others=order) for _ in "abc"]
+
+    assert [c.task.kind for c in claimed if c] == ["crawl_company", BULK, "deep_dive_company"]
+
+
 async def test_with_no_yielding_kinds_the_order_is_by_time_alone(db_session) -> None:
     long_ago = datetime.now(UTC) - timedelta(hours=1)
     await enqueue(db_session, BULK, {"company_id": "a"}, run_after=long_ago)
@@ -500,6 +514,7 @@ async def test_the_worker_makes_discovery_yield(db_session, monkeypatch) -> None
     """The rule is only real if the worker's own claim carries it."""
     from apps.worker import run as worker_run
     from apps.worker.discover_company_job import DISCOVER_COMPANY_TASK_KIND
+    from packages.crawler.issues import DEEP_DIVE_TASK_KIND
 
     seen: dict[str, object] = {}
 
@@ -510,4 +525,4 @@ async def test_the_worker_makes_discovery_yield(db_session, monkeypatch) -> None
     monkeypatch.setattr(worker_run, "claim_task", recording_claim)
 
     assert await worker_run.run_once(worker_id="test-worker") is False
-    assert seen["after_others"] == [DISCOVER_COMPANY_TASK_KIND]
+    assert seen["after_others"] == [DISCOVER_COMPANY_TASK_KIND, DEEP_DIVE_TASK_KIND]

@@ -30,6 +30,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from sqlalchemy.exc import IntegrityError
@@ -37,8 +38,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.config import get_settings
 from packages.core.enums import SourceStatus
-from packages.core.models import Company
+from packages.core.models import Company, CompanyCrawlState
 from packages.core.queue import ClaimedTask, enqueue
+from packages.crawler import issues
 from packages.crawler.board_directory import confirms
 from packages.crawler.board_directory import load_default as load_directory
 from packages.crawler.company_csv import is_search_url
@@ -53,7 +55,13 @@ log = structlog.get_logger(__name__)
 
 DISCOVER_COMPANY_TASK_KIND = "discover_company"
 
-__all__ = ["DISCOVER_COMPANY_TASK_KIND", "handle_discover_company", "lead_for", "should_guess"]
+__all__ = [
+    "DISCOVER_COMPANY_TASK_KIND",
+    "handle_discover_company",
+    "lead_for",
+    "should_guess",
+    "verify_board",
+]
 
 
 class MalformedDiscoveryTask(ValueError):
@@ -164,6 +172,8 @@ async def _set_aside_as_duplicate(
 ) -> None:
     """`company` resolved to a board `holder` already polls. No crawl is queued."""
     await set_aside(session, company, holder, ats=outcome.ats, slug=outcome.slug, now=now)
+    # Nothing left to look into: the board is found, and polled under `holder`.
+    await issues.resolve(session, company.id, stage="discovery", by="discovery", now=now)
     log.info(
         "discover_company_duplicate_board",
         company=company.name,
@@ -181,6 +191,79 @@ def _company_id(payload: dict) -> uuid.UUID:
         return uuid.UUID(str(raw))
     except ValueError as exc:
         raise MalformedDiscoveryTask(f"company_id is not a uuid: {raw!r}") from exc
+
+
+async def verify_board(
+    session: AsyncSession,
+    company: Company,
+    state: CompanyCrawlState,
+    outcome: Resolved,
+    *,
+    evidence: dict[str, Any],
+    via: str,
+    now: datetime,
+    by: str = "discovery",
+) -> bool:
+    """Make `outcome` the company's board and queue its first crawl. Does not commit.
+
+    False when another company already polls that board: this one is set aside
+    as its duplicate instead. Shared by discovery and the deep dive
+    (`deep_dive_job.py`), so a board found either way is verified the same way.
+    """
+    # One board, one verified row. The owner's sheet lists a company
+    # under an old name and a new one (ZEIT and Vercel), both resolve to
+    # the same board, and verifying both stored every posting on it twice.
+    holder = await holder_of(session, outcome.ats, outcome.slug, other_than=company.id)
+    if holder is not None:
+        await _set_aside_as_duplicate(session, company, holder, outcome, now)
+        return False
+    try:
+        # A savepoint, opened before the row is touched: opening one
+        # flushes what is pending, so a change made first would meet the
+        # index outside it and take the whole transaction down.
+        async with session.begin_nested():
+            company.ats_type = outcome.ats
+            company.slug = outcome.slug
+            company.careers_url = outcome.board_url
+            company.source_status = SourceStatus.VERIFIED.value
+            company.source_verified_at = now
+            company.discovery_failure = None
+            company.source_evidence = evidence
+            # Nothing more is owed to discovery, and the board is owed a
+            # first fetch now. Both written here, in the handler's
+            # transaction, with the crawl task — see the module docstring
+            # on why that is one write.
+            state.discovery_next_at = None
+            state.next_due_at = None
+            await enqueue(
+                session,
+                CRAWL_COMPANY_TASK_KIND,
+                {"company_id": str(company.id), "force": True, "trigger": by},
+            )
+            await session.flush()
+    except IntegrityError:
+        # Another task verified this board between the question above and
+        # this write: neither saw the other. `uq_companies_verified_board`
+        # refused the second, and by now the first is there to be found.
+        # The rollback expired the row; it is read again before anything
+        # looks at it, or the first attribute touched is a lazy load.
+        await session.refresh(company)
+        holder = await holder_of(session, outcome.ats, outcome.slug, other_than=company.id)
+        if holder is None:
+            raise
+        await _set_aside_as_duplicate(session, company, holder, outcome, now)
+        return False
+    await issues.resolve(session, company.id, stage="discovery", by=by, now=now)
+    log.info(
+        "discover_company_verified",
+        company=company.name,
+        ats=outcome.ats,
+        slug=outcome.slug,
+        open_jobs=outcome.open_jobs,
+        via=via,
+        by=by,
+    )
+    return True
 
 
 async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -> None:
@@ -259,13 +342,6 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
             method, via = "discovery_from_url", "url"
         else:
             method, via = "discovery_from_name", "name"
-        # One board, one verified row. The owner's sheet lists a company
-        # under an old name and a new one (ZEIT and Vercel), both resolve to
-        # the same board, and verifying both stored every posting on it twice.
-        holder = await holder_of(session, outcome.ats, outcome.slug, other_than=company.id)
-        if holder is not None:
-            await _set_aside_as_duplicate(session, company, holder, outcome, now)
-            return
         evidence = {
             "method": method,
             **(
@@ -281,50 +357,7 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
             "open_jobs": outcome.open_jobs,
             "at": now.isoformat(),
         }
-        try:
-            # A savepoint, opened before the row is touched: opening one
-            # flushes what is pending, so a change made first would meet the
-            # index outside it and take the whole transaction down.
-            async with session.begin_nested():
-                company.ats_type = outcome.ats
-                company.slug = outcome.slug
-                company.careers_url = outcome.board_url
-                company.source_status = SourceStatus.VERIFIED.value
-                company.source_verified_at = now
-                company.discovery_failure = None
-                company.source_evidence = evidence
-                # Nothing more is owed to discovery, and the board is owed a
-                # first fetch now. Both written here, in the handler's
-                # transaction, with the crawl task — see the module docstring
-                # on why that is one write.
-                state.discovery_next_at = None
-                state.next_due_at = None
-                await enqueue(
-                    session,
-                    CRAWL_COMPANY_TASK_KIND,
-                    {"company_id": str(company.id), "force": True, "trigger": "discovery"},
-                )
-                await session.flush()
-        except IntegrityError:
-            # Another task verified this board between the question above and
-            # this write: neither saw the other. `uq_companies_verified_board`
-            # refused the second, and by now the first is there to be found.
-            # The rollback expired the row; it is read again before anything
-            # looks at it, or the first attribute touched is a lazy load.
-            await session.refresh(company)
-            holder = await holder_of(session, outcome.ats, outcome.slug, other_than=company.id)
-            if holder is None:
-                raise
-            await _set_aside_as_duplicate(session, company, holder, outcome, now)
-            return
-        log.info(
-            "discover_company_verified",
-            company=company.name,
-            ats=outcome.ats,
-            slug=outcome.slug,
-            open_jobs=outcome.open_jobs,
-            via=via,
-        )
+        await verify_board(session, company, state, outcome, evidence=evidence, via=via, now=now)
         return
 
     _name, reason = outcome
@@ -356,6 +389,12 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
         "at": now.isoformat(),
     }
     state.discovery_next_at = now + discovery_backoff(state.discovery_attempts)
+    # Noted for the deep dive, which looks harder once nothing else is
+    # waiting (`issues.py`). This task is done either way: the worker moves on.
+    if category not in issues.NOT_AN_ISSUE:
+        await issues.note(
+            session, company.id, stage="discovery", category=category, reason=reason, now=now
+        )
     await session.flush()
     log.info(
         "discover_company_unresolved",

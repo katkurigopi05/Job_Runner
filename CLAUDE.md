@@ -130,7 +130,7 @@ of these loads only when work touches the directory or the files it names:
 | `packages/llm/CLAUDE.md` | providers, routing, OpenRouter, the fallback (§7); the local model and Ollama's hosted models (§14) |
 | `packages/tailor/CLAUDE.md` | comparing two models (§7); tailoring, the guard, the cover letter, the cache, editing at review (§15) |
 | `packages/ats/CLAUDE.md` | the adapter contract (§8); reaching and filling a form (§15) |
-| `packages/crawler/CLAUDE.md` | the registry (§9, Phase 5); bespoke pages and the shared rate limiter (§15); duplicate boards (§25) |
+| `packages/crawler/CLAUDE.md` | the registry (§9, Phase 5); bespoke pages and the shared rate limiter (§15); duplicate boards (§25); noted companies and the deep dive (§28) |
 | `packages/matching/CLAUDE.md` | the search area, eligibility, experience, labelling, résumé selection (§15); the feed's authorization filters (§18) |
 | `packages/inbox/CLAUDE.md` | the reply alias and duplicate mail (§15) |
 | `packages/core/CLAUDE.md` | the doorbell (§15); the queue's claim order and its producers (§24); races (§27) |
@@ -558,3 +558,12 @@ Fixed: a retried `apply` task sending a form twice (#16, covered by `tests/test_
 Not fixed, and each is in the report: one-word company names read from ordinary words
 ("Front Desk"); paraphrased questions, where bge-small's chunk search is the limit;
 and the role table reading a title only up to its first comma.
+
+---
+
+## 28. A company a worker cannot read is noted, then looked into
+
+A worker notes a company it cannot read and moves on (`company_issues`). A
+deep dive looks into each note once nothing else is waiting, discovery
+included, and what it cannot fix is the error list (`make company-issues`).
+What it tries and why is in `packages/crawler/CLAUDE.md`.

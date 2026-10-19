@@ -20,7 +20,7 @@ from packages.core.queue import ClaimedTask
 from packages.crawler.board_directory import BoardDirectory, DirectoryEntry
 from packages.crawler.dispatch import CRAWL_COMPANY_TASK_KIND
 from packages.crawler.extract import ExtractedPosting
-from packages.crawler.find_boards import SiteReading
+from packages.crawler.find_boards import Resolved, SiteReading
 
 
 @pytest.fixture
@@ -355,3 +355,63 @@ async def test_a_portfolio_board_records_the_boards_it_named(db_session, calls) 
     assert evidence["category"] == "multi_company_board"
     assert evidence["boards_named"] == ["ashby/ibotta", "lever/cyderes"]
     assert evidence["network_board"] == "Getro"
+
+
+# --- a failure is noted for the deep dive --------------------------------------------
+
+
+async def _open_issues(session, company) -> list:
+    from packages.core.models_issues import CompanyIssue
+
+    rows = await session.scalars(
+        select(CompanyIssue)
+        .where(CompanyIssue.company_id == company.id)
+        .execution_options(populate_existing=True)
+    )
+    return list(rows.all())
+
+
+async def test_a_failure_is_noted_and_the_worker_moves_on(db_session, calls) -> None:
+    calls["reading"] = SiteReading(read=True, careers_page="https://acme.com/careers")
+    company = await _company(db_session, website="https://acme.com")
+
+    await job.handle_discover_company(db_session, _claim(company))
+
+    [issue] = await _open_issues(db_session, company)
+    assert (issue.stage, issue.category, issue.status) == (
+        "discovery",
+        "careers_page_unreadable",
+        "noted",
+    )
+    assert issue.reason == company.discovery_failure
+
+
+async def test_a_board_listing_nothing_is_not_an_issue(db_session, calls, monkeypatch) -> None:
+    async def empty_board(name, fetcher, *, url=None, vendors=(), guess=True):
+        return (name, "board found (lever/acme) but it lists no open roles"), SiteReading(
+            board=("lever", "acme"), read=True
+        )
+
+    monkeypatch.setattr(job, "resolve_site", empty_board)
+    company = await _company(db_session, website="https://acme.com")
+
+    await job.handle_discover_company(db_session, _claim(company))
+
+    assert await _open_issues(db_session, company) == []
+
+
+async def test_a_verification_closes_the_note(db_session, calls, monkeypatch) -> None:
+    company = await _company(db_session, website="https://acme.com")
+    await job.handle_discover_company(db_session, _claim(company))
+
+    async def found(name, fetcher, *, url=None, vendors=(), guess=True):
+        board = Resolved(
+            name=name, ats="lever", slug="acme", board_url="https://jobs.lever.co/acme", open_jobs=3
+        )
+        return board, SiteReading(board=("lever", "acme"), read=True)
+
+    monkeypatch.setattr(job, "resolve_site", found)
+    await job.handle_discover_company(db_session, _claim(company))
+
+    [issue] = await _open_issues(db_session, company)
+    assert (issue.status, issue.resolved_by) == ("fixed", "discovery")
