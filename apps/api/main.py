@@ -18,6 +18,7 @@ from apps.api.routers import (
     detect,
     events,
     inbox,
+    judgments,
     labels,
     matches,
     postings,
@@ -59,6 +60,7 @@ app.include_router(crawl.router)
 app.include_router(companies.router)
 app.include_router(matches.router)
 app.include_router(labels.router)
+app.include_router(judgments.router)
 app.include_router(analytics.router)
 app.include_router(audit.router)
 app.include_router(setup.router)

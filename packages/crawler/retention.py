@@ -23,6 +23,10 @@ the posting would not just lose context:
 - `matches` and `posting_labels` are `ON DELETE CASCADE`. A swipe or a grade
   would vanish with the posting, and labels are what every ranking claim in
   this repo is waiting on.
+- `retrieval_judgments` is too, and is kept whether graded yet or not. It is
+  a frozen pool for grading the chat search: a posting pruned from it would
+  take its grade, or the place it is waiting to be graded, and a baseline
+  measured on one corpus could not be re-run on the next.
 
 `rescore` already draws the same line for stale match rows: withdrawn only
 when the row holds nothing of the owner's.
@@ -40,6 +44,7 @@ from sqlalchemy import ColumnElement, and_, delete, exists, func, not_, or_, sel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Application, Match, Posting, PostingLabel, Resume
+from packages.core.models_judgments import RetrievalJudgment
 
 
 @dataclass(frozen=True)
@@ -64,6 +69,7 @@ def _owned() -> ColumnElement[bool]:
         exists().where(Application.posting_id == Posting.id),
         exists().where(Resume.tailored_for_posting_id == Posting.id),
         exists().where(PostingLabel.posting_id == Posting.id),
+        exists().where(RetrievalJudgment.posting_id == Posting.id),
         exists().where(
             Match.posting_id == Posting.id,
             or_(Match.decision.is_not(None), Match.tailored_resume_id.is_not(None)),

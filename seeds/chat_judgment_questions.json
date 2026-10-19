@@ -1,0 +1,60 @@
+{
+  "version": "chat-v1",
+  "about": "Frozen questions for grading the assistant's search (Phase 5 part 2, docs/HARNESS_AUDIT_2026-10-15.md). Most are the owner's own wording as recorded in .claude/rules/assistant-search.md; the rest fill a stratum the audit names. A new question is a new version, never an edit: a baseline is only comparable on the set it was measured on. Held out is chosen by a stable hash of the key (packages/matching/judged.py), not by hand.",
+  "depth": 8,
+  "scale": {
+    "0": "not what was asked",
+    "1": "partly: near the subject, or one of several things asked",
+    "2": "what was asked for"
+  },
+  "modes": {
+    "shipped": {},
+    "semantic": {"chat_semantic_candidates": true},
+    "cross_encoder": {"chat_rerank_model": "cross-encoder/ms-marco-MiniLM-L-12-v2"}
+  },
+  "questions": [
+    {"key": "kafka-roles", "stratum": "skill", "expect": "answer", "question": "Which open roles use Kafka?"},
+    {"key": "rag-mention", "stratum": "skill", "expect": "answer", "question": "Which roles mention RAG?"},
+    {"key": "postman", "stratum": "skill", "expect": "answer", "question": "any posting mentioned postman"},
+    {"key": "pytorch", "stratum": "skill", "expect": "answer", "question": "jobs using PyTorch"},
+    {"key": "terraform", "stratum": "skill", "expect": "answer", "question": "roles that need Terraform"},
+    {"key": "flink-streaming", "stratum": "skill", "expect": "answer", "question": "Flink stream processing jobs"},
+
+    {"key": "ai-engineer-types", "stratum": "role", "expect": "answer", "question": "any jobs with job types AI engineer"},
+    {"key": "roles-with-ai", "stratum": "role", "expect": "answer", "question": "any roles with AI"},
+    {"key": "product-manager", "stratum": "role", "expect": "answer", "question": "product manager jobs"},
+    {"key": "forward-deployed", "stratum": "role", "expect": "answer", "question": "Show me forward deployed engineer jobs."},
+    {"key": "security-focused", "stratum": "role", "expect": "answer", "question": "roles focused on security"},
+
+    {"key": "astranis", "stratum": "company", "expect": "answer", "question": "jobs at Astranis"},
+    {"key": "stripe-backend", "stratum": "company", "expect": "none", "question": "backend engineer roles at Stripe"},
+    {"key": "stripe-kafka", "stratum": "company", "expect": "none", "question": "kafka jobs at Stripe"},
+    {"key": "anthropic-research", "stratum": "company", "expect": "answer", "question": "Anthropic research engineer roles"},
+
+    {"key": "entry-swe", "stratum": "level", "expect": "answer", "question": "entry level software engineer jobs"},
+    {"key": "intern-data-science", "stratum": "level", "expect": "answer", "question": "internships in data science"},
+    {"key": "junior-python", "stratum": "level", "expect": "answer", "question": "junior python jobs"},
+    {"key": "senior-data-engineer", "stratum": "level", "expect": "answer", "question": "senior data engineer jobs"},
+
+    {"key": "sponsor-h1b", "stratum": "sponsorship", "expect": "answer", "question": "jobs that sponsor H-1B"},
+    {"key": "sponsor-any", "stratum": "sponsorship", "expect": "answer", "question": "Which jobs offer visa sponsorship?"},
+    {"key": "python-sponsorship", "stratum": "sponsorship", "expect": "answer", "question": "which python jobs offer visa sponsorship?"},
+
+    {"key": "fraud-payments", "stratum": "paraphrase", "expect": "answer", "question": "jobs working on fraud detection for payments"},
+    {"key": "keep-systems-up", "stratum": "paraphrase", "expect": "answer", "question": "jobs keeping production systems up and reliable"},
+    {"key": "ground-llm-answers", "stratum": "paraphrase", "expect": "answer", "question": "roles grounding language model answers in company documents"},
+    {"key": "developer-tools", "stratum": "paraphrase", "expect": "answer", "question": "roles building tools that help developers ship code faster"},
+    {"key": "robots-see-move", "stratum": "paraphrase", "expect": "answer", "question": "jobs teaching robots to see and move"},
+
+    {"key": "swe-london", "stratum": "place", "expect": "answer", "question": "software engineer jobs in London"},
+    {"key": "remote-backend", "stratum": "place", "expect": "answer", "question": "remote backend engineer jobs"},
+    {"key": "ml-san-francisco", "stratum": "place", "expect": "answer", "question": "machine learning jobs in San Francisco"},
+
+    {"key": "zig", "stratum": "absent", "expect": "none", "question": "roles using Zig?"},
+    {"key": "cobol", "stratum": "absent", "expect": "none", "question": "COBOL developer jobs"},
+    {"key": "blacksmith", "stratum": "absent", "expect": "none", "question": "blacksmith jobs"},
+
+    {"key": "what-needs-me", "stratum": "not_a_search", "expect": "not_searched", "question": "What needs me?"},
+    {"key": "hiring-manager-reply", "stratum": "not_a_search", "expect": "not_searched", "question": "did the hiring manager reply?"}
+  ]
+}
