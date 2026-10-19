@@ -25,6 +25,7 @@ from packages.crawler.find_boards import (
     resolve_one,
     slug_candidates,
 )
+from packages.crawler.ratelimit import HostRateLimiter
 
 # --------------------------------------------------------------------------
 # Slugs
@@ -381,7 +382,7 @@ async def test_with_guessing_off_a_site_without_a_board_probes_no_ats_host() -> 
             return httpx.Response(200, text=page)
         return httpx.Response(200, text='{"jobs": [{"id": 1, "title": "x", "absolute_url": "y"}]}')
 
-    fetcher = PoliteFetcher(transport=httpx.MockTransport(handler))
+    fetcher = PoliteFetcher(transport=httpx.MockTransport(handler), rate_limiter=_no_waiting())
 
     outcome = await resolve_one("Acme", fetcher, url="https://acme.com", guess=False)
 
@@ -397,6 +398,16 @@ async def test_with_guessing_off_a_site_without_a_board_probes_no_ats_host() -> 
 # and a robots denial must never read as "this company has no board".
 
 
+def _no_waiting() -> HostRateLimiter:
+    """The per-host floor, on a fake clock: discovery now asks a company's
+    site for `/careers` after its home page, and the test should not sleep a
+    real minute between the two."""
+    from tests.test_crawler import FakeClock
+
+    clock = FakeClock()
+    return HostRateLimiter(clock=clock, sleeper=clock.sleep)
+
+
 def _site(robots: httpx.Response, page: httpx.Response, requested: list[str]):
     def handler(request: httpx.Request) -> httpx.Response:
         requested.append(request.url.host)
@@ -406,7 +417,7 @@ def _site(robots: httpx.Response, page: httpx.Response, requested: list[str]):
             return page
         return httpx.Response(200, text='{"jobs": [{"id": 1, "title": "x", "absolute_url": "y"}]}')
 
-    return PoliteFetcher(transport=httpx.MockTransport(handler))
+    return PoliteFetcher(transport=httpx.MockTransport(handler), rate_limiter=_no_waiting())
 
 
 @pytest.mark.asyncio

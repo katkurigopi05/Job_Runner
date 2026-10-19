@@ -293,3 +293,60 @@ are an employer listing the same job more than once, with the same title,
 place and text but its own requisition id and URL each time (Process Street
 has one five times). §16 does not merge within one source or across
 requisition ids, and those are the employer's own listings.
+
+## A company not verified is noted, with what its site showed
+
+Added 2026-10-19 at the owner's asking: a company whose careers page is not
+found should be noted and fixed where it can be, not retried for ever with
+nothing learned.
+
+**Why so many failed.** 3,684 of the 4,251 companies on
+`bay_area_tech_companies.csv` were `failed`. Its careers column is 3,797
+Google search links, 445 blanks and 9 real URLs, and a search link is never a
+lead (`lead_for`; fetching it would be scraping Google, which robots.txt
+forbids). So discovery read each company's own website, and recorded only
+"its own site names no supported board". A read-only sample of 40 of those
+found a careers page for 26: one on a supported board discovery had missed,
+five on other job systems, twenty on the company's own page.
+
+**What discovery does now** (`find_boards.from_url`, `resolve_site`):
+
+- **A careers link on the company's own subdomains is followed**
+  (`site_of`): `careers.acme.com` and `jobs.acme.com` were skipped by an
+  exact-host match.
+- **`/careers` then `/jobs` are tried when the site links no careers page**
+  (`COMMON_CAREERS_PATHS`), stopping at the first that exists. Each is a
+  request to the company's host at the 60s floor, so a company with no link
+  costs up to two minutes more of a worker's time. Nothing deeper is guessed.
+- **What the careers page is built on is recorded**: another job system by a
+  link to its host (`job_systems.py`; Workday, BambooHR, Oracle, Dover and
+  more, never by a name in prose), and schema.org JobPostings it publishes.
+- **Every failure gets a category** (`SiteReading.category`) and a reason
+  that says what was found: `other_job_system`, `structured_jobs`,
+  `careers_page_unreadable`, `no_careers_page`, `no_website`,
+  `board_empty`, `blocked`, `unreachable`. The careers page, the job system
+  and what was tried go into `source_evidence`.
+
+`make discovery-report` lists every failed company with its careers page,
+category and fix, as a CSV in `storage/exports/`, and counts how many
+companies each job system would unlock. A company that failed before this has
+no category until discovery tries it again (`not_yet_rechecked`).
+
+What a later change could undo:
+
+- **`blocked` means a robots.txt that disallows us**, nothing else. A
+  robots.txt that could not be fetched is still treated as a refusal
+  (RFC 9309), and is filed `unreachable`: on 2026-10-19 that was 678 of 739
+  "blocked" companies, nearly all connection errors and timeouts on sites
+  that are down or gone, against 61 real refusals.
+- **Only what was found is recorded.** An absent field means it was not
+  seen, never "none".
+- **`resolve_one` is unchanged** for its callers; `resolve_site` returns the
+  site's reading beside the outcome.
+
+Not done, each a decision for later: a reader for any of the other job
+systems (the report says which would unlock the most companies); taking the
+structured jobs a careers page publishes (`jsonld.py` exists, discovery does
+not verify a company on it); and pages that build their job list in the
+browser, which the fetcher never runs, so a board embedded by JavaScript
+reads as a careers page with nothing on it.

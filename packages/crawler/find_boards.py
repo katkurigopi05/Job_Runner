@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from urllib.parse import urljoin, urlparse
 
 import structlog
@@ -62,6 +62,8 @@ from packages.ats.registry import detect_ats
 from packages.crawler.discover import slug_from_ats_url
 from packages.crawler.extract import ExtractedPosting, extractor_for
 from packages.crawler.fetch import Blocked, PoliteFetcher
+from packages.crawler.job_systems import other_job_system
+from packages.crawler.jsonld import job_postings
 from packages.crawler.resolve import find_embedded
 
 log = structlog.get_logger(__name__)
@@ -377,14 +379,59 @@ _CAREERS_HREF_RE = re.compile(
 #: unresolved rather than paid for by a crawl.
 MAX_CAREERS_HOPS = 1
 
+#: Where a careers page usually is, tried in order when a site links none.
+#: Each is a request to the company's own host, at §2.6's 60s floor, so the
+#: list is short and stops at the first that exists. On a 40-company sample
+#: of the owner's failed sheet, `/careers` and `/jobs` were the two that
+#: answered; deeper guesses were not measured and are not tried.
+COMMON_CAREERS_PATHS: tuple[str, ...] = ("/careers", "/jobs")
+
+_CAREERS_ADDRESS_RE = re.compile(
+    r"(?:^|[/.-])(?:career|careers|jobs|join-us|joinus|work-with-us|open-roles|openings)"
+    r"(?:$|[/.?#-])",
+    re.I,
+)
+
+
+def looks_like_careers(url: str) -> bool:
+    """Whether a URL is itself a careers page: `acme.com/careers`, `jobs.acme.com`."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    first_label = host.split(".", 1)[0]
+    return first_label in {"careers", "jobs"} or bool(_CAREERS_ADDRESS_RE.search(parsed.path))
+
+
+#: Second-level labels under a two-letter country code that a company cannot
+#: own on its own: `acme.co.uk` is a site, `co.uk` is not.
+_SHARED_SECOND_LEVEL = frozenset({"co", "com", "org", "net", "ac", "gov", "edu"})
+
+
+def site_of(host: str) -> str:
+    """The part of a host a company owns: `careers.acme.com` is `acme.com`.
+
+    Deliberately small rather than a public-suffix list: it only has to keep
+    `careers.acme.com` together with `acme.com`, and `acme.co.uk` apart from
+    `other.co.uk`. A host it gets wrong is followed or not, never fetched
+    outside the floor.
+    """
+    labels = host.lower().rstrip(".").split(".")
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SHARED_SECOND_LEVEL:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
 
 def careers_links(html: str, base: str) -> list[str]:
     """Absolute, deduplicated careers-ish links from a page, in document order.
 
-    Same-host only. A careers link pointing at another domain is usually the
-    ATS itself — which `find_embedded` has already had its chance at — or a
-    job-board aggregator, and following either from here would fetch a host
-    nobody decided to crawl.
+    The company's own site only, subdomains included: `careers.acme.com` and
+    `jobs.acme.com` are where a careers page most often lives, and an exact
+    host match skipped both. A careers link to another domain is usually the
+    ATS itself — which `find_embedded` has already had its chance at, and
+    `job_systems` names — or a job-board aggregator, and following either from
+    here would fetch a host nobody decided to crawl.
     """
     try:
         base_host = (urlparse(base).hostname or "").lower()
@@ -401,7 +448,7 @@ def careers_links(html: str, base: str) -> list[str]:
             host = (urlparse(absolute).hostname or "").lower()
         except ValueError:
             continue
-        if host != base_host:
+        if site_of(host) != site_of(base_host):
             continue
         key = absolute.rstrip("/").lower()
         if key in seen or key == base.rstrip("/").lower():
@@ -426,6 +473,49 @@ class SiteReading:
     blocked: str | None = None
     #: The page could not be fetched: an exception type or an HTTP status.
     unreachable: str | None = None
+    #: The company's own page was read.
+    read: bool = False
+    #: The careers page found on the company's site, after redirects.
+    careers_page: str | None = None
+    #: A job system the careers page is built on that is not a supported
+    #: board (`job_systems`), and the link that named it.
+    job_system: str | None = None
+    job_system_url: str | None = None
+    #: schema.org JobPostings on the careers page: jobs a bespoke reader could
+    #: take (`jsonld.py`) where discovery takes none.
+    structured_jobs: int = 0
+    #: The usual careers addresses tried when the site linked none.
+    tried: tuple[str, ...] = ()
+
+    @property
+    def category(self) -> str:
+        """Which fix a company that was not verified needs. One word each.
+
+        `other_job_system` wants a reader for that system; `structured_jobs`
+        the bespoke reader; `careers_page_unreadable` and `no_careers_page` a
+        person, or a correct URL on the sheet. `blocked` and `unreachable` are
+        the site's answer, and stay as they are (§2.5).
+        """
+        if self.blocked:
+            # Only a robots.txt that says no is the site's refusal. One that
+            # could not be read at all is treated as a refusal too (RFC 9309),
+            # and is nearly always a site that is down or gone: on the owner's
+            # sheet, 678 of 739 "blocked" companies were connection errors and
+            # timeouts, against 61 robots.txt files that disallowed us.
+            return "blocked" if "disallow" in self.blocked.lower() else "unreachable"
+        if self.unreachable:
+            return "unreachable"
+        if self.board:
+            return "board_empty"
+        if self.job_system:
+            return "other_job_system"
+        if self.structured_jobs:
+            return "structured_jobs"
+        if self.careers_page:
+            return "careers_page_unreadable"
+        if self.read:
+            return "no_careers_page"
+        return "no_website"
 
 
 async def from_url(url: str, fetcher: PoliteFetcher) -> SiteReading:
@@ -471,14 +561,27 @@ async def from_url(url: str, fetcher: PoliteFetcher) -> SiteReading:
 
     found = _board_in(response.text)
     if found:
-        return SiteReading(board=found)
+        return SiteReading(board=found, read=True)
+
+    # What the page itself shows, kept whatever happens next: a link to a job
+    # system we cannot read, and jobs published as structured data.
+    careers_page = response.url if looks_like_careers(response.url) else None
+    system = other_job_system(response.text)
+    structured = len(job_postings(response.text))
 
     # The supplied URL was a home page with no board on it. The board is
     # usually one link away — `/careers` — and following it is the difference
     # between resolving a company from evidence and falling back to guessing a
-    # slug from its name.
+    # slug from its name. A site that links no careers page at all often has
+    # one at the usual address, so those are tried, in order, until one exists.
+    links = careers_links(response.text, url)[:MAX_CAREERS_HOPS]
+    usual = not links and careers_page is None
+    candidates = [urljoin(response.url, path) for path in COMMON_CAREERS_PATHS] if usual else links
+    tried: list[str] = []
     hop_blocked: str | None = None
-    for link in careers_links(response.text, url)[:MAX_CAREERS_HOPS]:
+    for link in candidates:
+        if usual:
+            tried.append(link)
         try:
             page = await fetcher.fetch(link)
         except Blocked as exc:
@@ -495,8 +598,22 @@ async def from_url(url: str, fetcher: PoliteFetcher) -> SiteReading:
         found = _board_in(page.text)
         if found:
             log.info("board_found_via_careers_link", company_page=url, careers_page=link)
-            return SiteReading(board=found)
-    return SiteReading(blocked=hop_blocked)
+            return SiteReading(board=found, read=True, careers_page=page.url)
+        # The first careers page that exists is the company's. Its own links
+        # outrank the home page's, which may be a footer to a sister company.
+        careers_page = page.url
+        system = other_job_system(page.text) or system
+        structured = len(job_postings(page.text))
+        break
+    return SiteReading(
+        blocked=hop_blocked,
+        read=True,
+        careers_page=careers_page,
+        job_system=system[0] if system else None,
+        job_system_url=system[1] if system else None,
+        structured_jobs=structured,
+        tried=tuple(tried) if careers_page is None else (),
+    )
 
 
 #: Any supported-ATS URL as it appears in a page's markup — href, iframe src,
@@ -566,6 +683,26 @@ async def resolve_one(
 ) -> Resolved | tuple[str, str]:
     """Find one company's board. Returns a Resolved, or (name, reason).
 
+    `resolve_site` without what the site showed.
+    """
+    outcome, _ = await resolve_site(name, fetcher, url=url, vendors=vendors, guess=guess)
+    return outcome
+
+
+async def resolve_site(
+    name: str,
+    fetcher: PoliteFetcher,
+    *,
+    url: str | None = None,
+    vendors: tuple[str, ...] = VENDORS,
+    guess: bool = True,
+) -> tuple[Resolved | tuple[str, str], SiteReading]:
+    """Find one company's board: a Resolved or (name, reason), and the site's reading.
+
+    The reading is what discovery records on a company it could not verify:
+    the careers page it found, the job system that page is built on, and
+    which fix the company needs (`SiteReading.category`).
+
     A `url` from the company list is tried first and, when it yields a vendor
     and slug, is the only thing tried. That is the point: the URL is evidence
     and the name is a guess, so falling back to guessing after the evidence
@@ -589,34 +726,38 @@ async def resolve_one(
             if count:
                 return Resolved(
                     name=name, ats=vendor, slug=slug, board_url=board_url, open_jobs=count
-                )
+                ), reading
             if blocked:
                 blocked_reason = blocked
+                reading = replace(reading, blocked=blocked)
             # A board named by the company's own page but listing nothing is
             # the clearest "not hiring" this tool can produce. Reported as
             # such rather than sending the name-guesser looking for a
             # different company that happens to share a word.
             elif count == 0:
-                return name, f"board found ({vendor}/{slug}) but it lists no open roles"
+                return (name, f"board found ({vendor}/{slug}) but it lists no open roles"), reading
 
     if not guess:
         if blocked_reason:
-            return name, f"blocked: {blocked_reason}"
+            return (name, f"blocked: {blocked_reason}"), reading
         if reading.unreachable:
-            return name, (
-                f"its own site could not be fetched ({reading.unreachable}); "
-                "name-guessing is off for a company with a website"
-            )
+            return (
+                name,
+                (
+                    f"its own site could not be fetched ({reading.unreachable}); "
+                    "name-guessing is off for a company with a website"
+                ),
+            ), reading
         if not url:
-            return name, "no website to read, and name-guessing is off"
-        return name, (
-            "its own site names no supported board; "
-            "name-guessing is off for a company with a website"
-        )
+            return (name, "no website to read, and name-guessing is off"), reading
+        return (
+            name,
+            f"{unreadable_reason(reading)}; name-guessing is off for a company with a website",
+        ), reading
 
     candidates = slug_candidates(name)
     if not candidates:
-        return name, "no usable slug could be derived from the name"
+        return (name, "no usable slug could be derived from the name"), reading
 
     # One task per vendor, run together; the slugs *within* a vendor stay
     # sequential because they share that vendor's host and therefore its floor.
@@ -671,11 +812,39 @@ async def resolve_one(
         if refused and not blocked_reason:
             blocked_reason = refused
         if found is not None:
-            return found
+            return found, reading
 
     if blocked_reason:
-        return name, f"blocked: {blocked_reason}"
-    return name, "no board found on any supported ATS"
+        return (name, f"blocked: {blocked_reason}"), replace(reading, blocked=blocked_reason)
+    return (name, "no board found on any supported ATS"), reading
+
+
+def unreadable_reason(reading: SiteReading) -> str:
+    """What a company's own site showed when it named no supported board.
+
+    Said in terms of the fix: the job system to write a reader for, the jobs
+    a bespoke reader could take, the page a person should look at, or that no
+    careers page exists where one usually is.
+    """
+    page = reading.careers_page
+    if reading.job_system:
+        where = f"careers page {page}" if page else "its site"
+        return (
+            f"{where} uses {reading.job_system} ({reading.job_system_url}), "
+            "which is not a supported board yet"
+        )
+    if reading.structured_jobs:
+        jobs = reading.structured_jobs
+        return (
+            f"careers page {page} lists {jobs} job{'' if jobs == 1 else 's'} as structured "
+            "data, which discovery does not read yet"
+        )
+    if page:
+        return f"careers page {page} names no supported board or job system"
+    tried = " and ".join(urlparse(link).path for link in reading.tried)
+    if tried:
+        return f"no careers page found: its site links none, and {tried} do not exist"
+    return "its own site names no supported board and links no careers page"
 
 
 async def resolve_all(
