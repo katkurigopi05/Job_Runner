@@ -315,10 +315,13 @@ _BOARD_ROOT_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
-        # The embed form, which is what a company's own page usually iframes.
+        # The embed forms: the iframe a company's own page usually shows, and
+        # the script that writes it (`/js`). Three of 21 careers pages read
+        # on 2026-10-19 loaded the script, and were recorded as naming no board.
         "greenhouse",
         re.compile(
-            r"^https?://boards\.greenhouse\.io/embed/job_board\?for=(?P<slug>[A-Za-z0-9._-]+)",
+            r"^https?://(?:job-)?boards\.greenhouse\.io/embed/job_board(?:/js)?"
+            r"\?for=(?P<slug>[A-Za-z0-9._-]+)",
             re.I,
         ),
     ),
@@ -363,6 +366,15 @@ _CAREERS_HREF_RE = re.compile(
     r"""href=["']([^"'#?]*(?:career|careers|jobs|join-us|joinus|work-with-us|
         open-roles|openings|opportunities)[^"']*)["']""",
     re.I | re.X,
+)
+
+#: Files, not pages. A careers link is matched by words in its address, and a
+#: stylesheet at `.../wp-job-openings/assets/css/general.min.css` has them: on
+#: 2026-10-19 one company's careers page was recorded as that file.
+_FILE_PATH_RE = re.compile(
+    r"\.(?:css|js|mjs|json|xml|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|eot|"
+    r"pdf|docx?|zip|mp4|webm)$",
+    re.I,
 )
 
 #: How many careers links to follow from a supplied page. **One.**
@@ -449,6 +461,8 @@ def careers_links(html: str, base: str) -> list[str]:
         except ValueError:
             continue
         if site_of(host) != site_of(base_host):
+            continue
+        if _FILE_PATH_RE.search(urlparse(absolute).path):
             continue
         key = absolute.rstrip("/").lower()
         if key in seen or key == base.rstrip("/").lower():
