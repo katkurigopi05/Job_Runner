@@ -54,6 +54,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field, replace
+from typing import NamedTuple
 from urllib.parse import urljoin, urlparse
 
 import structlog
@@ -62,7 +63,7 @@ from packages.ats.registry import detect_ats
 from packages.crawler.discover import slug_from_ats_url
 from packages.crawler.extract import ExtractedPosting, extractor_for
 from packages.crawler.fetch import Blocked, PoliteFetcher
-from packages.crawler.job_systems import other_job_system
+from packages.crawler.job_systems import network_board, other_job_system
 from packages.crawler.jsonld import job_postings
 from packages.crawler.resolve import find_embedded
 
@@ -486,15 +487,22 @@ class SiteReading:
     structured_jobs: int = 0
     #: The usual careers addresses tried when the site linked none.
     tried: tuple[str, ...] = ()
+    #: Every supported board a page named, as `vendor/slug`, when none of them
+    #: was taken as this company's: a portfolio or aggregator page.
+    boards_named: tuple[str, ...] = ()
+    #: The multi-company job-board system the page is built on
+    #: (`job_systems.NETWORK_BOARDS`).
+    network_board: str | None = None
 
     @property
     def category(self) -> str:
         """Which fix a company that was not verified needs. One word each.
 
         `other_job_system` wants a reader for that system; `structured_jobs`
-        the bespoke reader; `careers_page_unreadable` and `no_careers_page` a
-        person, or a correct URL on the sheet. `blocked` and `unreachable` are
-        the site's answer, and stay as they are (§2.5).
+        the bespoke reader; `careers_page_unreadable`, `no_careers_page` and
+        `multi_company_board` a person, or a correct URL on the sheet.
+        `blocked` and `unreachable` are the site's answer, and stay as they
+        are (§2.5).
         """
         if self.blocked:
             # Only a robots.txt that says no is the site's refusal. One that
@@ -507,6 +515,8 @@ class SiteReading:
             return "unreachable"
         if self.board:
             return "board_empty"
+        if self.boards_named or self.network_board:
+            return "multi_company_board"
         if self.job_system:
             return "other_job_system"
         if self.structured_jobs:
@@ -559,9 +569,10 @@ async def from_url(url: str, fetcher: PoliteFetcher) -> SiteReading:
     if not response.ok:
         return SiteReading(unreachable=f"HTTP {response.status}")
 
-    found = _board_in(response.text)
-    if found:
-        return SiteReading(board=found, read=True)
+    home = _read_page(response.text, url)
+    if home.board:
+        return SiteReading(board=home.board, read=True)
+    named, network = home.named, home.network
 
     # What the page itself shows, kept whatever happens next: a link to a job
     # system we cannot read, and jobs published as structured data.
@@ -595,16 +606,20 @@ async def from_url(url: str, fetcher: PoliteFetcher) -> SiteReading:
             continue
         if not page.ok:
             continue
-        found = _board_in(page.text)
-        if found:
+        said = _read_page(page.text, url)
+        if said.board:
             log.info("board_found_via_careers_link", company_page=url, careers_page=link)
-            return SiteReading(board=found, read=True, careers_page=page.url)
+            return SiteReading(board=said.board, read=True, careers_page=page.url)
         # The first careers page that exists is the company's. Its own links
         # outrank the home page's, which may be a footer to a sister company.
         careers_page = page.url
         system = other_job_system(page.text) or system
         structured = len(job_postings(page.text))
+        named, network = said.named, said.network
         break
+    if named or network:
+        # A job system linked from a portfolio page is some other company's.
+        system = None
     return SiteReading(
         blocked=hop_blocked,
         read=True,
@@ -613,6 +628,8 @@ async def from_url(url: str, fetcher: PoliteFetcher) -> SiteReading:
         job_system_url=system[1] if system else None,
         structured_jobs=structured,
         tried=tuple(tried) if careers_page is None else (),
+        boards_named=named,
+        network_board=network,
     )
 
 
@@ -635,15 +652,16 @@ _ATS_URL_IN_PAGE_RE = re.compile(
 _TRAILING_PUNCTUATION = "\".,;:'"
 
 
-def _board_in(html: str) -> tuple[str, str] | None:
-    """`(vendor, slug)` for the first supported ATS board named in a page.
+def _boards_in(html: str) -> list[tuple[str, str]]:
+    """Every distinct supported board a page names: posting links first, then
+    board front pages, each in document order.
 
     Two shapes count, and only the first one used to.
 
     **A link to one posting** — `boards.greenhouse.io/acmeco/jobs/9001`.
-    `find_embedded` finds those, because that is what `resolve.py` needs: it is
-    answering "where does this job apply", and a board front page is not an
-    answer to that.
+    `find_embedded`'s pattern reads those, because that is what `resolve.py`
+    needs: it is answering "where does this job apply", and a board front page
+    is not an answer to that.
 
     **A link to the board itself** — `boards.greenhouse.io/acmeco`, or the
     `embed/job_board?for=` iframe. This is the commoner shape by far on a
@@ -659,18 +677,66 @@ def _board_in(html: str) -> tuple[str, str] | None:
     which its own docstring explains is how a worker ends up filling a form
     that is not there.
     """
-    embedded = find_embedded(html)
-    if embedded:
-        vendor = detect_ats(embedded)
-        slug = slug_from_ats_url(embedded)
-        if vendor and slug and SLUG_RE.match(slug):
-            return vendor, slug
-
+    postings: list[tuple[str, str]] = []
+    fronts: list[tuple[str, str]] = []
     for candidate in _ATS_URL_IN_PAGE_RE.findall(html):
-        root = board_root(candidate.rstrip(_TRAILING_PUNCTUATION))
+        link = candidate.rstrip(_TRAILING_PUNCTUATION)
+        root = board_root(link)
         if root:
-            return root
-    return None
+            fronts.append(root)
+            continue
+        posting = find_embedded(link)
+        if posting:
+            vendor, slug = detect_ats(posting), slug_from_ats_url(posting)
+            if vendor and slug and SLUG_RE.match(slug):
+                postings.append((vendor, slug))
+    return list(dict.fromkeys(postings + fronts))
+
+
+class _Page(NamedTuple):
+    """What one page said about boards."""
+
+    #: The company's own board, if the page named one.
+    board: tuple[str, str] | None
+    #: Every board the page named, as `vendor/slug`, when none was taken.
+    named: tuple[str, ...] = ()
+    #: The multi-company job-board system the page is built on.
+    network: str | None = None
+
+
+def _plain(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _read_page(html: str, site_url: str) -> _Page:
+    """The company's own board on a page, or what the page named instead.
+
+    A page naming one company's board — however many of its jobs, on however
+    many systems — names that company's board. A page naming several
+    companies' boards is a portfolio or aggregator page, and the first board on
+    it is nobody's in particular: GGV Capital's careers link went to a Getro
+    board listing Ibotta, Brightwheel, Cyderes and Wiz, and discovery took
+    Cyderes's Lever board for GGV's own and stored its postings under GGV
+    (2026-10-19).
+
+    One of several is taken only when its slug is the site's own name —
+    `acme.com` naming `ashby/acme` beside a partner's board — because then the
+    page and the company's address agree. Nothing is taken from a page built on
+    a network board system (`job_systems.NETWORK_BOARDS`), whose first screen
+    may show one company's jobs and still be a portfolio.
+    """
+    boards = _boards_in(html)
+    named = tuple(f"{vendor}/{slug}" for vendor, slug in boards)
+    network = network_board(html)
+    if network or not boards:
+        return _Page(None, named, network)
+    if len({_plain(slug) for _, slug in boards}) == 1:
+        return _Page(boards[0])
+    own = _plain(site_of(urlparse(site_url).hostname or "").split(".")[0])
+    for board in boards:
+        if _plain(board[1]) == own:
+            return _Page(board)
+    return _Page(None, named)
 
 
 async def resolve_one(
@@ -827,6 +893,8 @@ def unreadable_reason(reading: SiteReading) -> str:
     careers page exists where one usually is.
     """
     page = reading.careers_page
+    if reading.boards_named or reading.network_board:
+        return _multi_company_reason(reading)
     if reading.job_system:
         where = f"careers page {page}" if page else "its site"
         return (
@@ -845,6 +913,20 @@ def unreadable_reason(reading: SiteReading) -> str:
     if tried:
         return f"no careers page found: its site links none, and {tried} do not exist"
     return "its own site names no supported board and links no careers page"
+
+
+def _multi_company_reason(reading: SiteReading) -> str:
+    """Why a page naming several companies' boards named none of them."""
+    where = f"careers page {reading.careers_page}" if reading.careers_page else "its site"
+    named = reading.boards_named
+    listing = ", ".join(named[:3]) + (f" and {len(named) - 3} more" if len(named) > 3 else "")
+    if reading.network_board:
+        head = f"{where} is a {reading.network_board} job board for several companies"
+        head += f", listing {listing}" if named else ""
+    else:
+        companies = len({_plain(board.split("/", 1)[1]) for board in named})
+        head = f"{where} lists jobs from {companies} different companies' boards ({listing})"
+    return f"{head}, so none is taken as this company's own"
 
 
 async def resolve_all(

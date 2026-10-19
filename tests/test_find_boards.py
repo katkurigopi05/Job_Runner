@@ -210,7 +210,7 @@ async def test_a_careers_page_linking_the_board_itself_is_read_too() -> None:
     page saying `boards.greenhouse.io/acmeco` produced `acme`, which is a
     different company's board if it is anybody's.
 
-    Without the board-root read in `_board_in` this test resolves to `acme`.
+    Without the board-root read in `_boards_in` this test resolves to `acme`.
     """
     page = "<html><a href='https://boards.greenhouse.io/acmeco'>View all openings</a></html>"
     body = '{"jobs": [{"id": 1, "title": "Engineer", "absolute_url": "https://x/1"}]}'

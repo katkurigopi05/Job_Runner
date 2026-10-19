@@ -46,6 +46,10 @@ def test_an_old_failure_with_nothing_to_read_waits_for_its_recheck() -> None:
     assert report.category_of({"method": "discovery_failed"}, reason) == "not_yet_rechecked"
 
 
+def test_a_portfolio_board_has_its_own_fix() -> None:
+    assert "several companies" in report.fix_for("multi_company_board")
+
+
 def test_the_fix_names_the_job_system() -> None:
     assert report.fix_for("other_job_system", "Workday") == "add a reader for Workday"
     assert report.fix_for("no_such_category") == report.FIXES["not_yet_rechecked"]

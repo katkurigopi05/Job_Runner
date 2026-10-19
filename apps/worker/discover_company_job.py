@@ -350,6 +350,8 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
         ),
         **({"structured_jobs": reading.structured_jobs} if reading.structured_jobs else {}),
         **({"tried": list(reading.tried)} if reading.tried else {}),
+        **({"boards_named": list(reading.boards_named)} if reading.boards_named else {}),
+        **({"network_board": reading.network_board} if reading.network_board else {}),
         "attempts": state.discovery_attempts,
         "at": now.isoformat(),
     }

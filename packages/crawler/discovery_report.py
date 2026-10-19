@@ -33,6 +33,8 @@ FIXES: dict[str, str] = {
     "structured_jobs": "read its careers page's structured jobs (the JSON-LD reader)",
     "careers_page_unreadable": "look at its careers page; add its job board URL if it has one",
     "no_careers_page": "add a careers URL to the sheet, or it may not be hiring",
+    "multi_company_board": "its careers link is a job board for several companies (a "
+    "portfolio or aggregator); add its own board URL to the sheet if it has one",
     "no_website": "add a website or careers URL to the sheet",
     "board_empty": "none: its board lists nothing open; retried on schedule",
     "blocked": "none: its site disallows crawling (robots.txt)",
