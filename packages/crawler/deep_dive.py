@@ -39,11 +39,12 @@ from packages.crawler.fetch import Blocked, PoliteFetcher
 from packages.crawler.find_boards import (
     Resolved,
     SiteReading,
+    names_a_board,
     resolve_site,
     site_of,
     unreadable_reason,
 )
-from packages.crawler.job_systems import system_for_host
+from packages.crawler.job_systems import other_job_system, system_for_host
 
 Resolver = Callable[[str], Awaitable[bool]]
 
@@ -187,6 +188,22 @@ async def _fetch(fetcher: PoliteFetcher, url: str) -> tuple[str, str, str]:
     return str(response.status), response.url, response.text if response.ok else ""
 
 
+def _merged(first: _Page, *more: _Page) -> _Page:
+    """One page's links followed by another's, each kind in order, once."""
+
+    def joined(kind: str) -> tuple[str, ...]:
+        links = [link for page in (first, *more) for link in getattr(page, kind)]
+        return tuple(dict.fromkeys(links))
+
+    return _Page(
+        url=first.url,
+        own_postings=joined("own_postings"),
+        own_job_links=joined("own_job_links"),
+        other_sites=joined("other_sites"),
+        emails=joined("emails"),
+    )
+
+
 def _from_links(page: _Page, findings: dict[str, Any]) -> DeepDive | None:
     """A diagnosis from what a page links to, without another request."""
     if page.other_sites:
@@ -242,28 +259,37 @@ async def _careers_page(name: str, page_url: str, fetcher: PoliteFetcher) -> Dee
     page = read_links(html, final)
 
     # One link further in: a jobs subdomain, an "open positions" page, or the
-    # first of its own postings, whose apply button may name the board.
-    further = (page.own_job_links or page.own_postings)[:1]
-    for link in further:
-        outcome, reading = await resolve_site(name, fetcher, url=link, guess=False)
-        findings["further"] = {"url": link, "category": reading.category}
-        if isinstance(outcome, Resolved):
-            return DeepDive(
-                board=outcome,
-                kind="board_further_in",
-                diagnosis=f"its board is named one page further in, on {link}",
-                findings=findings,
-            )
-        if reading.job_system:
+    # first of its own postings, whose apply button may name the board. Read
+    # once; read again through discovery only when it names a board, so the
+    # board is verified the way discovery verifies one.
+    further: list[_Page] = []
+    for link in (page.own_job_links or page.own_postings)[:1]:
+        status, landed, body = await _fetch(fetcher, link)
+        findings["further"] = {"url": link, "status": status}
+        if not body:
+            continue
+        if names_a_board(body):
+            outcome, reading = await resolve_site(name, fetcher, url=link, guess=False)
+            findings["further"]["category"] = reading.category
+            if isinstance(outcome, Resolved):
+                return DeepDive(
+                    board=outcome,
+                    kind="board_further_in",
+                    diagnosis=f"its board is named one page further in, on {link}",
+                    findings=findings,
+                )
+        system = other_job_system(body)
+        if system:
             return DeepDive(
                 kind="other_job_system",
-                diagnosis=f"its jobs are on {reading.job_system} ({reading.job_system_url}), "
-                f"one page further in than its careers page",
-                fix=f"add a reader for {reading.job_system}",
+                diagnosis=f"its jobs are on {system[0]} ({system[1]}), one page further in "
+                "than its careers page",
+                fix=f"add a reader for {system[0]}",
                 findings=findings,
             )
+        further.append(read_links(body, landed))
 
-    found = _from_links(page, findings)
+    found = _from_links(_merged(page, *further), findings)
     if found is not None:
         return found
     return DeepDive(

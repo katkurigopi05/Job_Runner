@@ -128,6 +128,47 @@ async def test_a_page_sending_applicants_elsewhere_names_where() -> None:
     assert "sends applicants to careers.risepeople.com" in found.diagnosis
 
 
+async def test_where_a_job_page_sends_applicants_outranks_an_email() -> None:
+    """CarbonRun: its careers page has an HR address and one job, and the job's
+    page sends applicants to careers.risepeople.com."""
+    found = await _careers(
+        '<a href="mailto:humanresources@acme.com">Questions?</a>'
+        '<a href="/careers-at-acme-engineering-co-op">Engineering co-op</a>',
+        **{
+            "acme.com/careers-at-acme-engineering-co-op": (
+                '<a href="https://careers.risepeople.com/acme/en/17713">Apply</a>'
+            )
+        },
+    )
+
+    assert "sends applicants to careers.risepeople.com" in found.diagnosis
+    assert found.findings["further"]["url"] == "https://acme.com/careers-at-acme-engineering-co-op"
+
+
+async def test_a_board_named_further_in_is_still_verified_after_one_read() -> None:
+    """The page further in is read once, and read again only to verify a board."""
+    requested: list[str] = []
+    found = await deep_dive(
+        name="Acme",
+        stage="discovery",
+        category="careers_page_unreadable",
+        reason="r",
+        lead="https://acme.com/",
+        careers_page="https://acme.com/careers",
+        fetcher=_site(
+            {
+                "acme.com/careers": '<a href="/open-positions">Open positions</a>',
+                "acme.com/open-positions": '<a href="https://boards.greenhouse.io/acme">x</a>',
+                GREENHOUSE_API: BOARD_JSON,
+            },
+            requested,
+        ),
+    )
+
+    assert isinstance(found.board, Resolved)
+    assert requested.count("acme.com/careers") == 1
+
+
 async def test_jobs_on_its_own_pages_are_said_to_be() -> None:
     found = await _careers(
         '<a href="/careers/forward-deployed-engineer">Engineer</a>'
