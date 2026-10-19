@@ -213,3 +213,101 @@ def test_a_robots_file_that_says_no_is_blocked_and_one_never_read_is_unreachable
 
     assert refused.category == "blocked"
     assert unread.category == "unreachable"
+
+
+# --- a page that lists other companies' jobs ----------------------------------------
+#
+# Found on 2026-10-19 by the first recheck with the code above. GGV Capital's
+# site (notablecap.com) links jobs.notablecap.com, a Getro job board listing
+# jobs at the firms it invests in: Ibotta and Brightwheel on Ashby, Cyderes on
+# Lever, Wiz on Greenhouse. Discovery took the first of them, Cyderes, as GGV's
+# own board, and twelve Cyderes postings were stored under GGV Capital.
+
+UUID_A = "2b3c4d5e-6f70-4a81-9b2c-3d4e5f607182"
+UUID_B = "8a9b0c1d-2e3f-4a5b-8c7d-9e0f1a2b3c4d"
+
+
+def _lever(slug: str, posting: str = UUID_A) -> str:
+    return f'<a href="https://jobs.lever.co/{slug}/{posting}">A role</a>'
+
+
+PORTFOLIO = (
+    _lever("cyderes")
+    + _lever("cyderes", UUID_B)
+    + '<a href="https://boards.greenhouse.io/otherco/jobs/3333">Designer, Otherco</a>'
+)
+GETRO = '<img src="https://cdn.getro.com/collections/1a70bb9b.png">'
+
+
+def _venture_firm(jobs_page: str) -> PoliteFetcher:
+    """A firm whose home page links a jobs subdomain serving `jobs_page`."""
+    return _site({"vc.com/": '<a href="https://jobs.vc.com/">Jobs</a>', "jobs.vc.com/": jobs_page})
+
+
+async def test_a_page_listing_several_companies_boards_names_none_of_them() -> None:
+    fetcher = _venture_firm(PORTFOLIO)
+
+    reading = await from_url("https://vc.com/", fetcher)
+
+    assert reading.board is None
+    assert reading.boards_named == ("lever/cyderes", "greenhouse/otherco")
+    assert reading.category == "multi_company_board"
+
+
+async def test_a_home_page_listing_several_companies_boards_names_none_either() -> None:
+    reading = await from_url("https://vc.com/", _site({"vc.com/": PORTFOLIO}))
+
+    assert reading.board is None
+    assert reading.category == "multi_company_board"
+
+
+async def test_several_jobs_on_one_board_still_name_that_board() -> None:
+    page = _lever("acme") + _lever("acme", UUID_B)
+    fetcher = _site({"acme.com/": '<a href="/careers">Careers</a>', "acme.com/careers": page})
+
+    reading = await from_url("https://acme.com/", fetcher)
+
+    assert reading.board == ("lever", "acme")
+
+
+async def test_one_company_on_two_systems_is_still_one_company() -> None:
+    """A company that moved systems and left a link to the old board up."""
+    page = _lever("acme") + '<a href="https://boards.greenhouse.io/acme">Old board</a>'
+
+    reading = await from_url("https://acme.com/careers", _site({"acme.com/careers": page}))
+
+    assert reading.board == ("lever", "acme"), "a posting link outranks a front page, as before"
+
+
+async def test_among_several_boards_the_one_named_like_the_site_is_its_own() -> None:
+    """`acme.com` naming its own board and a partner's: the page and the
+    company's own address agree on one of them."""
+    page = _lever("partnerco") + '<a href="https://jobs.ashbyhq.com/acme">Our jobs</a>'
+
+    reading = await from_url("https://careers.acme.com/", _site({"careers.acme.com/": page}))
+
+    assert reading.board == ("ashby", "acme")
+
+
+async def test_a_getro_board_is_never_one_companys_board() -> None:
+    """A portfolio board whose first screen happens to show one company's jobs
+    is still a portfolio board."""
+    fetcher = _venture_firm(GETRO + _lever("cyderes"))
+
+    reading = await from_url("https://vc.com/", fetcher)
+
+    assert reading.board is None
+    assert reading.network_board == "Getro"
+    assert reading.category == "multi_company_board"
+
+
+async def test_a_portfolio_page_says_so_in_the_reason() -> None:
+    fetcher = _venture_firm(PORTFOLIO)
+
+    outcome, _ = await resolve_site("VC", fetcher, url="https://vc.com/", guess=False)
+
+    assert not isinstance(outcome, Resolved)
+    reason = outcome[1]
+    assert reason.startswith("careers page https://jobs.vc.com/ lists jobs from ")
+    assert "2 different companies" in reason
+    assert "lever/cyderes" in reason

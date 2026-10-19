@@ -335,3 +335,23 @@ async def test_a_company_with_no_website_is_recorded_as_having_none(db_session, 
     await job.handle_discover_company(db_session, _claim(company))
 
     assert company.source_evidence["category"] == "no_website"
+
+
+async def test_a_portfolio_board_records_the_boards_it_named(db_session, calls) -> None:
+    """GGV Capital, 2026-10-19: its careers link was a Getro board listing other
+    companies' jobs. The boards are kept so a person can see why."""
+    calls["reading"] = SiteReading(
+        read=True,
+        careers_page="https://jobs.notablecap.com/jobs",
+        boards_named=("ashby/ibotta", "lever/cyderes"),
+        network_board="Getro",
+    )
+    company = await _company(db_session, website="https://www.notablecap.com")
+
+    await job.handle_discover_company(db_session, _claim(company))
+
+    evidence = company.source_evidence
+    assert company.source_status == SourceStatus.FAILED.value
+    assert evidence["category"] == "multi_company_board"
+    assert evidence["boards_named"] == ["ashby/ibotta", "lever/cyderes"]
+    assert evidence["network_board"] == "Getro"

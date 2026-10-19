@@ -16,6 +16,7 @@ whole label suffix, so `myworkdayjobs.com.evil.net` is not Workday.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from urllib.parse import urlparse
 
 #: Host suffix -> the system's name. A suffix matches the host itself or any
@@ -65,8 +66,17 @@ def system_for_host(host: str) -> str | None:
     return None
 
 
-def other_job_system(html: str) -> tuple[str, str] | None:
-    """`(name, url)` for the first link in `html` to a job system we cannot read."""
+#: Systems that host one job board for a network of companies — a venture
+#: firm's portfolio, an accelerator's alumni — rather than for one employer.
+#: A supported board named on such a page belongs to some company in the
+#: network, not to the company whose site linked it: GGV Capital's careers
+#: link went to a Getro board, and discovery took Cyderes's Lever board for
+#: GGV's own (2026-10-19, `find_boards._read_page`).
+NETWORK_BOARDS = frozenset({"Getro"})
+
+
+def _systems_linked(html: str) -> Iterator[tuple[str, str]]:
+    """`(name, url)` for each link in `html` to a job system, in document order."""
     for match in _URL_RE.finditer(html):
         url = match.group(0).rstrip("\".,;:'")
         try:
@@ -75,8 +85,17 @@ def other_job_system(html: str) -> tuple[str, str] | None:
             continue
         name = system_for_host(host)
         if name:
-            return name, url
-    return None
+            yield name, url
 
 
-__all__ = ["other_job_system", "system_for_host"]
+def other_job_system(html: str) -> tuple[str, str] | None:
+    """`(name, url)` for the first link in `html` to a job system we cannot read."""
+    return next(_systems_linked(html), None)
+
+
+def network_board(html: str) -> str | None:
+    """The multi-company job-board system a page is built on, if it is one."""
+    return next((name for name, _ in _systems_linked(html) if name in NETWORK_BOARDS), None)
+
+
+__all__ = ["NETWORK_BOARDS", "network_board", "other_job_system", "system_for_host"]

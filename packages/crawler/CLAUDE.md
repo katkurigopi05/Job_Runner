@@ -323,8 +323,8 @@ five on other job systems, twenty on the company's own page.
   more, never by a name in prose), and schema.org JobPostings it publishes.
 - **Every failure gets a category** (`SiteReading.category`) and a reason
   that says what was found: `other_job_system`, `structured_jobs`,
-  `careers_page_unreadable`, `no_careers_page`, `no_website`,
-  `board_empty`, `blocked`, `unreachable`. The careers page, the job system
+  `careers_page_unreadable`, `no_careers_page`, `multi_company_board`,
+  `no_website`, `board_empty`, `blocked`, `unreachable`. The careers page, the job system
   and what was tried go into `source_evidence`.
 
 `make discovery-report` lists every failed company with its careers page,
@@ -343,6 +343,19 @@ What a later change could undo:
   seen, never "none".
 - **`resolve_one` is unchanged** for its callers; `resolve_site` returns the
   site's reading beside the outcome.
+- **A page naming several companies' boards names none of them**
+  (`_read_page`). The first recheck with the code above verified GGV
+  Capital on Cyderes's Lever board: GGV's careers link is a Getro board
+  listing its portfolio's jobs, and discovery took the first board on it. A
+  read of the 79 companies verified from their own site then found Cargo,
+  verified 2026-10-05 on whichever of 290 boards its `/jobs` aggregator listed
+  first. A board is taken when the page names one company's (any number of
+  its jobs, on any number of systems), or, among several, the one whose slug
+  is the site's own name. Nothing is taken from a page built on a network
+  board system (`job_systems.NETWORK_BOARDS`, Getro). The boards it named go
+  into `source_evidence.boards_named`. Sony PlayStation's careers page lists
+  its studios' boards and would now fail too; it keeps the board it was
+  verified on, because a verified company is not rediscovered.
 
 Not done, each a decision for later: a reader for any of the other job
 systems (the report says which would unlock the most companies); taking the
