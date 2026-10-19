@@ -48,6 +48,9 @@ from packages.matching.metrics import bootstrap_ci
 SHOWN = 5
 #: The lowest grade that counts as relevant.
 RELEVANT = 1
+#: How a grade Claude gave is marked, at the owner's request, so a baseline
+#: can always say how many of its grades are the owner's own.
+CLAUDE_NOTE = "claude:"
 
 
 @dataclass(frozen=True)
@@ -245,6 +248,7 @@ def as_dict(scores: Sequence[QuestionScore]) -> list[dict[str, Any]]:
 
 
 __all__ = [
+    "CLAUDE_NOTE",
     "METRICS",
     "RELEVANT",
     "SHOWN",

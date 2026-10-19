@@ -44,7 +44,9 @@ export default async function JudgeQuestionsPage() {
         </p>
       </header>
 
-      <JudgmentDeck initial={queue} />
+      {/* Keyed on the count graded, so a refresh after a batch remounts the
+          deck with the next one: it reads `initial` only on mount. */}
+      <JudgmentDeck key={summary.graded} initial={queue} remaining={summary.remaining} />
 
       <section
         aria-labelledby="judged"

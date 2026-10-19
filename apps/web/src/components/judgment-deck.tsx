@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type JudgmentCandidate } from "@/lib/api";
 import { recordJudgment } from "@/app/label/questions/actions";
@@ -65,7 +66,15 @@ function Marked({ text, pattern }: { text: string; pattern: RegExp | null }) {
   );
 }
 
-export function JudgmentDeck({ initial }: { initial: JudgmentCandidate[] }) {
+export function JudgmentDeck({
+  initial,
+  remaining,
+}: {
+  initial: JudgmentCandidate[];
+  /** Ungraded in the whole set when the page was rendered, this batch included. */
+  remaining: number;
+}) {
+  const router = useRouter();
   const [queue, setQueue] = useState(initial);
   const [pending, setPending] = useState<number | null>(null);
   const [graded, setGraded] = useState(0);
@@ -112,14 +121,30 @@ export function JudgmentDeck({ initial }: { initial: JudgmentCandidate[] }) {
   }, [grade]);
 
   if (!current) {
+    // A batch is twenty. Saying only "reload for the next batch" left ten
+    // ungraded on 2026-10-19 because the screen read as finished.
+    const waiting = Math.max(0, remaining - graded);
     return (
       <div className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-10 text-center">
-        <p className="font-display text-2xl">Nothing left in this batch</p>
-        <p className="mt-3 text-sm text-ink-soft">
-          {graded > 0
-            ? `${graded} graded this session. Reload for the next batch.`
-            : "Nothing is waiting. If the summary below is empty, the pool has not been built."}
+        <p className="font-display text-2xl">
+          {waiting > 0 ? `${waiting} more waiting` : "Everything is graded"}
         </p>
+        <p className="mt-3 text-sm text-ink-soft">
+          {waiting > 0
+            ? `${graded} graded in this batch. The next batch is ready.`
+            : graded > 0
+              ? `${graded} graded in this batch. Freeze the baseline with make score-judgments freeze=1.`
+              : "Nothing is waiting. If the summary below is empty, the pool has not been built."}
+        </p>
+        {waiting > 0 ? (
+          <button
+            type="button"
+            onClick={() => router.refresh()}
+            className="mt-6 rounded bg-ink px-4 py-1.5 font-mono text-xs uppercase tracking-widest text-paper transition-opacity hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+          >
+            Load the next batch
+          </button>
+        ) : null}
       </div>
     );
   }
