@@ -35,15 +35,22 @@ from packages.core.models_chunks import PostingChunk
 from packages.core.models_judgments import RetrievalJudgment
 from packages.matching import judged, judged_scores
 
-#: Proposed, not approved. The owner approves them before any candidate is
-#: run against the held-out half (docs/harness-audit/phase-5-retrieval.md).
-PROPOSED_THRESHOLDS = {
+#: What a candidate must meet on the held-out half before it replaces the
+#: shipped search. Approved by the owner on 2026-10-19, as proposed
+#: (docs/harness-audit/phase-5-retrieval.md, part 2). A change to them is a
+#: new approval, recorded there, never an edit here alone.
+THRESHOLDS = {
     "held_out_mrr": "no lower than the baseline's",
     "held_out_ndcg_at_depth": "no lower than the baseline's",
     "better": "a paired 95% interval of the held-out difference that excludes zero",
     "abstention": "no question expecting nothing answered that the baseline got right",
     "median_seconds": "at most 1.0 s above the baseline's",
     "coverage": "at least 0.9 of a candidate's results graded, or grade more first",
+}
+THRESHOLDS_APPROVED = {
+    "by": "the owner",
+    "on": "2026-10-19",
+    "where": "docs/harness-audit/phase-5-retrieval.md, part 2",
 }
 
 
@@ -165,8 +172,8 @@ async def main() -> int:
             for split in ("dev", "held_out", "all")
         },
         "questions": judged_scores.as_dict(scores),
-        "proposed_thresholds": PROPOSED_THRESHOLDS,
-        "thresholds_approved": False,
+        "thresholds": THRESHOLDS,
+        "thresholds_approved": THRESHOLDS_APPROVED,
     }
     folder = Path(get_settings().storage_root) / "evaluation"
     folder.mkdir(parents=True, exist_ok=True)

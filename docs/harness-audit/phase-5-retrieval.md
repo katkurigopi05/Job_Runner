@@ -8,7 +8,7 @@ Phase 5 has three parts.
 | Part | State |
 |---|---|
 | 1. Fix proven filter-before-limit starvation (finding F, medium) | Merged in #180, measured on the live database |
-| 2. Owner relevance on a frozen, held-out set | Built (below). Waits on the owner's grades: 330 pooled, 0 graded. Answer support is not built |
+| 2. Owner relevance on a frozen, held-out set | Merged in #181 and deployed 2026-10-19: migration applied, 330 postings pooled. Thresholds approved. Waits on the owner's grades, then `make score-judgments freeze=1`. Answer support is not built |
 | 3. Evaluate the re-ranker and semantic switches, each on its own | Not started: needs part 2's frozen baseline |
 
 ## Part 1: a filter runs before the cut
@@ -117,7 +117,7 @@ the baseline to `storage/evaluation/`.
 
 | Piece | Where |
 |---|---|
-| 35 frozen questions, `chat-v1`: 26 to grade over seven strata (skill, role, company, level, sponsorship, paraphrase, place), 5 that should find nothing, 2 that are not a search | `seeds/chat_judgment_questions.json`, mostly the owner's own wording from `.claude/rules/assistant-search.md` |
+| 35 frozen questions, `chat-v1`: 28 to grade over seven strata (skill, role, company, level, sponsorship, paraphrase, place), 5 that should find nothing, 2 that are not a search | `seeds/chat_judgment_questions.json`, mostly the owner's own wording from `.claude/rules/assistant-search.md` |
 | Held out: 30% of questions by a stable hash of the key | `judged.is_held_out` |
 | The pool: each question asked in three modes (shipped, semantic candidates on, the MiniLM cross-encoder), each mode's top 8 unioned | `packages/matching/judged.py`, `make judge-pool` / `judge-pool-write` |
 | The grades, one row per question and posting | `retrieval_judgments` (migration `d3a9f6c1b742`) |
@@ -167,16 +167,24 @@ the baseline to `storage/evaluation/`.
   the area states it sponsors) was replaced, and "backend engineer roles at
   Stripe" (both such postings are in Seattle or Toronto) now expects none.
 
+**Deployed 2026-10-19.** After a backup verified by restore
+(`backups/jobrunner-20261019T055618Z`), the root checkout went to `0780377`,
+`make migrate` took the live database to `d3a9f6c1b742`, and
+`make judge-pool-write` added 330 rows (188 dev, 142 held out, 28 questions).
+`/label/questions` was checked in a browser at 1440 and 375 pixels wide: no
+horizontal scroll, the question's words marked in the posting.
+
 **Not built.** Answer support: whether each sentence of the assistant's
 answer is supported by the posting it cites. That needs the local model to
 write answers to the frozen questions and the owner to check the claims, and
 it is the next step after a retrieval baseline exists.
 
-**Thresholds, proposed and not approved.** Written into every baseline file
-as `proposed_thresholds` with `thresholds_approved: false`, for the owner to
-approve or change before part 3 reads the held-out half:
+**Thresholds, approved by the owner on 2026-10-19, as proposed.** Asked in
+a Claude Code session and answered "approve as proposed". Written into every
+baseline file as `thresholds`, with `thresholds_approved` naming who, when
+and where. A change to them is a new approval, recorded here:
 
-| | Proposed |
+| | Approved |
 |---|---|
 | held-out MRR and nDCG@8 | no lower than the baseline's |
 | "better" | a paired 95% interval of the held-out difference that excludes zero |
