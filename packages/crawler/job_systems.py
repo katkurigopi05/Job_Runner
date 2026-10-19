@@ -1,0 +1,82 @@
+"""Job systems a careers page can be built on that discovery cannot read yet.
+
+Discovery verifies a company only on Greenhouse, Lever, Ashby or Workable
+(`find_boards.VENDORS`). A careers page on anything else was recorded as
+"names no supported board", which is true and says nothing about what to do.
+Naming the system is what turns a failure into a list of readers worth
+writing: on a 40-company sample of the owner's failed sheet on 2026-10-19,
+five careers pages were on Workday, BambooHR (two), Paylocity and
+SuccessFactors.
+
+A system is recognised only by a link to its own host, never by its name in
+prose: "we moved payroll off Workday" names no board. Hosts are matched as a
+whole label suffix, so `myworkdayjobs.com.evil.net` is not Workday.
+"""
+
+from __future__ import annotations
+
+import re
+from urllib.parse import urlparse
+
+#: Host suffix -> the system's name. A suffix matches the host itself or any
+#: subdomain of it. Ordered most specific first where two could overlap.
+_SYSTEMS: tuple[tuple[str, str], ...] = (
+    ("myworkdayjobs.com", "Workday"),
+    ("myworkdaysite.com", "Workday"),
+    ("smartrecruiters.com", "SmartRecruiters"),
+    ("icims.com", "iCIMS"),
+    ("jobvite.com", "Jobvite"),
+    ("bamboohr.com", "BambooHR"),
+    ("ats.rippling.com", "Rippling"),
+    ("jobs.gem.com", "Gem"),
+    ("applytojob.com", "JazzHR"),
+    ("recruitee.com", "Recruitee"),
+    ("teamtailor.com", "Teamtailor"),
+    ("jobs.personio.de", "Personio"),
+    ("jobs.personio.com", "Personio"),
+    ("breezy.hr", "Breezy"),
+    ("pinpointhq.com", "Pinpoint"),
+    ("app.dover.com", "Dover"),
+    ("recruiting.paylocity.com", "Paylocity"),
+    ("recruiting.ultipro.com", "UKG"),
+    ("workforcenow.adp.com", "ADP"),
+    ("successfactors.com", "SuccessFactors"),
+    ("successfactors.eu", "SuccessFactors"),
+    ("jobs.sap.com", "SuccessFactors"),
+    ("taleo.net", "Taleo"),
+    ("oraclecloud.com", "Oracle Recruiting"),
+    ("eightfold.ai", "Eightfold"),
+    ("trinethire.com", "TriNet"),
+    ("zohorecruit.com", "Zoho Recruit"),
+    ("polymer.co", "Polymer"),
+    ("getro.com", "Getro"),
+    ("wellfound.com", "Wellfound"),
+)
+
+_URL_RE = re.compile(r"""https?://[^\s"'<>\\)\]]+""", re.I)
+
+
+def system_for_host(host: str) -> str | None:
+    """The job system a host belongs to, or None."""
+    host = host.lower().rstrip(".")
+    for suffix, name in _SYSTEMS:
+        if host == suffix or host.endswith("." + suffix):
+            return name
+    return None
+
+
+def other_job_system(html: str) -> tuple[str, str] | None:
+    """`(name, url)` for the first link in `html` to a job system we cannot read."""
+    for match in _URL_RE.finditer(html):
+        url = match.group(0).rstrip("\".,;:'")
+        try:
+            host = urlparse(url).hostname or ""
+        except ValueError:
+            continue
+        name = system_for_host(host)
+        if name:
+            return name, url
+    return None
+
+
+__all__ = ["other_job_system", "system_for_host"]

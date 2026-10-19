@@ -46,7 +46,7 @@ from packages.crawler.defer import defer_if_host_busy
 from packages.crawler.dispatch import CRAWL_COMPANY_TASK_KIND
 from packages.crawler.duplicate_boards import holder_of, set_aside
 from packages.crawler.fetch import PoliteFetcher, build_fetcher
-from packages.crawler.find_boards import VENDORS, Resolved, fetch_board, resolve_one
+from packages.crawler.find_boards import VENDORS, Resolved, SiteReading, fetch_board, resolve_site
 from packages.crawler.runs import discovery_backoff, ensure_state
 
 log = structlog.get_logger(__name__)
@@ -214,6 +214,9 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
     )
 
     outcome: Resolved | tuple[str, str]
+    # What the company's own site showed. Empty when the directory answered
+    # and the site was never read.
+    reading = SiteReading()
     async with build_fetcher() as fetcher:
         # The directory goes first because its probes go to the shared ATS
         # hosts (a 2s floor) rather than the company's own (60s), and on the
@@ -234,7 +237,7 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
                 # limiter deferral as an attempt would back the company off as
                 # though its own site had failed.
                 await defer_if_host_busy(session, claimed, fetcher, lead)
-            outcome = await resolve_one(
+            outcome, reading = await resolve_site(
                 company.name,
                 fetcher,
                 url=lead,
@@ -325,13 +328,28 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
         return
 
     _name, reason = outcome
+    category = reading.category if lead else "no_website"
     company.source_status = SourceStatus.FAILED.value
     company.discovery_failure = reason
+    # What the site showed, kept with the failure so the company can be fixed
+    # rather than only retried: the careers page found, the job system it is
+    # built on, and which fix it needs (`SiteReading.category`). The careers
+    # column of the owner's sheet was Google search links, so this is often
+    # the only careers URL the registry has for the company.
     company.source_evidence = {
         "method": "discovery_failed",
         **unconfirmed,
         "lead": lead,
         "reason": reason,
+        "category": category,
+        **({"careers_page": reading.careers_page} if reading.careers_page else {}),
+        **(
+            {"job_system": reading.job_system, "job_system_url": reading.job_system_url}
+            if reading.job_system
+            else {}
+        ),
+        **({"structured_jobs": reading.structured_jobs} if reading.structured_jobs else {}),
+        **({"tried": list(reading.tried)} if reading.tried else {}),
         "attempts": state.discovery_attempts,
         "at": now.isoformat(),
     }
@@ -340,6 +358,7 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
     log.info(
         "discover_company_unresolved",
         company=company.name,
+        category=category,
         reason=reason,
         attempts=state.discovery_attempts,
         next_attempt=state.discovery_next_at.isoformat(),

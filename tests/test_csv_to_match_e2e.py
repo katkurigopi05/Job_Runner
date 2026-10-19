@@ -123,6 +123,15 @@ async def flow(committing_sessionmaker, monkeypatch, tmp_path):
     from packages.crawler.fetch import build_fetcher as real_build
 
     monkeypatch.setattr(core_db, "get_sessionmaker", lambda: committing_sessionmaker)
+    # No usual careers addresses here. Every board-less company in this sheet
+    # serves a page with no careers link, so discovery would ask its host for
+    # `/careers` too, and this flow uses the real shared limiter: a 60s floor
+    # wait per company, twenty minutes over the file, which is what timed CI
+    # out on #185. Those addresses are tested on a fake clock in
+    # `test_discovery_careers_pages.py`; this file is about the flow.
+    from packages.crawler import find_boards
+
+    monkeypatch.setattr(find_boards, "COMMON_CAREERS_PATHS", ())
 
     state: dict = {}
 

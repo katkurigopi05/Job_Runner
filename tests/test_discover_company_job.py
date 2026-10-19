@@ -20,12 +20,13 @@ from packages.core.queue import ClaimedTask
 from packages.crawler.board_directory import BoardDirectory, DirectoryEntry
 from packages.crawler.dispatch import CRAWL_COMPANY_TASK_KIND
 from packages.crawler.extract import ExtractedPosting
+from packages.crawler.find_boards import SiteReading
 
 
 @pytest.fixture
 def calls(monkeypatch) -> dict:
     """Fakes for every outbound step, recording what the handler asked for."""
-    seen: dict = {"probes": [], "resolve": []}
+    seen: dict = {"probes": [], "resolve": [], "reading": SiteReading(read=True)}
 
     @contextlib.asynccontextmanager
     async def fake_fetcher():
@@ -36,11 +37,11 @@ def calls(monkeypatch) -> dict:
 
     async def fake_resolve(name, fetcher, *, url=None, vendors=(), guess=True):
         seen["resolve"].append({"name": name, "url": url, "guess": guess})
-        return name, "no board found on any supported ATS"
+        return (name, "no board found on any supported ATS"), seen["reading"]
 
     monkeypatch.setattr(job, "build_fetcher", fake_fetcher)
     monkeypatch.setattr(job, "defer_if_host_busy", no_defer)
-    monkeypatch.setattr(job, "resolve_one", fake_resolve)
+    monkeypatch.setattr(job, "resolve_site", fake_resolve)
     monkeypatch.setattr(job, "load_directory", lambda: None)
     return seen
 
@@ -285,3 +286,52 @@ async def test_losing_a_race_for_a_board_ends_the_same_way(db_session, calls, mo
     assert company.source_evidence["duplicate_of"] == str(holder.id)
     assert await _crawls(db_session) == 0
     assert holder.source_status == SourceStatus.VERIFIED.value
+
+
+# --- what a failure records ----------------------------------------------------------
+
+
+async def test_a_failure_keeps_the_careers_page_and_the_fix_it_needs(db_session, calls) -> None:
+    """The owner's sheet gave Google search links for careers pages. A careers
+    page found on the company's own site is often the only real one the
+    registry has, and was thrown away with the failure."""
+    calls["reading"] = SiteReading(
+        read=True,
+        careers_page="https://acme.com/careers",
+        job_system="Workday",
+        job_system_url="https://acme.wd5.myworkdayjobs.com/External",
+    )
+    company = await _company(db_session, website="https://acme.com")
+
+    await job.handle_discover_company(db_session, _claim(company))
+
+    assert company.source_status == SourceStatus.FAILED.value
+    evidence = company.source_evidence
+    assert evidence["category"] == "other_job_system"
+    assert evidence["careers_page"] == "https://acme.com/careers"
+    assert evidence["job_system"] == "Workday"
+    assert evidence["job_system_url"] == "https://acme.wd5.myworkdayjobs.com/External"
+    assert "structured_jobs" not in evidence, "only what was found is recorded"
+
+
+async def test_a_site_with_no_careers_page_records_what_was_tried(db_session, calls) -> None:
+    calls["reading"] = SiteReading(
+        read=True, tried=("https://acme.com/careers", "https://acme.com/jobs")
+    )
+    company = await _company(db_session, website="https://acme.com")
+
+    await job.handle_discover_company(db_session, _claim(company))
+
+    assert company.source_evidence["category"] == "no_careers_page"
+    assert company.source_evidence["tried"] == [
+        "https://acme.com/careers",
+        "https://acme.com/jobs",
+    ]
+
+
+async def test_a_company_with_no_website_is_recorded_as_having_none(db_session, calls) -> None:
+    company = await _company(db_session, website=None)
+
+    await job.handle_discover_company(db_session, _claim(company))
+
+    assert company.source_evidence["category"] == "no_website"
