@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching eval-retrieval fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -357,6 +357,25 @@ bench-matching:
 # what the numbers do not say.
 eval-retrieval:
 	$(PY)/python -m scripts.eval_retrieval $(if $(set),--set $(set),) $(if $(out),--json $(out),)
+
+# make judge-pool — the postings to grade for the assistant's search
+# (Phase 5 part 2). Asks every question in seeds/chat_judgment_questions.json
+# in every search mode and prints what would be pooled; writes nothing.
+# judge-pool-write adds it to retrieval_judgments for /label/questions, and
+# never touches a grade already given. See packages/matching/judged.py.
+judge-pool:
+	$(PY)/python -m scripts.judge_pool
+
+judge-pool-write:
+	$(PY)/python -m scripts.judge_pool --write
+
+# make score-judgments — the search against the owner's grades, per mode,
+# dev questions only (the held-out half is read once, in part 3).
+#   make score-judgments              once every pooled posting is graded
+#   make score-judgments p=1          provisional numbers while grading goes on
+#   make score-judgments freeze=1     write the baseline to storage/evaluation/
+score-judgments:
+	$(PY)/python -m scripts.score_judgments $(if $(p),--provisional,) $(if $(freeze),--freeze,)
 
 # Export the owner's swipe decisions as a labeled set. Gate 5 asks whether the
 # ranker works on this owner's material and every label in the repo is a

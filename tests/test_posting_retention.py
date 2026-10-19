@@ -31,6 +31,7 @@ from packages.core.models import (
     User,
 )
 from packages.core.models_chunks import PostingChunk
+from packages.core.models_judgments import RetrievalJudgment
 from packages.crawler.crawl import crawl_company
 from packages.crawler.extract import CompanySeed
 from packages.crawler.fetch import PoliteFetcher
@@ -247,6 +248,38 @@ async def test_old_and_closed_postings_go_and_the_owners_stay(db_session) -> Non
     }
     assert report.deleted == 4
     assert await db_session.scalar(select(func.count()).select_from(Match)) == 1
+
+
+async def test_a_posting_in_the_chat_grading_pool_is_kept_graded_or_not(db_session) -> None:
+    """The pool is frozen for grading the chat search (Phase 5). A posting
+    pruned out of it takes its grade, or its place waiting for one, and a
+    baseline measured on it could not be run again."""
+    company = Company(name="Acme", ats_type="greenhouse")
+    db_session.add(company)
+    await db_session.flush()
+    waiting = await _posting(db_session, company, "old_pooled", days_ago=60)
+    graded = await _posting(db_session, company, "old_judged", days_ago=60, closed=True)
+    await _posting(db_session, company, "old_unjudged", days_ago=60)
+    db_session.add_all(
+        RetrievalJudgment(
+            set_version="chat-v1",
+            question_key="q1",
+            question="kafka jobs",
+            stratum="skill",
+            held_out=False,
+            posting_id=posting.id,
+            pool_order=order,
+            surfaced_by={"shipped": order + 1},
+            relevance=relevance,
+        )
+        for order, (posting, relevance) in enumerate(((waiting, None), (graded, 2)))
+    )
+    await db_session.flush()
+
+    report = await prune(db_session, max_age_days=30, now=NOW, apply=True)
+
+    assert await _names(db_session) == {"old_pooled", "old_judged"}
+    assert (report.kept_for_owner, report.deleted) == (2, 1)
 
 
 async def test_a_tailored_resume_never_loses_its_posting(db_session) -> None:

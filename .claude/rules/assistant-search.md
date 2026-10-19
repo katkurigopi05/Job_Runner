@@ -756,3 +756,15 @@ python jobs" found 4 at the level and now 34. The known-target benchmark
 (`make eval-retrieval`) is identical on both sets. Median time 0.56 s to
 0.58 s, slowest 1.5 s to 1.2 s. The report is
 `docs/harness-audit/phase-5-retrieval.md`.
+
+## Grading the search, before changing it
+
+Added 2026-10-19, Phase 5 part 2. A change to how the search ranks or what
+it returns is measured against the owner's grades, not only the
+known-target benchmark: `make score-judgments` (dev questions; the held-out
+half is read once, when a change is decided). The frozen questions are
+`seeds/chat_judgment_questions.json` and a new question is a new set version.
+A new search mode is added to the set's `modes` and pooled with
+`make judge-pool-write` before it is scored, or its new finds score as
+misses. What the pieces are and what must not be undone:
+`docs/harness-audit/phase-5-retrieval.md`, part 2.

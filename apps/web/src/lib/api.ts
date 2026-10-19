@@ -499,6 +499,45 @@ export interface LabelSummary {
   notes: string[];
 }
 
+/**
+ * One posting to grade against one frozen question — Phase 5 of
+ * docs/HARNESS_AUDIT_2026-10-15.md, packages/matching/judged.py.
+ *
+ * Which search mode found it is deliberately absent: a grade given knowing
+ * whose answer it is leans toward that mode.
+ */
+export interface JudgmentCandidate {
+  id: string;
+  set_version: string;
+  question_key: string;
+  question: string;
+  /** This posting's place among its question's, and how many there are. */
+  position: number;
+  of: number;
+  posting_id: string;
+  title: string | null;
+  company: string | null;
+  location: string | null;
+  url: string;
+  description: string | null;
+  /** The posting's text changed since it was pooled; the grade is of what is shown. */
+  changed: boolean;
+  closed: boolean;
+}
+
+export interface JudgmentSummary {
+  set_version: string | null;
+  total: number;
+  graded: number;
+  remaining: number;
+  by_grade: Record<string, number>;
+  dev: { total: number; graded: number };
+  held_out: { total: number; graded: number };
+  questions: number;
+  questions_done: number;
+  notes: string[];
+}
+
 export interface Calibration {
   decided: number;
   interested: number;
@@ -1273,6 +1312,13 @@ export const api = {
         served_stream: servedStream ?? null,
         profile_id: profileId ?? null,
       }),
+    }),
+  judgmentQueue: (size: number) => request<JudgmentCandidate[]>(`/judgments/next?size=${size}`),
+  judgmentSummary: () => request<JudgmentSummary>("/judgments/summary"),
+  recordJudgment: (judgmentId: string, relevance: number, note?: string) =>
+    request<{ id: string; relevance: number }>(`/judgments/${judgmentId}`, {
+      method: "POST",
+      body: JSON.stringify({ relevance, note: note ?? null }),
     }),
   digest: () => request<Digest>("/analytics/digest"),
   matchSummary: () => request<MatchSummary>("/matches/summary"),

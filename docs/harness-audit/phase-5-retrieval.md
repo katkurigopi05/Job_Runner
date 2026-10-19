@@ -3,14 +3,13 @@
 Part of the plan in `docs/HARNESS_AUDIT_2026-10-15.md`, section H, Phase 5.
 Based on `main`. Started on 2026-10-18.
 
-Phase 5 has three parts. The first is done here; the other two wait on
-decisions only the owner can make.
+Phase 5 has three parts.
 
 | Part | State |
 |---|---|
-| 1. Fix proven filter-before-limit starvation (finding F, medium) | Done in this branch, measured on the live database |
-| 2. Owner relevance and answer support on a frozen, held-out set | Not started: 0 owner grades (`posting_labels` is empty; 7 swipes) |
-| 3. Evaluate the re-ranker and semantic switches, each on its own | Not started: needs part 2's baseline first |
+| 1. Fix proven filter-before-limit starvation (finding F, medium) | Merged in #180, measured on the live database |
+| 2. Owner relevance on a frozen, held-out set | Built (below). Waits on the owner's grades: 330 pooled, 0 graded. Answer support is not built |
+| 3. Evaluate the re-ranker and semantic switches, each on its own | Not started: needs part 2's frozen baseline |
 
 ## Part 1: a filter runs before the cut
 
@@ -102,25 +101,92 @@ right ones. Nobody has graded whether the new five are better, and the
 known-target benchmark measures where one known posting lands. Part 2 is the
 measurement that can say.
 
-## Parts 2 and 3: what they need from the owner
+## Part 2: grading the search on a frozen set
 
-The audit's acceptance for Phase 5 is an owner-approved baseline before any
-tuning, held-out metrics (Recall@5/20, MRR, NDCG@10, supported citations,
-abstention) and stratified query sets. None of that can be produced without
-the owner's judgements:
+Built 2026-10-19 at the owner's choice of a dashboard page and a budget of
+about 300 grades.
 
-- **Feed relevance.** `/label` exists and draws from three streams
-  (`packages/matching/active.py`). The documented bar is 100 grades from at
-  least two streams. There are 0.
-- **Chat relevance.** There is no store of owner-graded (question, posting)
-  pairs. The known-target set is generated, one posting per question. A
-  judged set would pool each mode's top results for a frozen list of
-  questions and ask the owner to grade them, which is new work and a label
-  budget the owner sets.
-- **Thresholds.** Which drop in a metric blocks a change, and how much
-  latency a gain may cost, are the owner's to approve before any candidate
-  is run against the held-out half.
+**What the owner does.** Grade on `/label/questions` (the "Search answers"
+tab of Grade): one posting at a time under the question it answers, 0 not
+what was asked, 1 partly, 2 what was asked for, keys 0–2. Dev questions are
+served first and held-out ones after, so work on part 3 can start on the dev
+half. When every posting is graded, `make score-judgments freeze=1` writes
+the baseline to `storage/evaluation/`.
 
-Part 3 (the cross-encoder with candidates, the semantic switch) is measured
-against part 2's baseline, one switch at a time, and is not shipped unless
-it beats it.
+**The pieces.**
+
+| Piece | Where |
+|---|---|
+| 35 frozen questions, `chat-v1`: 26 to grade over seven strata (skill, role, company, level, sponsorship, paraphrase, place), 5 that should find nothing, 2 that are not a search | `seeds/chat_judgment_questions.json`, mostly the owner's own wording from `.claude/rules/assistant-search.md` |
+| Held out: 30% of questions by a stable hash of the key | `judged.is_held_out` |
+| The pool: each question asked in three modes (shipped, semantic candidates on, the MiniLM cross-encoder), each mode's top 8 unioned | `packages/matching/judged.py`, `make judge-pool` / `judge-pool-write` |
+| The grades, one row per question and posting | `retrieval_judgments` (migration `d3a9f6c1b742`) |
+| Serving and recording grades | `/judgments/next`, `POST /judgments/{id}`, `/judgments/summary` |
+| The page | `apps/web/src/app/label/questions/` |
+| Scores per mode and split, with 95% intervals, and the frozen baseline | `packages/matching/judged_scores.py`, `make score-judgments` |
+| A pooled posting is never pruned | `crawler/retention.py` |
+
+**What must not be undone**, each held by a test in
+`tests/test_chat_judgment_*.py`:
+
+- **Every mode is pooled.** A mode scored against grades only another mode
+  produced scores its own finds as misses.
+- **Which mode found a posting is never shown while grading**, and the order
+  is a stable shuffle.
+- **Building the pool again only adds.** A grade is never touched.
+- **A mode that names a model it cannot load is refused**, not run as the
+  shipped search under its name. A switch name `Settings` does not have is
+  refused for the same reason.
+- **An ungraded result counts as not relevant, and coverage is reported
+  beside every row.** That is only safe while the pool covers what a mode
+  returns.
+- **A graded posting that closed is gone, not missed.**
+- **The held-out half is scored and not printed.** It is written only into
+  the frozen file, for part 3 to read once.
+
+**What the dry run on the live database showed** (2026-10-19, read-only,
+12,292 open postings):
+
+- **330 postings to grade**, 188 dev and 142 held out, at a depth of 8 per
+  mode: about an hour at ten seconds a grade. Depth 8 rather than the audit's
+  10 and 20 keeps to the budget, so the scorer reports R@5, R@8 and nDCG@8.
+- **The semantic switch answers questions about words no posting says.**
+  "roles using Zig?", "blacksmith jobs" and "kafka jobs at Stripe" (no open
+  Stripe posting says Kafka) each got 8 results from it, and none from the
+  shipped search. §20 already recorded that a vector search cannot say
+  "none"; this is that, in the experiment, and part 3 scores it.
+- **The shipped search answers "COBOL developer jobs" with developer jobs.**
+  "COBOL" is in no posting and "developer" is common enough to search for,
+  so the answer is postings that never mention COBOL. Every mode did it.
+- **Three paraphrased questions were not searched until reworded.** With no
+  job word and no company, a question is not a postings question (§14), so
+  "work on fraud detection for payments" was asked as "jobs working on fraud
+  detection for payments". That is the router as designed, not a defect.
+- **Two questions expected to find something had nothing in the area.**
+  "Which AI engineer jobs offer visa sponsorship?" (no AI engineer posting in
+  the area states it sponsors) was replaced, and "backend engineer roles at
+  Stripe" (both such postings are in Seattle or Toronto) now expects none.
+
+**Not built.** Answer support: whether each sentence of the assistant's
+answer is supported by the posting it cites. That needs the local model to
+write answers to the frozen questions and the owner to check the claims, and
+it is the next step after a retrieval baseline exists.
+
+**Thresholds, proposed and not approved.** Written into every baseline file
+as `proposed_thresholds` with `thresholds_approved: false`, for the owner to
+approve or change before part 3 reads the held-out half:
+
+| | Proposed |
+|---|---|
+| held-out MRR and nDCG@8 | no lower than the baseline's |
+| "better" | a paired 95% interval of the held-out difference that excludes zero |
+| abstention | no question expecting nothing answered that the baseline got right |
+| time | median at most 1.0 s above the baseline's |
+| coverage | at least 0.9 of a candidate's results graded, or grade more first |
+
+## Part 3
+
+The cross-encoder with candidates and the semantic switch, each measured
+against part 2's frozen baseline, one switch at a time, the held-out half
+read once at the end. Not shipped unless it beats the baseline under the
+approved thresholds.

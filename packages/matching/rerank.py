@@ -222,7 +222,16 @@ def get_reranker() -> Reranker | None:
     None when no model is named, and when the named one cannot be loaded: a
     missing download or a missing extra must not stop the assistant searching.
     """
-    name = get_settings().chat_rerank_model.strip()
+    return load_reranker(get_settings().chat_rerank_model)
+
+
+def load_reranker(model_name: str) -> Reranker | None:
+    """The named re-ranker, freshly loaded, or None when none is named or it fails.
+
+    `get_reranker` is this once per process for the configured model. An
+    evaluation comparing models names each one here.
+    """
+    name = model_name.strip()
     if not name:
         return None
     try:
@@ -272,5 +281,6 @@ __all__ = [
     "Reranker",
     "fuse",
     "get_reranker",
+    "load_reranker",
     "reorder",
 ]

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ApiError, api, type LabelCandidate, type LabelSummary, type Profile } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
 import { LabelDeck } from "@/components/label-deck";
+import { GradeTabs } from "./tabs";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +84,7 @@ export default async function LabelPage({
     <div className="mx-auto max-w-2xl space-y-8">
       <header className="space-y-3">
         <h1 className="font-display text-[length:var(--text-display)] leading-none">Grade</h1>
+        <GradeTabs active="postings" />
         <p className="text-sm text-ink-soft">
           A graded label is not a swipe. Nothing is applied to — this records how well the
           posting matches, on the scale the benchmark reads. Faster verdicts belong on{" "}
