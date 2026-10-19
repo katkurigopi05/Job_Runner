@@ -108,6 +108,18 @@ async def main() -> int:
                 )
                 or 0
             )
+            # Who gave each grade: a grade Claude gave carries a `claude:` note
+            # (docs/harness-audit/phase-5-retrieval.md), every other is the owner's.
+            by_claude = (
+                await session.scalar(
+                    select(func.count()).where(
+                        in_set,
+                        RetrievalJudgment.relevance.is_not(None),
+                        RetrievalJudgment.note.startswith(judged_scores.CLAUDE_NOTE),
+                    )
+                )
+                or 0
+            )
             if total == 0:
                 print(
                     "Nothing pooled. Run `make judge-pool-write`, then grade on /label/questions."
@@ -146,8 +158,8 @@ async def main() -> int:
 
     kind = "baseline" if complete else "provisional"
     print(
-        f"{questions.version}: {graded} of {total} graded, {kind}. Dev questions; "
-        "held out scored and not shown."
+        f"{questions.version}: {graded} of {total} graded ({graded - by_claude} by the owner, "
+        f"{by_claude} by Claude), {kind}. Dev questions; held out scored and not shown."
     )
     print(render(judged_scores.summarise(scores, "dev"), questions.depth))
     if not args.freeze:
@@ -161,6 +173,7 @@ async def main() -> int:
             json.dumps([[k, str(p), g] for k, p, g in grades]).encode()
         ).hexdigest(),
         "graded": graded,
+        "graded_by": {"owner": graded - by_claude, "claude": by_claude},
         "pooled": total,
         "code_revision": _revision(),
         "measured_at": datetime.now(UTC).isoformat(timespec="seconds"),

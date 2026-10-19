@@ -8,8 +8,8 @@ Phase 5 has three parts.
 | Part | State |
 |---|---|
 | 1. Fix proven filter-before-limit starvation (finding F, medium) | Merged in #180, measured on the live database |
-| 2. Owner relevance on a frozen, held-out set | Merged in #181 and deployed 2026-10-19: migration applied, 330 postings pooled. Thresholds approved. Waits on the owner's grades, then `make score-judgments freeze=1`. Answer support is not built |
-| 3. Evaluate the re-ranker and semantic switches, each on its own | Not started: needs part 2's frozen baseline |
+| 2. Owner relevance on a frozen, held-out set | Done 2026-10-19: 330 graded (33 by the owner, 297 by Claude at the owner's request), thresholds approved, baseline frozen. Answer support is not built |
+| 3. Evaluate the re-ranker and semantic switches, each on its own | Ready to start against `chat-v1-baseline-20261019T071358Z.json` |
 
 ## Part 1: a filter runs before the cut
 
@@ -173,6 +173,64 @@ the baseline to `storage/evaluation/`.
 `make judge-pool-write` added 330 rows (188 dev, 142 held out, 28 questions).
 `/label/questions` was checked in a browser at 1440 and 375 pixels wide: no
 horizontal scroll, the question's words marked in the posting.
+
+**Who graded, and how far to trust it.** The owner found 330 grades too
+long and asked Claude to grade them. Claude graded 297, each with a note
+beginning `claude:` and a one-line reason, reading each question and posting
+without being shown which mode found it. 30 chosen at random (seed
+20261019) were left for the owner, who had also graded 3 before; Claude
+graded those 33 too, privately, before seeing the owner's.
+
+| Over the owner's 33 | |
+|---|---|
+| same grade | 22 (67%) |
+| same relevant (1 or 2) or not (0) | 29 (88%) |
+| owner graded higher / lower | 8 / 3 |
+| owner's grades | 28 twos, 4 ones, 1 zero |
+| Claude's grades | 23 twos, 7 ones, 3 zeros |
+
+So the owner grades more generously, mostly where a posting meets half of
+a question: a framework named among alternatives, the right job in another
+city. Read the baseline with that in mind:
+
+- **P@5, recall and MRR rest on relevant or not**, where the two agree 88%.
+- **nDCG@8 also weighs 1 against 2**, where they differ most. It is weaker
+  evidence here.
+- **Comparing modes is unaffected in kind**: every mode is scored against
+  the same grades, so a difference between modes is not a difference
+  between graders.
+- **The owner kept their own grades as given**, including two Claude
+  flagged as possible mis-clicks (a robot assembly technician as "teaching
+  robots to see and move", 2; a medical-records clerk as "grounding language
+  model answers", 1). They are the owner's and stay.
+- **One call covers 18 grades.** Every pooled sponsorship posting is Kodiak
+  Robotics, which states "Kodiak may provide visa sponsorship for eligible
+  candidates". Claude graded that an offer (2); the owner kept it.
+
+Kappa is not reported: with 28 of the owner's 33 grades the same, chance
+agreement is so high that it says nothing.
+
+**The frozen baseline**, `storage/evaluation/chat-v1-baseline-20261019T071358Z.json`:
+set `0f1aca29…` (sha256), grades `a63743e8…`, code `05440be`, 12,292 open
+postings, thresholds approved. Its `graded_by` field is absent; the split
+above is the record, and `make score-judgments` writes it into every
+baseline from here on. Dev questions only, 15 that have something relevant:
+
+| mode | P@5 | R@8 | MRR | nDCG@8 | "none" right | median s |
+|---|---|---|---|---|---|---|
+| shipped | 0.907 [0.76, 1.00] | 0.726 [0.62, 0.83] | 0.956 [0.87, 1.00] | 0.810 [0.68, 0.92] | 5/6 | 0.93 |
+| semantic | 0.920 [0.84, 0.99] | 0.743 [0.63, 0.85] | 0.967 [0.90, 1.00] | 0.850 [0.77, 0.92] | 3/6 | 1.00 |
+| cross_encoder | 0.880 [0.75, 0.99] | 0.686 [0.58, 0.79] | 0.947 [0.84, 1.00] | 0.834 [0.71, 0.93] | 5/6 | 1.39 |
+
+Every interval overlaps every other: on 15 questions none of the three is
+distinguishable from another on relevance. The semantic mode answered two
+more "should find nothing" questions with results. The held-out half is in
+the file and has not been read; part 3 reads it once.
+
+**The grading page cut short.** It serves 20 at a time, and when a batch
+ran out it said only "reload for the next batch": the owner read the screen
+as finished with 10 left. It now says how many are waiting and offers the
+next batch.
 
 **Not built.** Answer support: whether each sentence of the assistant's
 answer is supported by the posting it cites. That needs the local model to

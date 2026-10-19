@@ -191,3 +191,35 @@ async def test_no_baseline_is_frozen_until_every_posting_is_graded(
 
     assert await score_judgments.main() == 2
     assert "1 of 3 graded" in capsys.readouterr().out
+
+
+async def test_a_frozen_baseline_says_who_gave_its_grades(
+    committing_sessionmaker, worker_session, monkeypatch, tmp_path, capsys
+) -> None:
+    """The owner asked Claude to grade most of the first set. A baseline
+    that did not say so would pass Claude's judgement off as the owner's."""
+    import json
+
+    from scripts import score_judgments
+
+    await _graded(worker_session, {"here": 2, "abroad": 0, "closed": 1})
+    claude_graded = await worker_session.scalar(
+        select(RetrievalJudgment).where(RetrievalJudgment.relevance == 0)
+    )
+    claude_graded.note = "claude: a posting abroad"
+    await worker_session.commit()
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    get_settings.cache_clear()
+    monkeypatch.setattr(score_judgments, "get_sessionmaker", lambda: committing_sessionmaker)
+    monkeypatch.setattr(score_judgments.judged, "load", lambda _path: QUESTIONS)
+    monkeypatch.setattr(score_judgments.judged, "DEFAULT_SET", tmp_path / "set.json")
+    (tmp_path / "set.json").write_text("{}")
+    monkeypatch.setattr(sys, "argv", ["score_judgments", "--freeze"])
+
+    assert await score_judgments.main() == 0
+
+    assert "2 by the owner, 1 by Claude" in capsys.readouterr().out
+    (written,) = (tmp_path / "evaluation").glob("test-v1-baseline-*.json")
+    record = json.loads(written.read_text())
+    assert record["graded_by"] == {"owner": 2, "claude": 1}
+    assert record["thresholds_approved"]["on"] == "2026-10-19"
