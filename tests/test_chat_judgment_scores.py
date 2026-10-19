@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -223,3 +224,180 @@ async def test_a_frozen_baseline_says_who_gave_its_grades(
     record = json.loads(written.read_text())
     assert record["graded_by"] == {"owner": 2, "claude": 1}
     assert record["thresholds_approved"]["on"] == "2026-10-19"
+
+
+# --- paired comparisons: the question, never the posting, is the sample ----------------
+
+
+def _scored(key="q", mode="shipped", value=0.5, **kwargs):
+    return judged_scores.QuestionScore(
+        mode=mode,
+        key=key,
+        stratum="skill",
+        expect="answer",
+        held_out=False,
+        attempted=True,
+        returned=8,
+        judged=8,
+        relevant=8,
+        gone=0,
+        seconds=1.0,
+        reciprocal_rank=value,
+        ndcg_at_depth=value,
+        recall_at_5=value,
+        recall_at_depth=value,
+        precision_at_5=value,
+        **kwargs,
+    )
+
+
+def test_bootstrap_resamples_paired_differences_not_independent_means():
+    scores = []
+    for key, value in (("low", 0.1), ("high", 0.8)):
+        scores += [_scored(key, value=value), _scored(key, "candidate", value + 0.1)]
+    got = judged_scores.compare(scores[::-1], "candidate")
+    for metric in ("reciprocal_rank", "ndcg_at_depth", "recall_at_5", "precision_at_5"):
+        assert got.means[metric] == pytest.approx(0.1)
+        assert got.intervals[metric] == pytest.approx((0.1, 0.1))
+        assert got.differences["low"][metric] == pytest.approx(0.1)
+    assert got.paired == 2
+
+
+def test_comparison_is_seeded_and_preserves_small_intervals():
+    scores = [_scored(str(i)) for i in range(5)]
+    scores += [_scored(str(i), "candidate", 0.50001 + i / 100000) for i in range(5)]
+    first = judged_scores.compare(scores, "candidate", seed=23)
+    assert first == judged_scores.compare(scores, "candidate", seed=23)
+    assert 0 < first.intervals["reciprocal_rank"][0] < 0.001
+
+
+def test_held_out_is_excluded_unless_explicitly_selected_and_strata_are_separate():
+    scores = [_scored(), _scored(mode="candidate", value=0.6)]
+    scores += [
+        replace(_scored("secret", mode, value), held_out=True)
+        for mode, value in (("shipped", 1.0), ("candidate", 0.0))
+    ]
+    scores += [
+        replace(_scored("company", mode), stratum="company") for mode in ("shipped", "candidate")
+    ]
+    assert set(judged_scores.compare(scores, "candidate").differences) == {"q", "company"}
+    assert set(judged_scores.compare(scores, "candidate", stratum="skill").differences) == {"q"}
+    assert (
+        judged_scores.compare(scores, "candidate", split="held_out").means["reciprocal_rank"]
+        == -1.0
+    )
+    with pytest.raises(ValueError, match="split"):
+        judged_scores.compare(scores, "candidate", split="typo")
+
+
+def test_abstention_and_routing_flips_are_named_separately():
+    scores = []
+    for key, expect, left, right in (
+        ("lost", "none", True, False),
+        ("gained", "none", False, True),
+        ("routing", "not_searched", True, False),
+    ):
+        for mode, correct in (("shipped", left), ("candidate", right)):
+            scores.append(replace(_scored(key, mode), expect=expect, correct=correct))
+    got = judged_scores.compare(scores, "candidate")
+    assert got.abstention_lost == ["lost"]
+    assert got.abstention_gained == ["gained"]
+    assert got.routing_lost == ["routing"]
+    assert got.routing_gained == []
+    assert got.differences == {} and got.means == {}
+
+
+def test_latency_coverage_and_unanswerable_questions_are_reported():
+    scores = []
+    for i in range(10):
+        scores += [
+            replace(_scored(str(i)), seconds=float(i)),
+            replace(_scored(str(i), "candidate"), seconds=float(i + 1), judged=4),
+        ]
+    scores += [
+        replace(
+            _scored("no-relevant", mode),
+            reciprocal_rank=None,
+            precision_at_5=None,
+            recall_at_5=None,
+            ndcg_at_depth=None,
+            relevant=0,
+        )
+        for mode in ("shipped", "candidate")
+    ]
+    got = judged_scores.compare(scores, "candidate")
+    assert got.paired == 10 and got.unanswerable == 1
+    assert got.shipped.median_seconds == 4.0 and got.shipped.p90_seconds == 8.0
+    assert got.candidate_summary.p90_seconds == 9.0
+    assert got.candidate_summary.coverage == pytest.approx(48 / 88)
+
+
+@pytest.mark.parametrize("fault", ["missing", "duplicate", "metadata", "metric"])
+def test_incomparable_pairs_are_refused(fault):
+    scores = [_scored(), _scored(mode="candidate")]
+    if fault == "missing":
+        scores.pop()
+    elif fault == "duplicate":
+        scores.append(scores[0])
+    elif fault == "metadata":
+        scores[1] = replace(scores[1], relevant=99)
+    else:
+        scores[1] = replace(scores[1], recall_at_5=None)
+    with pytest.raises(ValueError):
+        judged_scores.compare(scores, "candidate")
+
+
+async def test_frozen_comparison_prints_only_dev_and_never_searches(monkeypatch, tmp_path, capsys):
+    import hashlib
+    import json
+
+    from scripts import score_judgments
+
+    source = tmp_path / "set.json"
+    source.write_text("{}")
+    scores = [_scored(), _scored(mode="candidate", value=0.6)]
+    scores += [
+        replace(_scored("HELD_OUT_SECRET", mode), held_out=True)
+        for mode in ("shipped", "candidate")
+    ]
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "kind": "baseline",
+                "graded": 2,
+                "pooled": 2,
+                "depth": 8,
+                "set_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "grades_sha256": "frozen-grades",
+                "thresholds_approved": {"by": "owner"},
+                "modes": {"shipped": {}, "candidate": {"chat_semantic_candidates": True}},
+                "questions": [asdict(s) for s in scores],
+            }
+        )
+    )
+
+    def forbidden():
+        pytest.fail("a frozen comparison must never connect or load a model")
+
+    monkeypatch.setattr(score_judgments, "get_sessionmaker", forbidden)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "score_judgments",
+            "--compare",
+            str(baseline),
+            "--candidate",
+            "candidate",
+            "--set",
+            str(source),
+        ],
+    )
+    assert await score_judgments.main() == 0
+    printed = capsys.readouterr().out
+    assert "HELD_OUT_SECRET" not in printed
+    record = json.loads(printed)
+    assert record["comparison"]["split"] == "dev"
+    assert record["grades_sha256"] == "frozen-grades"
+    assert record["strata"]["skill"]["paired"] == 1

@@ -3,6 +3,11 @@
     python -m scripts.score_judgments                 # dev questions, once all are graded
     python -m scripts.score_judgments --provisional   # while grading is still going on
     python -m scripts.score_judgments --freeze        # write the baseline file
+    python -m scripts.score_judgments --compare BASELINE --candidate cross_encoder
+
+`--compare` reads frozen scores without querying or loading a model. It prints
+paired dev differences and strata as JSON; `--split held_out` is the explicit
+final comparison. Both modes were measured in the same frozen snapshot.
 
 Asks every frozen question again in every mode (`packages/matching/judged.py`)
 and scores the answers against `/label/questions` grades
@@ -92,7 +97,62 @@ async def main() -> int:
     parser.add_argument("--set", type=Path, default=judged.DEFAULT_SET)
     parser.add_argument("--provisional", action="store_true", help="score before every grade is in")
     parser.add_argument("--freeze", action="store_true", help="write the baseline file")
+    parser.add_argument("--compare", type=Path, help="compare scores in a frozen baseline")
+    parser.add_argument("--candidate", help="one pooled mode to compare against shipped")
+    parser.add_argument("--split", choices=("dev", "held_out"), default="dev")
     args = parser.parse_args()
+
+    if args.compare:
+        if not args.candidate or args.freeze or args.provisional:
+            parser.error("--compare needs --candidate and cannot freeze or be provisional")
+        record = json.loads(args.compare.read_text())
+        if (
+            record.get("kind") != "baseline"
+            or not record.get("pooled")
+            or record.get("graded") != record["pooled"]
+        ):
+            parser.error("comparison requires a complete frozen baseline")
+        if not record.get("thresholds_approved"):
+            parser.error("comparison requires written threshold approval")
+        if hashlib.sha256(args.set.read_bytes()).hexdigest() != record["set_sha256"]:
+            parser.error("the question set differs from the frozen baseline")
+        if args.candidate == "shipped" or args.candidate not in record["modes"]:
+            parser.error("candidate must be a pooled mode other than shipped")
+        switches = record["modes"][args.candidate]
+        if switches.get("chat_rerank_model") and switches.get("chat_semantic_candidates"):
+            parser.error("compare the cross-encoder and semantic modes separately")
+        scores = [
+            judged_scores.QuestionScore(**s)
+            for s in record["questions"]
+            if s["held_out"] == (args.split == "held_out")
+            and s["mode"] in {"shipped", args.candidate}
+        ]
+        comparison = judged_scores.compare(scores, args.candidate, split=args.split)
+        strata = sorted({s.stratum for s in scores})
+        print(
+            json.dumps(
+                {
+                    "baseline": str(args.compare),
+                    "set_sha256": record["set_sha256"],
+                    "grades_sha256": record["grades_sha256"],
+                    "depth": record["depth"],
+                    "thresholds_approved": record["thresholds_approved"],
+                    "comparison": asdict(comparison),
+                    "strata": {
+                        name: asdict(
+                            judged_scores.compare(
+                                scores, args.candidate, split=args.split, stratum=name
+                            )
+                        )
+                        for name in strata
+                    },
+                },
+                indent=2,
+            )
+        )
+        return 0
+    if args.candidate or args.split != "dev":
+        parser.error("--candidate and --split require --compare")
 
     questions = judged.load(args.set)
     try:
