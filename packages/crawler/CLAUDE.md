@@ -377,10 +377,17 @@ done, and put what it cannot fix on a separate list.
   `board_reads_empty`. Before this, a board that moved was retried every few
   hours for ever; seven were returning 404 that day. A later success closes
   the note (`resolved_by` discovery or crawl).
-- **Looked into** (`deep_dive.py`, task `deep_dive_company`). Dispatched by
-  the tick, capped by `max_backlog`, claimed only when nothing else is
-  runnable, discovery included. Once per note: the same failure again does
-  not reopen one the deep dive gave up on; a different failure does.
+- **Looked into, with the owner's permission** (`deep_dive.py`, task
+  `deep_dive_company`). The owner asked for the deep dive at the end, with
+  their permission. Nothing starts one until they say so: `make deep-dive`
+  or `POST /company-issues/deep-dive` (`issues.start_deep_dives`), unless
+  `DEEP_DIVE_AUTO` gives standing permission, when the tick starts them
+  capped by `max_backlog`. The first build started them on every tick; 2,343
+  were queued to run overnight unasked, and were cancelled. Once started they
+  are claimed only when nothing else is runnable, discovery included. A note
+  whose deep dive is cancelled or fails for good is offered again by the next
+  start. Once per note otherwise: the same failure again does not reopen one
+  the deep dive gave up on; a different failure does.
 - **The error list** is the notes the deep dive could not fix
   (`needs_owner`), each with a diagnosis, a fix and `findings.kind`. `make
   company-issues` writes `companies_noted.csv` and `company_errors.csv`.

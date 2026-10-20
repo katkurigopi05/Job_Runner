@@ -32,6 +32,7 @@ from sqlalchemy import func, literal, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.core.config import get_settings
 from packages.core.models import Company, CrawlRun, QueueTask
 from packages.core.queue import enqueue
 from packages.crawler import issues
@@ -371,17 +372,17 @@ async def tick(
         )
 
     # Then the deep dives owed to companies a worker noted and moved past
-    # (`issues.py`). Enqueued now, claimed only once nothing else is runnable
-    # (`run.YIELDING_KINDS`), so they never hold up a crawl or a discovery.
-    deep_outstanding = await issues.deep_dive_backlog(session)
-    if deep_outstanding < max_backlog:
-        owed_dives = await issues.claim_for_deep_dive(
-            session, limit=min(limit, max_backlog - deep_outstanding)
-        )
-        for issue_id in owed_dives:
-            await enqueue(session, issues.DEEP_DIVE_TASK_KIND, {"issue_id": str(issue_id)})
-        if owed_dives:
-            log.info("deep_dives_dispatched", companies=len(owed_dives))
+    # (`issues.py`), only with the owner's standing permission
+    # (`DEEP_DIVE_AUTO`). Without it, they start when the owner says so
+    # (`make deep-dive`): the owner asked for them at the end, with permission.
+    if get_settings().deep_dive_auto:
+        deep_outstanding = await issues.deep_dive_backlog(session)
+        if deep_outstanding < max_backlog:
+            started = await issues.start_deep_dives(
+                session, limit=min(limit, max_backlog - deep_outstanding)
+            )
+            if started:
+                log.info("deep_dives_dispatched", companies=len(started))
 
     outstanding = await backlog(session)
     if outstanding >= max_backlog:
