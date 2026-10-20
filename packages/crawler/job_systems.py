@@ -29,10 +29,14 @@ _SYSTEMS: tuple[tuple[str, str], ...] = (
     ("jobvite.com", "Jobvite"),
     ("bamboohr.com", "BambooHR"),
     ("ats.rippling.com", "Rippling"),
+    # Its job-board embed script (`/ats/embeds/...`), seen on a careers page.
+    ("static-assets.ripplingcdn.com", "Rippling"),
     ("jobs.gem.com", "Gem"),
     ("applytojob.com", "JazzHR"),
     ("recruitee.com", "Recruitee"),
     ("teamtailor.com", "Teamtailor"),
+    # Its jobs widget's script host.
+    ("teamtailor-cdn.com", "Teamtailor"),
     ("jobs.personio.de", "Personio"),
     ("jobs.personio.com", "Personio"),
     ("breezy.hr", "Breezy"),
