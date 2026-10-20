@@ -38,6 +38,7 @@ from packages.crawler import issues
 from packages.crawler.crawl import CompanyResult, CrawlReport
 from packages.crawler.extract import CompanySeed, extractor_for
 from packages.crawler.runs import (
+    DISCOVER_COMPANY_TASK_KIND,
     due_companies,
     due_for_discovery,
     fetchable,
@@ -269,10 +270,6 @@ __all__ = [
     "fold_into_run",
     "seed_from",
 ]
-
-
-#: One company, one discovery task.
-DISCOVER_COMPANY_TASK_KIND = "discover_company"
 
 
 async def dispatch_discovery(
