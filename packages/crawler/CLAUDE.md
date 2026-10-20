@@ -459,7 +459,10 @@ request, plus network time. Fetching 300 details in that cycle would mean
 - At most five details per crawl. New/missing or visibly changed listings
   get four slots when cached jobs exist; one rotates through cached jobs to
   detect description-only edits. Once caught up all five rotate. The nullable
-  `company_crawl_states.workday_detail_cursor` persists the rotation.
+  `company_crawl_states.workday_detail_cursor` persists cached validation;
+  `workday_pending_cursor` rotates pending jobs independently. Otherwise a
+  detail proving a job too old to store could consume the budget on every
+  crawl and strand newer jobs behind it.
 - A stable 300-job board initially takes about 75 successful crawls
   to hydrate (five first, then four per crawl), about 75 hours only if hourly
   scheduling holds. Once caught up, a full refresh takes 60 crawls. Fleet
@@ -495,6 +498,6 @@ truncation, without closing anything. Verification reports their full API
 total, not a claim that a bounded crawl reaches every posting. Increasing
 coverage beyond that cap needs a separate crawl-budget decision.
 
-Migration `a6c8e0f2b4d7` adds only the nullable cursor, with no backfill;
+Migration `a6c8e0f2b4d7` adds only two nullable cursors, with no backfill;
 downgrade drops only that scheduling state. It was not applied live. After
 merge the owner chooses when to migrate and re-discover these companies.

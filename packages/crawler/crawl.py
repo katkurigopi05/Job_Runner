@@ -726,18 +726,20 @@ async def _poll_paged(
             state = await session.scalar(
                 select(CompanyCrawlState).where(CompanyCrawlState.company_id == company.id)
             )
-            cursor = await hydrate_details(
+            cursor, pending_cursor = await hydrate_details(
                 fetcher,
                 seed.slug,
                 pages,
                 previous,
                 state.workday_detail_cursor if state else None,
                 max_age_days=get_settings().posting_max_age_days,
+                pending_cursor=state.workday_pending_cursor if state else None,
             )
             if state is None:
                 state = CompanyCrawlState(company_id=company.id)
                 session.add(state)
             state.workday_detail_cursor = cursor
+            state.workday_pending_cursor = pending_cursor
     except Blocked as exc:
         log.info("crawl_blocked", company=seed.name, reason=str(exc))
         result.skipped_reason = str(exc)

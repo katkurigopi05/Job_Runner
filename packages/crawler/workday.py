@@ -8,7 +8,8 @@ span at least 14 minutes; five detail requests add five more minutes.
 Descriptions are cached against the listed title, location and URL. Missing
 or visibly changed postings take priority, with one rotating validation slot
 for description-only edits. Once caught up, all five slots revalidate cached
-text. The cursor lives on CompanyCrawlState, never in the discovery evidence.
+text. Independent pending and cached cursors live on CompanyCrawlState,
+never in the discovery evidence.
 A pending posting has no description: existing matching sees its title and
 location, no body evidence or body embedding. Hydration emits a normal update
 so the ordinary downstream matching path reconsiders it.
@@ -218,7 +219,8 @@ async def hydrate_details(
     cursor: str | None,
     *,
     max_age_days: int,
-) -> str | None:
+    pending_cursor: str | None = None,
+) -> tuple[str | None, str | None]:
     """Prioritize missing/changed text; rotate bounded validation of the rest.
 
     A listing has no revision stamp. One rotating slot (all five once caught
@@ -248,6 +250,9 @@ async def hydrate_details(
             pending.append(item)
         item.content_hash = posting_hash(item)
 
+    # Rotate even the unheld jobs: a detail that proves a job too old is
+    # filtered by _store, so it appears pending again on the next crawl.
+    pending.sort(key=lambda item: (item.external_id <= (pending_cursor or ""), item.external_id))
     cached.sort(key=lambda item: (item.external_id <= (cursor or ""), item.external_id))
     # Preserve a validation slot while draining the pending descriptions.
     reserved = 1 if cached else 0
@@ -265,7 +270,9 @@ async def hydrate_details(
         item.content_hash = hydrated.content_hash
         if item in cached:
             cursor = item.external_id
-    return cursor
+        else:
+            pending_cursor = item.external_id
+    return cursor, pending_cursor
 
 
 @dataclass

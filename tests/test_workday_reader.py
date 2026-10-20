@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -89,7 +89,12 @@ def test_detail_from_a_different_requisition_is_refused():
 
 
 def _reader(
-    total=9, *, description="Python systems", status=200, robots="User-agent: *\nDisallow:"
+    total=9,
+    *,
+    description="Python systems",
+    status=200,
+    robots="User-agent: *\nDisallow:",
+    old_before=0,
 ):
     calls = []
     clock = FakeClock()
@@ -106,15 +111,19 @@ def _reader(
                 200,
                 json={
                     "total": total,
-                    "jobPostings": [_job(n) for n in range(offset, min(total, offset + 20))],
+                    "jobPostings": [
+                        _job(n) | ({"postedOn": "Posted 30+ Days Ago"} if n < old_before else {})
+                        for n in range(offset, min(total, offset + 20))
+                    ],
                 },
             )
+        age = 90 if int(request.url.path.rsplit("-", 1)[-1]) < old_before else 0
         return httpx.Response(
             200,
             json={
                 "jobPostingInfo": {
                     "jobDescription": f"<p>{description}</p>",
-                    "startDate": datetime.now(UTC).date().isoformat(),
+                    "startDate": (datetime.now(UTC) - timedelta(days=age)).date().isoformat(),
                 }
             },
         )
@@ -203,6 +212,27 @@ async def test_description_only_edit_is_versioned_on_identical_list(db_session):
     assert row.description_raw == "Rust services"
     versions = (await db_session.scalars(select(PostingVersion))).all()
     assert len(versions) == 2
+
+
+async def test_skipped_old_details_cannot_starve_newer_jobs(db_session, monkeypatch):
+    from packages.core.config import get_settings
+    from packages.core.models import CompanyCrawlState
+
+    monkeypatch.setattr(get_settings(), "posting_max_age_days", 45)
+    seed = CompanySeed(name="Acme", slug=SLUG, ats="workday", poll_interval_s=0)
+    for _ in range(5):
+        fetcher, calls = _reader(total=12, old_before=8)
+        result = await crawl_company(db_session, seed, fetcher, force=True)
+        assert result.error is None
+        assert len([c for c in calls if c[0] == "GET"]) <= 5
+        db_session.expire_all()
+    rows = (await db_session.scalars(select(Posting))).all()
+    fresh = [row for row in rows if int(row.external_id.rsplit("-", 1)[-1]) >= 8]
+    assert len(fresh) == 4
+    assert all(row.description_raw == "Python systems" for row in fresh)
+    state = await db_session.scalar(select(CompanyCrawlState))
+    assert state.workday_detail_cursor is not None
+    assert state.workday_pending_cursor is not None
 
 
 async def test_posting_age_lower_bound_is_not_an_invented_date(db_session, monkeypatch):
