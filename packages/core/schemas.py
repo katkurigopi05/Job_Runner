@@ -621,6 +621,33 @@ class CrawlStatusOut(BaseModel):
     last_status: str | None = None
     #: The newest posting anyone has seen, which is what staleness really means.
     newest_posting_at: datetime | None = None
+    #: What is left of each stage and how long it will take
+    #: (`crawler.progress`), so the owner need not ask.
+    backlog: list[StageBacklogOut] = Field(default_factory=list)
+
+
+class StageBacklogOut(BaseModel):
+    """`crawler.progress.StageProgress`: one stage's backlog, pace and estimate."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    stage: str
+    kind: str
+    waiting: int
+    scheduled: int
+    running: int
+    #: Distinct companies (or notes) still to do; fewer than the tasks when one
+    #: was queued twice.
+    items: int
+    done_recently: int
+    per_minute: float
+    #: Minutes until done at the last half hour's rate; None while not moving.
+    eta_minutes: float | None = None
+    #: The earlier stage this one waits behind, if any.
+    after: str | None = None
+
+
+CrawlStatusOut.model_rebuild()
 
 
 class CrawlStartOut(BaseModel):

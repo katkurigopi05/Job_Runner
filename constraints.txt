@@ -57,6 +57,8 @@ dnspython==2.8.0
     # via email-validator
 email-validator==2.3.0
     # via pydantic
+et-xmlfile==2.0.0
+    # via openpyxl
 fastapi==0.142.2
     # via jobrunner (pyproject.toml)
 fonttools==4.66.1
@@ -113,6 +115,8 @@ mypy==2.3.1
 mypy-extensions==1.1.0
     # via mypy
 nltk==3.10.3
+    # via jobrunner (pyproject.toml)
+openpyxl==3.1.5
     # via jobrunner (pyproject.toml)
 opentelemetry-api==1.45.0
     # via

@@ -567,8 +567,10 @@ and the role table reading a title only up to its first comma.
 ## 28. A company a worker cannot read is noted, then looked into
 
 A worker notes a company it cannot read and moves on (`company_issues`). A
-deep dive looks into each note once nothing else is waiting, discovery
-included, and what it cannot fix is the error list (`make company-issues`).
+deep dive looks into the notes **only when the owner says so** (`make
+deep-dive`; `DEEP_DIVE_AUTO` for standing permission), and runs once nothing
+else is waiting, discovery included. What it cannot fix is the error list
+(`make company-issues`).
 What it tries and why is in `packages/crawler/CLAUDE.md`.
 
 ---

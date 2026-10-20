@@ -37,8 +37,9 @@ from packages.core import heartbeat
 from packages.core.enums import QueueTaskStatus
 from packages.core.heartbeat import WorkerState
 from packages.core.models import Posting, QueueTask
-from packages.core.schemas import CrawlStartOut, CrawlStatusOut
+from packages.core.schemas import CrawlStartOut, CrawlStatusOut, StageBacklogOut
 from packages.crawler.dispatch import CRAWL_COMPANY_TASK_KIND, DISCOVER_COMPANY_TASK_KIND
+from packages.crawler.progress import crawl_backlog
 
 router = APIRouter(prefix="/crawl", tags=["crawl"])
 
@@ -117,6 +118,7 @@ async def crawl_status(session: SessionDep) -> CrawlStatusOut:
         # The number that actually answers "are my postings current". A crawl
         # that ran and found nothing leaves this unchanged, which is the truth.
         newest_posting_at=await session.scalar(select(func.max(Posting.first_seen_at))),
+        backlog=[StageBacklogOut.model_validate(stage) for stage in await crawl_backlog(session)],
     )
 
 

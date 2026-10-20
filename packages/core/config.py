@@ -228,6 +228,10 @@ class Settings(BaseSettings):
     #: (`queue.prune_finished`): done and cancelled ones, then failed ones,
     #: which are kept longer because a failure is what gets looked back at.
     #: The newest finished task of each kind is always kept.
+    #: Start a deep dive for each noted company without asking. Off: the owner
+    #: starts them (`make deep-dive`, `POST /company-issues/deep-dive`), as
+    #: they asked on 2026-10-19 — the deep dive at the end, with permission.
+    deep_dive_auto: bool = False
     queue_keep_done_days: int = Field(default=7, ge=1)
     queue_keep_failed_days: int = Field(default=30, ge=1)
 

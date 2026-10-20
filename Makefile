@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report company-issues fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -390,6 +390,21 @@ discovery-report:
 # storage/exports/companies_noted.csv and storage/exports/company_errors.csv.
 company-issues:
 	$(PY)/python -m scripts.company_issues $(if $(dir),--dir $(dir),)
+
+# make company-sheet — rebuild the company workbook beside the CSV: every
+# company, and the ones not on the 4 job boards with the careers pages and
+# findings discovery and the deep dive recorded. Read-only; the CSV is kept.
+#   make company-sheet                         # bay_area_tech_companies.csv
+#   make company-sheet src=other.csv out=x.xlsx
+company-sheet:
+	$(PY)/python -m scripts.company_sheet $(or $(src),bay_area_tech_companies.csv) $(if $(out),--out $(out),)
+
+# make deep-dive — start the deep dive into the noted companies. Only with
+# your permission: nothing else starts it unless DEEP_DIVE_AUTO=true.
+#   make deep-dive dry=1     # how many are waiting, start none
+#   make deep-dive n=50      # the 50 noted longest ago
+deep-dive:
+	$(PY)/python -m scripts.start_deep_dives $(if $(n),--limit $(n),) $(if $(dry),--dry-run,)
 
 # Export the owner's swipe decisions as a labeled set. Gate 5 asks whether the
 # ranker works on this owner's material and every label in the repo is a

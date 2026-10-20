@@ -377,10 +377,17 @@ done, and put what it cannot fix on a separate list.
   `board_reads_empty`. Before this, a board that moved was retried every few
   hours for ever; seven were returning 404 that day. A later success closes
   the note (`resolved_by` discovery or crawl).
-- **Looked into** (`deep_dive.py`, task `deep_dive_company`). Dispatched by
-  the tick, capped by `max_backlog`, claimed only when nothing else is
-  runnable, discovery included. Once per note: the same failure again does
-  not reopen one the deep dive gave up on; a different failure does.
+- **Looked into, with the owner's permission** (`deep_dive.py`, task
+  `deep_dive_company`). The owner asked for the deep dive at the end, with
+  their permission. Nothing starts one until they say so: `make deep-dive`
+  or `POST /company-issues/deep-dive` (`issues.start_deep_dives`), unless
+  `DEEP_DIVE_AUTO` gives standing permission, when the tick starts them
+  capped by `max_backlog`. The first build started them on every tick; 2,343
+  were queued to run overnight unasked, and were cancelled. Once started they
+  are claimed only when nothing else is runnable, discovery included. A note
+  whose deep dive is cancelled or fails for good is offered again by the next
+  start. Once per note otherwise: the same failure again does not reopen one
+  the deep dive gave up on; a different failure does.
 - **The error list** is the notes the deep dive could not fix
   (`needs_owner`), each with a diagnosis, a fix and `findings.kind`. `make
   company-issues` writes `companies_noted.csv` and `company_errors.csv`.
@@ -466,3 +473,28 @@ coverage beyond that cap needs a separate crawl-budget decision.
 Migration `a6c8e0f2b4d7` adds only the nullable cursor, with no backfill;
 downgrade drops only that scheduling state. It was not applied live. After
 merge the owner chooses when to migrate and re-discover these companies.
+
+## The company workbook (`make company-sheet`, 2026-10-19)
+
+The owner asked for their CSV's companies split in two: those on the four job
+boards, and the rest with their careers pages, as the list to work from.
+`make company-sheet` rebuilds `<csv>.xlsx` beside the CSV from the database:
+"All companies" (each row, its board, open jobs, how it was found) and "Not
+on the 4 job boards" (careers page from discovery or the deep dive, where
+applicants go, what was found, what to do). It is the same set the workers act
+on — discovery and the deep dive take exactly the companies with no board — so
+rebuilding it after a crawl or a deep dive is what keeps it current. Read-only;
+the CSV is never changed. The owner's CSV is git-ignored by name and the
+workbook is excluded locally (`.git/info/exclude`): the repo is public.
+`openpyxl` is the one dependency it added. `tests/test_company_sheet.py`.
+
+## One discovery task per company (2026-10-19)
+
+`due_for_discovery` skips a company that already has a `discover_company`
+task waiting or running. `dispatch_discovery` marks a company taken for one
+hour, and with a five-hour queue every tick queued each still-waiting company
+again: 3,974 tasks for 2,621 companies that evening, 1,220 of them cancelled
+by hand. A duplicate cost a worker a minute of waiting on a site it had just
+read, and bumped the company's attempts, pushing its next retry out a step.
+The one-hour mark stays, for a worker lost mid-task; it no longer has to be
+longer than the queue. `tests/test_discovery_no_duplicates.py`.

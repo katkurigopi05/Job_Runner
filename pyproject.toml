@@ -39,6 +39,10 @@ dependencies = [
     "mcp>=1.2",
     # packages/crawler/extract.py reads the company seed list.
     "pyyaml>=6",
+    # The owner's company workbook (`make company-sheet`): every company from
+    # their sheet, and the ones not on the four job boards with the careers
+    # pages discovery and the deep dive found. MIT, pure Python.
+    "openpyxl>=3.1",
     # packages/tailor/chunk.py — noun-phrase extraction for the fabrication
     # guard. Not optional: without it §9 Gate 3 checks capitalization instead
     # of noun phrases, and a lowercase claim like "machine learning" is
@@ -117,6 +121,7 @@ strict = true
 [[tool.mypy.overrides]]
 module = [
     "weasyprint.*",
+    "openpyxl.*",
     "pypdf.*",
     "sentence_transformers.*",
     "nltk.*",
