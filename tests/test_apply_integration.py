@@ -123,13 +123,18 @@ async def test_ats_is_recorded_on_the_application(client: AsyncClient, complete_
     assert created.json()["id"] == listing[0]["id"]
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://acme.com/careers/1",
+        "https://acme.wd5.myworkdayjobs.com/External/job/X_R1/apply",
+    ],
+)
 async def test_unsupported_site_fails_without_a_browser(
-    client: AsyncClient, complete_candidate, worker_session
+    client: AsyncClient, complete_candidate, worker_session, url
 ) -> None:
     """No adapter claims the URL, so it fails rather than parking forever."""
-    created = await client.post(
-        "/applications", json={**complete_candidate, "url": "https://acme.com/careers/1"}
-    )
+    created = await client.post("/applications", json={**complete_candidate, "url": url})
     app_id = created.json()["id"]
 
     await worker_run.run_once(worker_id="integration-worker")

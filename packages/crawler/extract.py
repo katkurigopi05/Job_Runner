@@ -42,6 +42,9 @@ class ExtractedPosting(BaseModel):
     #: When the source says the posting went up. None when the board does not
     #: say — which is a fact worth keeping, not a reason to substitute now().
     published_at: datetime | None = None
+    #: A source's age lower bound (e.g. Workday's "Posted 30+ Days Ago").
+    #: Used for retention without inventing an exact publication timestamp.
+    minimum_age_days: int | None = None
     #: Hash of the fields that matter, for change detection per posting.
     content_hash: str = ""
 

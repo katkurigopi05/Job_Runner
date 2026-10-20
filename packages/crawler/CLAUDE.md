@@ -406,6 +406,77 @@ again for a board it moved to, and a board found is verified through
 Not done: pages that build their jobs with JavaScript (10 of the 21 careers
 pages) say so and wait for a browser step.
 
+## Workday reading and verification (2026-10-20)
+
+Owner approved reading after Phase 6; applying through Workday forms remains
+out of scope (§11). `board_root` recognizes `tenant.wdN.myworkdayjobs.com`,
+with or without a locale and with deep posting/login links. The identity is
+`host|tenant|site`, preserving the site name's case, so the existing verified
+board unique index includes tenant, data centre and site. No tenant/site is
+guessed. `myworkdaysite.com` links and malformed site names remain unsupported.
+Supported Workday links no longer count as `other_job_system`.
+
+Before implementation, robots.txt was read through PoliteFetcher on 23andMe
+(wd5), Ameren (wd1) and Atmos Energy (wd108), using `User-Agent: jobrunner`.
+All returned 200, allowed their named career-site prefixes and disallowed
+`/refreshFacet/`. Neither the list `/wday/cxs/{tenant}/{site}/jobs` nor detail
+paths were disallowed. Normal robots checks remain mandatory on every tenant;
+a refusal or HTTP 403 is a failure, never an invitation to evade it.
+
+The existing POST path already uses the same robots and host-rate gates as
+GET. Tenant hosts remain outside `SHARED_API_HOSTS`: **60 seconds**, unchanged.
+At 300 jobs, 15 list pages span at least 14 minutes between first and last
+request, plus network time. Fetching 300 details in that cycle would mean
+315 requests, at least 314 minutes (5h14m). Instead:
+
+- All list pages each crawl, up to 60; truncation or inconsistent/duplicate
+  pagination closes nothing. A page failure abandons the read.
+- At most five details per crawl. New/missing or visibly changed listings
+  get four slots when cached jobs exist; one rotates through cached jobs to
+  detect description-only edits. Once caught up all five rotate. The nullable
+  `company_crawl_states.workday_detail_cursor` persists cached validation;
+  `workday_pending_cursor` rotates pending jobs independently. Otherwise a
+  detail proving a job too old to store could consume the budget on every
+  crawl and strand newer jobs behind it.
+- A stable 300-job board initially takes about 75 successful crawls
+  to hydrate (five first, then four per crawl), about 75 hours only if hourly
+  scheduling holds. Once caught up, a full refresh takes 60 crawls. Fleet
+  scheduling can extend these lags, the explicit cost of this budget and floor.
+  A 15-page + 5-detail crawl spans at least 19 minutes, plus network time;
+  the 60-page cap plus five details spans at least 64 minutes.
+- Cached text survives unchanged listings. A visible title/location/URL edit
+  clears stale text until refreshed. The board hash includes effective posting
+  content, so identical listings cannot strand pending or edited descriptions.
+  Fully hydrated unchanged content creates no posting versions or match work.
+- Until hydration, the existing matcher has title/location only, an empty
+  body and no body embedding; requirements remain unstated. Hydration emits a
+  normal changed posting for embedding, requirements extraction and rescoring.
+  No matcher or feed code changes.
+- Exact `startDate` comes from detail. English relative ages are used only
+  as lower bounds for `POSTING_MAX_AGE_DAYS`, without inventing a timestamp;
+  unknown/localized ages stay unknown until detail. Existing held jobs remain
+  subject to the ordinary sighting/closure rules.
+
+`python -m scripts.probe_workday --out /tmp/workday.json` reads the live
+inventory in REPEATABLE READ, READ ONLY, then probes one list page per parsed
+board for its reported total. It uses one in-memory limiter and disables DB
+metrics, so it writes only the output file. Do not run concurrent probes to
+the same Workday hosts. The crawler still uses its shared persistent limiter.
+
+The 2026-10-20 read-only run: **120 companies, 111 parse, 106 verify**, one
+empty board, four unreachable; nine unparseable (five `myworkdaysite.com`,
+four malformed site names). No discovery, company, posting or metrics writes.
+Real public Ameren payloads are trimmed under `tests/fixtures/workday`.
+The non-empty boards reported 41,668 jobs in total. Eleven exceed the existing
+60-page / 1,200-job cap: their crawls expose only the first 1,200 and report
+truncation, without closing anything. Verification reports their full API
+total, not a claim that a bounded crawl reaches every posting. Increasing
+coverage beyond that cap needs a separate crawl-budget decision.
+
+Migration `a6c8e0f2b4d7` adds only two nullable cursors, with no backfill;
+downgrade drops only that scheduling state. It was not applied live. After
+merge the owner chooses when to migrate and re-discover these companies.
+
 ## The company workbook (`make company-sheet`, 2026-10-19)
 
 The owner asked for their CSV's companies split in two: those on the four job

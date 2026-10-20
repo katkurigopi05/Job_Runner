@@ -128,6 +128,9 @@ class PoliteFetcher:
     #: unlimited and is the shipped default — see `crawler/budget.py`.
     request_budget: int = 0
     budget_window_seconds: float = 3600.0
+    #: Read-only probes use an in-memory limiter and disable DB metrics.
+    #: Robots and the host floor still run unconditionally.
+    record_metrics: bool = True
     _client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -322,7 +325,8 @@ class PoliteFetcher:
         # Recorded against the host the request *ended* on: `_walk` follows
         # redirects across machines, and a redirect's cost belongs to the host
         # that served it, not to the one that pointed there.
-        await record_request(host, waited=waited, network=network)
+        if self.record_metrics:
+            await record_request(host, waited=waited, network=network)
 
         return FetchResult(
             url=url,

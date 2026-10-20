@@ -51,7 +51,7 @@ def _site(pages: dict[str, str], requested: list[str] | None = None) -> PoliteFe
     return PoliteFetcher(transport=httpx.MockTransport(handler), rate_limiter=limiter)
 
 
-WORKDAY = '<a href="https://acme.wd5.myworkdayjobs.com/External">See open roles</a>'
+BAMBOOHR = '<a href="https://acme.bamboohr.com/careers">See open roles</a>'
 JSONLD = (
     '<script type="application/ld+json">{"@context": "https://schema.org", '
     '"@type": "JobPosting", "title": "Engineer", "datePosted": "2026-10-01"}</script>'
@@ -132,9 +132,9 @@ async def test_a_site_with_no_careers_page_says_what_was_tried() -> None:
 
 
 def test_another_job_system_is_named_by_a_link_to_it() -> None:
-    found = other_job_system(WORKDAY)
+    found = other_job_system(BAMBOOHR)
 
-    assert found == ("Workday", "https://acme.wd5.myworkdayjobs.com/External")
+    assert found == ("BambooHR", "https://acme.bamboohr.com/careers")
 
 
 def test_a_job_system_named_in_prose_is_not_a_link_to_one() -> None:
@@ -147,13 +147,13 @@ def test_a_lookalike_host_is_not_the_job_system() -> None:
 
 
 async def test_a_careers_page_on_another_job_system_is_recorded() -> None:
-    fetcher = _site({"acme.com/": '<a href="/careers">Careers</a>', "acme.com/careers": WORKDAY})
+    fetcher = _site({"acme.com/": '<a href="/careers">Careers</a>', "acme.com/careers": BAMBOOHR})
 
     reading = await from_url("https://acme.com/", fetcher)
 
     assert reading.careers_page == "https://acme.com/careers"
-    assert reading.job_system == "Workday"
-    assert reading.job_system_url == "https://acme.wd5.myworkdayjobs.com/External"
+    assert reading.job_system == "BambooHR"
+    assert reading.job_system_url == "https://acme.bamboohr.com/careers"
 
 
 async def test_structured_jobs_on_a_careers_page_are_counted() -> None:
@@ -171,9 +171,9 @@ async def test_structured_jobs_on_a_careers_page_are_counted() -> None:
     ("pages", "category", "words"),
     [
         (
-            {"acme.com/": '<a href="/careers">Careers</a>', "acme.com/careers": WORKDAY},
+            {"acme.com/": '<a href="/careers">Careers</a>', "acme.com/careers": BAMBOOHR},
             "other_job_system",
-            ["https://acme.com/careers", "Workday", "not a supported board"],
+            ["https://acme.com/careers", "BambooHR", "not a supported board"],
         ),
         (
             {"acme.com/": '<a href="/careers">Careers</a>', "acme.com/careers": JSONLD},

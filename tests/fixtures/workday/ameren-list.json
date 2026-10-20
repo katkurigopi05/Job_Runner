@@ -1,0 +1,36 @@
+{
+  "total": 83,
+  "jobPostings": [
+    {
+      "title": "System Protection- Electrical Engineer",
+      "externalPath": "/job/Decatur-IL/System-Protection--Electrical-Engineer_032867",
+      "timeType": "Full time",
+      "locationsText": "Decatur, IL",
+      "postedOn": "Posted 12 Days Ago",
+      "bulletFields": [
+        "032867"
+      ]
+    },
+    {
+      "title": "Project Manager",
+      "externalPath": "/job/St-Louis-MO/Project-Manager_034383-1",
+      "timeType": "Full time",
+      "locationsText": "St. Louis, MO",
+      "postedOn": "Posted Yesterday",
+      "bulletFields": [
+        "034383"
+      ]
+    },
+    {
+      "title": "Supervisor, Gas Operations",
+      "externalPath": "/job/Columbia-MO/Supervisor--Gas-Operations_034401",
+      "timeType": "Full time",
+      "locationsText": "Columbia, MO",
+      "postedOn": "Posted Yesterday",
+      "bulletFields": [
+        "034401"
+      ]
+    }
+  ],
+  "userAuthenticated": false
+}

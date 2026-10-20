@@ -650,6 +650,12 @@ class CompanyCrawlState(Base):
     #: `blocked`, `error`, or `suspect`.
     last_status: Mapped[str | None] = mapped_column(String(20))
     last_error: Mapped[str | None] = mapped_column(Text)
+    #: Last cached Workday detail revalidated. Rotates the bounded detail
+    #: budget across crawls, including identical listings; never a job fact.
+    workday_detail_cursor: Mapped[str | None] = mapped_column(String(200))
+    #: Pending details rotate independently: age-filtered jobs are not held
+    #: in postings, and repeatedly retrying their IDs must not starve new jobs.
+    workday_pending_cursor: Mapped[str | None] = mapped_column(String(200))
 
     #: Discovery's own schedule, kept apart from the crawl's.
     #:
