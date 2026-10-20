@@ -14,6 +14,7 @@ from apps.api.routers import (
     chat,
     chat_stream,
     companies,
+    company_issues,
     crawl,
     detect,
     events,
@@ -71,6 +72,7 @@ app.include_router(tracking.router)
 app.include_router(events.router)
 app.include_router(submissions.router)
 app.include_router(queue.router)
+app.include_router(company_issues.router)
 
 
 @app.get("/", tags=["meta"])

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+import pytest
+from sqlalchemy import func, select, update
 
 from packages.core.enums import SourceStatus
 from packages.core.models import Company
@@ -18,6 +19,17 @@ from packages.crawler.crawl import CompanyResult
 from packages.crawler.runs import record_attempt
 
 NOW = datetime(2026, 10, 19, 22, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def auto(monkeypatch):
+    """The owner's standing permission for deep dives (`DEEP_DIVE_AUTO`)."""
+    from packages.core.config import get_settings
+
+    monkeypatch.setenv("DEEP_DIVE_AUTO", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 async def _company(session, name: str = "Acme") -> Company:
@@ -145,9 +157,9 @@ async def test_notes_are_claimed_oldest_first_and_only_once(db_session) -> None:
         db_session, older.id, stage="discovery", category="x", reason="r", now=NOW - timedelta(1)
     )
 
-    first = await issues.claim_for_deep_dive(db_session, limit=1, now=NOW)
-    rest = await issues.claim_for_deep_dive(db_session, limit=10, now=NOW)
-    again = await issues.claim_for_deep_dive(db_session, limit=10, now=NOW)
+    first = await issues.start_deep_dives(db_session, limit=1, now=NOW)
+    rest = await issues.start_deep_dives(db_session, limit=10, now=NOW)
+    again = await issues.start_deep_dives(db_session, limit=10, now=NOW)
 
     [older_issue] = await _issues(db_session, older)
     assert first == [older_issue.id]
@@ -156,15 +168,22 @@ async def test_notes_are_claimed_oldest_first_and_only_once(db_session) -> None:
     assert older_issue.status == "queued"
 
 
-async def test_a_deep_dive_lost_with_its_worker_is_offered_again_a_day_later(db_session) -> None:
+async def test_a_deep_dive_that_failed_for_good_is_started_again(db_session) -> None:
+    """Its note stays `queued` with no task left to finish it."""
+    from packages.core.models import QueueTask
+
     acme = await _company(db_session)
     await issues.note(db_session, acme.id, stage="discovery", category="x", reason="r", now=NOW)
-    await issues.claim_for_deep_dive(db_session, limit=1, now=NOW)
+    await issues.start_deep_dives(db_session, limit=1, now=NOW)
+    assert await issues.start_deep_dives(db_session, limit=1) == [], "one is waiting"
 
-    assert (
-        await issues.claim_for_deep_dive(db_session, limit=1, now=NOW + timedelta(hours=23)) == []
+    await db_session.execute(
+        update(QueueTask)
+        .where(QueueTask.kind == issues.DEEP_DIVE_TASK_KIND)
+        .values(status="failed")
     )
-    assert len(await issues.claim_for_deep_dive(db_session, limit=1, now=NOW + timedelta(days=2)))
+
+    assert len(await issues.start_deep_dives(db_session, limit=1)) == 1
 
 
 async def test_a_note_given_up_on_or_fixed_is_not_claimed(db_session) -> None:
@@ -176,7 +195,7 @@ async def test_a_note_given_up_on_or_fixed_is_not_claimed(db_session) -> None:
     await issues.resolve(db_session, b.id, stage="discovery", by="discovery")
     await db_session.flush()
 
-    assert await issues.claim_for_deep_dive(db_session, limit=10) == []
+    assert await issues.start_deep_dives(db_session, limit=10) == []
 
 
 # --- what a crawl failure is called --------------------------------------------------
@@ -249,7 +268,7 @@ async def _deep_dives(session) -> int:
     )
 
 
-async def test_a_tick_enqueues_one_deep_dive_per_note_and_only_once(db_session) -> None:
+async def test_a_tick_enqueues_one_deep_dive_per_note_and_only_once(db_session, auto) -> None:
     from packages.crawler.dispatch import tick
 
     for name in ("A", "B"):
@@ -262,7 +281,7 @@ async def test_a_tick_enqueues_one_deep_dive_per_note_and_only_once(db_session) 
     assert await _deep_dives(db_session) == 2
 
 
-async def test_a_tick_stops_enqueuing_deep_dives_when_behind(db_session) -> None:
+async def test_a_tick_stops_enqueuing_deep_dives_when_behind(db_session, auto) -> None:
     from packages.crawler.dispatch import tick
 
     for name in ("A", "B", "C"):

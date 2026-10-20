@@ -1099,6 +1099,25 @@ export interface CrawlStatus {
   last_status?: string | null;
   /** Newest posting anyone has seen. This is what staleness actually means. */
   newest_posting_at?: string | null;
+  /** What is left of each crawl stage, its pace and an estimate. */
+  backlog?: StageBacklog[];
+}
+
+/** One crawl stage's backlog, from `packages/crawler/progress.py`. */
+export interface StageBacklog {
+  stage: string;
+  kind: string;
+  waiting: number;
+  scheduled: number;
+  running: number;
+  /** Distinct companies (or noted companies) still to do. */
+  items: number;
+  done_recently: number;
+  per_minute: number;
+  /** Minutes to go at the last half hour's pace; null while not moving. */
+  eta_minutes: number | null;
+  /** The earlier stage this one is waiting behind. */
+  after: string | null;
 }
 
 /**

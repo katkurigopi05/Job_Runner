@@ -297,3 +297,19 @@ documents to it — the stale `next start` claim survived in two files precisely
 because nothing checked prose. It allows a retraction to quote what it
 retracts, because this file's convention is to record what a paragraph used to
 say rather than edit it away.
+
+## The spider says how much is left (2026-10-19)
+
+The owner kept asking how long the crawl had to go. `/crawl/status` now
+carries `backlog` (`packages/crawler/progress.py`): for boards, discovery and
+the deep dive, what is left, the last half hour's pace, and an estimate. The
+header shows it beside the spider ("discovery 2,621 left ~4h 44m · deep dives
+2,132 left after discovery"), with the detail in its tooltip. Two rules:
+
+- **An estimate only from a measured pace.** A stage that has not moved in
+  the last half hour shows no time; one waiting behind another names it.
+- **Only from a fresh response**, like the spider: a count from a poll that
+  failed would read as current.
+
+It is hidden below the `lg` breakpoint, where the header has no room.
+`tests/test_crawl_progress.py`, `tests/test_crawler_spider_ui.py`.

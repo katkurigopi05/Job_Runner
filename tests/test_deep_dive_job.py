@@ -60,7 +60,7 @@ async def _noted(session, *, stage: str = "discovery", category: str = "unreacha
     session.add(acme)
     await session.flush()
     await issues.note(session, acme.id, stage=stage, category=category, reason="why")
-    [issue_id] = await issues.claim_for_deep_dive(session, limit=1)
+    [issue_id] = await issues.start_deep_dives(session, limit=1)
     return acme, await session.get(CompanyIssue, issue_id)
 
 
