@@ -133,7 +133,7 @@ of these loads only when work touches the directory or the files it names:
 | `packages/crawler/CLAUDE.md` | the registry (§9, Phase 5); bespoke pages and the shared rate limiter (§15); duplicate boards (§25); noted companies and the deep dive (§28) |
 | `packages/matching/CLAUDE.md` | the search area, eligibility, experience, labelling, résumé selection (§15); the feed's authorization filters (§18) |
 | `packages/inbox/CLAUDE.md` | the reply alias and duplicate mail (§15) |
-| `packages/core/CLAUDE.md` | the doorbell (§15); the queue's claim order and its producers (§24); races (§27) |
+| `packages/core/CLAUDE.md` | the doorbell (§15); the queue's claim order and its producers (§24); races (§27); retries, cancelling, time limits, finish times and pruning (§29) |
 | `tests/CLAUDE.md` | what each gate proves, and the test database (§15) |
 | `docs/CLAUDE.md` | outside repositories and specs (§15); hybrid retrieval (§19) |
 | `.github/CLAUDE.md` | CI, the Dockerfile, pinned dependencies (§13) |
@@ -567,3 +567,12 @@ A worker notes a company it cannot read and moves on (`company_issues`). A
 deep dive looks into each note once nothing else is waiting, discovery
 included, and what it cannot fix is the error list (`make company-issues`).
 What it tries and why is in `packages/crawler/CLAUDE.md`.
+
+---
+
+## 29. A task's life after it is claimed
+
+Retries back off by kind, a pending task can be cancelled (`/queue`), a
+handler past its kind's time limit is stopped, a task records when it
+finished, and finished tasks are cleared after a week (failures after a
+month). What must not be undone is in `packages/core/CLAUDE.md`.

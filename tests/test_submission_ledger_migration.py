@@ -1,5 +1,6 @@
 """Historical applications must be protected when the ledger is introduced."""
 
+import json
 import os
 import subprocess
 
@@ -7,7 +8,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from packages.core.enums import ApplicationStatus
-from packages.core.models import Application, AppliedPosting, QueueTask
+from packages.core.models import Application, AppliedPosting
 from packages.core.state import transition
 from tests.test_migration_posting_dedupe import (  # noqa: F401
     REPO_ROOT,
@@ -45,10 +46,15 @@ async def test_backfill_preserves_history_and_protects_old_attempts(scratch_data
                 text("UPDATE applications SET status = 'queued' WHERE id IN (:old, :new)"),
                 {"old": rolled_back_id, "new": untouched_id},
             )
-            session.add(
-                QueueTask(
-                    kind="apply", payload_json={"application_id": str(rolled_back_id)}, attempts=1
-                )
+            # Written as SQL, in the shape `queue_tasks` had at this revision:
+            # the model is today's, and a column added since (`finished_at`)
+            # does not exist yet.
+            await session.execute(
+                text(
+                    "INSERT INTO queue_tasks (kind, payload_json, attempts) "
+                    "VALUES ('apply', CAST(:payload AS jsonb), 1)"
+                ),
+                {"payload": json.dumps({"application_id": str(rolled_back_id)})},
             )
             await session.commit()
         _alembic("head", scratch_database)

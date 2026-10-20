@@ -24,6 +24,7 @@ from apps.api.routers import (
     postings,
     profiles,
     projects,
+    queue,
     ranking,
     resumes,
     search_preferences,
@@ -69,6 +70,7 @@ app.include_router(ranking.router)
 app.include_router(tracking.router)
 app.include_router(events.router)
 app.include_router(submissions.router)
+app.include_router(queue.router)
 
 
 @app.get("/", tags=["meta"])

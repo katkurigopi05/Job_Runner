@@ -224,6 +224,12 @@ class Settings(BaseSettings):
     worker_id: str | None = None
     #: How long a claimed task stays owned without a heartbeat.
     lease_seconds: int = 300
+    #: How long finished queue tasks are kept before the worker clears them
+    #: (`queue.prune_finished`): done and cancelled ones, then failed ones,
+    #: which are kept longer because a failure is what gets looked back at.
+    #: The newest finished task of each kind is always kept.
+    queue_keep_done_days: int = Field(default=7, ge=1)
+    queue_keep_failed_days: int = Field(default=30, ge=1)
 
     #: Managed inbox — the mailbox recruiter replies land in.
     imap_host: str | None = None

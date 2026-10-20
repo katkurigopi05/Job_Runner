@@ -1081,12 +1081,18 @@ class QueueTask(Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _created_at()
+    #: When it was done, failed for good, or cancelled. With `locked_at`, the
+    #: start of its last attempt, this is how long that attempt took. NULL
+    #: while it is pending or running, and on tasks finished before it existed.
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         Index("ix_queue_tasks_status_run_after", "status", "run_after"),
         # The reclaim half of a claim scans for expired leases; without
         # this it is a sequential scan of every running task.
         Index("ix_queue_tasks_status_lease", "status", "lease_expires_at"),
+        # Pruning and the stats both look for finished tasks by when.
+        Index("ix_queue_tasks_status_finished", "status", "finished_at"),
     )
 
 

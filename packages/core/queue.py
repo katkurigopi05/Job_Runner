@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import socket
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, select, text, update
+from sqlalchemy import CursorResult, and_, delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.enums import QueueTaskStatus
@@ -38,6 +39,48 @@ DEFAULT_LEASE_SECONDS = 300
 
 #: Give up after this many attempts and park the task as failed.
 DEFAULT_MAX_ATTEMPTS = 3
+
+#: The wait before a failed task's first retry. Each later retry waits twice
+#: as long as the one before, up to `DEFAULT_RETRY_MAX_DELAY_SECONDS`.
+DEFAULT_RETRY_BASE_SECONDS = 60.0
+DEFAULT_RETRY_MAX_DELAY_SECONDS = 3600.0
+
+#: The statuses a task does not leave.
+FINISHED_STATUSES = (
+    QueueTaskStatus.DONE.value,
+    QueueTaskStatus.FAILED.value,
+    QueueTaskStatus.CANCELLED.value,
+)
+
+#: The database's clock, which every claim and lease is judged by.
+_CLOCK = text("clock_timestamp()")
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """How a failed task is retried: how long it waits, and when it stops.
+
+    The wait after attempt n is `base_s * 2**(n - 1)`, capped at `max_delay_s`.
+    It was a flat 60 seconds for every kind and every attempt (2026-10-19), so
+    a board that was down for an hour was asked again at the same pace each
+    time, and a retry had no time to let anything recover.
+
+    `max_attempts` is honoured by `fail_task`. A task whose worker died is
+    judged by `claim_task`'s own limit instead, `DEFAULT_MAX_ATTEMPTS`, so a
+    kind given more attempts than that loses the extra ones to a crash.
+    """
+
+    base_s: float = DEFAULT_RETRY_BASE_SECONDS
+    max_delay_s: float = DEFAULT_RETRY_MAX_DELAY_SECONDS
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS
+
+    def delay_after(self, attempt: int) -> float:
+        """Seconds to wait after failing on `attempt` (1 for the first try)."""
+        doublings = min(max(attempt - 1, 0), 30)
+        return float(min(self.base_s * 2**doublings, self.max_delay_s))
+
+
+DEFAULT_RETRY_POLICY = RetryPolicy()
 
 
 def db_now_plus(seconds: float) -> Any:
@@ -170,6 +213,7 @@ async def claim_task(
             locked_by=None,
             lease_expires_at=None,
             last_error="lease_expired_retry_limit",
+            finished_at=_CLOCK,
         )
     )
     if kinds:
@@ -313,6 +357,9 @@ async def complete_task(session: AsyncSession, claimed: ClaimedTask) -> bool:
         locked_by=None,
         lease_expires_at=None,
         last_error=None,
+        # With `locked_at`, which a claim set and nothing here clears, this is
+        # how long the last attempt took.
+        finished_at=_CLOCK,
     )
 
 
@@ -321,15 +368,24 @@ async def fail_task(
     claimed: ClaimedTask,
     error: str,
     *,
-    retry_in_s: int = 60,
-    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    policy: RetryPolicy | None = None,
+    retry_in_s: float | None = None,
+    max_attempts: int | None = None,
 ) -> bool | None:
     """Record a failure. True retries, False terminates, None lost ownership.
+
+    The retry waits as `policy` says for this attempt. `retry_in_s` and
+    `max_attempts` override it, for a caller that knows better: a malformed
+    payload will never succeed, so it is failed with `max_attempts=0`.
 
     `error` is written to the row, so callers must pass a message that carries
     no secrets, résumé content, or page HTML.
     """
-    retrying = claimed.attempt is not None and claimed.attempt < max_attempts
+    rule = policy or DEFAULT_RETRY_POLICY
+    limit = rule.max_attempts if max_attempts is None else max_attempts
+    attempt = claimed.attempt
+    retrying = attempt is not None and attempt < limit
+    wait = rule.delay_after(attempt or 1) if retry_in_s is None else retry_in_s
     accepted = await _update_claim(
         session,
         claimed,
@@ -337,7 +393,7 @@ async def fail_task(
         locked_by=None,
         lease_expires_at=None,
         last_error=error[:2000],
-        **({"run_after": db_now_plus(retry_in_s)} if retrying else {}),
+        **({"run_after": db_now_plus(wait)} if retrying else {"finished_at": _CLOCK}),
     )
     return retrying if accepted else None
 
@@ -409,6 +465,183 @@ async def defer_task(session: AsyncSession, claimed: ClaimedTask, *, run_after: 
         run_after=run_after,
         attempts=QueueTask.attempts - 1,
     )
+
+
+async def cancel_pending(
+    session: AsyncSession,
+    *,
+    reason: str,
+    task_id: uuid.UUID | None = None,
+    kind: str | None = None,
+    refuse_kinds: Collection[str] = (),
+) -> list[uuid.UUID]:
+    """Cancel tasks that have not started: one by id, or every one of a kind.
+
+    Returns the ids cancelled. Does not commit.
+
+    Only `pending` tasks, retries waiting their turn included. A running task
+    is left to finish or fail: stopping a handler partway is what a lost lease
+    does, and a run cut short by hand is not a state any handler expects to
+    be left in. `refuse_kinds` are kinds whose loss breaks something else,
+    which the caller names: an apply task is withdrawn by rejecting its
+    application, and the crawl tick and the inbox poll each schedule their
+    own next run, so cancelling one would stop them for good.
+    """
+    if task_id is None and kind is None:
+        raise ValueError("name a task or a kind to cancel")
+    statement = update(QueueTask).where(QueueTask.status == QueueTaskStatus.PENDING.value)
+    if task_id is not None:
+        statement = statement.where(QueueTask.id == task_id)
+    if kind is not None:
+        statement = statement.where(QueueTask.kind == kind)
+    if refuse_kinds:
+        statement = statement.where(QueueTask.kind.not_in(list(refuse_kinds)))
+    result = await session.execute(
+        statement.values(
+            status=QueueTaskStatus.CANCELLED.value,
+            finished_at=_CLOCK,
+            last_error=f"cancelled: {reason}"[:2000],
+        )
+        .returning(QueueTask.id)
+        .execution_options(synchronize_session=False)
+    )
+    return list(result.scalars().all())
+
+
+async def prune_finished(
+    session: AsyncSession,
+    *,
+    keep_done: timedelta,
+    keep_failed: timedelta,
+    batch: int = 10_000,
+) -> int:
+    """Delete finished tasks older than they are kept. Does not commit.
+
+    Returns how many went. Nothing cleared them before 2026-10-19, when
+    63,436 finished tasks dated back two months.
+
+    `done` and `cancelled` are kept for `keep_done`, `failed` for the longer
+    `keep_failed`: a failure is what someone comes back to look at. The newest
+    finished task of each kind is kept whatever its age, because the crawl
+    status reports when the last crawl finished and a quiet week must not
+    erase that. A task finished before `finished_at` existed is aged by when
+    it was created. At most `batch` rows go per call, so one call never holds
+    a long lock on the table the workers claim from.
+    """
+    finished = func.coalesce(QueueTask.finished_at, QueueTask.created_at)
+    newest_of_each_kind = (
+        select(QueueTask.id)
+        .where(QueueTask.status.in_(FINISHED_STATUSES))
+        .distinct(QueueTask.kind)
+        .order_by(QueueTask.kind, finished.desc())
+    )
+    old = or_(
+        and_(
+            QueueTask.status.in_((QueueTaskStatus.DONE.value, QueueTaskStatus.CANCELLED.value)),
+            finished < func.now() - keep_done,
+        ),
+        and_(
+            QueueTask.status == QueueTaskStatus.FAILED.value,
+            finished < func.now() - keep_failed,
+        ),
+    )
+    doomed = select(QueueTask.id).where(old, QueueTask.id.not_in(newest_of_each_kind)).limit(batch)
+    result = await session.execute(
+        delete(QueueTask)
+        .where(QueueTask.id.in_(doomed))
+        .execution_options(synchronize_session=False)
+    )
+    return int(cast("CursorResult[Any]", result).rowcount)
+
+
+@dataclass(frozen=True)
+class KindStats:
+    """What one kind of task is doing, and did in a recent window."""
+
+    kind: str
+    pending: int
+    running: int
+    #: Finished in the window.
+    done: int
+    failed: int
+    cancelled: int
+    #: How long a task that finished in the window took, last attempt only.
+    median_seconds: float | None
+    p95_seconds: float | None
+    #: How long the oldest task that could run now has been waiting.
+    oldest_waiting_seconds: float | None
+    #: The most recent failure in the window.
+    last_error: str | None
+
+
+async def queue_stats(session: AsyncSession, *, since: timedelta) -> list[KindStats]:
+    """Counts, durations and the latest failure for each kind of task."""
+    window = {"since_s": since.total_seconds()}
+    rows = (
+        await session.execute(
+            text("""
+            SELECT kind,
+              count(*) FILTER (WHERE status = 'pending') AS pending,
+              count(*) FILTER (WHERE status = 'running') AS running,
+              count(*) FILTER (WHERE status = 'done' AND finished_at >= cutoff) AS done,
+              count(*) FILTER (WHERE status = 'failed' AND finished_at >= cutoff) AS failed,
+              count(*) FILTER (WHERE status = 'cancelled' AND finished_at >= cutoff)
+                AS cancelled,
+              percentile_cont(0.5) WITHIN GROUP (
+                ORDER BY extract(epoch FROM finished_at - locked_at))
+                FILTER (WHERE status = 'done' AND finished_at >= cutoff
+                        AND locked_at IS NOT NULL) AS median_seconds,
+              percentile_cont(0.95) WITHIN GROUP (
+                ORDER BY extract(epoch FROM finished_at - locked_at))
+                FILTER (WHERE status = 'done' AND finished_at >= cutoff
+                        AND locked_at IS NOT NULL) AS p95_seconds,
+              extract(epoch FROM now() - min(run_after)
+                FILTER (WHERE status = 'pending' AND run_after <= now()))
+                AS oldest_waiting_seconds
+            FROM queue_tasks,
+                 LATERAL (SELECT now() - make_interval(secs => :since_s) AS cutoff) w
+            WHERE status IN ('pending', 'running') OR finished_at >= cutoff
+            GROUP BY kind
+            ORDER BY kind
+            """),
+            window,
+        )
+    ).all()
+    errors = dict(
+        (
+            await session.execute(
+                text("""
+                SELECT DISTINCT ON (kind) kind, last_error
+                FROM queue_tasks
+                WHERE status = 'failed'
+                  AND finished_at >= now() - make_interval(secs => :since_s)
+                ORDER BY kind, finished_at DESC
+                """),
+                window,
+            )
+        )
+        .tuples()
+        .all()
+    )
+
+    def seconds(value: Any) -> float | None:
+        return None if value is None else float(value)
+
+    return [
+        KindStats(
+            kind=row.kind,
+            pending=row.pending,
+            running=row.running,
+            done=row.done,
+            failed=row.failed,
+            cancelled=row.cancelled,
+            median_seconds=seconds(row.median_seconds),
+            p95_seconds=seconds(row.p95_seconds),
+            oldest_waiting_seconds=seconds(row.oldest_waiting_seconds),
+            last_error=errors.get(row.kind),
+        )
+        for row in rows
+    ]
 
 
 async def pending_count(session: AsyncSession, *, kind: str | None = None) -> int:
