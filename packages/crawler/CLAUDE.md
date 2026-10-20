@@ -363,3 +363,38 @@ structured jobs a careers page publishes (`jsonld.py` exists, discovery does
 not verify a company on it); and pages that build their job list in the
 browser, which the fetcher never runs, so a board embedded by JavaScript
 reads as a careers page with nothing on it.
+
+## A company a worker cannot read is noted, then looked into
+
+Asked for by the owner on 2026-10-19: when a worker cannot read a company, it
+should note it, move on, look into the noted ones once everything else is
+done, and put what it cannot fix on a separate list.
+
+- **Noted** (`issues.py`, table `company_issues`, one open row per company
+  and stage). Discovery notes every failure but `board_empty`. A crawl notes
+  a board after `CRAWL_FAILURES_BEFORE_NOTED` (3) failures in a row:
+  `board_gone` (HTTP 404/410), `board_error`, `board_blocked`,
+  `board_reads_empty`. Before this, a board that moved was retried every few
+  hours for ever; seven were returning 404 that day. A later success closes
+  the note (`resolved_by` discovery or crawl).
+- **Looked into** (`deep_dive.py`, task `deep_dive_company`). Dispatched by
+  the tick, capped by `max_backlog`, claimed only when nothing else is
+  runnable, discovery included. Once per note: the same failure again does
+  not reopen one the deep dive gave up on; a different failure does.
+- **The error list** is the notes the deep dive could not fix
+  (`needs_owner`), each with a diagnosis, a fix and `findings.kind`. `make
+  company-issues` writes `companies_noted.csv` and `company_errors.csv`.
+
+What it tries is what found something when 53 just-failed companies were read
+again by hand that day, and nothing else. Unreachable: the DNS of both forms
+of the address, then the other form (2 of 17 answered at `www.`, 3 had no
+DNS). A careers page with no board: one page further in (Boeing to Workday),
+links to other sites (named, never followed: a board there could be anyone's),
+its own job pages, applications by email. No careers page: what the home page
+links to. More usual addresses and the sitemap found nothing on 15 sites, so
+they are not tried. A known board that stopped answering: the site is read
+again for a board it moved to, and a board found is verified through
+`discover_company_job.verify_board`, the same path as discovery.
+
+Not done: pages that build their jobs with JavaScript (10 of the 21 careers
+pages) say so and wait for a browser step.

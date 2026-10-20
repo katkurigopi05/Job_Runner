@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report company-issues fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -383,6 +383,13 @@ score-judgments:
 # Read-only. Writes storage/exports/discovery_failures.csv.
 discovery-report:
 	$(PY)/python -m scripts.discovery_report $(if $(out),--out $(out),)
+
+# make company-issues — the companies a worker could not read and moved past
+# (waiting for the deep dive), and the error list the deep dive left: each
+# company it could not fix, what it found, and what to do. Read-only. Writes
+# storage/exports/companies_noted.csv and storage/exports/company_errors.csv.
+company-issues:
+	$(PY)/python -m scripts.company_issues $(if $(dir),--dir $(dir),)
 
 # Export the owner's swipe decisions as a labeled set. Gate 5 asks whether the
 # ranker works on this owner's material and every label in the repo is a

@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.worker.apply_job import TaskPayloadError, handle_apply
 from apps.worker.crawl_company_job import CRAWL_COMPANY_TASK_KIND, handle_crawl_company
 from apps.worker.crawl_job import CRAWL_TASK_KIND, handle_crawl
+from apps.worker.deep_dive_job import DEEP_DIVE_TASK_KIND, handle_deep_dive_company
 from apps.worker.discover_company_job import (
     DISCOVER_COMPANY_TASK_KIND,
     handle_discover_company,
@@ -61,15 +62,18 @@ HANDLERS = {
     CRAWL_TASK_KIND: handle_crawl,
     CRAWL_COMPANY_TASK_KIND: handle_crawl_company,
     DISCOVER_COMPANY_TASK_KIND: handle_discover_company,
+    DEEP_DIVE_TASK_KIND: handle_deep_dive_company,
     DISCOVER_TASK_KIND: handle_discover,
     INBOX_TASK_KIND: handle_inbox,
 }
 
-#: Taken only when nothing else is runnable (`claim_task`). Discovery looks for
-#: boards nobody has confirmed yet, thousands of companies at a time and about
-#: a minute each. Polling the boards already known, an approved application
-#: and the inbox are all owed sooner than that.
-YIELDING_KINDS = (DISCOVER_COMPANY_TASK_KIND,)
+#: Taken only when nothing else is runnable (`claim_task`), each after the ones
+#: before it. Discovery looks for boards nobody has confirmed yet, thousands of
+#: companies at a time and about a minute each. Polling the boards already
+#: known, an approved application and the inbox are all owed sooner than that.
+#: The deep dive looks again at the companies those could not read, and comes
+#: last: the owner asked for it once everything else is done (2026-10-19).
+YIELDING_KINDS = (DISCOVER_COMPANY_TASK_KIND, DEEP_DIVE_TASK_KIND)
 
 
 async def run_once(

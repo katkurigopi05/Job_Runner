@@ -707,6 +707,11 @@ def _boards_in(html: str) -> list[tuple[str, str]]:
     return list(dict.fromkeys(postings + fronts))
 
 
+def names_a_board(html: str) -> bool:
+    """Whether a page names any supported board, before deciding whose it is."""
+    return bool(_boards_in(html))
+
+
 class _Page(NamedTuple):
     """What one page said about boards."""
 

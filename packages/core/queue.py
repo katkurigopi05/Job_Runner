@@ -134,6 +134,9 @@ async def claim_task(
     posting would have arrived for three hours, and an application approved
     in that time would have waited behind them as well. Only runnable work is
     yielded to, so a task scheduled for later holds nothing back.
+
+    `after_others` is ordered: each kind in it also waits for the kinds
+    before it. The deep dive comes after discovery (`issues.py`).
     """
     kind_filter = ""
     params: dict[str, Any] = {
@@ -186,7 +189,8 @@ async def claim_task(
             )
             AND attempts < :max_attempts
             {kind_filter}
-            ORDER BY (kind = ANY(:after_others)), run_after
+            ORDER BY coalesce(array_position(CAST(:after_others AS varchar[]), kind), 0),
+                run_after
             FOR UPDATE SKIP LOCKED
             LIMIT 1
         )

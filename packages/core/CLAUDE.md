@@ -129,6 +129,10 @@ Three things to keep:
   idle with nothing to wait for. `tests/test_queue.py` holds it.
 - **Among discovery tasks the order is still `run_after`**, which is what
   `defer_task` moves when it hands a task back for a busy host.
+- **`after_others` is ordered** (2026-10-19). Each kind in it also waits for
+  the kinds before it, so `YIELDING_KINDS` is discovery, then the deep dive
+  (`deep_dive_company`), which the owner asked for once everything else is
+  done. `test_a_later_yielding_kind_waits_for_an_earlier_one`.
 
 Seen the same day: `make workers` ignored both an interrupt and a terminate
 for 20 seconds and had to be killed. The five tasks it was running kept their
