@@ -1,16 +1,8 @@
-"""Workday: the board that takes more than one request to read.
+"""Synthetic pagination and failure cases for Workday.
 
-**The payload shape here is unverified against a live tenant.** This
-environment has no egress to `*.myworkdayjobs.com`, so the fixtures below were
-written from the API's documented shape rather than recorded from a real
-board. CLAUDE.md §15 says exactly what that is worth: the hand-written
-Greenhouse fixture had a native `<select>` while the live board had moved to
-react-select, the adapter misread every dropdown, and the suite stayed green
-the whole time.
-
-So read these as tests of the *pagination and failure handling*, which is
-where the risk specific to Workday lives, and not as evidence that the field
-names are right. They are the half that can be established offline.
+Real public list and detail payloads, recorded on 2026-10-20, are exercised
+by test_workday_reader.py. These synthetic boards cover sizes and failures
+that cannot be safely induced against a live tenant.
 """
 
 from __future__ import annotations
@@ -65,6 +57,10 @@ def _fetcher(total: int, *, fail_page: int | None = None, robots: str = "User-ag
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/robots.txt":
             return httpx.Response(200, text=robots)
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"jobPostingInfo": {"jobDescription": "<p>Engineer</p>"}}
+            )
         body = json.loads(request.content.decode())
         offset = int(body["offset"])
         page = offset // PAGE_SIZE
@@ -335,19 +331,15 @@ async def test_a_workday_board_stores_its_postings(db_session) -> None:
 
 
 async def test_a_second_crawl_of_an_unchanged_workday_board_emits_nothing(db_session) -> None:
-    """Gate 5's property, over a board that took three requests to read.
-
-    The board hash covers every page, so an unchanged board short-circuits
-    before any of them is parsed.
-    """
+    """A fully hydrated unchanged board emits nothing; a pending one progresses."""
     from packages.crawler.crawl import crawl_company
     from packages.crawler.extract import CompanySeed
 
     seed = CompanySeed(name="Acme", slug=SLUG, ats="workday", poll_interval_s=0)
-    first, _ = _fetcher(total=45)
+    first, _ = _fetcher(total=5)
     await crawl_company(db_session, seed, first, force=True)
 
-    second, _ = _fetcher(total=45)
+    second, _ = _fetcher(total=5)
     again = await crawl_company(db_session, seed, second, force=True)
 
     assert again.emitted == 0

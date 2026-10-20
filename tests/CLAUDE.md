@@ -81,33 +81,24 @@ before trusting either number.
 - **Gate 2** needs a real posting and a real profile by definition.
   `make gate-2` checks the offline half; `make gate-2-live` is the other half.
 
-- **The Workday extractor's payload shape has never been seen.**
-  `packages/crawler/workday.py` reads a board across pages, and
-  `tests/test_workday.py` covers the pagination, the failure handling and the
-  truncation rule — all of which are testable offline and all of which are the
-  risk specific to a multi-request board. What is *not* established is that
-  `title`, `externalPath`, `locationsText` and `bulletFields` are the keys a
-  real tenant sends: the machine it was written on has no egress to
-  `*.myworkdayjobs.com`, so the fixture was written from the API's documented
-  shape. That is the same artifact as the pre-HAR Greenhouse fixture above,
-  with the same failure available to it. Run
-  `python -m scripts.record_workday <careers-url>` and compare before adding a
-  Workday row to the registry.
+- **Workday's payload is now recorded (2026-10-20).** Trimmed public Ameren
+  list/detail responses and provenance live in `tests/fixtures/workday`;
+  `test_workday_reader.py` exercises the real fields and exact source date.
+  A separate live request at offset 20 returned 20 jobs with distinct sampled
+  IDs. Synthetic `test_workday.py` boards still cover pagination, empty boards,
+  failures, robots refusals and truncation without touching the network.
 
-  Two consequences of Workday itself, neither a defect to fix:
+  A tenant retains §2.6's 60s floor. The reader caps list pages at 60 and
+  details at five per crawl. Missing/changed descriptions take priority;
+  cached descriptions rotate for revalidation. Tests establish progress on
+  identical listings, description-only edits, versioning, age lower bounds,
+  and unchanged fully hydrated content emitting nothing. Until hydration,
+  the matcher has title/location and an empty body, without a body embedding.
+  A truncated board closes nothing; the operational limits are in
+  `packages/crawler/CLAUDE.md`.
 
-  - A tenant is its own host, so §2.6's 60s floor applies **per page**. A
-    400-role employer is 20 pages, so 20 minutes for one company per cycle.
-    `MAX_PAGES` bounds it at an hour and marks the board truncated, and a
-    truncated board closes nothing.
-  - The listing carries no descriptions — those are one request per posting,
-    which at 60s is eight hours for a 500-role employer. So Workday postings
-    have no `description_raw`, `embed_postings` skips them, and they score on
-    title alone.
-
-  This is an **extractor, not an adapter**. §11 still holds: nothing fills or
-  submits a Workday form, and an application to one fails as
-  `unsupported_site`.
+  Workday forms remain unsupported. Both adapter lookup and the real apply
+  worker are tested to refuse them with `unsupported_site`.
 
 ### Closing the gate gaps §15 had only described
 

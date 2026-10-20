@@ -261,8 +261,45 @@ async def _probe(
     fetcher: PoliteFetcher, vendor: str, slug: str
 ) -> tuple[int | None, str, str | None]:
     """Try one vendor and slug. Returns (job count, url, blocked reason)."""
+    if vendor == "workday":
+        postings, url, blocked, total = await _workday_probe(fetcher, slug)
+        return total if postings is not None else None, url, blocked
     postings, url, blocked = await fetch_board(fetcher, vendor, slug)
     return (None if postings is None else len(postings)), url, blocked
+
+
+async def _workday_probe(
+    fetcher: PoliteFetcher, slug: str
+) -> tuple[list[ExtractedPosting] | None, str, str | None, int | None]:
+    """One POST proves existence and reads the count, without a full crawl."""
+    from packages.crawler.workday import PAGE_SIZE, WorkdayExtractor, parse_page
+
+    url = ""
+    try:
+        endpoint = WorkdayExtractor().board_url(slug)
+        host, _, site = slug.split("|")
+        url = f"https://{host}/{site}"
+        response = await fetcher.fetch(
+            endpoint,
+            method="POST",
+            json={
+                "appliedFacets": {},
+                "limit": PAGE_SIZE,
+                "offset": 0,
+                "searchText": "",
+            },
+        )
+        if not response.ok:
+            return None, url, None, None
+        postings, total = parse_page(response.text, host, site)
+        if total is None or (total > 0 and not postings) or total < len(postings):
+            return None, url, None, None
+        return postings, url, None, total
+    except Blocked as exc:
+        return None, url, str(exc), None
+    except Exception as exc:  # noqa: BLE001 - one host cannot stop discovery
+        log.debug("workday_probe_failed", slug=slug, error=type(exc).__name__)
+        return None, url, None, None
 
 
 async def fetch_board(
@@ -275,6 +312,9 @@ async def fetch_board(
     is no board to read — an unknown vendor, a refusal, an error, a body that
     does not parse.
     """
+    if vendor == "workday":
+        postings, url, blocked, _ = await _workday_probe(fetcher, slug)
+        return postings, url, blocked
     extractor = extractor_for(vendor)
     if extractor is None:
         return None, "", None
@@ -352,6 +392,13 @@ _BOARD_ROOT_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 def board_root(url: str) -> tuple[str, str] | None:
     """`(vendor, slug)` when the URL is a board's front page."""
+    # Read-only board recognition is deliberately independent of ATS form
+    # detection: no Workday URL becomes supported by the apply path.
+    from packages.crawler.workday import slug_for
+
+    workday_slug = slug_for(url)
+    if workday_slug:
+        return "workday", workday_slug
     for vendor, pattern in _BOARD_ROOT_RES:
         match = pattern.match(url.strip())
         if match:
@@ -657,6 +704,7 @@ _ATS_URL_IN_PAGE_RE = re.compile(
         |jobs\.(?:eu\.)?lever\.co
         |jobs\.ashbyhq\.com
         |apply\.workable\.com
+        |[a-z0-9-]+\.wd[0-9]+\.myworkdayjobs\.com
     )/[^\s"'<>\\)\]]*""",
     re.I | re.X,
 )
@@ -821,6 +869,10 @@ async def resolve_site(
             # different company that happens to share a word.
             elif count == 0:
                 return (name, f"board found ({vendor}/{slug}) but it lists no open roles"), reading
+            elif vendor == "workday":
+                reading = replace(
+                    reading, unreachable="Workday board unreachable or invalid response"
+                )
 
     if not guess:
         if blocked_reason:

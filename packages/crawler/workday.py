@@ -1,63 +1,21 @@
-"""Workday's careers API — the one board that cannot be read in one request.
+"""Read Workday listings and bounded details through PoliteFetcher.
 
-Two things make it different from the four in `extract.py`, and both are
-contract problems rather than parsing problems.
+A board is a company host: 60 seconds between requests, including POSTs.
+A complete listing is required before closing missing jobs. Truncated or
+inconsistent pagination closes nothing. At 300 roles the 15 listing pages
+span at least 14 minutes; five detail requests add five more minutes.
 
-**It is a POST.** The page offset travels in a JSON body, not a query string,
-so `PoliteFetcher.fetch` grew a `method`. Nothing about politeness changes: a
-POST touches a host exactly as much as a GET, and the same two gates run
-before it.
+Descriptions are cached against the listed title, location and URL. Missing
+or visibly changed postings take priority, with one rotating validation slot
+for description-only edits. Once caught up, all five slots revalidate cached
+text. The cursor lives on CompanyCrawlState, never in the discovery evidence.
+A pending posting has no description: existing matching sees its title and
+location, no body evidence or body embedding. Hydration emits a normal update
+so the ordinary downstream matching path reconsiders it.
 
-**It is paginated, and the pages are not optional.** Greenhouse hands back
-every open posting in one response; Workday hands back twenty and a total. An
-extractor that read the first page would report a 400-role employer as having
-20 — and worse, `_close_missing` would then close the other 380 on the next
-cycle. So `collect` walks every page, and a page that fails abandons the whole
-board rather than returning a partial list. A partial board is the input to
-closing postings that are open.
-
-## What this costs, which is the part to read before enabling it
-
-A Workday tenant is its own host — `acme.wd5.myworkdayjobs.com` — not a
-multi-tenant API. So §2.6's ordinary 60s floor applies, not the 2s shared one,
-and it applies *per page*: an employer with 400 open roles is 20 pages, which
-is 20 minutes of waiting for one company, once per cycle. `MAX_PAGES` bounds
-that at an hour and logs when it truncates, because silently reading half a
-board is the failure this module is otherwise built to avoid.
-
-## What it cannot give you
-
-The list endpoint carries titles, locations and links — no descriptions. Those
-live behind one detail request per posting, which at 60s a request is eight
-hours for a 500-role employer, per cycle. So Workday postings arrive with no
-`description_raw`, and the consequence is concrete rather than cosmetic:
-`embed_postings` skips a posting with no description, so these never get a
-vector and never score on anything but their title.
-
-That is recorded here, and in the `ExtractedPosting` it produces, rather than
-worked around. A posting that ranks low because nothing was read is not the
-same as one that ranks low because it does not fit, and the matching side has
-no way to tell the difference unless this side says so.
-
-## This is not an adapter
-
-CLAUDE.md §11 puts the Workday *adapter* out of scope until after Phase 6,
-which is where it stays: nothing here fills a form or submits anything.
-Reading a board and applying to it are different capabilities, and applying to
-a Workday posting remains unsupported — `packages/ats/` has no Workday
-adapter, so an application to one fails as `unsupported_site`, which is the
-correct outcome.
-
-## The payload shape here is unverified
-
-This environment has no egress to `*.myworkdayjobs.com`, so the fixture beside
-it was written from the API's documented shape rather than recorded from a
-live tenant. CLAUDE.md §15 is explicit about what that is worth: the
-hand-written Greenhouse fixture had a native `<select>` while the live board
-had moved to react-select, the adapter misread every dropdown, and the suite
-stayed green throughout. Record a real response with
-`python -m scripts.record_workday <careers-url>` before trusting a Workday
-row in the registry.
+The public Ameren list and detail were recorded on 2026-10-20; trimmed public
+payloads and provenance are in tests/fixtures/workday. Workday application
+forms remain unsupported (CLAUDE.md §11).
 """
 
 from __future__ import annotations
@@ -65,12 +23,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
 import structlog
 
-from packages.crawler.extract import ExtractedPosting, posting_hash
+from packages.crawler.extract import ExtractedPosting, posting_hash, strip_html
 from packages.crawler.fetch import Blocked, PoliteFetcher
 
 log = structlog.get_logger(__name__)
@@ -84,6 +43,11 @@ PAGE_SIZE = 20
 #: for one company, which is already beyond generous; past it the board is
 #: reported truncated rather than quietly halved.
 MAX_PAGES = 60
+
+# Five extra minutes at the company-host floor, never one request per job.
+DETAIL_REQUESTS_PER_CRAWL = 5
+_HOST_RE = re.compile(r"(?P<tenant>[a-z0-9-]+)\.wd[0-9]+\.myworkdayjobs\.com")
+_SITE_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 @dataclass
@@ -102,7 +66,8 @@ class BoardPages:
     @property
     def body(self) -> str:
         """One string standing for the whole board, for hashing."""
-        return "\n".join(self.bodies)
+        # A detail-only edit must invalidate an otherwise identical listing.
+        return "\n".join([*self.bodies, *(p.content_hash for p in self.postings)])
 
 
 class WorkdayBoardError(RuntimeError):
@@ -125,18 +90,23 @@ def parse_site(careers_url: str) -> tuple[str, str, str] | None:
         parsed = urlparse(careers_url.strip())
     except ValueError:
         return None
-    host = (parsed.hostname or "").lower()
-    if not host.endswith(".myworkdayjobs.com"):
+    host = (parsed.hostname or "").lower().rstrip(".")
+    match = _HOST_RE.fullmatch(host)
+    if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password or not match:
         return None
-    tenant = host.split(".", 1)[0]
-    if not tenant:
+    try:
+        port = parsed.port
+    except ValueError:
         return None
+    if port not in {None, 80, 443}:
+        return None
+    tenant = match.group("tenant")
 
     segments = [segment for segment in parsed.path.split("/") if segment]
     # A locale looks like `en-US`; anything else in first position is the site.
-    if segments and re.fullmatch(r"[a-z]{2}(-[A-Za-z]{2})?", segments[0]):
+    if segments and re.fullmatch(r"[a-z]{2}(-[a-z]{2})?", segments[0], re.I):
         segments = segments[1:]
-    if not segments:
+    if not segments or not _SITE_RE.fullmatch(segments[0]) or segments[0].lower() == "wday":
         return None
     return host, tenant, segments[0]
 
@@ -148,16 +118,13 @@ def api_url(host: str, tenant: str, site: str) -> str:
 def _external_id(entry: dict[str, Any]) -> str | None:
     """The employer's own requisition id.
 
-    `bulletFields` is where Workday puts it on most tenants; the tail of
-    `externalPath` carries it otherwise. Neither is guaranteed, and a posting
+    The tail of `externalPath` carries it. A posting
     with no stable id is skipped rather than given a synthetic one — an id
     derived from the title changes when the title is edited, which would read
     as the old posting closing and a new one opening.
     """
-    for value in entry.get("bulletFields") or []:
-        text = str(value).strip()
-        if text:
-            return text
+    # The public path carries the requisition; bulletFields can instead be
+    # locations or time type on a tenant with a different list configuration.
     path = str(entry.get("externalPath") or "")
     match = re.search(r"_([A-Za-z0-9-]+)$", path)
     return match.group(1) if match else None
@@ -179,16 +146,21 @@ def parse_page(body: str, host: str, site: str) -> tuple[list[ExtractedPosting],
         return [], None
 
     total = payload.get("total")
-    total = int(total) if isinstance(total, int | float) else None
+    total = total if type(total) is int and total >= 0 else None
+
+    entries = payload.get("jobPostings")
+    if not isinstance(entries, list):
+        return [], None
 
     postings: list[ExtractedPosting] = []
-    for entry in payload.get("jobPostings") or []:
+    for entry in entries:
         if not isinstance(entry, dict):
             continue
         external_id = _external_id(entry)
         path = str(entry.get("externalPath") or "")
-        if not external_id or not path:
+        if not external_id or not path.startswith("/job/") or "?" in path or "#" in path:
             continue
+        age = re.fullmatch(r"Posted (\d+)\+? Days? Ago", str(entry.get("postedOn") or ""))
         posting = ExtractedPosting(
             external_id=external_id,
             url=f"https://{host}/{site}{path}",
@@ -202,12 +174,98 @@ def parse_page(body: str, host: str, site: str) -> tuple[list[ExtractedPosting],
             # the source does not have. CLAUDE.md keeps an unknown field None.
             description_raw=None,
             published_at=None,
+            minimum_age_days=int(age.group(1)) if age else None,
             ats_type="workday",
         )
         posting.content_hash = posting_hash(posting)
         postings.append(posting)
 
     return postings, total
+
+
+def read_detail(body: str, listing: ExtractedPosting) -> ExtractedPosting:
+    """Read only source facts; a missing/changed schema is not an empty job."""
+    try:
+        info = json.loads(body)["jobPostingInfo"]
+        description = info["jobDescription"]
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError("missing description")
+        published = datetime.fromisoformat(info["startDate"]) if info.get("startDate") else None
+    except (KeyError, TypeError, ValueError) as exc:
+        raise WorkdayBoardError("malformed Workday detail") from exc
+    requisition = info.get("jobReqId")
+    if requisition and not re.fullmatch(
+        re.escape(str(requisition)) + r"(?:-\d+)?", listing.external_id
+    ):
+        raise WorkdayBoardError("Workday detail belongs to a different requisition")
+    if published is not None and published.tzinfo is None:
+        published = published.replace(tzinfo=UTC)
+    result = listing.model_copy(
+        update={
+            "description_raw": strip_html(description),
+            "published_at": published or listing.published_at,
+        }
+    )
+    result.content_hash = posting_hash(result)
+    return result
+
+
+async def hydrate_details(
+    fetcher: PoliteFetcher,
+    company_slug: str,
+    pages: BoardPages,
+    previous: dict[str, ExtractedPosting],
+    cursor: str | None,
+    *,
+    max_age_days: int,
+) -> str | None:
+    """Prioritize missing/changed text; rotate bounded validation of the rest.
+
+    A listing has no revision stamp. One rotating slot (all five once caught
+    up) detects edits to descriptions that leave the listing unchanged.
+    Cached text is retained only while its title, location and URL agree.
+    """
+    host, tenant, site = company_slug.split("|")
+    pending: list[ExtractedPosting] = []
+    cached: list[ExtractedPosting] = []
+    for item in pages.postings:
+        prior = previous.get(item.external_id)
+        same = prior is not None and (prior.title, prior.location, prior.url) == (
+            item.title,
+            item.location,
+            item.url,
+        )
+        if prior is not None:
+            item.published_at = prior.published_at
+        if same and prior is not None and prior.description_raw:
+            item.description_raw = prior.description_raw
+            cached.append(item)
+        elif prior is not None or not (
+            max_age_days > 0
+            and item.minimum_age_days is not None
+            and item.minimum_age_days > max_age_days
+        ):
+            pending.append(item)
+        item.content_hash = posting_hash(item)
+
+    cached.sort(key=lambda item: (item.external_id <= (cursor or ""), item.external_id))
+    # Preserve a validation slot while draining the pending descriptions.
+    reserved = 1 if cached else 0
+    selected = pending[: DETAIL_REQUESTS_PER_CRAWL - reserved]
+    selected += cached[: DETAIL_REQUESTS_PER_CRAWL - len(selected)]
+    for item in selected:
+        path = urlparse(item.url).path.removeprefix(f"/{site}")
+        response = await fetcher.fetch(f"https://{host}/wday/cxs/{tenant}/{site}{path}")
+        pages.waited_seconds += response.waited
+        if not response.ok:
+            raise WorkdayBoardError(f"{response.url}: HTTP {response.status} in detail")
+        hydrated = read_detail(response.text, item)
+        item.description_raw = hydrated.description_raw
+        item.published_at = hydrated.published_at
+        item.content_hash = hydrated.content_hash
+        if item in cached:
+            cursor = item.external_id
+    return cursor
 
 
 @dataclass
@@ -230,6 +288,8 @@ class WorkdayExtractor:
                 "use workday.slug_for(careers_url) to build one"
             )
         host, tenant, site = parts
+        if parse_site(f"https://{host}/{site}") != (host, tenant, site):
+            raise ValueError("invalid Workday board identity")
         return api_url(host, tenant, site)
 
     def parse(self, body: str, company_slug: str) -> list[ExtractedPosting]:
@@ -286,6 +346,13 @@ class WorkdayExtractor:
             pages.bodies.append(response.text)
             pages.postings.extend(postings)
 
+            # A skipped/malformed entry or shifting pagination is not proof
+            # that an unseen requisition closed. Refuse closure on that read.
+            payload = json.loads(response.text)
+            entries = payload.get("jobPostings", [])
+            if len(postings) != len(entries) or (page_total is not None and page_total != total):
+                pages.truncated = True
+
             if not postings:
                 # An empty page before the total is reached means the board
                 # disagrees with its own count. Stopping is right; pretending
@@ -311,6 +378,9 @@ class WorkdayExtractor:
                 seen=len(pages.postings),
                 total=total,
             )
+            pages.truncated = True
+
+        if total is not None and len({p.external_id for p in pages.postings}) != total:
             pages.truncated = True
 
         log.info(

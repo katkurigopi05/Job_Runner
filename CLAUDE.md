@@ -312,7 +312,10 @@ Do not build these. If a task seems to need one, stop and ask.
 - Cloud deployment, and any hosted runtime. The app runs on localhost only.
   (CI is now in scope — see §13. It *runs* the gates, it does not deploy
   anything, and no image is pushed to a registry.)
-- Workday adapter (revisit after Phase 6)
+- Applying through Workday forms. Reading Workday postings and verifying
+  boards in discovery are in scope (owner approved 2026-10-20 after the
+  Phase 6 gate). Workday application URLs remain unsupported:
+  `manual_completion_required` / `unsupported_site`.
 - Any paid API
 
 ---

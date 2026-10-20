@@ -296,8 +296,10 @@ async def _store(
             item
             for item in extracted
             if item.external_id in existing
-            or item.published_at is None
-            or _aware(item.published_at) >= cutoff
+            or (
+                (item.minimum_age_days is None or item.minimum_age_days <= max_age_days)
+                and (item.published_at is None or _aware(item.published_at) >= cutoff)
+            )
         ]
         result.too_old = len(extracted) - len(kept)
         if result.too_old:
@@ -689,6 +691,53 @@ async def _poll_paged(
     """
     try:
         pages = await collect(fetcher, seed.slug)
+        if seed.ats == "workday":
+            from packages.core.config import get_settings
+            from packages.core.models import CompanyCrawlState
+            from packages.crawler.workday import hydrate_details
+
+            # The listing itself has no description revision. Read our
+            # current text once, reuse it, then spend a bounded detail budget.
+            rows = (
+                await session.execute(
+                    select(
+                        Posting.external_id,
+                        Posting.url,
+                        Posting.title,
+                        Posting.location,
+                        Posting.description_raw,
+                        Posting.published_at,
+                    ).where(Posting.company_id == company.id)
+                )
+            ).all()
+            previous = {
+                row.external_id: ExtractedPosting(
+                    external_id=row.external_id,
+                    url=row.url,
+                    title=row.title,
+                    location=row.location,
+                    description_raw=row.description_raw,
+                    published_at=row.published_at,
+                    ats_type="workday",
+                )
+                for row in rows
+                if row.external_id is not None
+            }
+            state = await session.scalar(
+                select(CompanyCrawlState).where(CompanyCrawlState.company_id == company.id)
+            )
+            cursor = await hydrate_details(
+                fetcher,
+                seed.slug,
+                pages,
+                previous,
+                state.workday_detail_cursor if state else None,
+                max_age_days=get_settings().posting_max_age_days,
+            )
+            if state is None:
+                state = CompanyCrawlState(company_id=company.id)
+                session.add(state)
+            state.workday_detail_cursor = cursor
     except Blocked as exc:
         log.info("crawl_blocked", company=seed.name, reason=str(exc))
         result.skipped_reason = str(exc)

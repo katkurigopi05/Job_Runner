@@ -106,15 +106,15 @@ async def test_a_board_one_page_further_in_is_found() -> None:
 
 
 async def test_a_job_system_one_page_further_in_is_named() -> None:
-    """Boeing: its careers page links jobs.boeing.com, which links Workday."""
+    """An unsupported system one hop deeper is still named."""
     found = await _careers(
         '<a href="https://jobs.acme.com/">Search jobs</a>',
-        **{"jobs.acme.com/": '<a href="https://acme.wd1.myworkdayjobs.com/External">Go</a>'},
+        **{"jobs.acme.com/": '<a href="https://acme.bamboohr.com/careers">Go</a>'},
     )
 
     assert found.board is None
-    assert found.diagnosis.startswith("its jobs are on Workday")
-    assert found.fix == "add a reader for Workday"
+    assert found.diagnosis.startswith("its jobs are on BambooHR")
+    assert found.fix == "add a reader for BambooHR"
 
 
 async def test_a_page_sending_applicants_elsewhere_names_where() -> None:

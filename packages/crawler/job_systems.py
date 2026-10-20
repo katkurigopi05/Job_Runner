@@ -1,7 +1,8 @@
 """Job systems a careers page can be built on that discovery cannot read yet.
 
-Discovery verifies a company only on Greenhouse, Lever, Ashby or Workable
-(`find_boards.VENDORS`). A careers page on anything else was recorded as
+Discovery verifies Greenhouse, Lever, Ashby, Workable and linked Workday
+boards. `find_boards.VENDORS` is only the vendors probed by name guesses.
+A careers page on anything else was recorded as
 "names no supported board", which is true and says nothing about what to do.
 Naming the system is what turns a failure into a list of readers worth
 writing: on a 40-company sample of the owner's failed sheet on 2026-10-19,
@@ -94,7 +95,16 @@ def _systems_linked(html: str) -> Iterator[tuple[str, str]]:
 
 def other_job_system(html: str) -> tuple[str, str] | None:
     """`(name, url)` for the first link in `html` to a job system we cannot read."""
-    return next(_systems_linked(html), None)
+    from packages.crawler.workday import parse_site
+
+    return next(
+        (
+            (name, url)
+            for name, url in _systems_linked(html)
+            if name != "Workday" or parse_site(url) is None
+        ),
+        None,
+    )
 
 
 def network_board(html: str) -> str | None:
