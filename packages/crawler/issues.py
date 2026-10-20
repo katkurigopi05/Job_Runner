@@ -15,14 +15,18 @@ board next month needs no one to tidy up after it.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import cast, func, select, text, update
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import QueueTask
 from packages.core.models_issues import CompanyIssue
+from packages.core.queue import enqueue
 from packages.crawler.crawl import CompanyResult
 
 #: One company's deep dive, as a queue task. Claimed after every other kind,
@@ -37,11 +41,6 @@ CRAWL_FAILURES_BEFORE_NOTED = 3
 #: Discovery outcomes that are not a problem with the company. A board that
 #: lists nothing is a company not hiring today, and is retried on schedule.
 NOT_AN_ISSUE = frozenset({"board_empty"})
-
-#: How long a deep dive may sit enqueued before the dispatcher offers it
-#: again: long enough for any backlog, short enough that a task lost with a
-#: worker does not hide a company for good.
-REQUEUE_AFTER = timedelta(days=1)
 
 
 def crawl_category(result: CompanyResult) -> str | None:
@@ -123,41 +122,91 @@ async def resolve(
     return result.first() is not None
 
 
-async def claim_for_deep_dive(
-    session: AsyncSession, *, limit: int, now: datetime | None = None
-) -> list[uuid.UUID]:
-    """Notes owed a deep dive, oldest first, marked enqueued. Does not commit.
+def _owed_a_deep_dive() -> Any:
+    """A note with no deep dive waiting or running for it, and none done.
 
-    Locked and skipped rather than counted, so two dispatchers at once take
-    different notes and never the same one twice.
+    `noted`, or `queued` with its task gone: cancelled, failed for good, or
+    lost with its worker. The live ids are compared with NOT IN over a
+    subquery that never yields NULL, which Postgres hashes once.
     """
-    if limit <= 0:
+    live = select(cast(QueueTask.payload_json["issue_id"].astext, PgUUID)).where(
+        QueueTask.kind == DEEP_DIVE_TASK_KIND,
+        QueueTask.status.in_(("pending", "running")),
+        QueueTask.payload_json["issue_id"].astext.is_not(None),
+    )
+    return (CompanyIssue.status == "noted") | (
+        (CompanyIssue.status == "queued") & CompanyIssue.id.not_in(live)
+    )
+
+
+async def start_deep_dives(
+    session: AsyncSession, *, limit: int | None = None, now: datetime | None = None
+) -> list[uuid.UUID]:
+    """Enqueue a deep dive for each note owed one, oldest first. Does not commit.
+
+    **Only with the owner's permission** (2026-10-19): the noted companies are
+    looked into at the end, when they say so. This is what `make deep-dive`
+    and `POST /company-issues/deep-dive` call, and the tick calls it only
+    while `DEEP_DIVE_AUTO` is set. The first build dispatched on every tick,
+    and 2,343 deep dives were queued to start overnight without asking.
+
+    Locked and skipped, so two callers at once never start one note twice.
+    """
+    if limit is not None and limit <= 0:
         return []
     current = now or datetime.now(UTC)
-    ids = list(
-        (
-            await session.scalars(
-                select(CompanyIssue.id)
-                .where(
-                    (CompanyIssue.status == "noted")
-                    | (
-                        (CompanyIssue.status == "queued")
-                        & (CompanyIssue.queued_at < current - REQUEUE_AFTER)
-                    )
-                )
-                .order_by(CompanyIssue.noted_at)
-                .limit(limit)
-                .with_for_update(skip_locked=True)
-            )
-        ).all()
+    query = (
+        select(CompanyIssue.id)
+        .where(_owed_a_deep_dive())
+        .order_by(CompanyIssue.noted_at)
+        .with_for_update(skip_locked=True)
     )
+    if limit is not None:
+        query = query.limit(limit)
+    ids = list((await session.scalars(query)).all())
     if ids:
         await session.execute(
             update(CompanyIssue)
             .where(CompanyIssue.id.in_(ids))
             .values(status="queued", queued_at=current)
         )
+        for issue_id in ids:
+            await enqueue(session, DEEP_DIVE_TASK_KIND, {"issue_id": str(issue_id)})
     return ids
+
+
+@dataclass(frozen=True)
+class IssueSummary:
+    """The noted list at a glance."""
+
+    noted: int
+    queued: int
+    needs_owner: int
+    fixed: int
+    #: Notes a deep dive would be started for now: the ones awaiting permission.
+    waiting_for_permission: int
+
+
+async def summary(session: AsyncSession) -> IssueSummary:
+    counts = dict(
+        (
+            await session.execute(
+                select(CompanyIssue.status, func.count()).group_by(CompanyIssue.status)
+            )
+        )
+        .tuples()
+        .all()
+    )
+    waiting = await session.scalar(
+        select(func.count()).select_from(CompanyIssue).where(_owed_a_deep_dive())
+    )
+    return IssueSummary(
+        noted=counts.get("noted", 0),
+        queued=counts.get("queued", 0),
+        needs_owner=counts.get("needs_owner", 0),
+        fixed=counts.get("fixed", 0),
+        waiting_for_permission=int(waiting or 0),
+    )
 
 
 async def deep_dive_backlog(session: AsyncSession) -> int:
@@ -179,9 +228,11 @@ __all__ = [
     "CRAWL_FAILURES_BEFORE_NOTED",
     "DEEP_DIVE_TASK_KIND",
     "NOT_AN_ISSUE",
-    "claim_for_deep_dive",
+    "IssueSummary",
     "crawl_category",
     "deep_dive_backlog",
     "note",
     "resolve",
+    "start_deep_dives",
+    "summary",
 ]
