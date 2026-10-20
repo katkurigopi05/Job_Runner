@@ -848,6 +848,17 @@ class ChatReply(BaseModel):
 # --------------------------------------------------------------------------
 
 
+class KeywordHitOut(BaseModel):
+    """Where one of the search's keywords matched, with two words either side."""
+
+    keyword: str
+    #: "title", "location" or "description".
+    field: str
+    before: str
+    match: str
+    after: str
+
+
 class MatchOut(BaseModel):
     """A scored posting, with the breakdown that produced the score.
 
@@ -936,6 +947,9 @@ class MatchOut(BaseModel):
     personalized_score: float | None = None
     #: Each preference that moved it, with its weight and why it applied.
     adjustments: list[dict[str, Any]] = Field(default_factory=list)
+    #: Where each keyword of the search matched, in the order typed. Empty
+    #: when the search has no keywords.
+    keyword_hits: list[KeywordHitOut] = Field(default_factory=list)
 
 
 class PacketPosting(BaseModel):

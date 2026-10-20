@@ -12,6 +12,7 @@ the score decides what gets applied to.
 from __future__ import annotations
 
 import uuid
+from dataclasses import asdict
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
@@ -26,12 +27,15 @@ from packages.core.enums import ErrorCode
 from packages.core.models import Application, CompanyCrawlState, Match, Posting, Profile
 from packages.core.schemas import (
     CalibrationOut,
+    KeywordHitOut,
     MatchDecision,
     MatchDecisionOut,
     MatchOut,
     MatchSummaryOut,
 )
 from packages.matching.filters import eligibility_of, experience_of
+from packages.matching.keywords import find as find_keyword
+from packages.matching.keywords import parse as parse_keyword
 from packages.matching.locality import locality_of
 from packages.matching.locality import rank as locality_rank
 from packages.matching.personalize import SKIP_REASONS, Applied, adjust
@@ -274,14 +278,24 @@ async def list_matches(
     # the authorization is read live: a posting scored before the reading
     # existed would otherwise show nothing, and one definition means the filter
     # and the card cannot disagree.
+    #
+    # The keyword hits are read again for the page, not carried from the
+    # filter: grouping can put a different listing of the same job on the card.
     readings = await run_in_threadpool(
-        lambda: [(eligibility_of(posting).as_dict(), experience_of(posting)) for _, posting in page]
+        lambda: [
+            (
+                eligibility_of(posting).as_dict(),
+                experience_of(posting),
+                _keyword_hits(posting, filters.keywords),
+            )
+            for _, posting in page
+        ]
     )
 
     unanswered = await _boards_unanswered(session, page)
 
     feed: list[MatchOut] = []
-    for (match, posting), (authorization, demanded) in zip(page, readings, strict=True):
+    for (match, posting), (authorization, demanded, hits) in zip(page, readings, strict=True):
         reasons = match.reasons_json or {}
         feed.append(
             MatchOut(
@@ -328,9 +342,16 @@ async def list_matches(
                 sources=sources.get(posting.canonical_job_id, []),
                 personalized_score=personal[match.id][0] if personal else None,
                 adjustments=[item.as_dict() for item in personal[match.id][1]] if personal else [],
+                keyword_hits=hits,
             )
         )
     return feed
+
+
+def _keyword_hits(posting: Posting, keywords: tuple[str, ...]) -> list[KeywordHitOut]:
+    """Where each keyword matched this posting, with the words around it."""
+    found = (find_keyword(parse_keyword(keyword), posting) for keyword in keywords)
+    return [KeywordHitOut(**asdict(hit)) for hit in found if hit is not None]
 
 
 async def _boards_unanswered(

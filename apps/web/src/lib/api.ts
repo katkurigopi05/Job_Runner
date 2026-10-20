@@ -611,6 +611,17 @@ export interface Match {
   /** Base score adjusted by explicit ranking preferences; null when there are none. */
   personalized_score: number | null;
   adjustments: RankingAdjustment[];
+  /** Where each of the search's keywords matched; empty when it has none. */
+  keyword_hits: KeywordHit[];
+}
+
+/** Where one keyword matched, with the two words either side of it. */
+export interface KeywordHit {
+  keyword: string;
+  field: "title" | "location" | "description";
+  before: string;
+  match: string;
+  after: string;
 }
 
 export interface RankingAdjustment {

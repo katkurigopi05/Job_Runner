@@ -20,6 +20,9 @@ from datetime import UTC, datetime, timedelta
 
 from packages.core.models import Posting
 from packages.matching.eligibility import Sponsorship
+from packages.matching.keywords import Hit
+from packages.matching.keywords import find as find_keyword
+from packages.matching.keywords import parse as parse_keyword
 from packages.matching.locality import (
     area_exclusion,
     is_domestic,
@@ -66,7 +69,9 @@ _SENIORITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 class SearchFilters:
     """One search. Every field is optional; an empty filter matches everything."""
 
-    #: All must appear somewhere in title, location, or description.
+    #: All must appear in the title, location or description, as whole words;
+    #: a keyword of several words as written or with its words near each
+    #: other (`keywords.py`).
     keywords: tuple[str, ...] = ()
     #: One of `ROLE_FILTERS`: keep only postings whose **title** names this
     #: role, under any of its aliases (`matching/roles.py`).
@@ -247,6 +252,8 @@ class FilterVerdict:
     #: Why it was dropped. Plural because showing only the first reason invites
     #: fixing one filter and being surprised the posting is still missing.
     reasons: list[str] = field(default_factory=list)
+    #: Where each keyword matched, with the words around it (`keywords.Hit`).
+    hits: list[Hit] = field(default_factory=list)
 
 
 def detect_seniority(text: str) -> str | None:
@@ -329,29 +336,16 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
     if not filters.include_closed and posting.closed_at is not None:
         reasons.append("posting is closed")
 
-    # Guarded, because building the haystack means lowercasing the *whole*
-    # description and it is read nowhere else. Unconditional, it was the single
-    # most expensive thing the match feed did: the dashboard's default request
-    # sets no keywords, so 27MB of posting text across 4050 rows was lowercased
-    # and discarded on every load. Filtering fell from 2.5s to milliseconds.
-    if filters.keywords:
-        haystack = " ".join(
-            part.lower()
-            for part in (posting.title, posting.location, posting.description_raw)
-            if part
-        )
-        wanted_role = canonical(posting.title or "")
-        for keyword in filters.keywords:
-            if keyword.lower() in haystack:
-                continue
-            # A keyword naming a role matches a title naming the same role, even
-            # with no string in common. This filter runs *before* scoring, so a
-            # posting dropped here is never scored at all and no embedding
-            # backend can recover it: filtering on "software engineer" used to
-            # discard "Member of Technical Staff" outright. See matching/roles.py.
-            if (asked := canonical(keyword)) is not None and asked == wanted_role:
-                continue
+    # Whole words, a phrase or words near each other, and a role's other titles
+    # (`keywords.py`). It was a substring test, so "ai" matched "maintain" and
+    # a role name with a word after it dropped the word.
+    hits: list[Hit] = []
+    for keyword in filters.keywords:
+        hit = find_keyword(parse_keyword(keyword), posting)
+        if hit is None:
             reasons.append(f"missing keyword {keyword!r}")
+        else:
+            hits.append(hit)
 
     if filters.role:
         named = canonical(posting.title or "")
@@ -411,7 +405,7 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
 
     reasons.extend(requirement_reasons(posting, filters))
     reasons.extend(authorization_reasons(posting, filters))
-    return FilterVerdict(kept=not reasons, reasons=reasons)
+    return FilterVerdict(kept=not reasons, reasons=reasons, hits=hits)
 
 
 _NOT_EXTRACTED = "requirements not read yet (make extract-requirements)"
