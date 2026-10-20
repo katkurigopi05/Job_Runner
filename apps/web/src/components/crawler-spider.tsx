@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { CrawlStatus } from "@/lib/api";
-import { crawlerView } from "@/lib/crawler-state";
+import { backlogView, crawlerView } from "@/lib/crawler-state";
 
 /** Slow: this is a local queue, and a crawl runs for minutes, not milliseconds. */
 const POLL_MS = 10_000;
@@ -66,6 +66,8 @@ export function CrawlerSpider() {
   }, []);
 
   const { label, tone, moving, asleep, title } = crawlerView(status, reachable);
+  // Only from a fresh response: a stale count would read as current.
+  const backlog = reachable ? backlogView(status) : null;
 
   return (
     <>
@@ -168,6 +170,13 @@ export function CrawlerSpider() {
         </span>
         <span>{label}</span>
       </p>
+      {/* What is left and how long it will take, so the owner need not ask.
+          Hidden on a phone, where the header has no room for it. */}
+      {backlog ? (
+        <p className="hidden font-mono text-[11px] text-ink-faint lg:block" title={backlog.title}>
+          {backlog.text}
+        </p>
+      ) : null}
 
       {/* Keyframes live here rather than in the global sheet: this is the only
           thing that uses them, and a reader of this file should not have to go
