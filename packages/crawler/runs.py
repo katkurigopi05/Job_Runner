@@ -20,12 +20,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import String, cast, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.enums import SourceStatus
-from packages.core.models import Company, CompanyCrawlState, CrawlRun
+from packages.core.models import Company, CompanyCrawlState, CrawlRun, QueueTask
 from packages.crawler import issues
 from packages.crawler.crawl import CompanyResult, CrawlReport, ResultHook
 
@@ -296,6 +296,11 @@ def fetchable() -> Any:
     )
 
 
+#: One company, one discovery task. Defined here, where the schedule asks
+#: which companies already have one; `dispatch` re-exports it.
+DISCOVER_COMPANY_TASK_KIND = "discover_company"
+
+
 async def due_for_discovery(
     session: AsyncSession, *, limit: int, now: datetime | None = None
 ) -> list[Company]:
@@ -308,8 +313,20 @@ async def due_for_discovery(
     A NULL `discovery_next_at` means "as soon as possible", and a company with
     no state row at all is included for the reason the fetch query includes
     one: a row the import created moments ago must not be invisible.
+
+    **A company with a discovery task waiting or running is not due.** The
+    dispatcher marks one taken for an hour (`dispatch_discovery`), and on
+    2026-10-19 the queue was five hours long, so every tick queued each
+    still-waiting company again: 3,974 tasks for 2,621 companies. Once its
+    task is done, failed for good or cancelled, the company is due again on
+    its own schedule.
     """
     current = now or datetime.now(UTC)
+    queued = select(QueueTask.payload_json["company_id"].astext).where(
+        QueueTask.kind == DISCOVER_COMPANY_TASK_KIND,
+        QueueTask.status.in_(("pending", "running")),
+        QueueTask.payload_json["company_id"].astext.is_not(None),
+    )
     rows = await session.scalars(
         select(Company)
         .outerjoin(CompanyCrawlState, CompanyCrawlState.company_id == Company.id)
@@ -320,6 +337,8 @@ async def due_for_discovery(
             CompanyCrawlState.company_id.is_(None)
             | CompanyCrawlState.discovery_next_at.is_(None)
             | (CompanyCrawlState.discovery_next_at <= current),
+            # NOT IN over a subquery that never yields NULL, hashed once.
+            cast(Company.id, String).not_in(queued),
         )
         .order_by(CompanyCrawlState.discovery_next_at.asc().nullsfirst())
         .limit(limit)

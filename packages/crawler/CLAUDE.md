@@ -412,3 +412,14 @@ rebuilding it after a crawl or a deep dive is what keeps it current. Read-only;
 the CSV is never changed. The owner's CSV is git-ignored by name and the
 workbook is excluded locally (`.git/info/exclude`): the repo is public.
 `openpyxl` is the one dependency it added. `tests/test_company_sheet.py`.
+
+## One discovery task per company (2026-10-19)
+
+`due_for_discovery` skips a company that already has a `discover_company`
+task waiting or running. `dispatch_discovery` marks a company taken for one
+hour, and with a five-hour queue every tick queued each still-waiting company
+again: 3,974 tasks for 2,621 companies that evening, 1,220 of them cancelled
+by hand. A duplicate cost a worker a minute of waiting on a site it had just
+read, and bumped the company's attempts, pushing its next retry out a step.
+The one-hour mark stays, for a worker lost mid-task; it no longer has to be
+longer than the queue. `tests/test_discovery_no_duplicates.py`.
