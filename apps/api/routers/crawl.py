@@ -100,9 +100,9 @@ async def crawl_status(session: SessionDep) -> CrawlStatusOut:
                 QueueTask.kind == CRAWL_TASK_KIND,
                 QueueTask.status.in_((QueueTaskStatus.DONE.value, QueueTaskStatus.FAILED.value)),
             )
-            # `locked_at` is when the worker claimed it, which is the closest
-            # thing the row has to a finish time — there is no completed_at.
-            .order_by(desc(QueueTask.locked_at))
+            # `finished_at` since 2026-10-19; a tick finished before then has
+            # only `locked_at`, when the worker claimed it.
+            .order_by(desc(func.coalesce(QueueTask.finished_at, QueueTask.locked_at)))
             .limit(1)
         )
     ).first()
@@ -112,7 +112,7 @@ async def crawl_status(session: SessionDep) -> CrawlStatusOut:
         pending=int(pending or 0),
         # An unclaimed queue with no live workers is not a completed crawl.
         stalled=bool(pending) and not bool(running),
-        last_finished_at=last.locked_at if last else None,
+        last_finished_at=(last.finished_at or last.locked_at) if last else None,
         last_status=last.status if last else None,
         # The number that actually answers "are my postings current". A crawl
         # that ran and found nothing leaves this unchanged, which is the truth.

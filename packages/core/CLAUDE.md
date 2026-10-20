@@ -194,6 +194,47 @@ things to keep:
 With the lock taken out of one guard, that guard's test fails and the other's
 passes.
 
+## §29: a task's life after it is claimed
+
+Added on 2026-10-19, after the owner compared the queue with a crawler-style
+job system. Each was a gap that cost something:
+
+- **Retries back off** (`RetryPolicy`). The wait after attempt n is
+  `base * 2**(n-1)`, capped; it was a flat 60s for every kind and every
+  attempt. The worker sets a policy per kind (`run.RETRY_POLICIES`): an
+  employer's site and a board get minutes, discovery and the deep dive ten
+  minutes doubling to six hours, and the crawl tick and inbox poll stay short
+  because each keeps a loop going. `max_attempts` stays `DEFAULT_MAX_ATTEMPTS`
+  for every kind: `claim_task` judges a crashed worker's task by that number,
+  so a kind given more would lose the extra attempts to a crash.
+- **A pending task can be cancelled** (`cancel_pending`; `POST
+  /queue/tasks/{id}/cancel`, `POST /queue/cancel` for a whole kind). Only
+  pending ones: a running task finishes or fails on its own. `apply`, `crawl`
+  and `inbox` are refused: an application is withdrawn by rejecting it, and
+  the crawl tick and inbox poll schedule their own next run, so cancelling one
+  would stop crawling or mail for good. `cancelled` is a terminal status.
+- **A handler that hangs is stopped** (`run.TIME_LIMITS`). The lease is
+  renewed while a handler runs, so one that hung held its worker for ever.
+  Past its kind's limit it is failed as `timed out after Ns` and retried like
+  any failure. Limits sit well above the slowest honest run; every request
+  already has a network timeout and this is the backstop. A handler's own
+  `TimeoutError` is an ordinary failure: only `deadline.expired()` is a
+  timeout.
+- **A task records when it finished** (`finished_at`, set on done, failed for
+  good and cancelled). With `locked_at`, which a claim sets and nothing
+  clears, it is how long the last attempt took. `GET /queue/stats` reports
+  counts, median and p95 durations, the oldest runnable wait and the latest
+  error per kind. NULL on tasks finished before the column existed; nothing
+  invents one.
+- **Finished tasks are cleared** (`prune_finished`, hourly, on the first
+  worker of each pool, under an advisory lock so two pools never prune at
+  once). Done and cancelled after `QUEUE_KEEP_DONE_DAYS` (7), failed after
+  `QUEUE_KEEP_FAILED_DAYS` (30). **The newest finished task of each kind is
+  always kept**, because the crawl status reports when the last crawl
+  finished. There were 63,436 finished tasks back to 2026-08-20.
+
+`tests/test_queue_lifecycle.py` and `tests/test_queue_api.py`.
+
 ## §27: races
 
 Races, each reproduced with real transactions and each held by a test that

@@ -14,8 +14,10 @@ import signal
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 import structlog
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.worker.apply_job import TaskPayloadError, handle_apply
@@ -35,13 +37,16 @@ from packages.core.heartbeat import Heartbeat
 from packages.core.models import Application
 from packages.core.queue import (
     DEFAULT_LEASE_SECONDS,
+    DEFAULT_RETRY_POLICY,
     ClaimedTask,
     ClaimOwnershipLost,
+    RetryPolicy,
     TaskDeferred,
     claim_task,
     complete_task,
     default_worker_id,
     fail_task,
+    prune_finished,
     renew_lease,
 )
 from packages.core.trace import correlated, normalize_trace_id
@@ -66,6 +71,47 @@ HANDLERS = {
     DISCOVER_TASK_KIND: handle_discover,
     INBOX_TASK_KIND: handle_inbox,
 }
+
+#: How a failed task of each kind is retried (`queue.RetryPolicy`): the first
+#: wait, doubling each time to the cap. A board or an employer's site that
+#: failed is given time to recover; the crawl tick and the inbox poll keep a
+#: loop going, so theirs stay short.
+RETRY_POLICIES: dict[str, RetryPolicy] = {
+    APPLY_TASK_KIND: RetryPolicy(base_s=300, max_delay_s=1800),
+    CRAWL_COMPANY_TASK_KIND: RetryPolicy(base_s=120, max_delay_s=1800),
+    DISCOVER_COMPANY_TASK_KIND: RetryPolicy(base_s=600, max_delay_s=6 * 3600),
+    DEEP_DIVE_TASK_KIND: RetryPolicy(base_s=600, max_delay_s=6 * 3600),
+    DISCOVER_TASK_KIND: RetryPolicy(base_s=600, max_delay_s=6 * 3600),
+    CRAWL_TASK_KIND: RetryPolicy(base_s=60, max_delay_s=600),
+    INBOX_TASK_KIND: RetryPolicy(base_s=60, max_delay_s=600),
+}
+
+
+def retry_policy(kind: str) -> RetryPolicy:
+    return RETRY_POLICIES.get(kind, DEFAULT_RETRY_POLICY)
+
+
+#: The longest one attempt of each kind may run, in seconds, before it is
+#: stopped and failed like any other error (and retried, if it has attempts
+#: left). Set well above the slowest honest run: this is for a handler that
+#: hangs, which renewed its lease for ever and held its worker with it.
+#: Every request already has a network timeout; this is the backstop for
+#: whatever does not.
+TIME_LIMITS: dict[str, float] = {
+    APPLY_TASK_KIND: 3600,
+    CRAWL_TASK_KIND: 1800,
+    CRAWL_COMPANY_TASK_KIND: 1800,
+    DISCOVER_COMPANY_TASK_KIND: 1800,
+    DEEP_DIVE_TASK_KIND: 3600,
+    DISCOVER_TASK_KIND: 3600,
+    INBOX_TASK_KIND: 900,
+}
+DEFAULT_TIME_LIMIT_S = 3600.0
+
+
+def time_limit(kind: str) -> float:
+    return float(TIME_LIMITS.get(kind, DEFAULT_TIME_LIMIT_S))
+
 
 #: Taken only when nothing else is runnable (`claim_task`), each after the ones
 #: before it. Discovery looks for boards nobody has confirmed yet, thousands of
@@ -219,8 +265,11 @@ async def _process(session: AsyncSession, claimed: ClaimedTask) -> None:
             raise ClaimOwnershipLost(str(task_id))
         return
 
+    limit = time_limit(task_kind)
+    deadline = asyncio.timeout(limit)
     try:
-        await handler(session, claimed)
+        async with deadline:
+            await handler(session, claimed)
     except ClaimOwnershipLost:
         await session.rollback()
         raise
@@ -249,8 +298,11 @@ async def _process(session: AsyncSession, claimed: ClaimedTask) -> None:
     except Exception as exc:  # noqa: BLE001 - the loop must survive any handler
         await session.rollback()
         # Never log the exception body verbatim: it can carry page content.
-        message = type(exc).__name__
-        will_retry = await _fail(session, claimed, message)
+        # A handler's own TimeoutError is an ordinary failure; only the
+        # deadline set here having passed is "timed out".
+        timed_out = isinstance(exc, TimeoutError) and deadline.expired()
+        message = f"timed out after {limit:g}s" if timed_out else type(exc).__name__
+        will_retry = await _fail(session, claimed, message, policy=retry_policy(task_kind))
         if will_retry is None:
             raise ClaimOwnershipLost(str(task_id)) from exc
         if not will_retry:
@@ -262,7 +314,7 @@ async def _process(session: AsyncSession, claimed: ClaimedTask) -> None:
             task_id=str(task_id),
             kind=task_kind,
             will_retry=will_retry,
-            error=type(exc).__name__,
+            error=message,
         )
         return
 
@@ -299,10 +351,12 @@ async def _fail(
     message: str,
     *,
     max_attempts: int | None = None,
+    policy: RetryPolicy | None = None,
 ) -> bool | None:
     """Record failure only while this exact claim generation is current."""
-    kwargs = {} if max_attempts is None else {"max_attempts": max_attempts}
-    will_retry = await fail_task(session, claimed, message, **kwargs)
+    will_retry = await fail_task(
+        session, claimed, message, policy=policy, max_attempts=max_attempts
+    )
     if will_retry is None:
         await session.rollback()
     else:
@@ -363,6 +417,9 @@ async def run_forever(
     inbox_scheduler = (
         asyncio.create_task(_maintain_inbox_schedule(stop)) if schedule_inbox else None
     )
+    # One pruner per pool, beside the inbox scheduler: it runs whether or not
+    # the workers are busy, which the idle-time reminders do not.
+    queue_pruner = asyncio.create_task(_prune_queue(stop)) if schedule_inbox else None
 
     try:
         while not stop.is_set():
@@ -383,10 +440,11 @@ async def run_forever(
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=IDLE_SLEEP_SECONDS)
     finally:
-        if inbox_scheduler is not None:
-            inbox_scheduler.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await inbox_scheduler
+        for background in (inbox_scheduler, queue_pruner):
+            if background is not None:
+                background.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await background
 
     # A goodbye, so the setup page can tell a clean stop from a crash.
     await heartbeat.pulse(force=True, stopped=True)
@@ -407,6 +465,53 @@ async def _maintain_inbox_schedule(stop: asyncio.Event) -> None:
 
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=INBOX_SCHEDULE_TICK_SECONDS)
+
+
+#: How often finished tasks are cleared away (`queue.prune_finished`).
+PRUNE_QUEUE_EVERY_SECONDS = 3600.0
+#: Any number: the same key in every process, so two pools never prune at once.
+_PRUNE_LOCK_KEY = 7_204_311_005
+
+
+async def prune_queue_once() -> int:
+    """Clear finished tasks older than the settings keep. Never raises.
+
+    Takes a transaction lock first and skips if another pool holds it. Deletes
+    in batches until one removes nothing, then commits. The rows it locks are
+    finished ones, which no claim reads, so the workers are not held up.
+    """
+    settings = get_settings()
+    removed = 0
+    try:
+        async with core_db.get_sessionmaker()() as session:
+            locked = await session.scalar(
+                text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _PRUNE_LOCK_KEY}
+            )
+            if not locked:
+                return 0
+            while True:
+                gone = await prune_finished(
+                    session,
+                    keep_done=timedelta(days=settings.queue_keep_done_days),
+                    keep_failed=timedelta(days=settings.queue_keep_failed_days),
+                )
+                removed += gone
+                if gone == 0:
+                    break
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 - housekeeping must not stop the worker
+        log.warning("queue_prune_failed", error=type(exc).__name__)
+        return removed
+    if removed:
+        log.info("queue_pruned", removed=removed)
+    return removed
+
+
+async def _prune_queue(stop: asyncio.Event) -> None:
+    while not stop.is_set():
+        await prune_queue_once()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=PRUNE_QUEUE_EVERY_SECONDS)
 
 
 #: How often an idle worker checks for task reminders that are due.

@@ -139,6 +139,8 @@ class QueueTaskStatus(StrEnum):
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+    #: Withdrawn by the owner before it started (`queue.cancel_pending`).
+    CANCELLED = "cancelled"
 
 
 class EventType(StrEnum):
