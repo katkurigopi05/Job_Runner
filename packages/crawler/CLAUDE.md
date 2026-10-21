@@ -479,17 +479,24 @@ merge the owner chooses when to migrate and re-discover these companies.
 
 ## The company workbook (`make company-sheet`, 2026-10-19)
 
-The owner asked for their CSV's companies split in two: those on the four job
-boards, and the rest with their careers pages, as the list to work from.
+The owner asked for their CSV's companies split in two: those on a job board
+we read, and the rest with their careers pages, as the list to work from.
 `make company-sheet` rebuilds `<csv>.xlsx` beside the CSV from the database:
 "All companies" (each row, its board, open jobs, how it was found) and "Not
-on the 4 job boards" (careers page from discovery or the deep dive, where
+on a job board we read" (careers page from discovery or the deep dive, where
 applicants go, what was found, what to do). It is the same set the workers act
 on — discovery and the deep dive take exactly the companies with no board — so
 rebuilding it after a crawl or a deep dive is what keeps it current. Read-only;
 the CSV is never changed. The owner's CSV is git-ignored by name and the
 workbook is excluded locally (`.git/info/exclude`): the repo is public.
 `openpyxl` is the one dependency it added. `tests/test_company_sheet.py`.
+
+After the Workday reader, `BOARDS` includes Workday and the About board list
+comes from that mapping. Sheet 2 stays in the same position with a count-free
+name. Unverified companies whose evidence names Workday say "Workday: readable
+now, waiting for re-discovery", keeping their Workday URL in "Where to apply".
+This only changes the next export; it neither re-discovers companies nor
+rebuilds the owner's existing workbook. Tests write temporary files only.
 
 ## One discovery task per company (2026-10-19)
 

@@ -4,8 +4,8 @@
     python -m scripts.company_sheet companies.csv --out elsewhere.xlsx
 
 Writes `<csv name>.xlsx` next to the CSV: "All companies" (every row, and
-whether its jobs are on Greenhouse, Ashby, Lever or Workable) and "Not on the
-4 job boards" (the rest, with the careers pages and findings discovery and the
+whether its jobs are on a job board we read) and "Not on a job board we read"
+(the rest, with the careers pages and findings discovery and the
 deep dive recorded). Read-only against the database; the CSV is not changed.
 `packages/crawler/company_sheet.py` says what each column holds.
 """
