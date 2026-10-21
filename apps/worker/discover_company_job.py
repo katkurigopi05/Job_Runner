@@ -394,6 +394,16 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
                 ats=outcome.ats,
                 slug=outcome.slug,
                 board_domain=outcome.confirmed_domain,
+                evidence=(
+                    {
+                        "method": "discovery_from_url",
+                        "lead": outcome.source_url,
+                        "ats": outcome.ats,
+                        "slug": outcome.slug,
+                    }
+                    if outcome.source_url
+                    else None
+                ),
             ):
                 return True
             collisions.append(
@@ -450,7 +460,7 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
     if isinstance(outcome, Resolved):
         if found.resolved is not None:
             method, via = "discovery_from_directory", "directory"
-        elif lead:
+        elif outcome.source_url:
             method, via = "discovery_from_url", "url"
         else:
             method, via = "discovery_from_name", "name"

@@ -239,6 +239,8 @@ class Resolved:
     open_jobs: int
     #: Set only when actual board content names the candidate's website.
     confirmed_domain: str | None = None
+    #: The lead read by the URL path; never set by a directory or name guess.
+    source_url: str | None = None
 
 
 BoardFilter = Callable[[Resolved], Awaitable[bool]]
@@ -869,7 +871,12 @@ async def resolve_site(
             count, board_url, blocked = await _probe(fetcher, vendor, slug)
             if count:
                 site_board = Resolved(
-                    name=name, ats=vendor, slug=slug, board_url=board_url, open_jobs=count
+                    name=name,
+                    ats=vendor,
+                    slug=slug,
+                    board_url=board_url,
+                    open_jobs=count,
+                    source_url=url,
                 )
                 if accept is None or await accept(site_board):
                     return site_board, reading

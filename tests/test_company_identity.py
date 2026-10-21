@@ -135,3 +135,104 @@ async def test_a_rejected_site_board_is_not_reported_empty_or_unreachable(
     assert not isinstance(result, Resolved)
     assert reading.board is None
     assert reading.unreachable is None
+
+
+@pytest.mark.parametrize("depth", [0, 1, 3])
+@pytest.mark.parametrize(
+    ("domain", "lead"),
+    [
+        ("oldfinch.example", "https://oldfinch.example/careers"),
+        ("oldfinch.example", "https://www.oldfinch.example/jobs"),
+        ("www.oldfinch.example", "https://oldfinch.example"),
+        ("OLDFINCH.EXAMPLE", "http://WWW.OLDFINCH.EXAMPLE"),
+    ],
+)
+def test_own_website_link_proves_identity_through_history(depth, domain, lead) -> None:
+    # No name overlap; the stored company domain, not a supplied URL, is the
+    # authority for this rule. A rename need not preserve any part of a name.
+    target = company("Old Finch", "https://marketing.example", domain=domain)
+    holder = company("Canopy", "https://canopy.example")
+    evidence = {"method": "discovery_from_url", "lead": lead, "ats": "ashby", "slug": "canopy"}
+    for _ in range(depth):
+        evidence = {"method": "duplicate_board", "previous": evidence}
+    target.source_evidence = evidence
+    reason = boards.identity_reason(target, holder, ats="ashby", slug="canopy")
+    assert reason and "own website" in reason
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"lead": "https://another.example/careers"},
+        {"lead": "https://careers.oldfinch.example"},
+        {"lead": "https://oldfinch.example.attacker.example"},
+        {"lead": "https://oldfinch.example@another.example"},
+        {"lead": "https://another.example/oldfinch.example"},
+        {"lead": None},
+        {"lead": "not a URL"},
+        {"method": "discovery_from_directory"},
+        {"method": "discovery_from_name"},
+        {"ats": "greenhouse"},
+        {"slug": "other-board"},
+    ],
+)
+def test_own_website_proof_requires_the_method_host_and_board(changed) -> None:
+    target = company("Old Finch", "https://oldfinch.example", domain="oldfinch.example")
+    holder = company("Canopy", "https://canopy.example")
+    evidence = {
+        "method": "discovery_from_url",
+        "lead": "https://oldfinch.example/jobs",
+        "ats": "ashby",
+        "slug": "canopy",
+        **changed,
+    }
+    target.source_evidence = {"previous": evidence}
+    assert boards.identity_reason(target, holder, ats="ashby", slug="canopy") is None
+
+
+def test_a_supplied_website_does_not_substitute_for_the_company_domain() -> None:
+    target = company("Old Finch", "https://oldfinch.example")
+    holder = company("Canopy", "https://canopy.example")
+    evidence = {
+        "method": "discovery_from_url",
+        "lead": target.supplied_website,
+        "ats": "ashby",
+        "slug": "canopy",
+    }
+    assert (
+        boards.identity_reason(target, holder, ats="ashby", slug="canopy", evidence=evidence)
+        is None
+    )
+
+
+async def test_verification_accepts_current_own_website_proof(db_session) -> None:
+    holder = company(
+        "Canopy",
+        "https://canopy.example",
+        ats_type="ashby",
+        slug="canopy",
+        source_status="verified",
+    )
+    target = company(
+        "Old Finch", "https://oldfinch.example", domain="oldfinch.example", source_status="hint"
+    )
+    db_session.add_all([holder, target])
+    await db_session.flush()
+    state = CompanyCrawlState(company_id=target.id, discovery_attempts=1)
+    db_session.add(state)
+    await db_session.flush()
+    evidence = {
+        "method": "discovery_from_url",
+        "lead": "https://www.oldfinch.example/jobs",
+        "ats": "ashby",
+        "slug": "canopy",
+    }
+    found = Resolved(target.name, "ashby", "canopy", "https://jobs.ashbyhq.com/canopy", 2)
+    now = datetime.now(UTC)
+    assert not await job.verify_board(
+        db_session, target, state, found, evidence=evidence, via="url", now=now
+    )
+    assert target.source_evidence["method"] == "duplicate_board"
+    assert target.source_evidence["duplicate_of"] == str(holder.id)
+    assert "own website" in target.source_evidence["identity_reason"]
+    assert state.discovery_next_at == now + boards.RECHECK_AFTER
