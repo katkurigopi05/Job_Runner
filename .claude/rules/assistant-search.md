@@ -461,7 +461,8 @@ area 61 postings were that role. Four causes, each with a test in
   Engineer" and not a Product Manager posting that mentions one. The words
   that named the role are not searched for; what is left of the question
   ("using Kafka") is searched among that role's postings, and if none says it
-  the role alone is the answer.
+  the role alone is the answer. Since 2026-10-20 the ones that say it are
+  listed first and the rest of the role after them, never dropped (below).
 - **Nothing said there were more.** `Retrieval.role_total` is how many open
   postings in the area carry the title. The context tells the model the
   number; the reply carries the next matches as `more_sources` (up to
@@ -529,7 +530,9 @@ dictionary":
 - **Related roles are links, never results.** `roles.related_to` names
   neighbours (data scientist and data engineer for this one) and the dock
   links them to the feed. Their postings are not mixed in, and the alias
-  table, which also feeds scoring and Gate 5, is untouched.
+  table, which also feeds scoring and Gate 5, is untouched. (A title search
+  lists the *same* role's other titles after its own since 2026-10-20, under
+  "related:". That is not a neighbour, and the rule stands.)
 
 Not done, and the measurement is the argument for it: splitting the row into
 two roles. That changes the feed's filter, the scorer's title match and the
@@ -768,3 +771,42 @@ A new search mode is added to the set's `modes` and pooled with
 `make judge-pool-write` before it is scored, or its new finds score as
 misses. What the pieces are and what must not be undone:
 `docs/harness-audit/phase-5-retrieval.md`, part 2.
+
+## The exact jobs first, then the rest (2026-10-20)
+
+The owner asked "any software engineer roles in AI" and got 614 software
+engineer postings, opening with three titled exactly "Software Engineer" at
+Roku. The role was read and "AI", in 81% of descriptions, was dropped as a
+term. Asked how it should work, the owner said: the exact roles first, the
+related ones after them, and do not drop the rest, because a list cut to what
+matched is where a missed job hides. `matching/tiers.py` does it, and
+`tests/test_chat_tiers.py` holds it:
+
+- **A role question that asks for more is listed in tiers**, each its own
+  heading: the role's postings with the rest of the question in the title
+  ("software engineer (AI in the title)"), then those whose description
+  mentions it when it is rare enough to search for ("mentions Kafka"; never
+  "AI"), then the rest of the role. On the live database: 52 of 614 software
+  engineer postings have AI in the title; 54 mention Kafka.
+- **The model is handed the first tiers only**, when there are any, and told
+  how many there are and not to count the rest as having the word
+  (`chat._beyond_the_role_line`). The owner's list carries every tier.
+- **A title search lists a role named with the word after its own titles.**
+  "AI engineer" names the AI / ML engineer role, so "any roles for AI" lists
+  277 titles with AI and then 43 "Machine Learning Engineer"-like titles
+  without it, under "related:". `postings_related_total` keeps them out of
+  the count of titles with the word.
+- **The list is capped per tier**, at `MORE_LIMIT` each. One cap let the 277
+  fill it and the related were never listed.
+- **The mentions keep the keyword scan's order.** Fused in the role's
+  newest-first order, "software engineer jobs in London" dropped from a
+  relevant posting first to third in the owner's grades.
+
+Measured before merging, against `main`: the known-target benchmark is
+identical on every set, held out included. On the graded dev questions, 20 of
+21 return what they did. The one that moved, "software engineer jobs in
+London", now opens with two London software engineer postings with London in
+the title that were not in the pool when it was graded, so they score as
+misses: MRR 0.532 to 0.488 and nDCG@8 0.446 to 0.428 for the shipped mode,
+P@5 and R@5 unchanged. They need grading before the numbers mean more.
+

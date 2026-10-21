@@ -213,7 +213,7 @@ async def test_a_title_that_is_only_the_roles_name_does_not_outrank_the_place(db
     are titled "Software Engineer, Payments" and were listed after them.
     """
     company = await _company(db_session)
-    for n in range(3):
+    elsewhere = [
         await _posting(
             db_session,
             company,
@@ -221,14 +221,21 @@ async def test_a_title_that_is_only_the_roles_name_does_not_outrank_the_place(db
             "Software Engineer",
             f"Build streaming {n}.",
         )
+        for n in range(3)
+    ]
     located = await _posting(
         db_session, company, "London, UK", "Software Engineer, Payments", "Build payments."
     )
 
     found = await retrieve(db_session, "software engineer jobs in London")
 
-    assert [p.posting_id for p in found.passages] == [located.id]
-    assert len(found.more) == 0, "the three in San Jose say nothing of London"
+    assert [p.posting_id for p in found.passages] == [located.id], (
+        "the three in San Jose say nothing of London, so the model is not handed them"
+    )
+    # Listed after it for the owner, under the role's own heading: nothing in
+    # the role is dropped for not saying the rest of the question (2026-10-20).
+    assert {m.posting_id for m in found.more} == {p.id for p in elsewhere}
+    assert {m.kind for m in found.more} == {"software engineer"}
 
 
 async def test_a_role_asked_for_alone_still_lists_its_exact_titles_first(db_session) -> None:

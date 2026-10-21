@@ -88,6 +88,7 @@ from packages.matching.level import LevelCount
 from packages.matching.retrieve import Passage, Retrieval, retrieve
 from packages.matching.roles import display_name
 from packages.matching.sponsored import SponsorshipCount
+from packages.matching.tiers import RELATED_PREFIX
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -440,6 +441,36 @@ def _unmet_by_posting(
     return _PostingGaps(lines, across)
 
 
+def _beyond_the_role_line(found: Retrieval, count: int) -> str:
+    """How many of a role's postings say what else the question asked.
+
+    They are listed first and the rest of the role after them (`tiers.py`),
+    so the count is what keeps "614 software engineer postings" from being
+    read as 614 in AI.
+    """
+    words = " ".join(f'"{word}"' for word in found.beyond_role)
+    said = found.beyond_in_title + (found.beyond_mentioned or 0)
+    where = (
+        "in the title or the description"
+        if found.beyond_mentioned is not None
+        else ("in the title")
+    )
+    if not said:
+        return (
+            f"  asked for beyond the role: {words}. None of the {count} says it {where}, so "
+            "below are the closest of the role. Say that none says it."
+        )
+    parts = [f"{found.beyond_in_title} have {words} in the title"]
+    if found.beyond_mentioned:
+        parts.append(f"{found.beyond_mentioned} more mention it in the description")
+    return (
+        f"  asked for beyond the role: {words}. Of the {count}, {' and '.join(parts)}; the "
+        f"postings below are from these. The other {count - said} do not say it {where}, and "
+        "the owner sees them listed after, closest first. Give both numbers, and do not count "
+        f"the other {count - said} as having {words}."
+    )
+
+
 def _level_lines(count: LevelCount) -> list[str]:
     """How the postings found stand against the level asked, as the model is told it.
 
@@ -575,6 +606,8 @@ def _postings_section(
             + f"; the closest {len(found.passages)} are below and the owner sees the rest "
             "listed by kind under your answer. Say how many there are of each kind."
         )
+        if found.beyond_role:
+            lines.append(_beyond_the_role_line(found, count))
     if found.title_words:
         # Searched by title because every word asked for is in most
         # descriptions. The model sees five; the count is what stops "five"
@@ -592,6 +625,21 @@ def _postings_section(
             + f"; the closest {len(found.passages)} are below and the owner sees the rest "
             "listed by kind under your answer. Say how many there are and name the main kinds."
         )
+        if found.related_total:
+            # Listed after the titles with the word, and never handed over:
+            # they do not say it, so nothing below may be cited for it.
+            related = [
+                f"{number} {_one_line(kind.removeprefix(RELATED_PREFIX))}"
+                for kind, number in found.kinds
+                if kind.startswith(RELATED_PREFIX)
+            ]
+            lines.append(
+                f"  related: {found.related_total} more open posting"
+                f"{'' if found.related_total == 1 else 's'} of a role named with {words} "
+                f"({', '.join(related)}) do not have it in the title. The owner sees them "
+                "listed after the others; none is below. Say they are listed, and do not count "
+                f"them among the postings with {words} in the title."
+            )
     if found.not_hiring:
         # The question says a word that is also a company's name, and that
         # company has nothing open. The word was searched for, in case a tool
@@ -943,6 +991,7 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
             found.role_total if found.role_total is not None else found.title_total
         ),
         matched_title_words=list(found.title_words),
+        postings_related_total=found.related_total,
         matched_role_filter=found.role_keys[0] if len(found.role_keys) == 1 else None,
         # A posting carried over from an earlier answer was supplied too, under
         # a label of its own (`chat_history.earlier_postings`), so citing it is

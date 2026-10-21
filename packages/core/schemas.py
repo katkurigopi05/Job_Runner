@@ -809,6 +809,10 @@ class ChatReply(BaseModel):
     #: when none of it was rare enough to look for in descriptions. Then
     #: `postings_matched_total` counts the titles and `matched_role` is None.
     matched_title_words: list[str] = Field(default_factory=list)
+    #: Postings of a role named with those words whose titles lack them
+    #: ("Machine Learning Engineer" for "AI"), listed after the others and
+    #: not in `postings_matched_total`.
+    postings_related_total: int = 0
     #: Labels the answer cites that were not among `sources`: "P7" over five
     #: postings. A source the model made up. Empty is not "every claim is
     #: supported": a label that exists can still be cited for something its
