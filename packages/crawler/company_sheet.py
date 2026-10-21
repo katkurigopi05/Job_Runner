@@ -1,8 +1,8 @@
-"""The owner's company workbook: every company, and the ones not on the 4 job boards.
+"""The owner's company workbook: every company, and the ones without a readable board.
 
 Asked for on 2026-10-19. The owner's sheet lists companies; the crawler reads
-jobs only from Greenhouse, Ashby, Lever and Workable boards. The second sheet
-is the companies whose jobs are not there yet, with what is known about each:
+jobs from the supported boards in `BOARDS`. The second sheet lists companies
+whose boards have not been verified yet, with what is known about each:
 the careers page discovery found on its website, where the deep dive found
 applicants are sent, and what to do. It is rebuilt from the database
 (`make company-sheet`), so it is the current state of the same list the
@@ -24,7 +24,14 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-BOARDS = {"greenhouse": "Greenhouse", "ashby": "Ashby", "lever": "Lever", "workable": "Workable"}
+BOARDS = {
+    "greenhouse": "Greenhouse",
+    "ashby": "Ashby",
+    "lever": "Lever",
+    "workable": "Workable",
+    "workday": "Workday",
+}
+MISSING_SHEET = "Not on a job board we read"
 
 #: How each company came to be on a board, by the evidence's `method`.
 FOUND_BY = {
@@ -162,8 +169,11 @@ def missing_row(row: Mapping[str, str], company: Company | None) -> list[str] | 
     else:
         category = company.evidence.get("category", "")
         what = WHAT_WE_FOUND.get(category, "Not yet checked with the latest search")
-        if company.evidence.get("job_system"):
-            what = f"{what} ({company.evidence['job_system']})"
+        system = company.evidence.get("job_system")
+        if str(system or "").strip().casefold() == "workday":
+            what = "Workday: readable now, waiting for re-discovery"
+        elif system:
+            what = f"{what} ({system})"
         deep = DEEP_DIVE_STATE.get(company.issue_status or "noted", "Not started")
         page, apply = careers_page(company), where_to_apply(company)
         details = _without_guessing(company.reason)
@@ -242,7 +252,7 @@ def write_workbook(
     first = book.active
     assert first is not None
     first.title = "All companies"
-    second = book.create_sheet("Not on the 4 job boards")
+    second = book.create_sheet(MISSING_SHEET)
     for sheet, columns, rows, widths in (
         (first, ALL_COLUMNS, all_rows, (34, 34, 46, 26, 13, 52, 10, 16)),
         (second, MISSING_COLUMNS, missing_rows, (34, 34, 46, 46, 40, 12, 60, 40, 60, 40)),
@@ -268,9 +278,10 @@ def write_workbook(
     for line in (
         "About this workbook",
         f"Rebuilt {when} from {source_name} and the Jobrunner database (make company-sheet).",
-        "All companies: every row of the CSV, unchanged, then whether its jobs are on Greenhouse, "
-        "Ashby, Lever or Workable, how many are open, and how the board was found.",
-        "Not on the 4 job boards: the companies whose jobs are not on those boards — the same list "
+        "All companies: every row of the CSV, unchanged, then whether its jobs are on a board "
+        "we read, how many are open, and how the board was found.",
+        f"Job boards we read: {', '.join(BOARDS.values())}.",
+        f"{MISSING_SHEET}: the companies whose boards have not been verified yet — the same list "
         "discovery and the deep dive work on — with the careers page found on each website, where "
         "the deep dive found applicants are sent, and what to do.",
         "'Same board as X': this company's board is already read under another company row.",

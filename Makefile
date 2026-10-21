@@ -392,7 +392,7 @@ company-issues:
 	$(PY)/python -m scripts.company_issues $(if $(dir),--dir $(dir),)
 
 # make company-sheet — rebuild the company workbook beside the CSV: every
-# company, and the ones not on the 4 job boards with the careers pages and
+# company, and the ones not on a job board we read with the careers pages and
 # findings discovery and the deep dive recorded. Read-only; the CSV is kept.
 #   make company-sheet                         # bay_area_tech_companies.csv
 #   make company-sheet src=other.csv out=x.xlsx

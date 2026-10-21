@@ -1,7 +1,7 @@
-"""`make company-sheet`: the owner's companies, and the ones not on the 4 job boards.
+"""`make company-sheet`: the owner's companies, and the ones not on a job board we read.
 
 Asked for on 2026-10-19: a second sheet beside the CSV listing the companies
-whose jobs are not on Greenhouse, Ashby, Lever or Workable, with the careers
+whose jobs are not on a supported job board, with the careers
 pages discovery and the deep dive found, kept current so it is the list the
 owner works from.
 """
@@ -91,7 +91,7 @@ def test_a_row_never_imported_is_listed_as_such() -> None:
     )
 
 
-# --- the second sheet: the companies not on the 4 job boards ---------------------------
+# --- the second sheet: the companies not on a job board we read ---------------------------
 
 
 def _cell(row: list, column: str):
@@ -114,7 +114,7 @@ def test_what_discovery_found_is_carried() -> None:
 
     assert _cell(row, "Careers page") == "https://acme.com/careers"
     assert _cell(row, "Where to apply") == "https://acme.wd5.myworkdayjobs.com/External"
-    assert _cell(row, "What we found") == "Uses another job system (Workday)"
+    assert _cell(row, "What we found") == "Workday: readable now, waiting for re-discovery"
     assert _cell(row, "Deep dive") == "Waiting"
     assert "name-guessing" not in _cell(row, "Details")
     assert _cell(row, "Original careers link (from CSV)") == "https://g/q"
@@ -167,8 +167,8 @@ def test_the_workbook_has_both_sheets_and_a_note(tmp_path) -> None:
     )
 
     book = load_workbook(out)
-    assert book.sheetnames == ["All companies", "Not on the 4 job boards", "About"]
-    first, second = book["All companies"], book["Not on the 4 job boards"]
+    assert book.sheetnames == ["All companies", "Not on a job board we read", "About"]
+    first, second = book["All companies"], book["Not on a job board we read"]
     assert [c.value for c in first[1]] == list(sheet.ALL_COLUMNS)
     assert [c.value for c in second[1]] == list(sheet.MISSING_COLUMNS)
     assert (first.max_row, second.max_row) == (3, 2)
@@ -221,7 +221,47 @@ async def test_the_command_reads_the_database_and_writes_beside_the_csv(
     assert await company_sheet.main() == 0
 
     book = load_workbook(tmp_path / "companies.xlsx")
-    rows = list(book["Not on the 4 job boards"].iter_rows(min_row=2, values_only=True))
+    rows = list(book["Not on a job board we read"].iter_rows(min_row=2, values_only=True))
     assert [r[0] for r in rows] == ["Offboard"]
     assert rows[0][sheet.MISSING_COLUMNS.index("Deep dive found")] == "its domain no longer exists"
     assert "1 on a job board, 1 not" in capsys.readouterr().out
+
+
+def test_verified_workday_uses_the_board_label() -> None:
+    acme = _company(
+        status="verified",
+        ats_type="workday",
+        slug="acme:wd5:External",
+        board_url="https://acme.wd5.myworkdayjobs.com/External",
+        open_jobs=7,
+    )
+    assert sheet.all_row(ROW, acme)[3:7] == [
+        "Yes",
+        "Workday",
+        "https://acme.wd5.myworkdayjobs.com/External",
+        7,
+    ]
+    assert sheet.missing_row(ROW, acme) is None
+
+
+def test_other_unread_job_systems_keep_the_existing_label() -> None:
+    acme = _company(
+        evidence={
+            "category": "other_job_system",
+            "job_system": "Example ATS",
+            "job_system_url": "https://jobs.example/acme",
+        }
+    )
+    row = sheet.missing_row(ROW, acme)
+    assert _cell(row, "What we found") == "Uses another job system (Example ATS)"
+    assert _cell(row, "Where to apply") == "https://jobs.example/acme"
+
+
+def test_about_names_workday_and_uses_the_count_free_sheet_name(tmp_path) -> None:
+    out = tmp_path / "about.xlsx"
+    sheet.write_workbook(out, all_rows=[], missing_rows=[], source_name="fixture.csv")
+    book = load_workbook(out)
+    text = "\n".join(str(row[0]) for row in book["About"].values)
+    assert "Workday" in text
+    assert "Not on a job board we read:" in text
+    assert "4 job boards" not in text
