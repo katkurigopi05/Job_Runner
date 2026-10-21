@@ -121,9 +121,13 @@ async def handle_deep_dive_company(session: AsyncSession, claimed: ClaimedTask) 
         verified = await _apply_found_board(session, company, issue, found, now)
         if not verified:
             issue.diagnosis = f"{found.diagnosis}; that board is polled under another company"
-        issue.status = "fixed"
-        issue.resolved_at = now
-        issue.resolved_by = "deep_dive"
+        if verified or (company.source_evidence or {}).get("method") == "duplicate_board":
+            issue.status = "fixed"
+            issue.resolved_at = now
+            issue.resolved_by = "deep_dive"
+        else:
+            issue.status = "needs_owner"
+            issue.fix = "Unconfirmed name collision; discovery will keep looking for its own board."
     else:
         issue.status = "needs_owner"
     await session.flush()

@@ -137,6 +137,7 @@ async def test_a_board_another_company_holds_is_not_taken(db_session, dives) -> 
     db_session.add(
         Company(
             name="Acme Inc",
+            supplied_website="https://acme.com",
             ats_type="greenhouse",
             slug="acme",
             source_status=SourceStatus.VERIFIED.value,
@@ -170,3 +171,22 @@ async def test_a_company_verified_since_it_was_noted_is_closed_not_dived(db_sess
 
     assert dives["asked"] == []
     assert (await _reload(db_session, issue)).status == "fixed"
+
+
+async def test_a_deep_dive_namesake_is_not_marked_fixed(db_session, dives) -> None:
+    db_session.add(
+        Company(
+            name="Other Acme",
+            supplied_website="https://other-acme.example",
+            ats_type="greenhouse",
+            slug="acme",
+            source_status="verified",
+        )
+    )
+    dives["found"] = DeepDive(board=_board(), diagnosis="found")
+    acme, issue = await _noted(db_session)
+    await job.handle_deep_dive_company(db_session, _claim(issue))
+    issue = await _reload(db_session, issue)
+    assert issue.status == "needs_owner"
+    assert issue.resolved_at is None
+    assert acme.source_evidence["category"] == "name_collision"
