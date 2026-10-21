@@ -82,3 +82,75 @@ def test_no_posting_text_changes_nothing() -> None:
 def test_empty_input_is_not_an_error() -> None:
     assert reorder_skills([], JOB) == []
     assert reorder_skills([""], JOB) == [""]
+
+
+# --------------------------------------------------------------------------
+# A Skills section laid out as a table, with grouped skills
+#
+# Every tailored résumé from the owner's base came out with its Skills section
+# scrambled. Each line there is a table row the parser joins with two spaces
+# (`parse.py`), and several skills carry a bracketed list. The reorder knew
+# neither: it split "Generative AI (VAE, GAN, Diffusion)" at its inner commas
+# and moved the pieces apart, and it took the row's label for the first skill
+# and moved that too ("React, Frameworks & Web  FastAPI, ..."). The tests above
+# only ever used a colon label and no brackets.
+# --------------------------------------------------------------------------
+
+
+def test_a_bracketed_group_moves_as_one_skill() -> None:
+    lines = ["Java, Databases (MySQL, PostgreSQL), Go"]
+    assert reorder_skills(lines, JOB) == ["Databases (MySQL, PostgreSQL), Go, Java"]
+
+
+def test_a_bracketed_group_the_posting_does_not_ask_for_stays_whole() -> None:
+    lines = ["Generative AI (VAE, GAN, Diffusion), Go"]
+    assert reorder_skills(lines, JOB) == ["Go, Generative AI (VAE, GAN, Diffusion)"]
+
+
+def test_a_two_space_label_stays_at_the_front_of_its_line() -> None:
+    """The parser's table row: label cell, two spaces, value cell."""
+    lines = ["Frameworks & Web  FastAPI, React, gRPC"]
+    assert reorder_skills(lines, JOB) == ["Frameworks & Web  gRPC, FastAPI, React"]
+
+
+def test_a_label_the_posting_names_is_still_a_label() -> None:
+    lines = ["Go & Cloud  Terraform, Kubernetes"]
+    assert reorder_skills(lines, JOB) == ["Go & Cloud  Kubernetes, Terraform"]
+
+
+def test_a_label_with_a_comma_in_it_is_not_cut_at_the_comma() -> None:
+    lines = ["Data, DevOps & Tools  Docker, Kubernetes, Git"]
+    assert reorder_skills(lines, JOB) == ["Data, DevOps & Tools  Kubernetes, Docker, Git"]
+
+
+def test_a_double_space_after_a_comma_is_not_a_label() -> None:
+    """A stray gap inside the list must not turn its first skill into a label."""
+    lines = ["Java,  Go, PHP"]
+    assert reorder_skills(lines, JOB) == ["Go, Java, PHP"]
+
+
+def test_unbalanced_brackets_leave_the_line_alone() -> None:
+    """Grouping cannot be read, so nothing is moved. Leaving a line as the
+    owner wrote it is always safe; guessing at its groups is not."""
+    lines = ["Java, Tools (Go, PostgreSQL", "Java, Go) PHP"]
+    assert reorder_skills(lines, JOB) == lines
+
+
+def test_a_table_row_with_groups_keeps_every_group_whole() -> None:
+    """The shape that broke, end to end."""
+    line = (
+        "AI / ML & NLP  Machine Learning, Generative AI (VAE, GAN, Diffusion), "
+        "Transformer NLP (BERT, HuggingFace), RAG Pipelines, "
+        "LLM Orchestration (OpenAI, Groq, Ollama)"
+    )
+    job = "We build RAG pipelines on OpenAI models and fine-tune BERT."
+    assert reorder_skills([line], job) == [
+        "AI / ML & NLP  Transformer NLP (BERT, HuggingFace), RAG Pipelines, "
+        "LLM Orchestration (OpenAI, Groq, Ollama), Machine Learning, "
+        "Generative AI (VAE, GAN, Diffusion)"
+    ]
+
+
+def test_a_colon_inside_brackets_is_not_a_label() -> None:
+    lines = ["Cloud (AWS: EC2, S3), Go"]
+    assert reorder_skills(lines, JOB) == ["Go, Cloud (AWS: EC2, S3)"]
