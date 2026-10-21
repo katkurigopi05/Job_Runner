@@ -480,3 +480,109 @@ async def test_collision_keeps_searching_other_directory_candidates(
     assert target.source_status == "verified"
     assert target.slug == "juniper-labs"
     assert target.source_evidence["unconfirmed"] == ["ashby/juniper"]
+
+
+async def test_current_own_site_link_is_identity_before_candidate_filtering(
+    db_session, calls, monkeypatch
+) -> None:
+    from packages.crawler import find_boards
+
+    holder = Company(
+        name="Canopy",
+        supplied_website="https://canopy.example",
+        ats_type="ashby",
+        slug="canopy",
+        source_status="verified",
+    )
+    target = Company(
+        name="Old Finch",
+        domain="oldfinch.example",
+        supplied_website="https://oldfinch.example",
+        source_status="hint",
+    )
+    db_session.add_all([holder, target])
+    await db_session.flush()
+    monkeypatch.setattr(job, "resolve_site", find_boards.resolve_site)
+
+    async def own_page(url, fetcher):
+        assert url == target.supplied_website
+        return SiteReading(board=("ashby", "canopy"), read=True)
+
+    async def probe(fetcher, vendor, slug):
+        return 2, "https://jobs.ashbyhq.com/canopy", None
+
+    monkeypatch.setattr(find_boards, "from_url", own_page)
+    monkeypatch.setattr(find_boards, "_probe", probe)
+
+    await job.handle_discover_company(db_session, _claim(target))
+
+    assert target.source_evidence["method"] == "duplicate_board"
+    assert target.source_evidence["duplicate_of"] == str(holder.id)
+    assert "own website" in target.source_evidence["identity_reason"]
+    assert await _crawls(db_session) == 0
+
+
+async def test_directory_candidate_cannot_borrow_the_current_own_site_lead(
+    db_session, calls, monkeypatch
+) -> None:
+    db_session.add(
+        Company(
+            name="Canopy",
+            supplied_website="https://canopy.example",
+            ats_type="ashby",
+            slug="canopy",
+            source_status="verified",
+        )
+    )
+    target = Company(
+        name="Old Finch",
+        domain="oldfinch.example",
+        supplied_website="https://oldfinch.example",
+        source_status="hint",
+    )
+    db_session.add(target)
+    await db_session.flush()
+    monkeypatch.setattr(job, "load_directory", lambda: _directory(("ashby", "canopy", "Old Finch")))
+    monkeypatch.setattr(job, "fetch_board", _board_returning(calls, jobs=2))
+
+    await job.handle_discover_company(db_session, _claim(target))
+
+    assert target.source_evidence["category"] == "name_collision"
+    assert target.source_evidence["unconfirmed"] == ["ashby/canopy"]
+    assert "duplicate_of" not in target.source_evidence
+    assert calls["resolve"]
+
+
+async def test_name_guess_after_reading_a_site_is_not_recorded_as_url_proof(
+    db_session, calls, monkeypatch
+) -> None:
+    from packages.crawler import find_boards
+
+    target = Company(
+        name="Old Finch",
+        domain="oldfinch.example",
+        supplied_website="https://oldfinch.example",
+        source_status="hint",
+    )
+    db_session.add(target)
+    await db_session.flush()
+    settings = job.get_settings().model_copy(
+        update={"crawler_name_guessing": "always", "crawler_discovery_vendors": "ashby"}
+    )
+    monkeypatch.setattr(job, "get_settings", lambda: settings)
+    monkeypatch.setattr(job, "resolve_site", find_boards.resolve_site)
+    monkeypatch.setattr(find_boards, "slug_candidates", lambda name: ["canopy"])
+
+    async def no_board_on_site(url, fetcher):
+        return SiteReading(read=True)
+
+    async def probe(fetcher, vendor, slug):
+        return 2, "https://jobs.ashbyhq.com/canopy", None
+
+    monkeypatch.setattr(find_boards, "from_url", no_board_on_site)
+    monkeypatch.setattr(find_boards, "_probe", probe)
+
+    await job.handle_discover_company(db_session, _claim(target))
+
+    assert target.source_status == "verified"
+    assert target.source_evidence["method"] == "discovery_from_name"

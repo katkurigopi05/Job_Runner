@@ -514,6 +514,11 @@ longer than the queue. `tests/test_discovery_no_duplicates.py`.
 
 `duplicate_boards.identity_reason` is the automatic discovery/deep-dive gate:
 - Same company website domain (excluding shared ATS/search/directory hosts).
+- An own-site link: a current or historical `discovery_from_url` record for
+  the same ATS/slug, with the lead's host matching `companies.domain` (case
+  insensitive, ignoring `www.` only). This does not require name overlap:
+  a rename or acquisition can change the entire name. A supplied website
+  alone is not a substitute for the stored company domain.
 - Normalised names overlap **and** the actual board names this company's
   website. `Resolved.confirmed_domain` carries fresh directory evidence;
   historical `confirmed_by: board names the website` counts only for the
@@ -530,11 +535,20 @@ on their shared AsyncSession are serialized. Verification checks identity
 again, including after the uniqueness race. Deep dives leave collisions
 unresolved instead of closing the issue as fixed. No index/schema change.
 
-The live read-only dry run found 17 set-aside rows: one has sufficient stored
-proof (Elastic.co/Elastic); 16 would remain unconfirmed and keep searching,
-including Twelve Labs and Charter Communications. Missing proof is not proof
-of distinct companies: legitimate aliases also need identity evidence. No
-records were repaired or re-discovered; that remains the owner's decision.
-The full per-row table is in this change's PR. The explicit legacy
+`Resolved.source_url` marks an actual URL resolution, so fresh own-site proof
+reaches the identity filter before verification. Directory candidates and name
+guesses never set it. A name guess after reading a site is recorded as
+`discovery_from_name`, not `discovery_from_url`; otherwise it could become
+false own-site evidence on a later run. Portfolio/multi-company page refusal
+is unchanged and happens before a URL resolution is returned.
+
+The revised live read-only dry run found 17 set-aside rows: nine supported
+duplicates (eight own-site links plus Elastic.co's board-domain evidence).
+Twelve Labs and Charter Communications remain collisions. Repl.it, Gen
+Digital, Intricately, Qordoba, Stessa and Streamlit remain unproven and keep
+searching. Missing proof is not proof of distinct companies. No records were
+repaired or re-discovered; that remains the owner's decision. The revised
+per-row table is recorded with PR #198 and its post-merge amendment.
+The explicit legacy
 `merge-duplicate-boards` repair/registry absorption is unchanged; this gate
 covers automatic discovery and deep dives, not an operator-directed merge.

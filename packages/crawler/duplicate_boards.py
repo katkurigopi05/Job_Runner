@@ -86,6 +86,18 @@ def _records(evidence: dict[str, Any] | None) -> Iterator[dict[str, Any]]:
         evidence = evidence.get("previous")
 
 
+def _own_website_lead(lead: Any, domain: str | None) -> bool:
+    """Compare the actual lead host with companies.domain, ignoring www only."""
+    if not domain or not isinstance(lead, str):
+        return False
+    try:
+        parsed = urlparse(lead)
+        host = (parsed.hostname or "").removeprefix("www.")
+    except ValueError:
+        return False
+    return parsed.scheme in ("https", "http") and host == domain.lower().removeprefix("www.")
+
+
 def identity_reason(
     company: Company,
     holder: Company,
@@ -109,6 +121,13 @@ def identity_reason(
         return f"overlapping names and board names the website: {domain}"
     for root in (evidence, company.source_evidence, holder.source_evidence):
         for record in _records(root):
+            if (
+                record.get("method") == "discovery_from_url"
+                and record.get("ats") == ats
+                and record.get("slug") == slug
+                and _own_website_lead(record.get("lead"), company.domain)
+            ):
+                return f"company's own website links to the board: {company.domain}"
             relationship = record.get("relationship")
             if isinstance(relationship, dict):
                 parties = {normalize_name(str(relationship.get(k, ""))) for k in ("from", "to")}
