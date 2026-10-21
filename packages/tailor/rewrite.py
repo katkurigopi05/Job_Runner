@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from packages.llm.prompts import TAILOR_SYSTEM
 from packages.llm.provider import LLMProvider
 from packages.llm.router import temperature_for
-from packages.tailor import figures, placeholders
+from packages.tailor import facts, figures, placeholders
 from packages.tailor.guard import (
     _COMMON_WORDS,
     GuardReport,
@@ -353,6 +353,18 @@ def vet(
     stronger = claim_strength_refusal(original, candidate)
     if stronger is not None:
         return False, stronger, report
+
+    # Names inside prose need not appear in Skills or a project stack. Keep
+    # the older refusal reasons intact and check these bullet-local facts last.
+    missing = facts.dropped(original, candidate)
+    if missing:
+        return (
+            False,
+            "drops "
+            + ", ".join(repr(term) for term in missing)
+            + " — the bullet states it and the rewrite does not",
+            report,
+        )
 
     return True, None, report
 

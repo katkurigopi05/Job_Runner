@@ -570,3 +570,25 @@ not model samples; this measures regression cost, not real-model accuracy.
 `scripts.eval_tailor.py` with StubProvider ran over 12 postings/60 bullets;
 all uncanned stub answers were refused both before and after (exit 1,
 expected unhealthy). No network model was called.
+
+## Facts stated only inside a bullet (2026-10-21)
+
+`rewrite.vet` checks `facts.dropped` after the existing refusals. The listed
+technology inventory cannot see model names or features named only in prose.
+The new check reads names, hyphenated technical terms, explicitly labelled
+library/product identifiers and short comma-list items from the original
+bullet. Presence uses `targeted.taken_away` and its alias/morphology index;
+the sentence's opening action and ordinary prose can still be rephrased.
+Another bullet never licenses deleting this bullet's fact.
+
+This is lexical protection, not general semantic entailment: an unlabelled
+lowercase tool, a complex clause or an unrecognised synonym may need human
+review. The relationship change from publishing *as* Claude Skill to building
+*using* Claude Skill is deliberately outside this fix.
+
+`tests/test_facts_not_dropped.py` holds both the real deletion shapes and the
+wording-only controls. Measured against the private ten-résumé evaluation's
+72 accepted rewrites, this adds ten refusals, all previously reviewed fact
+drops, and no refusal of the other 62. Private measurements remain in
+gitignored storage. `cache.TAILORING_REVISION` changes for both modes so old
+cached outputs must pass a fresh tailoring run.
