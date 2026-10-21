@@ -26,6 +26,7 @@ from packages.tailor.guard import (
     GuardReport,
     SourceCorpus,
     check,
+    claim_strength_refusal,
     normalize,
     slash_members,
 )
@@ -348,6 +349,10 @@ def vet(
     if loss is not None:
         report.dropped_figures = loss.dropped
         return False, loss.reason, report
+
+    stronger = claim_strength_refusal(original, candidate)
+    if stronger is not None:
+        return False, stronger, report
 
     return True, None, report
 

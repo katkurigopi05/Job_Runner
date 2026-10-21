@@ -45,6 +45,16 @@ def test_the_same_inputs_produce_the_same_key() -> None:
     assert _key() == _key()
 
 
+def test_pre_claim_guard_cache_cannot_be_reused(monkeypatch) -> None:
+    """Both modes must vet again rather than serve a formerly accepted upgrade."""
+    for mode in ("rewrite", "targeted"):
+        current = _key(mode=mode)
+        with monkeypatch.context() as patch:
+            patch.setattr("packages.tailor.cache.TAILORING_REVISION", "recovery-v2")
+            old = _key(mode=mode)
+        assert current != old
+
+
 def test_an_edited_posting_is_a_different_key() -> None:
     """The failure that matters: serving a résumé written for another job."""
     assert _key() != _key(content_hash="hash-b")

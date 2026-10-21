@@ -543,3 +543,30 @@ What a later change could quietly undo:
 Not taken from Tsenta: justified text (uneven word spacing for no parsing
 gain) and its "Aggressive tailoring … may stretch the truth" mode, which is
 §2.1's line.
+
+## Bullet action strength (2026-10-20)
+
+`rewrite.vet` also calls `guard.claim_strength_refusal` against the original
+bullet, even for flat corpora. Ongoing designing/building/exploring does not
+license created/built/shipped/launched/delivered; contributing/helping/assisting
+does not license led/owned/managed/architected. The explicit pairs distinguish
+an outcome from work underway, and authority from participation. Keep or lower
+the claim and it passes this check; refusal keeps the original bullet.
+
+This is a small lexical check of clause-start actions, independent of NLTK.
+It permits actions already stated in the same bullet. It cannot establish
+general entailment, resolve who did what in complex clauses, or detect every
+unlisted synonym. Shared Skills and other bullets never license an upgrade.
+The shared-section keyword policy, including CI/CD, is unchanged pending an
+owner decision.
+
+`cache.TAILORING_REVISION` changes for both tailoring modes, so output vetted
+before this check is not reused as a cache hit. Stored files are not removed.
+
+Measured offline: 180 canned paraphrases over Gate 3's 20 descriptions × 3
+synthetic résumés; 160 accepted before and after, **0 additional refusals**.
+The other 20 already failed existing checks. These are fixed paraphrases,
+not model samples; this measures regression cost, not real-model accuracy.
+`scripts.eval_tailor.py` with StubProvider ran over 12 postings/60 bullets;
+all uncanned stub answers were refused both before and after (exit 1,
+expected unhealthy). No network model was called.

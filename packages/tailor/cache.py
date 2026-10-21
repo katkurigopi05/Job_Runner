@@ -54,10 +54,9 @@ from packages.tailor import practices
 #: different component lists cannot flatten to the same string.
 _SEP = "\x1f"
 
-# Earlier output may contain provider failures cached as completed work, or
-# false refusals of slash-separated technologies. Keep those files available
-# for review, but require a fresh successful pass before reusing them.
-TAILORING_REVISION = "recovery-v2"
+# Earlier output may contain action upgrades accepted before the bullet-local
+# claim-strength check. Keep it available for review, but require a fresh pass.
+TAILORING_REVISION = "claim-strength-v3"
 
 
 def tailoring_key(

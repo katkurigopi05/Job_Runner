@@ -776,3 +776,44 @@ def check_or_raise(
     if not report.ok:
         raise FabricationError(report)
     return report
+
+
+# Each row is a boundary, not a synonym table. Designing/building/exploring
+# assert work underway, whereas these past-tense actions assert an outcome.
+# Contributing/helping/assisting assert participation, whereas the second
+# row's actions assert responsibility or authority. No Skills section or
+# other bullet can license crossing either boundary.
+_CLAIM_BOUNDARIES = (
+    (
+        ("designing", "building", "exploring"),
+        ("created", "built", "shipped", "launched", "delivered"),
+    ),
+    (("contributed to", "helped", "assisted"), ("led", "owned", "managed", "architected")),
+)
+# Read actions at clause starts, not incidental nouns (a building) or a
+# subordinate attribution (a project managed by someone else). Intentionally
+# small and deterministic: this is not a general English entailment checker.
+_ACTION_START = r"(?:^|[.;\n]|\band\b)\s*(?:[-•*]\s*)?(?:currently\s+)?"
+
+
+def claim_strength_refusal(original: str, candidate: str) -> str | None:
+    """Refuse explicit action upgrades against this source bullet alone.
+
+    An action already stated by this bullet may remain, including a mixed
+    bullet that contains both ongoing and completed work. Unlisted verbs and
+    complex clause attribution still need the owner's review.
+    """
+    for weaker, stronger in _CLAIM_BOUNDARIES:
+        source = re.search(_ACTION_START + "(" + "|".join(weaker) + r")\b", original, re.I)
+        if source is None:
+            continue
+        actions = re.compile(_ACTION_START + "(" + "|".join(stronger) + r")\b", re.I)
+        existing = {match.group(1).lower() for match in actions.finditer(original)}
+        for match in actions.finditer(candidate):
+            action = match.group(1).lower()
+            if action not in existing:
+                return (
+                    f"raises claim strength from {source.group(1).lower()!r} to {action!r}; "
+                    "the original bullet does not support that completion or ownership"
+                )
+    return None
