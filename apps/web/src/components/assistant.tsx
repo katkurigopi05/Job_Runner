@@ -72,6 +72,8 @@ interface Turn {
   relatedRoles?: RelatedRole[];
   /** Words looked for in titles, as typed ("AI"), when titles were what was searched. */
   titleWords?: string[];
+  /** Titles of a role named with those words that lack them: listed after, not in `matchedTotal`. */
+  relatedTotal?: number;
   /** Open postings the search covered, and the ones it could not reach. */
   searched?: number;
   unsearchable?: number;
@@ -141,6 +143,7 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
 
   const total = turn.matchedTotal ?? null;
   const titleWords = turn.titleWords ?? [];
+  const relatedNote = turn.relatedTotal ? `, then ${turn.relatedTotal} related without it` : "";
   // What was counted: a role from the table, or the titles holding a word.
   const counted =
     total === null
@@ -148,11 +151,11 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
       : turn.matchedRole
         ? `${total} open ${turn.matchedRole} posting${total === 1 ? "" : "s"} in your search area`
         : titleWords.length > 0
-          ? `${total} open posting${total === 1 ? "" : "s"} with ${titleWords.join(" and ")} in the title, in your search area`
+          ? `${total} open posting${total === 1 ? "" : "s"} with ${titleWords.join(" and ")} in the title, in your search area${relatedNote}`
           : null;
   const remaining = more.length - Math.min(visible, more.length);
   // The reply carries a bounded list. Past it, the feed has the whole one.
-  const beyondTheList = total !== null ? total - shownAbove - more.length : 0;
+  const beyondTheList = total !== null ? total + (turn.relatedTotal ?? 0) - shownAbove - more.length : 0;
   const shown = more.slice(0, visible);
   const countOf = new Map(kinds.map((kind) => [kind.label, kind.count]));
   const aboveOf = new Map<string, number>();
@@ -395,6 +398,7 @@ interface Reply {
   matched_kinds?: Kind[];
   related_roles?: RelatedRole[];
   matched_title_words?: string[];
+  postings_related_total?: number;
   postings_searched?: number;
   postings_unsearchable?: number;
   unsupported_citations?: string[];
@@ -417,6 +421,7 @@ function turnFrom(body: Reply): Turn {
     kinds: body.matched_kinds,
     relatedRoles: body.related_roles,
     titleWords: body.matched_title_words,
+    relatedTotal: body.postings_related_total,
     searched: body.postings_searched,
     unsearchable: body.postings_unsearchable,
     unsupportedCitations: body.unsupported_citations,

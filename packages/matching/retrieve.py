@@ -93,7 +93,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.config import get_settings
 from packages.core.models import Application, Company, Posting
 from packages.core.models_chunks import PostingChunk
-from packages.matching import idf
+from packages.matching import idf, tiers
 from packages.matching.eligibility import Sponsorship
 from packages.matching.embed import (
     Embedder,
@@ -473,6 +473,18 @@ class Retrieval:
     #: How many open postings in the search area have them in the title, or
     #: None when titles were not searched.
     title_total: int | None = None
+    #: A title search's postings of a role whose name has the word and whose
+    #: own titles do not ("Machine Learning Engineer" for "AI"), listed after
+    #: the ones that do and not counted in `title_total` (`tiers.py`).
+    related_total: int = 0
+    #: What a role question asked beyond the role, as typed: "AI" in "software
+    #: engineer roles in AI". The role's postings saying it in the title, and
+    #: the ones whose description mentions it when it is rare enough to search
+    #: descriptions for (None when it is not), are listed first; the rest of
+    #: the role after them, never dropped (`tiers.py`).
+    beyond_role: tuple[str, ...] = ()
+    beyond_in_title: int = 0
+    beyond_mentioned: int | None = None
     #: The question asks about jobs and names no role, skill, company, place
     #: or title: "any jobs?", "my target jobs". Nothing was searched. It used
     #: to be searched with an empty subject, which no vector can be made
@@ -945,6 +957,31 @@ async def _title_word_hits(
     ]
     found = await _hits_for(session, ids)
     return [found[posting_id] for posting_id in ids if posting_id in found]
+
+
+async def _related_titles(
+    session: AsyncSession,
+    stems: frozenset[str],
+    companies: list[uuid.UUID],
+    *,
+    found: list[_Hit],
+    area: str | None,
+    level: AskedLevel | None,
+) -> list[_Hit]:
+    """The titles of a role whose name has the words asked and that do not:
+    "Machine Learning Engineer" for "any roles for AI", since "AI engineer"
+    names that role. In the area and at the level asked, like the rest."""
+    roles = tiers.roles_holding(stems, _stem)
+    if not roles:
+        return []
+    have = {hit.posting_id for hit in found}
+    related = [
+        hit
+        for hit in await _role_hits(session, roles, companies)
+        if hit.posting_id not in have and not (area and _outside_area(hit))
+    ]
+    kept, _ = _at_level(related, level)
+    return kept
 
 
 def _family(title: str) -> str:
@@ -1907,6 +1944,11 @@ async def retrieve(
     kinds: list[tuple[str, int]] = []
     label_of: dict[uuid.UUID, str] = {}
     title_words: tuple[str, ...] = ()
+    # The tier of each posting in a list that asked for more than a role or a
+    # word (`tiers.py`), and what else a role question asked, as typed.
+    tier_of: dict[uuid.UUID, int] = {}
+    beyond: list[str] = []
+    related_total = 0
     if asked_roles:
         of_the_role = await _role_hits(session, set(asked_roles), companies)
         role_pool = [hit for hit in of_the_role if not (area and _outside_area(hit))]
@@ -1915,6 +1957,16 @@ async def retrieve(
         label_of = _kind_labels(role_pool)
         typed_kinds = {alias_label(alias) for alias in typed_aliases}
         kinds = _kinds(label_of, lambda label: int(label in typed_kinds), set(label_of.values()))
+        # Every word, however common: "AI" is not searched for in descriptions,
+        # and is still what "software engineer roles in AI" asks for.
+        beyond = [
+            word
+            for word in dict.fromkeys(tokenize(question))
+            if word not in _FRAMING_WORDS
+            and word not in role_words
+            and word not in company_words
+            and word not in aside
+        ]
     elif not beyond_the_name:
         # Nothing in the question is rare enough to look for in descriptions.
         # "any roles with AI" was answered from vectors, which found employers
@@ -1952,6 +2004,22 @@ async def retrieve(
                 lambda label: len(stems & {_stem(word) for word in tokenize(label)}),
                 {kind for hit in role_pool if (kind := _kind_of(hit.title or "")) is not None},
             )
+            related_pool = await _related_titles(
+                session, frozenset(stems), companies, found=of_the_title, area=area, level=level
+            )
+            if related_pool:
+                related_labels = {
+                    posting_id: f"{tiers.RELATED_PREFIX}{label}"
+                    for posting_id, label in _kind_labels(related_pool).items()
+                }
+                kinds = kinds + _kinds(related_labels, lambda _: 0, set(related_labels.values()))
+                label_of = {**label_of, **related_labels}
+                tier_of = {
+                    **{hit.posting_id: tiers.IN_TITLE for hit in role_pool},
+                    **{hit.posting_id: tiers.REST for hit in related_pool},
+                }
+                related_total = len(related_pool)
+                role_pool = role_pool + related_pool
             # With a company named, `terms` fell back to its name. The titles
             # are the search now, so that must not become a keyword scan.
             terms = []
@@ -2019,8 +2087,21 @@ async def retrieve(
                 if terms and among_role
                 else []
             )
-            scanned = saying_it or role_pool
-            if saying_it:
+            # Never only the ones that say it: they are listed first, then
+            # the rest of the role (`tiers.py`). In the keyword scan's order,
+            # best match first, since that order is one of the ranks fused
+            # below: the role's own order is newest first, and fusing that
+            # put "software engineer jobs in London"'s first relevant posting
+            # third in the owner's grades, from first.
+            said = {hit.posting_id for hit in saying_it}
+            scanned = saying_it + [hit for hit in role_pool if hit.posting_id not in said]
+            if beyond:
+                tier_of = tiers.assign(
+                    {hit.posting_id: _title_stems(hit.title or "") for hit in role_pool},
+                    frozenset(_stem(word) for word in beyond),
+                    (hit.posting_id for hit in saying_it),
+                )
+            if beyond and tiers.matched(tier_of):
                 # A title that is the role's own name is in every question
                 # about the role, so it goes first whatever else was asked:
                 # "software engineer jobs in London" opened with three
@@ -2028,8 +2109,27 @@ async def retrieve(
                 # nothing of London. When something more was asked and some
                 # of the role's postings say it, a posting goes first for its
                 # title only if it is one of them.
-                matching = {hit.posting_id for hit in saying_it}
-                titled = [hit for hit in titled if hit.posting_id in matching]
+                titled = [hit for hit in titled if tier_of.get(hit.posting_id) != tiers.REST]
+                base_of = label_of
+                label_of = tiers.relabel(
+                    base_of,
+                    tier_of,
+                    in_title=" ".join(_as_typed(question, word) for word in beyond),
+                    mentioned=", ".join(_as_typed(question, term) for term in terms),
+                )
+                typed_label = {label_of[i]: base_of[i] for i in label_of}
+                kinds = tiers.order_kinds(
+                    _kinds(
+                        label_of,
+                        lambda label: int(typed_label[label] in typed_kinds),
+                        set(label_of.values()),
+                    ),
+                    label_of,
+                    tier_of,
+                )
+                kind_rank = {kind: rank for rank, (kind, _) in enumerate(kinds)}
+            elif beyond:
+                tier_of = {}
         already = {hit.posting_id for hit in titled}
         scanned = [hit for hit in scanned if hit.posting_id not in already]
         if area:
@@ -2198,8 +2298,18 @@ async def retrieve(
                     else int(not at_the_level(hit.title, asked))
                 ),
             )
-        chosen = everything[:limit]
-        more_hits = everything[limit : limit + MORE_LIMIT]
+        if tier_of:
+            # Ordered by tier, and the model handed the first tiers only: an
+            # answer must not cite a posting for a word it does not say.
+            by_id = {hit.posting_id: hit for hit in everything}
+            shown_ids, more_ids = tiers.split(
+                [hit.posting_id for hit in everything], tier_of, limit, MORE_LIMIT
+            )
+            chosen = [by_id[posting_id] for posting_id in shown_ids]
+            more_hits = [by_id[posting_id] for posting_id in more_ids]
+        else:
+            chosen = everything[:limit]
+            more_hits = everything[limit : limit + MORE_LIMIT]
         ranked_total = len(everything)
         # What the second model read: the head of what it was handed, which
         # leaves out the postings held ahead of it, and for one that judges,
@@ -2315,7 +2425,19 @@ async def retrieve(
         role_keys=tuple(sorted(asked_roles)),
         role_total=len(role_pool) if role_pool is not None and asked_roles else None,
         title_words=title_words,
-        title_total=len(role_pool) if role_pool is not None and title_words else None,
+        title_total=(
+            len(role_pool) - related_total if role_pool is not None and title_words else None
+        ),
+        related_total=related_total,
+        beyond_role=tuple(_as_typed(question, word) for word in beyond),
+        beyond_in_title=sum(1 for tier in tier_of.values() if tier == tiers.IN_TITLE)
+        if beyond
+        else 0,
+        beyond_mentioned=(
+            sum(1 for tier in tier_of.values() if tier == tiers.MENTIONED)
+            if beyond and terms
+            else None
+        ),
         more=tuple(
             Listed(
                 posting_id=hit.posting_id,
