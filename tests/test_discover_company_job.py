@@ -35,7 +35,7 @@ def calls(monkeypatch) -> dict:
     async def no_defer(*args, **kwargs) -> None:
         return None
 
-    async def fake_resolve(name, fetcher, *, url=None, vendors=(), guess=True):
+    async def fake_resolve(name, fetcher, *, url=None, vendors=(), guess=True, accept=None):
         seen["resolve"].append({"name": name, "url": url, "guess": guess})
         return (name, "no board found on any supported ATS"), seen["reading"]
 
@@ -228,7 +228,11 @@ def test_an_unknown_policy_is_refused(monkeypatch) -> None:
 
 async def _holder(session) -> Company:
     holder = Company(
-        name="Acme", ats_type="ashby", slug="acme", source_status=SourceStatus.VERIFIED.value
+        name="Acme",
+        supplied_website="https://acme.com",
+        ats_type="ashby",
+        slug="acme",
+        source_status=SourceStatus.VERIFIED.value,
     )
     session.add(holder)
     await session.flush()
@@ -273,7 +277,7 @@ async def test_losing_a_race_for_a_board_ends_the_same_way(db_session, calls, mo
 
     async def nobody_at_first(session, ats, slug, *, other_than):
         asked.append((ats, slug))
-        if len(asked) == 1:
+        if len(asked) <= 2:
             return None
         return await real(session, ats, slug, other_than=other_than)
 
@@ -281,7 +285,7 @@ async def test_losing_a_race_for_a_board_ends_the_same_way(db_session, calls, mo
 
     await job.handle_discover_company(db_session, _claim(company))
 
-    assert len(asked) == 2
+    assert len(asked) == 3
     assert company.source_status == SourceStatus.FAILED.value
     assert company.source_evidence["duplicate_of"] == str(holder.id)
     assert await _crawls(db_session) == 0
@@ -387,7 +391,7 @@ async def test_a_failure_is_noted_and_the_worker_moves_on(db_session, calls) -> 
 
 
 async def test_a_board_listing_nothing_is_not_an_issue(db_session, calls, monkeypatch) -> None:
-    async def empty_board(name, fetcher, *, url=None, vendors=(), guess=True):
+    async def empty_board(name, fetcher, *, url=None, vendors=(), guess=True, accept=None):
         return (name, "board found (lever/acme) but it lists no open roles"), SiteReading(
             board=("lever", "acme"), read=True
         )
@@ -404,7 +408,7 @@ async def test_a_verification_closes_the_note(db_session, calls, monkeypatch) ->
     company = await _company(db_session, website="https://acme.com")
     await job.handle_discover_company(db_session, _claim(company))
 
-    async def found(name, fetcher, *, url=None, vendors=(), guess=True):
+    async def found(name, fetcher, *, url=None, vendors=(), guess=True, accept=None):
         board = Resolved(
             name=name, ats="lever", slug="acme", board_url="https://jobs.lever.co/acme", open_jobs=3
         )
@@ -415,3 +419,64 @@ async def test_a_verification_closes_the_note(db_session, calls, monkeypatch) ->
 
     [issue] = await _open_issues(db_session, company)
     assert (issue.status, issue.resolved_by) == ("fixed", "discovery")
+
+
+async def test_collision_keeps_searching_other_guessed_slugs(
+    db_session, calls, monkeypatch
+) -> None:
+    from packages.crawler import find_boards
+
+    holder = Company(
+        name="Juniper",
+        supplied_website="https://juniper.example",
+        ats_type="ashby",
+        slug="juniper",
+        source_status="verified",
+    )
+    target = Company(name="Juniper Labs", source_status="hint")
+    db_session.add_all([holder, target])
+    await db_session.flush()
+    monkeypatch.setattr(job, "resolve_site", find_boards.resolve_site)
+    monkeypatch.setattr(find_boards, "slug_candidates", lambda name: ["juniper", "juniper-labs"])
+
+    async def probe(fetcher, vendor, slug):
+        return (2 if vendor == "ashby" else None), f"https://jobs.example/{slug}", None
+
+    monkeypatch.setattr(find_boards, "_probe", probe)
+
+    await job.handle_discover_company(db_session, _claim(target))
+
+    assert target.source_status == "verified"
+    assert target.slug == "juniper-labs"
+    assert target.source_evidence["unconfirmed"] == ["ashby/juniper"]
+    assert target.source_evidence["name_collisions"][0]["holder_name"] == "Juniper"
+    assert await _crawls(db_session) == 1
+
+
+async def test_collision_keeps_searching_other_directory_candidates(
+    db_session, calls, monkeypatch
+) -> None:
+    db_session.add(
+        Company(
+            name="Juniper",
+            supplied_website="https://juniper.example",
+            ats_type="ashby",
+            slug="juniper",
+            source_status="verified",
+        )
+    )
+    target = Company(name="Juniper Labs", source_status="hint")
+    db_session.add(target)
+    await db_session.flush()
+    monkeypatch.setattr(
+        job,
+        "load_directory",
+        lambda: _directory(
+            ("ashby", "juniper", "Juniper Labs"), ("lever", "juniper-labs", "Juniper Labs")
+        ),
+    )
+    monkeypatch.setattr(job, "fetch_board", _board_returning(calls, jobs=2))
+    await job.handle_discover_company(db_session, _claim(target))
+    assert target.source_status == "verified"
+    assert target.slug == "juniper-labs"
+    assert target.source_evidence["unconfirmed"] == ["ashby/juniper"]

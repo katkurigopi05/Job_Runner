@@ -27,6 +27,7 @@ returned from immediately rather than re-probed.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -41,14 +42,21 @@ from packages.core.enums import SourceStatus
 from packages.core.models import Company, CompanyCrawlState
 from packages.core.queue import ClaimedTask, enqueue
 from packages.crawler import issues
-from packages.crawler.board_directory import confirms
+from packages.crawler.board_directory import confirms, registrable_domain
 from packages.crawler.board_directory import load_default as load_directory
 from packages.crawler.company_csv import is_search_url
 from packages.crawler.defer import defer_if_host_busy
 from packages.crawler.dispatch import CRAWL_COMPANY_TASK_KIND
-from packages.crawler.duplicate_boards import holder_of, set_aside
+from packages.crawler.duplicate_boards import holder_of, identity_reason, set_aside
 from packages.crawler.fetch import PoliteFetcher, build_fetcher
-from packages.crawler.find_boards import VENDORS, Resolved, SiteReading, fetch_board, resolve_site
+from packages.crawler.find_boards import (
+    VENDORS,
+    BoardFilter,
+    Resolved,
+    SiteReading,
+    fetch_board,
+    resolve_site,
+)
 from packages.crawler.runs import discovery_backoff, ensure_state
 
 log = structlog.get_logger(__name__)
@@ -119,7 +127,12 @@ class DirectoryResult:
 
 
 async def _from_directory(
-    fetcher: PoliteFetcher, company: Company, lead: str | None, vendors: tuple[str, ...]
+    fetcher: PoliteFetcher,
+    company: Company,
+    lead: str | None,
+    vendors: tuple[str, ...],
+    *,
+    accept: BoardFilter | None = None,
 ) -> DirectoryResult:
     """A board a public directory lists for this company, confirmed live.
 
@@ -157,7 +170,13 @@ async def _from_directory(
             slug=candidate.slug,
             board_url=url,
             open_jobs=len(postings),
+            confirmed_domain=(
+                registrable_domain(website) if confirmed_by == "board names the website" else None
+            ),
         )
+        if accept is not None and not await accept(resolved):
+            unconfirmed.append(f"{candidate.vendor}/{candidate.slug}")
+            continue
         return DirectoryResult(
             resolved=resolved,
             why=candidate.why,
@@ -168,10 +187,16 @@ async def _from_directory(
 
 
 async def _set_aside_as_duplicate(
-    session: AsyncSession, company: Company, holder: Company, outcome: Resolved, now: datetime
+    session: AsyncSession,
+    company: Company,
+    holder: Company,
+    outcome: Resolved,
+    now: datetime,
+    reason: str,
 ) -> None:
     """`company` resolved to a board `holder` already polls. No crawl is queued."""
     await set_aside(session, company, holder, ats=outcome.ats, slug=outcome.slug, now=now)
+    company.source_evidence = {**company.source_evidence, "identity_reason": reason}
     # Nothing left to look into: the board is found, and polled under `holder`.
     await issues.resolve(session, company.id, stage="discovery", by="discovery", now=now)
     log.info(
@@ -181,6 +206,59 @@ async def _set_aside_as_duplicate(
         ats=outcome.ats,
         slug=outcome.slug,
     )
+
+
+async def _occupied_board(
+    session: AsyncSession,
+    company: Company,
+    state: CompanyCrawlState,
+    holder: Company,
+    outcome: Resolved,
+    evidence: dict[str, Any],
+    now: datetime,
+) -> None:
+    reason = identity_reason(
+        company,
+        holder,
+        ats=outcome.ats,
+        slug=outcome.slug,
+        evidence=evidence,
+        board_domain=outcome.confirmed_domain,
+    )
+    if reason:
+        await _set_aside_as_duplicate(session, company, holder, outcome, now, reason)
+        return
+    board = f"{outcome.ats}/{outcome.slug}"
+    reason = f"name collision: {board} is held by {holder.name}; no same-company evidence"
+    previous = company.source_evidence or {}
+    company.source_status = SourceStatus.FAILED.value
+    company.slug = None
+    company.source_verified_at = None
+    company.discovery_failure = reason
+    company.source_evidence = {
+        **evidence,
+        "method": "discovery_failed",
+        "category": "name_collision",
+        "reason": reason,
+        "unconfirmed": list(dict.fromkeys([*evidence.get("unconfirmed", []), board])),
+        "name_collisions": [
+            *evidence.get("name_collisions", []),
+            {
+                "category": "name_collision",
+                "board": board,
+                "holder_id": str(holder.id),
+                "holder_name": holder.name,
+            },
+        ],
+        "previous": previous,
+        "at": now.isoformat(),
+    }
+    state.next_due_at = None
+    state.discovery_next_at = now + discovery_backoff(state.discovery_attempts)
+    await issues.note(
+        session, company.id, stage="discovery", category="name_collision", reason=reason, now=now
+    )
+    await session.flush()
 
 
 def _company_id(payload: dict) -> uuid.UUID:
@@ -206,8 +284,9 @@ async def verify_board(
 ) -> bool:
     """Make `outcome` the company's board and queue its first crawl. Does not commit.
 
-    False when another company already polls that board: this one is set aside
-    as its duplicate instead. Shared by discovery and the deep dive
+    False when another company already polls that board: only a proven alias
+    is set aside. Otherwise retain a name collision and keep discovery due.
+    Shared by discovery and the deep dive
     (`deep_dive_job.py`), so a board found either way is verified the same way.
     """
     # One board, one verified row. The owner's sheet lists a company
@@ -215,7 +294,7 @@ async def verify_board(
     # the same board, and verifying both stored every posting on it twice.
     holder = await holder_of(session, outcome.ats, outcome.slug, other_than=company.id)
     if holder is not None:
-        await _set_aside_as_duplicate(session, company, holder, outcome, now)
+        await _occupied_board(session, company, state, holder, outcome, evidence, now)
         return False
     try:
         # A savepoint, opened before the row is touched: opening one
@@ -248,10 +327,11 @@ async def verify_board(
         # The rollback expired the row; it is read again before anything
         # looks at it, or the first attribute touched is a lazy load.
         await session.refresh(company)
+        await session.refresh(state)
         holder = await holder_of(session, outcome.ats, outcome.slug, other_than=company.id)
         if holder is None:
             raise
-        await _set_aside_as_duplicate(session, company, holder, outcome, now)
+        await _occupied_board(session, company, state, holder, outcome, evidence, now)
         return False
     await issues.resolve(session, company.id, stage="discovery", by=by, now=now)
     log.info(
@@ -300,12 +380,38 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
     # What the company's own site showed. Empty when the directory answered
     # and the site was never read.
     reading = SiteReading()
+    collisions: list[dict[str, str]] = []
+    # Vendor probes run concurrently, but an AsyncSession cannot execute two
+    # queries at once. Only this short identity lookup is serialized.
+    identity_lock = asyncio.Lock()
+
+    async def accept(outcome: Resolved) -> bool:
+        async with identity_lock:
+            holder = await holder_of(session, outcome.ats, outcome.slug, other_than=company.id)
+            if holder is None or identity_reason(
+                company,
+                holder,
+                ats=outcome.ats,
+                slug=outcome.slug,
+                board_domain=outcome.confirmed_domain,
+            ):
+                return True
+            collisions.append(
+                {
+                    "category": "name_collision",
+                    "board": f"{outcome.ats}/{outcome.slug}",
+                    "holder_id": str(holder.id),
+                    "holder_name": holder.name,
+                }
+            )
+            return False
+
     async with build_fetcher() as fetcher:
         # The directory goes first because its probes go to the shared ATS
         # hosts (a 2s floor) rather than the company's own (60s), and on the
         # trial it proposed 23 of the 33 boards found. A miss costs at most
         # MAX_CANDIDATES probes and falls through to the site unchanged.
-        found = await _from_directory(fetcher, company, lead, vendors)
+        found = await _from_directory(fetcher, company, lead, vendors, accept=accept)
         if found.resolved is not None:
             outcome = found.resolved
         else:
@@ -326,14 +432,20 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
                 url=lead,
                 vendors=vendors,
                 guess=should_guess(lead, settings.crawler_name_guessing),
+                accept=accept,
             )
 
     state.discovery_last_at = now
     state.discovery_attempts += 1
 
+    collisions = sorted({c["board"]: c for c in collisions}.values(), key=lambda c: c["board"])
+
     # Recorded on success and failure alike: a namesake turned down beside a
     # board found on the company's own site is still worth seeing.
-    unconfirmed = {"unconfirmed": list(found.unconfirmed)} if found.unconfirmed else {}
+    rejected = list(dict.fromkeys([*found.unconfirmed, *(c["board"] for c in collisions)]))
+    unconfirmed: dict[str, Any] = {"unconfirmed": rejected} if rejected else {}
+    if collisions:
+        unconfirmed["name_collisions"] = collisions
 
     if isinstance(outcome, Resolved):
         if found.resolved is not None:
@@ -362,6 +474,14 @@ async def handle_discover_company(session: AsyncSession, claimed: ClaimedTask) -
 
     _name, reason = outcome
     category = reading.category if lead else "no_website"
+    if collisions:
+        category = "name_collision"
+        reason = (
+            "name collision: no same-company evidence for "
+            + ", ".join(c["board"] for c in collisions)
+            + "; "
+            + reason
+        )
     company.source_status = SourceStatus.FAILED.value
     company.discovery_failure = reason
     # What the site showed, kept with the failure so the company can be fixed

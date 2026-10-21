@@ -251,14 +251,15 @@ copies belong to two companies.
 `packages/crawler/duplicate_boards.py` is the fix, in three places:
 
 - **Discovery asks first.** `holder_of` is consulted before a company is
-  verified; a board somebody holds sets the newcomer aside and queues no
-  crawl.
+  verified. A held board sets the newcomer aside only with positive identity
+  evidence (see below); otherwise it is an unconfirmed name collision and
+  discovery keeps looking. Neither path queues a second crawl for that board.
 - **The database refuses the rest.** `uq_companies_verified_board` is a
   partial unique index on `(ats_type, slug)` for verified rows only. Two
   discovery tasks can resolve one board at once, each before the other
   commits, and then neither finds a holder: the index is what still holds.
   The handler writes inside a savepoint and comes out of that with the
-  company set aside, not with a failed task.
+  company classified as an alias or a name collision, not with a failed task.
 - **`make merge-duplicate-boards` repaired what was there**, after a verified
   backup: 11 rows set aside, 282 copies deleted, 32 scores that only a copy
   had moved to the original, nothing of the owner's touched.
@@ -268,10 +269,10 @@ Five things to keep:
 - **The row that loses a board is kept.** It becomes `failed`, with no slug,
   carrying what it resolved to and who holds it (`duplicate_board`). The
   registry keeps evidence, not deletions (§9), and the row is the only record
-  that the sheet named that company. Two of the eleven are probably not
-  renames at all (Twelve and Twelve Labs, Alchemy and Alchemy Cloud): the
-  board belongs to one and discovery guessed it for the other. Set aside is
-  right for both readings.
+  that the sheet named that company. The earlier implementation also set
+  namesakes aside, stopping discovery of their own boards. That is now a
+  `name_collision`, retained under `unconfirmed` with its holder and normal
+  discovery backoff, rather than the alias's 30-day backoff.
 - **The row named like the board keeps it** (`keeper_of`): "Vercel" for
   `vercel`, "Teleport" for `goteleport`. The name is what the owner reads on
   a card. Where the names say nothing, the older row. Discovery cannot wait
@@ -508,3 +509,32 @@ by hand. A duplicate cost a worker a minute of waiting on a site it had just
 read, and bumped the company's attempts, pushing its next retry out a step.
 The one-hour mark stays, for a worker lost mid-task; it no longer has to be
 longer than the queue. `tests/test_discovery_no_duplicates.py`.
+
+## Company identity before suppressing discovery (2026-10-20)
+
+`duplicate_boards.identity_reason` is the automatic discovery/deep-dive gate:
+- Same company website domain (excluding shared ATS/search/directory hosts).
+- Normalised names overlap **and** the actual board names this company's
+  website. `Resolved.confirmed_domain` carries fresh directory evidence;
+  historical `confirmed_by: board names the website` counts only for the
+  same ATS/slug and lead domain. Slug/name agreement alone does not count.
+- A sourced `relationship` record naming both companies: `kind` is `rename`
+  or `acquisition`, `from`/`to` name the two parties, `source_url` cites the
+  evidence. A previous `duplicate_board` verdict or arbitrary diagnosis prose
+  is not a relationship record.
+
+The discovery handler filters occupied candidates while still searching, so a
+name collision does not terminate the directory or slug loop. Vendor network
+probes still run concurrently with the same robots/rate gates; identity reads
+on their shared AsyncSession are serialized. Verification checks identity
+again, including after the uniqueness race. Deep dives leave collisions
+unresolved instead of closing the issue as fixed. No index/schema change.
+
+The live read-only dry run found 17 set-aside rows: one has sufficient stored
+proof (Elastic.co/Elastic); 16 would remain unconfirmed and keep searching,
+including Twelve Labs and Charter Communications. Missing proof is not proof
+of distinct companies: legitimate aliases also need identity evidence. No
+records were repaired or re-discovered; that remains the owner's decision.
+The full per-row table is in this change's PR. The explicit legacy
+`merge-duplicate-boards` repair/registry absorption is unchanged; this gate
+covers automatic discovery and deep dives, not an operator-directed merge.

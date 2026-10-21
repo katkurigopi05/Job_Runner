@@ -31,9 +31,11 @@ from __future__ import annotations
 import re
 import uuid
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
+from urllib.parse import urlparse
 
 import structlog
 from sqlalchemy import delete, exists, select
@@ -41,6 +43,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.enums import SourceStatus
 from packages.core.models import Company, CompanyCrawlState, Match, Posting
+from packages.crawler.board_directory import normalize_name, registrable_domain
+from packages.crawler.company_csv import is_search_url
 from packages.crawler.retention import _owned
 
 log = structlog.get_logger(__name__)
@@ -53,6 +57,81 @@ DUPLICATE_METHOD = "duplicate_board"
 RECHECK_AFTER = timedelta(days=30)
 
 _NOT_ALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def website_domain(company: Company) -> str:
+    """A company website, never a shared ATS/directory host."""
+    value = company.supplied_website or company.domain
+    if not value or is_search_url(value):
+        return ""
+    domain = registrable_domain(value)
+    if "." not in domain or domain in {
+        "greenhouse.io",
+        "lever.co",
+        "ashbyhq.com",
+        "workable.com",
+        "myworkdayjobs.com",
+        "linkedin.com",
+        "google.com",
+        "github.com",
+    }:
+        return ""
+    return domain
+
+
+def _records(evidence: dict[str, Any] | None) -> Iterator[dict[str, Any]]:
+    """Historical discovery evidence is retained under `previous`."""
+    while isinstance(evidence, dict):
+        yield evidence
+        evidence = evidence.get("previous")
+
+
+def identity_reason(
+    company: Company,
+    holder: Company,
+    *,
+    ats: str,
+    slug: str,
+    evidence: dict[str, Any] | None = None,
+    board_domain: str | None = None,
+) -> str | None:
+    """Positive identity evidence; sharing a name/slug is insufficient.
+
+    Relationships must name both parties and cite a source, rather than
+    interpreting arbitrary diagnosis prose or a previous duplicate verdict.
+    """
+    domain = website_domain(company)
+    if domain and domain == website_domain(holder):
+        return f"same website domain: {domain}"
+    a, b = normalize_name(company.name), normalize_name(holder.name)
+    overlaps = min(len(a), len(b)) >= 3 and (a in b or b in a)
+    if overlaps and domain and board_domain == domain:
+        return f"overlapping names and board names the website: {domain}"
+    for root in (evidence, company.source_evidence, holder.source_evidence):
+        for record in _records(root):
+            relationship = record.get("relationship")
+            if isinstance(relationship, dict):
+                parties = {normalize_name(str(relationship.get(k, ""))) for k in ("from", "to")}
+                source = urlparse(str(relationship.get("source_url", "")))
+                if (
+                    a
+                    and b
+                    and parties == {a, b}
+                    and relationship.get("kind") in ("rename", "acquisition")
+                    and source.scheme in ("https", "http")
+                    and source.hostname
+                ):
+                    return f"recorded {relationship['kind']}: {source.geturl()}"
+            if (
+                overlaps
+                and domain
+                and record.get("ats") == ats
+                and record.get("slug") == slug
+                and record.get("confirmed_by") == "board names the website"
+                and registrable_domain(record.get("lead")) == domain
+            ):
+                return f"overlapping names and board names the website: {domain}"
+    return None
 
 
 def _plain(text: str | None) -> str:

@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import NamedTuple
 from urllib.parse import urljoin, urlparse
@@ -236,6 +237,11 @@ class Resolved:
     slug: str
     board_url: str
     open_jobs: int
+    #: Set only when actual board content names the candidate's website.
+    confirmed_domain: str | None = None
+
+
+BoardFilter = Callable[[Resolved], Awaitable[bool]]
 
 
 @dataclass
@@ -829,6 +835,7 @@ async def resolve_site(
     url: str | None = None,
     vendors: tuple[str, ...] = VENDORS,
     guess: bool = True,
+    accept: BoardFilter | None = None,
 ) -> tuple[Resolved | tuple[str, str], SiteReading]:
     """Find one company's board: a Resolved or (name, reason), and the site's reading.
 
@@ -846,6 +853,10 @@ async def resolve_site(
     when `guess` is set. `discover_company_job` turns it off for a company with
     a website: on the owner's sheet it found nothing such a company's own site
     had not, at ~10 shared-host probes each.
+
+    `accept` may reject a resolved namesake. Directory/site/guess callers
+    then continue their remaining candidates, respecting the existing guess
+    policy. A rejection is not an empty or unreachable board.
     """
     blocked_reason: str | None = None
     reading = SiteReading()
@@ -857,9 +868,12 @@ async def resolve_site(
             vendor, slug = reading.board
             count, board_url, blocked = await _probe(fetcher, vendor, slug)
             if count:
-                return Resolved(
+                site_board = Resolved(
                     name=name, ats=vendor, slug=slug, board_url=board_url, open_jobs=count
-                ), reading
+                )
+                if accept is None or await accept(site_board):
+                    return site_board, reading
+                reading = replace(reading, board=None)
             if blocked:
                 blocked_reason = blocked
                 reading = replace(reading, blocked=blocked)
@@ -869,7 +883,7 @@ async def resolve_site(
             # different company that happens to share a word.
             elif count == 0:
                 return (name, f"board found ({vendor}/{slug}) but it lists no open roles"), reading
-            elif vendor == "workday":
+            elif vendor == "workday" and count is None:
                 reading = replace(
                     reading, unreachable="Workday board unreachable or invalid response"
                 )
@@ -921,9 +935,9 @@ async def resolve_site(
                 refused = blocked
                 continue
             if count:
-                return Resolved(
-                    name=name, ats=vendor, slug=slug, board_url=url, open_jobs=count
-                ), None
+                found = Resolved(name=name, ats=vendor, slug=slug, board_url=url, open_jobs=count)
+                if accept is None or await accept(found):
+                    return found, None
         return None, refused
 
     outcomes = await asyncio.gather(*(probe_vendor(vendor) for vendor in vendors))
