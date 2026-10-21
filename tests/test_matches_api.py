@@ -158,6 +158,39 @@ async def test_keywords_and_location(client: AsyncClient, varied) -> None:
     assert await _titles(client, varied, locations="Austin") == ["Junior Backend Engineer"]
 
 
+async def test_each_card_says_where_its_keywords_matched(client: AsyncClient, varied) -> None:
+    """The words either side of a hit travel with the card, one per keyword."""
+    response = await client.get(
+        "/matches",
+        params={"profile_id": varied, "us_only": "false", "keywords": "spark, data engineer"},
+    )
+
+    assert response.status_code == 200, response.text
+    [card] = response.json()
+    assert card["keyword_hits"] == [
+        {
+            "keyword": "spark",
+            "field": "description",
+            "before": "",
+            "match": "Spark",
+            "after": "and Kubernetes.",
+        },
+        {
+            "keyword": "data engineer",
+            "field": "title",
+            "before": "Principal",
+            "match": "Data Engineer",
+            "after": "",
+        },
+    ]
+
+
+async def test_a_search_without_keywords_sends_no_hits(client: AsyncClient, varied) -> None:
+    rows = (await client.get("/matches", params={"profile_id": varied, "us_only": "false"})).json()
+
+    assert rows and all(row["keyword_hits"] == [] for row in rows)
+
+
 async def test_filters_combine(client: AsyncClient, varied) -> None:
     assert await _titles(client, varied, remote="true", keywords="python") == [
         "Senior Backend Engineer"

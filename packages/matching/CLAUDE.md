@@ -587,3 +587,48 @@ feed over MCP. Three things about it:
 
 It reads and never writes: recording a decision on a match is still the
 owner's, on `/matches` or `/swipe`.
+
+## The keyword filter reads words, not letters (2026-10-20)
+
+Asked for "software engineer ai", the feed's keyword filter, a substring test,
+answered badly either way it was typed. As one keyword the role table read
+"software engineer" and dropped "ai": 542 results, mostly not AI. As two, "ai"
+matched inside "maintain" and "container". `keywords.py` replaced it. What a
+later change could undo:
+
+- **A keyword is whole words**, case aside, plural allowed: "ml" is not in
+  "HTML", "go" is not in "Google", "c" is not in "C++".
+- **Several words match as written; only a title also takes them near each
+  other** (within `NEAR`, any order: "AI Software Engineer", "Software
+  Engineer, AI Platform"). Nearness was tried in descriptions too, and over
+  the live feed it matched one company's boilerplate ("open source software
+  engineers and AI agents rely") on 20 unrelated postings, and words either
+  side of a full stop.
+- **A role name plus words finds the role's other titles only when the title
+  says the words** ("Member of Technical Staff, AI Engineering", not "Member
+  of Technical Staff - Inference").
+- **A description is never split into words whole.** That cost 2-3.6s per
+  search over the feed's 4,543 postings. A pattern finds where the keyword
+  might stand and only a window around it is read; the pattern checks the
+  character before a word *after* the word, which made it 3-30x faster with
+  identical matches. A search costs 0.14-0.29s against 0.07-0.15s before.
+- **The card's hits are read again for the page**, not carried out of the
+  filter: grouping can put a different listing of the same job on the card.
+
+Over the 4,543 open matched postings, before and after:
+
+| Search | Before | After |
+|---|---|---|
+| `software engineer ai` | 542 | 50, every one an AI software role, all on the title |
+| `software engineer, ai` | 927 | 538 |
+| `ai` | 4,533 | 3,269 |
+| `ml` | 1,574 | 497 |
+| `go` | 4,090 | 1,344 |
+| `react` | 276 | 197 |
+| `software engineer` | 928 | 705 |
+| `kafka`, `c++` | 81, 221 | unchanged |
+| `machine learning` | 354 | 359 ("machine-learning" now counts) |
+
+`software engineer` lost 229 postings that only ever said "software
+engineering". That is the narrowing working, not a loss: the role filter is
+the question "is this job a software engineer job".

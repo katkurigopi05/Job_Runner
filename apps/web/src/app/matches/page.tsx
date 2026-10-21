@@ -13,6 +13,7 @@ import { AtsPanel } from "./ats-panel";
 import { DiscoveryStrip } from "./discovery-strip";
 import { EligibilityNote } from "@/components/eligibility-note";
 import { RequirementsPanel } from "./requirements-panel";
+import { KeywordHits } from "./keyword-hits";
 import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
@@ -216,6 +217,7 @@ export default async function MatchesPage({
                         " · no posting date"
                       )}
                     </p>
+                    <KeywordHits hits={match.keyword_hits} />
                   </div>
                   <div className="shrink-0 text-right">
                     <p
