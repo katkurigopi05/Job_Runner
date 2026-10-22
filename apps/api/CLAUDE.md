@@ -89,6 +89,16 @@ the prompt is a request and this is a rule — the check runs in code.
 application, and its recent replies, and told to say when it does not know. An
 assistant that invents an application status is worse than no assistant.
 
+**An employer's applications have their own section** (2026-10-21).
+`prepare` uses retrieval's shared first-person application-status rule and
+`found.companies` to supply `YOUR APPLICATIONS AT …`: the code counts and lists
+each application's status, failure reason and dates, or explicitly says none.
+A linked posting identifies the company; only an unlinked application may
+fall back to an exact ATS vendor/registry board slug from its URL. A jobs
+question gets no application section. `assistant.system` v7 distinguishes
+these company facts from the global status counts: v6 attributed four global
+failures to Cloudflare despite its one application being `needs_review`.
+
 **"Run crawler" is a command, and commands are handled in code.** Saying "run
 crawler", "find new jobs", "refresh the postings" and the like queues a crawl
 through `crawl_job.request_crawl` — the same door `make crawl` uses, with its

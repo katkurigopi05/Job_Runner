@@ -383,6 +383,16 @@ _RAW_WORD = re.compile(r"[a-z0-9+#.]+")
 _SENTENCE_START = re.compile(r"(?<=[.!?;])\s+")
 
 
+def asks_about_own_applications(question: str) -> bool:
+    """The shared first-person application-status routing rule (§27)."""
+    words = {word.rstrip(".") for word in _RAW_WORD.findall(question.lower())}
+    return bool(
+        words & _APPLICATION_NOUNS
+        and words & _APPLICATION_STATE
+        and _FIRST_PERSON.search(question.lower())
+    )
+
+
 class _Hit(NamedTuple):
     posting_id: uuid.UUID
     title: str | None
@@ -1906,11 +1916,7 @@ async def retrieve(
     # anyway: "review" is in a title, and a question whose words are all in
     # one title is taken for the title (below). The same question worded
     # "waiting for my review" was not searched, since no title says "waiting".
-    about_my_applications = (
-        bool(words & _APPLICATION_NOUNS)
-        and bool(words & _APPLICATION_STATE)
-        and bool(_FIRST_PERSON.search(question.lower()))
-    )
+    about_my_applications = asks_about_own_applications(question)
     aside = _APPLICATION_STATE if about_my_applications else frozenset()
     # A level is read from titles and never searched for as a word: "junior"
     # in a description is "mentor junior engineers" in a senior posting.

@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api import chat_history
@@ -60,11 +60,12 @@ from apps.api.protected_questions import (  # noqa: F401
 )
 from apps.api.routers.chat_evidence import skill_lines, skills_asked_about, unsupported_citations
 from apps.worker.crawl_job import request_crawl
+from packages.ats.registry import detect_ats
 from packages.core import heartbeat
 from packages.core.config import Settings, get_settings
 from packages.core.enums import ErrorCode
 from packages.core.heartbeat import WorkerState
-from packages.core.models import Application, InboundMessage, Posting, Profile
+from packages.core.models import Application, Company, InboundMessage, Posting, Profile
 from packages.core.notify import ParkReason, asks, needs_owner
 from packages.core.schemas import (
     ChatKind,
@@ -73,6 +74,7 @@ from packages.core.schemas import (
     ChatRequest,
     ChatSource,
 )
+from packages.crawler.discover import slug_from_ats_url
 from packages.llm import router as llm_router
 from packages.llm.audit import is_local
 from packages.llm.prompts import CHAT_SYSTEM
@@ -85,7 +87,7 @@ from packages.llm.provider import (
 )
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
 from packages.matching.level import LevelCount
-from packages.matching.retrieve import Passage, Retrieval, retrieve
+from packages.matching.retrieve import Passage, Retrieval, asks_about_own_applications, retrieve
 from packages.matching.roles import display_name
 from packages.matching.sponsored import SponsorshipCount
 from packages.matching.tiers import RELATED_PREFIX
@@ -238,6 +240,61 @@ async def _context(
             # a different and wrong answer.
             lines.append("  recent replies: withheld — not shared with a remote model")
 
+    return "\n".join(lines)
+
+
+async def _company_applications(session: AsyncSession, companies: tuple[str, ...]) -> str:
+    """Application facts for named employers, including unlinked board URLs.
+
+    A linked posting is authoritative. Only an application with no posting
+    may fall back to its URL's ATS and exact registry board slug.
+    """
+    employers = list(
+        (await session.scalars(select(Company).where(Company.name.in_(companies)))).all()
+    )
+    rows = (
+        await session.execute(
+            select(Application, Posting.title, Posting.company_id)
+            .outerjoin(Posting, Application.posting_id == Posting.id)
+            .where(
+                or_(
+                    Posting.company_id.in_([c.id for c in employers]),
+                    Application.posting_id.is_(None),
+                )
+            )
+            .order_by(Application.created_at, Application.id)
+        )
+    ).all()
+    lines = []
+    for company in employers:
+        slug = company.slug or slug_from_ats_url((company.careers_url or "").rstrip("/") + "/")
+        matched = [
+            (application, title)
+            for application, title, company_id in rows
+            if company_id == company.id
+            or (
+                application.posting_id is None
+                and slug is not None
+                and detect_ats(application.url) == company.ats_type
+                and (slug_from_ats_url(application.url) or "").casefold() == slug.casefold()
+            )
+        ]
+        name = _one_line(company.name)
+        lines.append(f"YOUR APPLICATIONS AT {name}:")
+        lines.append(
+            f"  {len(matched)} application{'' if len(matched) == 1 else 's'} at {name}; "
+            "global status counts cover all companies."
+        )
+        if not matched:
+            lines.append(f"  no applications at {name}")
+        for application, title in matched:
+            lines.append(
+                f"  - {_one_line(title or application.url)}; url={_one_line(application.url)}; "
+                f"status={_one_line(application.status)}; "
+                f"failure_reason={_one_line(application.failure_reason) or 'none'}; "
+                f"created={application.created_at.isoformat()}; "
+                f"updated={application.updated_at.isoformat()}"
+            )
     return "\n".join(lines)
 
 
@@ -813,6 +870,11 @@ async def prepare(body: ChatRequest, session: AsyncSession) -> ChatReply | Ready
     posting_gaps = _unmet_by_posting(found, gaps, requirements) if gaps else None
     sections = [
         context,
+        *(
+            [await _company_applications(session, found.companies)]
+            if found.companies and asks_about_own_applications(question)
+            else []
+        ),
         _postings_section(found, posting_gaps, skill_lines(found, named_skills, requirements)),
     ]
     if gaps is not None:
