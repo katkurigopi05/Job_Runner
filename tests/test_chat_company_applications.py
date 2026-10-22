@@ -1,4 +1,4 @@
-"""A named employer's applications must not inherit the global status counts."""
+"""Synthetic applications must not inherit the global status counts."""
 
 from datetime import UTC, datetime
 
@@ -24,7 +24,7 @@ async def _setup(session, *, linked=True, count=1):
     posting = Posting(
         company_id=company.id,
         title="Systems Engineer",
-        url="https://boards.greenhouse.io/cloudflare/jobs/8042034",
+        url="https://boards.greenhouse.io/cloudflare/jobs/990000001",
     )
     session.add(posting)
     await session.flush()
@@ -34,11 +34,11 @@ async def _setup(session, *, linked=True, count=1):
                 candidate_id=profile.candidate_id,
                 profile_id=profile.id,
                 posting_id=posting.id if linked else None,
-                url=f"https://boards.greenhouse.io/cloudflare/jobs/{8042034 + index}",
+                url=f"https://boards.greenhouse.io/cloudflare/jobs/{990000001 + index}",
                 status="needs_review" if index == 0 else "failed",
                 failure_reason=None if index == 0 else "job_closed",
-                created_at=datetime(2026, 8, 26, tzinfo=UTC),
-                updated_at=datetime(2026, 8, 27, tzinfo=UTC),
+                created_at=datetime(2000, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2000, 1, 2, tzinfo=UTC),
             )
         )
     session.add(
@@ -61,7 +61,7 @@ async def test_named_company_applications_are_listed(client, worker_session, mon
     assert "Systems Engineer" in section
     assert "status=needs_review" in section
     assert "failure_reason=none" in section
-    assert "created=2026-08-26" in section and "updated=2026-08-27" in section
+    assert "created=2000-01-01" in section and "updated=2000-01-02" in section
     assert "/other/" not in section and "submitted" not in section
     if count > 1:
         assert "status=failed" in section and "failure_reason=job_closed" in section
@@ -77,7 +77,7 @@ async def test_orphan_application_matches_board_url(client, worker_session, monk
     await _setup(worker_session, linked=False)
     _, seen = await _ask(client, monkeypatch, "What's the status of my Cloudflare application?")
     section = seen["user"].split("YOUR APPLICATIONS AT Cloudflare:")[1].split("POSTINGS:")[0]
-    assert "https://boards.greenhouse.io/cloudflare/jobs/8042034" in section
+    assert "https://boards.greenhouse.io/cloudflare/jobs/990000001" in section
     assert "status=needs_review" in section
 
 

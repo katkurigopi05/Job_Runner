@@ -96,8 +96,8 @@ each application's status, failure reason and dates, or explicitly says none.
 A linked posting identifies the company; only an unlinked application may
 fall back to an exact ATS vendor/registry board slug from its URL. A jobs
 question gets no application section. `assistant.system` v7 distinguishes
-these company facts from the global status counts: v6 attributed four global
-failures to Cloudflare despite its one application being `needs_review`.
+these company facts from the global status counts: v6 could attribute global
+application totals to a named employer.
 
 **"Run crawler" is a command, and commands are handled in code.** Saying "run
 crawler", "find new jobs", "refresh the postings" and the like queues a crawl
