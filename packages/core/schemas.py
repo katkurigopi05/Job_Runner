@@ -794,7 +794,13 @@ class ChatReply(BaseModel):
     #: how many open postings in the search area carry such a title. Both
     #: None when the question named no role.
     matched_role: str | None = None
+    #: Exact total for a role/title, a single distinguishing term, or a
+    #: company-only question. Simple-search totals count mentions, not
+    #: requirements; their area check uses listed location/title only.
     postings_matched_total: int | None = None
+    companies_matched_total: int | None = None
+    matched_term: str | None = None
+    matched_companies: list[str] = Field(default_factory=list)
     #: The feed's `role` filter value, when exactly one role was named, so
     #: the dashboard can link to the same list on /matches.
     matched_role_filter: str | None = None

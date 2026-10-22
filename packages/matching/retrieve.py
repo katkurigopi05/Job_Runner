@@ -381,6 +381,9 @@ _APPLICATION_STATE = frozenset(_APPLICATION_STATE_TEXT.split())
 
 _RAW_WORD = re.compile(r"[a-z0-9+#.]+")
 _SENTENCE_START = re.compile(r"(?<=[.!?;])\s+")
+#: A temporal framing phrase. "right" alone still distinguishes a question
+#: about the right to work from one about any work.
+_FRAMING_PHRASES = re.compile(r"\bright\s+now\b", re.IGNORECASE)
 
 
 def asks_about_own_applications(question: str) -> bool:
@@ -455,6 +458,12 @@ class Retrieval:
     #: Registry companies the question named, so "nothing found" can say
     #: "no open postings at Mistral AI" rather than leave the model to guess.
     companies: tuple[str, ...] = ()
+    #: Exact in-area totals only for one distinguishing term or a company
+    #: with no additional subject. These count mentions, not requirements,
+    #: with geography established from location/title only.
+    match_total: int | None = None
+    company_total: int | None = None
+    matched_term: str | None = None
     #: Registry companies whose one-word name the question says and was not
     #: taken to be about: they have nothing open, and other employers'
     #: postings say the word (`_only_others_say_it`). "any posting on postman"
@@ -1240,6 +1249,62 @@ async def _read_until(
     return read
 
 
+async def _matching_totals(
+    session: AsyncSession,
+    posting_ids: list[uuid.UUID],
+    *,
+    area: bool,
+    level: AskedLevel | None,
+    allow_unknown: bool,
+) -> tuple[int, int, int]:
+    """Count the keyword scan's complete match IDs, beyond its ranked pool.
+
+    No second regex scan or posting bodies: word boundaries were already
+    applied. Counts use the ordinary area rule on location/title only and
+    the requested level. Group identical metadata before classifying it.
+    No ranked candidate is added or reordered.
+    """
+    if not posting_ids:
+        return 0, 0, 0
+    query = (
+        select(
+            Posting.title,
+            Posting.location,
+            Posting.company_id,
+            func.count().label("postings"),
+        )
+        .where(Posting.closed_at.is_(None), Posting.id.in_(posting_ids))
+        .group_by(Posting.title, Posting.location, Posting.company_id)
+    )
+    total, outside = 0, 0
+    employers: set[uuid.UUID] = set()
+    remote_outside = get_settings().search_remote_outside_california
+    eligibility: dict[tuple[str | None, str | None], tuple[bool, bool]] = {}
+    for title, location, company_id, number in (await session.execute(query)).all():
+        key = (title, location)
+        if key not in eligibility:
+            inside = (
+                not area
+                or area_exclusion(
+                    location,
+                    title=title,
+                    description=None,
+                    remote_outside_california=remote_outside,
+                )
+                is None
+            )
+            place = standing(title, level) if level is not None else 0
+            eligibility[key] = (inside, inside and (place < 2 or (allow_unknown and place == 2)))
+        inside, kept = eligibility[key]
+        if not inside:
+            outside += number
+        if kept:
+            total += number
+            if company_id is not None:
+                employers.add(company_id)
+    return total, len(employers), outside
+
+
 async def _keyword_ranking(
     session: AsyncSession,
     terms: list[str],
@@ -1929,6 +1994,9 @@ async def retrieve(
     companies, company_words, company_names, not_hiring = await _named_companies(
         session, words, frequencies, question
     )
+    # Company recognition sees the question exactly as before. Only search
+    # subjects lose this framing phrase, never the standalone word "right".
+    question = _FRAMING_PHRASES.sub(" ", question)
     subject_terms = [t for t in tokenize(question) if t not in _FRAMING_WORDS and t not in aside]
     if not (
         asks_about_jobs
@@ -2153,6 +2221,10 @@ async def retrieve(
     only_names_a_company = (
         bool(companies) and not beyond_the_name and not asked_roles and not title_words
     )
+    count_simple = role_pool is None and (
+        only_names_a_company or (not companies and len(terms) == 1)
+    )
+    matching_ids: list[uuid.UUID] | None = None
     # Loading the model blocks for seconds the first time, so off the loop.
     reranker = None if only_names_a_company else await asyncio.to_thread(get_reranker)
     reranked_by: str | None = None
@@ -2175,19 +2247,28 @@ async def retrieve(
                     and (asked_for is None or at_the_level(hit.title, asked_for))
                 )
 
+            ranking = await _keyword_ranking(session, terms, frequencies, companies, limit=None)
+            if count_simple:
+                matching_ids = ranking
             scanned = await _read_until(
                 session,
-                await _keyword_ranking(session, terms, frequencies, companies),
+                ranking,
                 first=pool,
                 counts=counts,
                 want=KEYWORD_POOL,
             )
         elif role_pool is None:
-            scanned = (
-                await _keyword_hits(session, terms, frequencies, companies, pool=pool)
-                if terms
-                else []
-            )
+            if count_simple:
+                matching_ids = await _keyword_ranking(
+                    session, terms, frequencies, companies, limit=None
+                )
+                scanned = await _read_until(session, matching_ids[:pool], first=pool)
+            else:
+                scanned = (
+                    await _keyword_hits(session, terms, frequencies, companies, pool=pool)
+                    if terms
+                    else []
+                )
         else:
             # Among the role's postings only. If none of them says what else
             # was asked, the role alone is the better answer than nothing.
@@ -2493,6 +2574,29 @@ async def retrieve(
         searched = await _reachable(session, list(chunk_vectors), list(vectors))
         unsearchable = max(0, open_total - searched)
 
+    match_total = company_total = None
+    matched_term = None
+    if count_simple:
+        matched_term = None if only_names_a_company else _as_typed(question, terms[0])
+        if only_names_a_company:
+            # A company filter needs no text scan. Also covers a registry
+            # name composed entirely of framing words, with no keyword IDs.
+            matching_ids = list(
+                (
+                    await session.scalars(
+                        select(Posting.id).where(
+                            Posting.closed_at.is_(None), Posting.company_id.in_(companies)
+                        )
+                    )
+                ).all()
+            )
+        match_total, company_total, outside = await _matching_totals(
+            session,
+            matching_ids or [],
+            area=bool(area),
+            level=level,
+            allow_unknown=allow_unknown,
+        )
     statuses = await _application_statuses(session, [hit.posting_id for hit in chosen])
     passages = tuple(
         Passage(
@@ -2526,6 +2630,9 @@ async def retrieve(
         searched=searched,
         unsearchable=unsearchable,
         companies=tuple(sorted(company_names)),
+        match_total=match_total,
+        company_total=company_total,
+        matched_term=matched_term,
         not_hiring=tuple(sorted(not_hiring)),
         area=area,
         area_waived=area is None and get_settings().search_us_only,
