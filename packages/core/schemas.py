@@ -796,7 +796,7 @@ class ChatReply(BaseModel):
     matched_role: str | None = None
     #: Exact total for a role/title, a single distinguishing term, or a
     #: company-only question. Simple-search totals count mentions, not
-    #: requirements; their area check uses listed location/title only.
+    #: requirements; their area check is the search's ordinary rule.
     postings_matched_total: int | None = None
     companies_matched_total: int | None = None
     matched_term: str | None = None

@@ -575,12 +575,7 @@ def _postings_section(
             f"  search area: {found.area}"
             + (
                 f"; {found.outside_area} matching posting"
-                f"{'' if found.outside_area == 1 else 's'} "
-                + (
-                    "outside it by listed location or title (excluded from this count)"
-                    if found.match_total is not None
-                    else "outside it left out"
-                )
+                f"{'' if found.outside_area == 1 else 's'} " + "outside it left out"
                 if found.outside_area
                 else ""
             )
@@ -672,15 +667,10 @@ def _postings_section(
     if found.sponsorship is not None:
         lines += _sponsorship_lines(found.sponsorship)
     if not (found.roles or found.title_words or found.sponsorship):
-        # Exact simple-search totals classify geography from metadata only.
-        # Ranking is unchanged and may also read remote-work prose. Do not
-        # claim its displayed list is a subset of the metadata-only count.
+        # Totals use the same area rule as ranking. The displayed list stays
+        # separate: experimental semantic candidates need not say the term.
         if found.match_total is not None:
-            scope = (
-                "in the search area from their listed location or title"
-                if found.area
-                else "with search-area filtering not applied"
-            )
+            scope = "in the search area" if found.area else "with search-area filtering not applied"
             if found.matched_term is not None:
                 lines.append(
                     f"  counted matches: {found.match_total} postings "
@@ -694,8 +684,6 @@ def _postings_section(
                 )
             lines.append(
                 f"  below: the closest {len(found.passages)} retrieved postings. "
-                "The list is ranked separately and may also establish remote work "
-                "from descriptions. "
                 "Required/preferred evidence covers only these supplied postings; "
                 "do not describe the whole count as requiring a skill."
             )
