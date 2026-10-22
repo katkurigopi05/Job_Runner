@@ -270,6 +270,7 @@ async def test_no_opportunity_makes_no_model_call(posting: str) -> None:
 
 EXPORTS = "Built billing exports in Python for the finance team."
 RANKER = "Shipped an ML ranking service for search."
+PIPELINE = "Built Talend ETL jobs to join order sources."
 LEDGER = "Verified 1,000 ledger rows with pytest checks."
 
 
@@ -294,24 +295,27 @@ async def test_another_projects_tool_does_not_become_an_employers_claim() -> Non
 
 
 async def test_a_bullet_revised_for_one_term_cannot_pick_up_anothers() -> None:
-    """The employer's bullet is revised to write `ML` out. The model also
-    adds the practice a side project is evidence of. That term is off limits
-    to this bullet, whatever else the revision got right."""
+    """The employer's bullet is revised to say what its ETL jobs are: data
+    pipelines. The model also adds the practice a side project is evidence
+    of. That term is off limits to this bullet, whatever else the revision got
+    right. (ETL is an alias of data pipelines, not its abbreviation, so this
+    one is the model's to write; an acronym is written out by code.)"""
     parsed = resume(
-        [RANKER, HANDBOOK],
+        [PIPELINE, HANDBOOK],
         projects=["Ledger Checker — Side Project   [GitHub]", "Python, pytest", LEDGER],
     )
-    posting = "Requirements:\nMachine learning and automated testing.\n"
-    greedy = "Shipped a machine learning (ML) ranking service for search with automated testing."
+    posting = "Requirements:\nData pipelines and automated testing.\n"
+    greedy = "Built Talend ETL data pipelines to join order sources with automated testing."
 
     plan = classify(parsed, posting)
     revision = await revise(Scripted(greedy), parsed, posting)
 
     assert set(plan.targets) == {0}
-    assert [target.term for target in plan.targets[0]] == ["machine learning"]
-    ranker = revision.result.bullets[0]
-    assert ranker.tailored == RANKER and ranker.guard_refused
-    assert ranker.rejected_reason is not None and "'automated testing'" in ranker.rejected_reason
+    assert [target.term for target in plan.targets[0]] == ["data pipelines"]
+    pipeline = revision.result.bullets[0]
+    assert pipeline.tailored == PIPELINE and pipeline.guard_refused
+    assert pipeline.rejected_reason is not None
+    assert "'automated testing'" in pipeline.rejected_reason
 
 
 async def test_a_term_the_resume_states_elsewhere_cannot_be_moved_onto_the_bullet() -> None:
@@ -369,18 +373,23 @@ def test_the_table_goes_one_way() -> None:
 
 
 async def test_a_short_form_is_written_out_in_the_bullet_that_has_it() -> None:
+    """By code, beside the acronym, with no model asked (`test_acronym_expansion.py`)."""
     parsed = resume([RANKER, HANDBOOK])
     posting = "Requirements:\nMachine learning.\n"
-    written_out = "Shipped a machine learning (ML) ranking service for search."
+    provider = Scripted("Shipped a machine learning (ML) ranking service for search.")
 
     plan = classify(parsed, posting)
     term = by_term(plan)["machine learning"]
-    revision = await revise(Scripted(written_out), parsed, posting)
+    revision = await revise(provider, parsed, posting)
 
     assert term.status is Status.SYNONYM and term.via == "ml" and term.bullet == 0
     assert plan.targets == {0: (Target(term="machine learning", evidence="ML"),)}
-    assert revision.result.bullets[0].tailored == written_out
+    assert (
+        revision.result.bullets[0].tailored
+        == "Shipped an ML (machine learning) ranking service for search."
+    )
     assert revision.gained == ("machine learning",)
+    assert provider.calls == [] and revision.calls == 0
 
 
 def test_writing_a_short_form_out_takes_nothing_away() -> None:

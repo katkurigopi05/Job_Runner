@@ -54,6 +54,7 @@ PDF that comes out.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -241,6 +242,58 @@ def _as_written(form: str, bullet: str) -> str:
         if normalize(raw) == form or singular(normalize(raw)) == form:
             return str(raw).strip(".,;:")
     return form
+
+
+#: An acronym as a bullet writes it: capitals, with a plural "s" ("APIs").
+_ACRONYM = re.compile(r"[A-Z]{2,6}s?")
+
+
+def _abbreviates(acronym: str, term: str) -> bool:
+    """Whether `acronym`'s letters begin `term`'s words, in order (`UI`, user interface)."""
+    letters = acronym.removesuffix("s")
+    words = term.replace("-", " ").split()
+    return len(words) == len(letters) and all(
+        word[0].lower() == letter.lower() for word, letter in zip(words, letters, strict=True)
+    )
+
+
+def _in_number_of(acronym: str, term: str) -> str:
+    """`term` singular when the bullet's acronym is: "an LLM" is one model."""
+    if acronym.endswith("s"):
+        return term
+    *head, last = term.split()
+    return " ".join([*head, singular(last)])
+
+
+def expand_acronyms(bullet: str, targets: Sequence[Target]) -> str | None:
+    """`bullet` with each target written out beside its acronym, or None.
+
+    A target qualifies when its evidence is an acronym this bullet uses and
+    the acronym's letters begin the term's words: `Streamlit UI` becomes
+    `Streamlit UI (user interface)`. The bullet already states that fact;
+    this only spells it, so no model is needed, and a small local one asked
+    to do it added words a targeted revision may not (2026-10-21).
+
+    All or nothing, so a bullet is never half written by code and half by a
+    model. None for an alias that is not an abbreviation ("ETL" for "data
+    pipelines"), an acronym inside another word ("GUI"), one already followed
+    by brackets, or a practice. The caller still holds the result to `judge`.
+    """
+    candidate = bullet
+    for target in targets:
+        acronym = target.evidence
+        if (
+            target.practice
+            or not _ACRONYM.fullmatch(acronym)
+            or not _abbreviates(acronym, target.term)
+        ):
+            return None
+        found = re.search(rf"(?<![\w-]){re.escape(acronym)}(?![\w-])(?!\s*\()", candidate)
+        if found is None:
+            return None
+        spelled = f" ({_in_number_of(acronym, target.term)})"
+        candidate = candidate[: found.end()] + spelled + candidate[found.end() :]
+    return candidate
 
 
 def classify(
@@ -555,6 +608,30 @@ async def _revise_bullet(
     )
 
 
+def _spelled_out(
+    index: int,
+    bullet: str,
+    targets: tuple[Target, ...],
+    corpus: SourceCorpus,
+    off_limits: tuple[str, ...],
+) -> tuple[BulletRewrite, Outcome] | None:
+    """The bullet with its acronyms written out, if `judge` keeps it. No model call.
+
+    None sends the bullet to the model as before: nothing to expand, or an
+    expansion the guard would refuse from a model too.
+    """
+    candidate = expand_acronyms(bullet, targets)
+    if candidate is None:
+        return None
+    added, _, _, checked = judge(bullet, candidate, targets, corpus, off_limits)
+    if set(added) != {target.term for target in targets}:
+        return None
+    return (
+        BulletRewrite(original=bullet, tailored=candidate, changed=True, entities_checked=checked),
+        Outcome(index, targets, added, attempts=0),
+    )
+
+
 async def revise(
     provider: LLMProvider,
     parsed: ParsedResume,
@@ -580,9 +657,13 @@ async def revise(
             continue
         asked = {target.term for target in targets}
         off_limits = tuple(term.term for term in plan.terms if term.term not in asked)
-        rewrite, outcome = await _revise_bullet(
-            provider, index, bullet, targets, corpus, off_limits
-        )
+        spelled = _spelled_out(index, bullet, targets, corpus, off_limits)
+        if spelled is not None:
+            rewrite, outcome = spelled
+        else:
+            rewrite, outcome = await _revise_bullet(
+                provider, index, bullet, targets, corpus, off_limits
+            )
         rewrites.append(rewrite)
         outcomes.append(outcome)
 
@@ -611,6 +692,7 @@ __all__ = [
     "Term",
     "brought_in",
     "classify",
+    "expand_acronyms",
     "judge",
     "posting_terms",
     "revise",

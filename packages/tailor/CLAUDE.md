@@ -592,3 +592,28 @@ wording-only controls. Measured against the private ten-résumé evaluation's
 drops, and no refusal of the other 62. Private measurements remain in
 gitignored storage. `cache.TAILORING_REVISION` changes for both modes so old
 cached outputs must pass a fresh tailoring run.
+
+## An acronym is written out by code (2026-10-21)
+
+Targeted mode was run on the ten frozen postings and found three terms the
+résumé backs under another spelling. The local model was given all three and
+produced one usable answer: twice it added "supporting", which a targeted
+revision may not, and once it wrote "and large language models (LLM)
+marketing strategist". Two of the three were plain acronyms.
+
+`targeted.expand_acronyms` now writes those itself, before any model is asked:
+when every target of a bullet is an acronym the bullet uses and its letters
+begin the term's words, `Streamlit UI` becomes `Streamlit UI (user
+interface)`, singular when the acronym is ("an LLM (large language model)").
+The result goes through `judge` exactly as a model's revision does, and a
+bullet it cannot fully write, or that `judge` would refuse, goes to the model
+as before. "ETL" for "data pipelines" is an alias, not an abbreviation, so it
+stays the model's. `Revision.calls` counts only real calls, so a bullet
+written this way reads as no model's work. `calls_needed` is still an upper
+bound.
+
+On the frozen postings with no model available, posting 10 gains its required
+"user interface" and posting 04 gains "large language model", both read back
+from the rendered two-page PDFs. `TAILORING_REVISION` is unchanged: a cached
+targeted result from before is still one the guard accepted, only without the
+expansion. `tests/test_acronym_expansion.py`.
