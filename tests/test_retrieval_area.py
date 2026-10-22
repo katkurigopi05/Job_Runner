@@ -165,7 +165,7 @@ async def test_a_company_hiring_only_abroad_says_so(
     answered = await client.post("/chat", json={"message": "jobs at Faculty"})
 
     assert answered.status_code == 200
-    assert "1 matching posting outside it left out" in seen["user"]
+    assert "1 matching posting outside it by listed location or title" in seen["user"]
     assert "no open postings at Faculty in the search area" in seen["user"]
 
 

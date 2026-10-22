@@ -264,4 +264,6 @@ def test_the_dock_counts_the_related_apart() -> None:
     ).read_text()
 
     assert "body.postings_related_total" in dock
-    assert "related without it" in dock
+    assert "countedMatches(turn)" in dock
+    labels = (Path(__file__).resolve().parents[1] / "apps/web/src/lib/chat-counts.ts").read_text()
+    assert "related without it" in labels

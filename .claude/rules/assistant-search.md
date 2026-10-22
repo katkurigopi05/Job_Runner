@@ -843,3 +843,25 @@ company. `make eval-retrieval` is identical before and after on the same
 corpus. Still open: "Bay Area" is not read as a place, so the 71 are the
 area's data engineers rather than the Bay Area's; and a shortened name over
 10% ("Scale" for Scale AI) is still not a name. `tests/test_retrieval_names.py`.
+
+## Counts for a simple search (2026-10-21)
+
+One distinguishing term, or an employer with no extra search subject, now
+gets an exact count beyond the ranked pool. The keyword ranking is explicitly
+read with `limit=None`; its displayed head and order stay unchanged. Totals
+load only grouped title/location/company metadata, apply `area_exclusion`
+with no description and the requested level, and count companies by id.
+Company-only totals read all open ids at the named employers, without a text
+scan. Other searches retain the unknown-total wording.
+
+`Retrieval.match_total`, `company_total` and `matched_term` reach both the
+context and reply/dock. These are mentions, never a claim that every matching
+posting requires a skill. The context separates the metadata-only count
+from the unchanged ranked list, which may also establish remote work from
+description prose. No model counts postings or companies.
+
+Only the two-word phrase **right now** is framing, after company recognition;
+standalone **right** remains searchable, including **right to work**. Company
+name recognition is unchanged. `tests/test_retrieval_totals.py` covers the
+full set beyond 120 rows, projection without bodies, metadata-only geography,
+scope, phrase framing, and the existing unknown-total cases.

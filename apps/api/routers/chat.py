@@ -575,7 +575,12 @@ def _postings_section(
             f"  search area: {found.area}"
             + (
                 f"; {found.outside_area} matching posting"
-                f"{'' if found.outside_area == 1 else 's'} outside it left out"
+                f"{'' if found.outside_area == 1 else 's'} "
+                + (
+                    "outside it by listed location or title (excluded from this count)"
+                    if found.match_total is not None
+                    else "outside it left out"
+                )
                 if found.outside_area
                 else ""
             )
@@ -666,14 +671,40 @@ def _postings_section(
         lines += _level_lines(found.level)
     if found.sponsorship is not None:
         lines += _sponsorship_lines(found.sponsorship)
-    if found.passages and not (found.roles or found.title_words or found.sponsorship):
-        # A role or a title search states its total above. Any other search
-        # has none to state: the pool it ranks is cut off, so "the 5 below"
-        # must not become "5 postings" in the answer.
-        lines.append(
-            f"  below: the closest {len(found.passages)} of those found. More may match, "
-            "and how many do is not known: give no total."
-        )
+    if not (found.roles or found.title_words or found.sponsorship):
+        # Exact simple-search totals classify geography from metadata only.
+        # Ranking is unchanged and may also read remote-work prose. Do not
+        # claim its displayed list is a subset of the metadata-only count.
+        if found.match_total is not None:
+            scope = (
+                "in the search area from their listed location or title"
+                if found.area
+                else "with search-area filtering not applied"
+            )
+            if found.matched_term is not None:
+                lines.append(
+                    f"  counted matches: {found.match_total} postings "
+                    f"at {found.company_total} companies that say {_one_line(found.matched_term)} "
+                    f"{scope}. These count mentions, not requirements."
+                )
+            else:
+                employers = ", ".join(map(_one_line, found.companies))
+                lines.append(
+                    f"  counted matches: {employers}'s {found.match_total} open postings {scope}."
+                )
+            lines.append(
+                f"  below: the closest {len(found.passages)} retrieved postings. "
+                "The list is ranked separately and may also establish remote work "
+                "from descriptions. "
+                "Required/preferred evidence covers only these supplied postings; "
+                "do not describe the whole count as requiring a skill."
+            )
+        elif found.passages:
+            # Other searches still have a capped pool, never a known total.
+            lines.append(
+                f"  below: the closest {len(found.passages)} of those found. More may match, "
+                "and how many do is not known: give no total."
+            )
     if gaps is not None and gaps.across:
         lines.append(gaps.across)
     for passage in found.passages:
@@ -988,8 +1019,15 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
         ],
         matched_role=" or ".join(found.roles) or None,
         postings_matched_total=(
-            found.role_total if found.role_total is not None else found.title_total
+            found.role_total
+            if found.role_total is not None
+            else found.title_total
+            if found.title_total is not None
+            else found.match_total
         ),
+        companies_matched_total=found.company_total,
+        matched_term=found.matched_term,
+        matched_companies=list(found.companies) if found.match_total is not None else [],
         matched_title_words=list(found.title_words),
         postings_related_total=found.related_total,
         matched_role_filter=found.role_keys[0] if len(found.role_keys) == 1 else None,

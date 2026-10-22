@@ -206,7 +206,9 @@ def test_the_dock_reads_the_title_words() -> None:
     ).read_text()
 
     assert "body.matched_title_words" in dock
-    assert "in the title" in dock
+    assert "countedMatches(turn)" in dock
+    labels = (Path(__file__).resolve().parents[1] / "apps/web/src/lib/chat-counts.ts").read_text()
+    assert "in the title" in labels
 
 
 # --- the headings themselves -------------------------------------------------------

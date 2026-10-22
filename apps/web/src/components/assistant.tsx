@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { countedMatches } from "@/lib/chat-counts";
 import { useEffect, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 
@@ -64,6 +65,9 @@ interface Turn {
   /** The kind of job the question named, and how many open postings are one. */
   matchedRole?: string | null;
   matchedTotal?: number | null;
+  matchedTerm?: string | null;
+  matchedCompanies?: string[];
+  companiesTotal?: number | null;
   /** The feed's role filter value for that kind, when there is exactly one. */
   matchedRoleFilter?: string | null;
   /** That role's kinds of title with their counts, the one that was typed first. */
@@ -139,20 +143,10 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
   const kinds = turn.kinds ?? [];
   const related = turn.relatedRoles ?? [];
   const [visible, setVisible] = useState(MORE_PAGE);
-  if (more.length === 0 && kinds.length === 0) return null;
+  if (more.length === 0 && kinds.length === 0 && !turn.matchedTerm && !turn.matchedCompanies?.length) return null;
 
   const total = turn.matchedTotal ?? null;
-  const titleWords = turn.titleWords ?? [];
-  const relatedNote = turn.relatedTotal ? `, then ${turn.relatedTotal} related without it` : "";
-  // What was counted: a role from the table, or the titles holding a word.
-  const counted =
-    total === null
-      ? null
-      : turn.matchedRole
-        ? `${total} open ${turn.matchedRole} posting${total === 1 ? "" : "s"} in your search area`
-        : titleWords.length > 0
-          ? `${total} open posting${total === 1 ? "" : "s"} with ${titleWords.join(" and ")} in the title, in your search area${relatedNote}`
-          : null;
+  const counted = countedMatches(turn);
   const remaining = more.length - Math.min(visible, more.length);
   // The reply carries a bounded list. Past it, the feed has the whole one.
   const beyondTheList = total !== null ? total + (turn.relatedTotal ?? 0) - shownAbove - more.length : 0;
@@ -394,6 +388,9 @@ interface Reply {
   more_sources?: Source[];
   matched_role?: string | null;
   postings_matched_total?: number | null;
+  matched_term?: string | null;
+  matched_companies?: string[];
+  companies_matched_total?: number | null;
   matched_role_filter?: string | null;
   matched_kinds?: Kind[];
   related_roles?: RelatedRole[];
@@ -417,6 +414,9 @@ function turnFrom(body: Reply): Turn {
     more: body.more_sources,
     matchedRole: body.matched_role,
     matchedTotal: body.postings_matched_total,
+    matchedTerm: body.matched_term,
+    matchedCompanies: body.matched_companies,
+    companiesTotal: body.companies_matched_total,
     matchedRoleFilter: body.matched_role_filter,
     kinds: body.matched_kinds,
     relatedRoles: body.related_roles,
