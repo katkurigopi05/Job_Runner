@@ -112,6 +112,7 @@ from packages.matching.level import (
 )
 from packages.matching.locality import Locality, area_exclusion, locality_of, reads_as_remote
 from packages.matching.rerank import Reranker, fuse, get_reranker, reorder
+from packages.matching.retrieval_trace import stage, traced
 from packages.matching.roles import (
     alias_label,
     canonical,
@@ -1261,6 +1262,7 @@ def _metadata_area_exclusion(
     )
 
 
+@stage("metadata_totals")
 async def _matching_totals(
     session: AsyncSession,
     posting_ids: list[uuid.UUID],
@@ -1331,6 +1333,7 @@ async def _matching_totals(
     return total, len(employers), outside
 
 
+@stage("keyword")
 async def _keyword_ranking(
     session: AsyncSession,
     terms: list[str],
@@ -1408,6 +1411,7 @@ def _space_filter(model: str, revision: int | None) -> list[ColumnElement[bool]]
     ]
 
 
+@stage("dense")
 async def _nearest(
     session: AsyncSession,
     space: tuple[str, int | None],
@@ -1454,6 +1458,7 @@ async def _nearest(
         window *= _WIDEN_BY
 
 
+@stage("dense")
 async def _order_in_space(
     session: AsyncSession,
     space: tuple[str, int | None],
@@ -1479,6 +1484,7 @@ def _chunk_filter(model: str) -> list[ColumnElement[bool]]:
     ]
 
 
+@stage("chunks")
 async def _best_chunks(
     session: AsyncSession,
     model: str,
@@ -1500,6 +1506,7 @@ async def _best_chunks(
     return best
 
 
+@stage("chunks")
 async def _chunk_ranking(
     session: AsyncSession,
     model: str,
@@ -1541,6 +1548,7 @@ async def _chunk_ranking(
 _WIDEN_BY = 4
 
 
+@stage("chunks")
 async def _nearest_kept(
     session: AsyncSession,
     model: str,
@@ -1596,6 +1604,7 @@ async def _nearest_kept(
         window *= _WIDEN_BY
 
 
+@stage("hydrate")
 async def _hits_for(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, _Hit]:
     rows = await session.execute(
         select(
@@ -1653,6 +1662,7 @@ def _rerank_text(hit: _Hit, span: tuple[int, int] | None, *, named: bool = False
     return f"{heading}\n{text}" if heading else text
 
 
+@stage("semantic")
 async def _nearest_unfound(
     session: AsyncSession,
     chunk_vectors: dict[str, list[float]],
@@ -1698,6 +1708,7 @@ async def _nearest_unfound(
     return kept, {hit.posting_id: spans[hit.posting_id] for hit in kept}
 
 
+@stage("rerank")
 async def _reranked(
     reranker: Reranker | None,
     question: str,
@@ -1770,6 +1781,7 @@ def _fuse(keyword: list[uuid.UUID], by_space: list[list[uuid.UUID]]) -> dict[uui
     }
 
 
+@stage("semantic")
 async def _semantic_candidates(
     session: AsyncSession,
     chunk_vectors: dict[str, list[float]],
@@ -1989,6 +2001,7 @@ async def _stating_sponsorship(
     )
 
 
+@traced
 async def retrieve(
     session: AsyncSession, question: str, *, limit: int = DEFAULT_LIMIT
 ) -> Retrieval:
