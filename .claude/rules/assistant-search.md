@@ -849,8 +849,8 @@ area's data engineers rather than the Bay Area's; and a shortened name over
 One distinguishing term, or an employer with no extra search subject, now
 gets an exact count beyond the ranked pool. The keyword ranking is explicitly
 read with `limit=None`; its displayed head and order stay unchanged. Totals
-load grouped title/location/company metadata first. Only groups excluded as
-on-site outside California need descriptions rechecked per posting: remote
+load title/location/company metadata first. Only postings excluded as
+on-site outside California need descriptions rechecked: remote
 prose can admit them under the ordinary `area_exclusion` rule. The totals
 apply the same area/level predicates as ranking and count companies by id.
 Company-only totals read all open ids at the named employers, without a text
@@ -861,6 +861,10 @@ context and reply/dock. These are mentions, never a claim that every matching
 posting requires a skill. The unchanged ranked list is shown separately;
 experimental semantic candidates need not say the counted term. No model
 counts postings or companies.
+
+Geography and metadata verdict caches are bounded. The remote-prose cache
+keeps only SHA-256 digests and booleans, not descriptions; edits get a fresh
+classification. An on-site marker is checked before scanning body prose.
 
 Only the two-word phrase **right now** is framing, after company recognition;
 standalone **right** remains searchable, including **right to work**. Company

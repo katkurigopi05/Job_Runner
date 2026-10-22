@@ -39,8 +39,10 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections import OrderedDict
 from enum import StrEnum
 from functools import lru_cache
+from hashlib import sha256
 
 
 class Locality(StrEnum):
@@ -128,6 +130,24 @@ _REMOTE_PROSE_RE = re.compile(
     re.I,
 )
 
+# Only digests and verdicts survive a call: descriptions can be large, and
+# a changed body must be classified again even if its posting id is the same.
+_REMOTE_PROSE_CACHE: OrderedDict[bytes, bool] = OrderedDict()
+
+
+def _prose_reads_as_remote(description: str) -> bool:
+    if not description:
+        return False
+    key = sha256(description.encode("utf-8", errors="surrogatepass")).digest()
+    try:
+        remote = _REMOTE_PROSE_CACHE.pop(key)
+    except KeyError:
+        remote = bool(_REMOTE_PROSE_RE.search(description))
+    _REMOTE_PROSE_CACHE[key] = remote
+    if len(_REMOTE_PROSE_CACHE) > 4096:
+        _REMOTE_PROSE_CACHE.popitem(last=False)
+    return remote
+
 
 def reads_as_remote(
     *, title: str | None, location: str | None, description: str | None = None
@@ -147,9 +167,7 @@ def reads_as_remote(
     haystack = f"{title or ''} {location or ''}"
     if _REMOTE_RE.search(haystack):
         return True
-    return not _ONSITE_MARKER_RE.search(haystack) and bool(
-        _REMOTE_PROSE_RE.search(description or "")
-    )
+    return not _ONSITE_MARKER_RE.search(haystack) and _prose_reads_as_remote(description or "")
 
 
 def names_no_place(location: str | None) -> bool:

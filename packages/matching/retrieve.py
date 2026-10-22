@@ -1249,6 +1249,18 @@ async def _read_until(
     return read
 
 
+@lru_cache(maxsize=4096)
+def _metadata_area_exclusion(
+    title: str | None, location: str | None, remote_outside: bool
+) -> str | None:
+    return area_exclusion(
+        location,
+        title=title,
+        description=None,
+        remote_outside_california=remote_outside,
+    )
+
+
 async def _matching_totals(
     session: AsyncSession,
     posting_ids: list[uuid.UUID],
@@ -1260,51 +1272,37 @@ async def _matching_totals(
     """Count the keyword scan's complete match IDs, beyond its ranked pool.
 
     No second regex scan: word boundaries were already applied. Classify
-    grouped metadata first, then fetch descriptions only for on-site
+    metadata first, then fetch descriptions only for on-site
     exclusions outside California, the only verdict prose can change.
     Counts use the search's own area and level rules, without reordering it.
     """
     if not posting_ids:
         return 0, 0, 0
-    query = (
-        select(
-            Posting.title,
-            Posting.location,
-            Posting.company_id,
-            func.count().label("postings"),
-            func.array_agg(Posting.id).label("ids"),
-        )
-        .where(Posting.closed_at.is_(None), Posting.id.in_(posting_ids))
-        .group_by(Posting.title, Posting.location, Posting.company_id)
-    )
+    query = select(
+        Posting.id,
+        Posting.title,
+        Posting.location,
+        Posting.company_id,
+    ).where(Posting.closed_at.is_(None), Posting.id.in_(posting_ids))
     total, outside = 0, 0
     employers: set[uuid.UUID] = set()
     remote_outside = get_settings().search_remote_outside_california
     eligibility: dict[tuple[str | None, str | None], tuple[str | None, bool]] = {}
     recheck: dict[uuid.UUID, tuple[str | None, str | None, uuid.UUID | None, bool]] = {}
-    for title, location, company_id, number, ids in (await session.execute(query)).all():
+    for ident, title, location, company_id in (await session.execute(query)).all():
         key = (title, location)
         if key not in eligibility:
-            reason = (
-                area_exclusion(
-                    location,
-                    title=title,
-                    description=None,
-                    remote_outside_california=remote_outside,
-                )
-                if area
-                else None
-            )
+            reason = _metadata_area_exclusion(title, location, remote_outside) if area else None
             place = standing(title, level) if level is not None else 0
             eligibility[key] = (reason, place < 2 or (allow_unknown and place == 2))
         reason, at_level = eligibility[key]
         if reason is not None and reason.endswith(" is on-site outside California"):
-            recheck.update({ident: (title, location, company_id, at_level) for ident in ids})
+            recheck[ident] = (title, location, company_id, at_level)
             continue
         if reason is not None:
-            outside += number
+            outside += 1
         elif at_level:
-            total += number
+            total += 1
             if company_id is not None:
                 employers.add(company_id)
     if recheck:
