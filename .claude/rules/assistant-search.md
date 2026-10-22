@@ -810,3 +810,36 @@ the title that were not in the pool when it was graded, so they score as
 misses: MRR 0.532 to 0.488 and nDCG@8 0.446 to 0.428 for the shipped mode,
 P@5 and R@5 unchanged. They need grading before the numbers mean more.
 
+
+## A name tokenizing cuts down, and a shortened name (2026-10-21)
+
+Asking the assistant real questions on 2026-10-21 found two company-name
+misreadings, both in `retrieve._named_companies`:
+
+- "Show me data engineer jobs in the bay area" answered 0. Tokenizing turns
+  "At-Bay" into `bay` ("at" is a stopword), so the question was about At-Bay,
+  which has no data engineers; without the place it finds 71. A hyphenated
+  name that tokenizing cuts a piece off (`_loses_a_piece`: At-Bay, T-robotics,
+  C-Zero, n-Join and four more on the registry) now names its company only as
+  written: with its hyphen in any case, or spaced as the registry capitalizes
+  it ("At Bay"), so "keep cloud costs at bay" is not about At-Bay.
+- "What jobs does Snowflake have open?" listed Fivetran, GitLab and Iterable
+  postings as Snowflake's. "Snowflake" did not name Snowflake Computing (157
+  open): "computing" is not a suffix, and the word is in 3.3% of postings,
+  over the 2% a shortened name needs. Adding "computing" everywhere would
+  make "normal" name Normal Computing, and lifting the 2% would make "jobs
+  that use Snowflake" a question about the employer, though Snowflake is on
+  the owner's résumé. So a one-word shortened name up to 10% of postings
+  (`_framed_alias`) counts only where the question asks about an employer
+  (`_EMPLOYER_FRAMES`: "at X", "X's", "does X have", "X hiring", "X jobs")
+  and the company has postings open.
+
+Over all 208 saved questions (both benchmark sets and the judged set) plus
+the day's, six readings changed, each the intended one: the two above, "Grafana
+jobs" and "Nasdaq jobs" now name their employers, "T-robotics roles" names
+T-robotics, and "keep cloud costs at bay" names no one. "Postings that
+require Snowflake experience" and "jobs that use Grafana" still name no
+company. `make eval-retrieval` is identical before and after on the same
+corpus. Still open: "Bay Area" is not read as a place, so the 71 are the
+area's data engineers rather than the Bay Area's; and a shortened name over
+10% ("Scale" for Scale AI) is still not a name. `tests/test_retrieval_names.py`.

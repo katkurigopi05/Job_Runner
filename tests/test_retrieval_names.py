@@ -452,3 +452,77 @@ def test_the_end_of_what_was_said_is_read_as_the_regex_read_it(tail: str) -> Non
 
     was = re.match(r"\s*(?:[?.!,;:]|$)", tail) is not None
     assert _nothing_follows("at fast" + tail, len("at fast")) is was, tail
+
+
+# --- a name tokenizing cuts down, and a shortened name ---------------------------
+#
+# Asking the assistant real questions on 2026-10-21: "data engineer jobs in the
+# bay area" answered 0, because tokenizing turns "At-Bay" into `bay` and the
+# question was read as being about At-Bay, which has no data engineers (71
+# without "in the bay area"). "What jobs does Snowflake have open?" listed
+# Fivetran, GitLab and Iterable jobs as Snowflake's: "Snowflake" did not name
+# Snowflake Computing (157 open), so postings mentioning the product answered.
+
+
+async def test_a_hyphenated_name_is_not_one_of_its_pieces(db_session) -> None:
+    at_bay = await _company(db_session, "At-Bay")
+    acme = await _company(db_session, "Acme")
+    ours = await _posting(db_session, at_bay, "Security Engineer")
+    await _posting(db_session, acme, "Data Engineer", "Data pipelines in the Bay Area.")
+
+    for question in ("data engineer jobs in the bay area", "keep cloud costs at bay"):
+        assert (await retrieve(db_session, question)).companies == (), question
+
+    for question in ("jobs at At-Bay", "roles at at-bay", "anything open at At Bay?"):
+        found = await retrieve(db_session, question)
+        assert found.companies == ("At-Bay",), question
+        assert [p.posting_id for p in found.passages] == [ours.id], question
+
+
+async def test_a_shortened_name_counts_where_the_question_asks_about_the_employer(
+    db_session,
+) -> None:
+    await _stats(db_session, snowflake=6)
+    snowflake = await _company(db_session, "Snowflake Computing")
+    fivetran = await _company(db_session, "Fivetran")
+    ours = [
+        await _posting(db_session, snowflake, "Staff Software Engineer"),
+        await _posting(db_session, snowflake, "Solutions Engineer"),
+    ]
+    tool = await _posting(
+        db_session, fivetran, "Partner Solutions Architect", "Experience with Snowflake."
+    )
+
+    # "right now" is left off: in a test corpus that has never seen the words
+    # they read as rare, and are searched for. The owner's corpus does not.
+    for question in (
+        "What jobs does Snowflake have open?",
+        "jobs at Snowflake",
+        "Snowflake jobs",
+        "is snowflake hiring?",
+    ):
+        found = await retrieve(db_session, question)
+        assert found.companies == ("Snowflake Computing",), question
+        assert {p.posting_id for p in found.passages} == {p.id for p in ours}, question
+
+    # Asked as a skill, it is still the product: Snowflake is on the owner's résumé.
+    found = await retrieve(db_session, "postings that require Snowflake experience")
+    assert found.companies == ()
+    assert tool.id in {p.posting_id for p in found.passages}
+
+
+async def test_an_ordinary_word_left_by_a_shortened_name_needs_the_framing(db_session) -> None:
+    """ "computing" is not dropped everywhere: "normal" would name Normal Computing."""
+    await _stats(db_session, normal=1)
+    normal = await _company(db_session, "Normal Computing")
+    await _posting(db_session, normal, "Research Scientist")
+
+    assert (await retrieve(db_session, "roles with normal working hours")).companies == ()
+
+
+async def test_a_shortened_name_with_nothing_open_is_not_an_employer(db_session) -> None:
+    await _stats(db_session, snowflake=6)
+    await _company(db_session, "Snowflake Computing")
+
+    found = await retrieve(db_session, "What jobs does Snowflake have open right now?")
+    assert found.companies == ()
