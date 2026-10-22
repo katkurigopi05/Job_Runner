@@ -280,6 +280,44 @@ def test_prose_remote_counts_but_an_on_site_marker_overrides_it() -> None:
     )
 
 
+def test_on_site_marker_avoids_scanning_irrelevant_body(monkeypatch) -> None:
+    from packages.matching import locality
+
+    class UnreadBody:
+        def search(self, _text):
+            pytest.fail("an on-site title already rules out remote prose")
+
+    monkeypatch.setattr(locality, "_REMOTE_PROSE_RE", UnreadBody())
+    assert not reads_as_remote(
+        title="Backend Engineer (Hybrid)",
+        location="Austin, TX",
+        description="A long description that cannot change the verdict.",
+    )
+
+
+def test_unchanged_remote_prose_is_scanned_once_but_edits_are_rechecked(monkeypatch) -> None:
+    from collections import OrderedDict
+
+    from packages.matching import locality
+
+    pattern = locality._REMOTE_PROSE_RE
+    scanned = []
+
+    class CountScans:
+        def search(self, text):
+            scanned.append(text)
+            return pattern.search(text)
+
+    monkeypatch.setattr(locality, "_REMOTE_PROSE_RE", CountScans())
+    monkeypatch.setattr(locality, "_REMOTE_PROSE_CACHE", OrderedDict(), raising=False)
+    description = "This position offers remote work."
+    for location in ("Austin, TX", "Chicago, IL", "Seattle, WA"):
+        assert reads_as_remote(title="Engineer", location=location, description=description)
+    edited = "This position requires office work."
+    assert not reads_as_remote(title="Engineer", location="Austin, TX", description=edited)
+    assert scanned == [description, edited]
+
+
 # --------------------------------------------------------------------------
 # The search area
 # --------------------------------------------------------------------------
