@@ -21,10 +21,10 @@ export function countedMatches(turn: MatchCounts): string | null {
     return `${total} open posting${plural} with ${turn.titleWords.join(" and ")} in the title, in your search area${related}`;
   }
   if (turn.matchedTerm) {
-    return `${total} open posting${plural} at ${turn.companiesTotal ?? 0} companies mentioning ${turn.matchedTerm}; geography uses listed location or title; mentions do not necessarily mean required skills`;
+    return `${total} open posting${plural} at ${turn.companiesTotal ?? 0} companies mentioning ${turn.matchedTerm} in your search area; mentions do not necessarily mean required skills`;
   }
   if (turn.matchedCompanies?.length) {
-    return `${total} open posting${plural} at ${turn.matchedCompanies.join(" or ")}; geography uses listed location or title`;
+    return `${total} open posting${plural} at ${turn.matchedCompanies.join(" or ")} in your search area`;
   }
   return null;
 }

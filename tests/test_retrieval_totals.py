@@ -70,12 +70,19 @@ async def test_total_is_not_capped_by_the_ranked_pool(db_session, monkeypatch, a
     assert len(found.more) == 25
 
 
-async def test_totals_query_reads_only_location_title_and_ids(db_session, monkeypatch):
+async def test_totals_read_bodies_only_for_on_site_out_of_state_matches(db_session, monkeypatch):
+    from sqlalchemy import select
+
+    from packages.core.models import Posting
     from packages.matching import retrieve as module
 
     await _corpus(db_session)
+    expected = set(
+        (await db_session.scalars(select(Posting.id).where(Posting.location == "Austin, TX"))).all()
+    )
     original = module._matching_totals
     seen = []
+    body_ids = []
 
     async def count(*args, **kwargs):
         execute = db_session.execute
@@ -83,8 +90,15 @@ async def test_totals_query_reads_only_location_title_and_ids(db_session, monkey
         async def metadata_only(statement, *values, **options):
             columns = {column.name for column in statement.selected_columns}
             seen.append(columns)
-            assert "description_raw" not in columns, "totals must not load posting bodies"
             assert "url" not in columns
+            if "description_raw" in columns:
+                params = statement.compile().params
+                body_ids.extend(
+                    value
+                    for values in params.values()
+                    if isinstance(values, list)
+                    for value in values
+                )
             return await execute(statement, *values, **options)
 
         with monkeypatch.context() as patch:
@@ -95,9 +109,10 @@ async def test_totals_query_reads_only_location_title_and_ids(db_session, monkey
     found = await retrieve(db_session, "jobs using Kafka")
     assert found.match_total == 7
     assert seen
+    assert set(body_ids) == expected
 
 
-async def test_total_area_uses_location_and_title_not_remote_body_prose(db_session):
+async def test_remote_body_keeps_an_out_of_state_posting_in_the_total(db_session):
     company = await _company(db_session, "Acme")
     p = await _posting(
         db_session,
@@ -108,13 +123,41 @@ async def test_total_area_uses_location_and_title_not_remote_body_prose(db_sessi
     p.location = "Austin, TX"
     await db_session.flush()
     found = await retrieve(db_session, "jobs using Kafka")
+    assert found.match_total == 1
+    assert found.outside_area == 0
+
+
+async def test_same_metadata_can_have_different_remote_body_verdicts(db_session):
+    company = await _company(db_session, "Acme")
+    for description in (
+        "Kafka. This is a fully remote position; work from anywhere in the United States.",
+        "Kafka. Work in our office every weekday.",
+    ):
+        p = await _posting(db_session, company, "Platform Specialist", description)
+        p.location = "Austin, TX"
+    await db_session.flush()
+    found = await retrieve(db_session, "jobs using Kafka")
+    assert found.match_total == 1
+    assert found.company_total == 1
+    assert found.outside_area == 1
+
+
+async def test_remote_body_does_not_override_an_explicit_on_site_title(db_session):
+    company = await _company(db_session, "Acme")
+    p = await _posting(
+        db_session,
+        company,
+        "Platform Specialist (On-site)",
+        "Kafka. This is a fully remote position; work from anywhere in the United States.",
+    )
+    p.location = "Austin, TX"
+    await db_session.flush()
+    found = await retrieve(db_session, "jobs using Kafka")
     assert found.match_total == 0
     assert found.outside_area == 1
 
 
-async def test_count_scope_does_not_claim_every_retrieved_posting_was_counted(
-    client, worker_session, monkeypatch
-):
+async def test_remote_body_count_agrees_with_ranked_sources(client, worker_session, monkeypatch):
     company = await _company(worker_session, "Acme")
     p = await _posting(
         worker_session,
@@ -125,11 +168,11 @@ async def test_count_scope_does_not_claim_every_retrieved_posting_was_counted(
     p.location = "Austin, TX"
     await worker_session.commit()
     body, seen = await _ask(client, monkeypatch, "jobs using Kafka")
-    assert len(body["sources"]) == 1  # The existing ranking still reads remote prose.
-    assert body["postings_matched_total"] == 0  # New totals use only location/title.
+    assert len(body["sources"]) == 1
+    assert body["postings_matched_total"] == 1
     assert "closest 1 of 0" not in seen["user"]
     assert "outside it left out" not in seen["user"]
-    assert "listed location or title" in seen["user"]
+    assert "1 postings at 1 companies" in seen["user"]
 
 
 async def test_company_only_counts_in_area_open_postings(db_session):
