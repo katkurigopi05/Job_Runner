@@ -312,6 +312,24 @@ _SHORT_NAME_MAX_SHARE = 0.02
 #: "change", "matter", "based" at 18% and up.
 _MENTIONED_NAME_MAX_SHARE = 0.10
 
+#: What else a shortened name may drop, but only where the question asks about
+#: the employer (`_framed_alias`): "Snowflake" for Snowflake Computing. Not in
+#: `_COMPANY_SUFFIXES`, where "normal" would name Normal Computing in any
+#: question about normal working hours.
+_FRAMED_SUFFIXES = _COMPANY_SUFFIXES | frozenset({"computing"})
+
+#: How a question asks about an employer rather than a word, `{w}` the word:
+#: "jobs at Snowflake", "Snowflake's", "does Snowflake have", "is Snowflake
+#: hiring", "Snowflake jobs". "Postings that require Snowflake" is none of them.
+_EMPLOYER_FRAMES = (
+    r"(?:\bat|@)\s+{w}\b",
+    r"\b{w}['’]s\b",
+    r"\bdoes\s+{w}\s+(?:have|hire|offer|post|list)\b",
+    r"\b{w}\s+(?:is\s+|are\s+)?hiring\b",
+    r"\bis\s+{w}\s+hiring\b",
+    r"\b{w}\s+(?:jobs?|roles?|openings?|positions?|postings?|careers?|opportunities)\b",
+)
+
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _HIRING_MANAGER = re.compile(r"\bhiring managers?\b")
 #: "My job applications" is about applications. "job" there says what kind,
@@ -664,9 +682,11 @@ def _company_aliases(name: str, frequencies: idf.DocumentFrequencies) -> list[tu
     either of those without a corporate suffix, when what remains is rare in
     postings. Without corpus statistics nothing is shortened.
     """
-    parts = [re.sub(r"\(.*?\)", " ", name), *re.findall(r"\((.*?)\)", name)]
     aliases: list[tuple[str, ...]] = []
-    for part in parts:
+    for part in _name_parts(name):
+        if _loses_a_piece(part):
+            # Named only as written (`_written_names`).
+            continue
         terms = tuple(dict.fromkeys(tokenize(part)))
         if not terms:
             continue
@@ -680,6 +700,76 @@ def _company_aliases(name: str, frequencies: idf.DocumentFrequencies) -> list[tu
         ):
             aliases.append(core)
     return aliases
+
+
+def _name_parts(name: str) -> list[str]:
+    """The name without its brackets, then what is in them: each a name of its own."""
+    return [re.sub(r"\(.*?\)", " ", name), *re.findall(r"\((.*?)\)", name)]
+
+
+def _loses_a_piece(part: str) -> bool:
+    """Whether tokenizing cuts a piece off a hyphenated word of the name.
+
+    "At-Bay" is `bay` once "at" is dropped as a stopword, and "T-robotics" is
+    `robotics`: a fragment, and an ordinary word, standing for the whole name.
+    "Data engineer jobs in the bay area" was read as a question about At-Bay
+    and answered 0 (2026-10-21).
+    """
+    return any(
+        len(tokenize(word)) < len([piece for piece in word.split("-") if piece])
+        for word in part.split()
+        if "-" in word
+    )
+
+
+def _written_names(name: str) -> list[re.Pattern[str]]:
+    """A name tokenizing cuts down, as it has to be written.
+
+    With its hyphen in any case ("at-bay"), or without it only as the registry
+    capitalizes it ("At Bay"): "keep cloud costs at bay" is not about At-Bay.
+    """
+    patterns: list[re.Pattern[str]] = []
+    for part in _name_parts(name):
+        if not part.strip() or not _loses_a_piece(part):
+            continue
+        pieces = [[re.escape(p) for p in word.split("-") if p] for word in part.split()]
+        hyphened = r"\s+".join("-".join(word) for word in pieces)
+        spaced = r"\s+".join(r"\s?".join(word) for word in pieces)
+        patterns.append(re.compile(rf"(?<![\w-])(?:(?i:{hyphened})|{spaced})(?![\w-])"))
+    return patterns
+
+
+def _framed_alias(name: str, words: set[str], frequencies: idf.DocumentFrequencies) -> str | None:
+    """A one-word shortened name the question says, that names its company only as an employer.
+
+    "Snowflake" for Snowflake Computing is in 3.3% of postings, nearly all of
+    them about the product, so it is not a name everywhere (`_company_aliases`
+    wants under 2%), and "What jobs does Snowflake have open?" listed Fivetran's
+    and GitLab's (2026-10-21). Asked about the employer (`_EMPLOYER_FRAMES`) it
+    names the company; "postings that require Snowflake" still means the product,
+    which is on the owner's résumé. Up to `_MENTIONED_NAME_MAX_SHARE`, as for a
+    one-word name, and the caller wants the company to have postings open.
+    """
+    if not frequencies.usable:
+        return None
+    main = _name_parts(name)[0]
+    if _loses_a_piece(main):
+        return None
+    terms = tuple(dict.fromkeys(tokenize(main)))
+    core = tuple(term for term in terms if term not in _FRAMED_SUFFIXES)
+    if len(core) != 1 or core == terms or core[0] not in words:
+        return None
+    if frequencies.document_share(core[0]) > _MENTIONED_NAME_MAX_SHARE:
+        return None
+    return core[0]
+
+
+def _asks_about_employer(word: str, question: str) -> bool:
+    """Whether the question uses `word` as an employer's name (`_EMPLOYER_FRAMES`)."""
+    escaped = re.escape(word)
+    return any(
+        re.search(frame.format(w=escaped), question, re.IGNORECASE) for frame in _EMPLOYER_FRAMES
+    )
 
 
 def _says(alias: tuple[str, ...], words: set[str], said: list[str]) -> bool:
@@ -726,14 +816,26 @@ async def _named_companies(
     rows = (await session.execute(select(Company.id, Company.name))).all()
     said = tokenize(question)
     matched: list[tuple[uuid.UUID, str, list[tuple[str, ...]]]] = []
-    for company_id, name in rows:
-        hits = [a for a in _company_aliases(name or "", frequencies) if _says(a, words, said)]
+    # Named exactly as written (`_written_names`), and by a shortened name used
+    # as an employer's (`_framed_alias`), which also needs postings open.
+    written: list[tuple[uuid.UUID, str]] = []
+    framed: list[tuple[uuid.UUID, str]] = []
+    for company_id, raw_name in rows:
+        name = raw_name or ""
+        hits = [a for a in _company_aliases(name, frequencies) if _says(a, words, said)]
         if hits:
             matched.append((company_id, name, hits))
+        elif any(pattern.search(question) for pattern in _written_names(name)):
+            written.append((company_id, name))
+        elif (word := _framed_alias(name, words, frequencies)) and _asks_about_employer(
+            word, question
+        ):
+            framed.append((company_id, name))
 
     # Only companies named by nothing longer than one word need the check, and
     # only they need their own postings counted.
     doubtful = [cid for cid, _, hits in matched if all(len(a) == 1 for a in hits)]
+    doubtful += [cid for cid, _ in framed]
     own: dict[uuid.UUID, int] = {}
     if doubtful and frequencies.usable:
         counted = await session.execute(
@@ -757,6 +859,10 @@ async def _named_companies(
             continue
         named.append(company_id)
         naming |= set(tokenize(name or ""))
+        names.append(name)
+    for company_id, name in [*written, *((cid, n) for cid, n in framed if own.get(cid, 0))]:
+        named.append(company_id)
+        naming |= set(tokenize(name))
         names.append(name)
     return named, naming, names, not_hiring
 
