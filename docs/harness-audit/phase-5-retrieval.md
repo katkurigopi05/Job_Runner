@@ -232,10 +232,12 @@ ran out it said only "reload for the next batch": the owner read the screen
 as finished with 10 left. It now says how many are waiting and offers the
 next batch.
 
-**Not built.** Answer support: whether each sentence of the assistant's
-answer is supported by the posting it cites. That needs the local model to
-write answers to the frozen questions and the owner to check the claims, and
-it is the next step after a retrieval baseline exists.
+**Answer-support evaluation tooling added (2026-10-22).** Frozen context/answer
+records and full nonblank-line manual reviews can now be scored offline;
+see `docs/ANSWER_SUPPORT.md`. Citation validity is separate from entailment.
+This adds no runtime checker or model judge. A representative frozen local
+answer cohort and owner claim reviews are still needed before reporting
+answer accuracy or choosing a release threshold.
 
 **Thresholds, approved by the owner on 2026-10-19, as proposed.** Asked in
 a Claude Code session and answered "approve as proposed". Written into every
