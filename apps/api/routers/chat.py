@@ -51,6 +51,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api import chat_history
+from apps.api.chat_budget import BudgetReport, PromptBudget, pack
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from apps.api.protected_questions import (  # noqa: F401
@@ -601,6 +602,8 @@ def _postings_section(
     found: Retrieval,
     gaps: _PostingGaps | None = None,
     evidence: dict[uuid.UUID, list[str]] | None = None,
+    *,
+    excerpt_labels: frozenset[str] | None = None,
 ) -> str:
     """The retrieved postings, labelled for citation, with the search's reach.
 
@@ -760,7 +763,11 @@ def _postings_section(
         )
         if passage.application_status:
             lines.append(f"       you applied: {passage.application_status}")
-        lines.append(f"       excerpt: {passage.excerpt}")
+        lines.append(
+            f"       excerpt: {passage.excerpt}"
+            if excerpt_labels is None or passage.label in excerpt_labels
+            else "       excerpt: withheld to fit the context budget"
+        )
         # Under the excerpt, which shows the word and not how it is asked for.
         lines += [
             f"       {_one_line(line)}" for line in (evidence or {}).get(passage.posting_id, [])
@@ -827,9 +834,13 @@ class Ready:
     earlier: tuple[Passage, ...] = ()
     #: Mail is only read for an application.
     mail_in_context: bool = False
+    #: Only explicit evaluation callers opt into packing; live routes leave it off.
+    budget: BudgetReport | None = None
 
 
-async def prepare(body: ChatRequest, session: AsyncSession) -> ChatReply | Ready:
+async def prepare(
+    body: ChatRequest, session: AsyncSession, *, context_budget: PromptBudget | None = None
+) -> ChatReply | Ready:
     """Everything that happens before a model is asked, for both routes.
 
     The refusals and the crawl command answer here, with no model. Anything
@@ -896,6 +907,7 @@ async def prepare(body: ChatRequest, session: AsyncSession) -> ChatReply | Ready
         ),
         _postings_section(found, posting_gaps, skill_lines(found, named_skills, requirements)),
     ]
+    postings_index = len(sections) - 1
     if gaps is not None:
         sections.append(_gaps_section(gaps))
 
@@ -908,12 +920,34 @@ async def prepare(body: ChatRequest, session: AsyncSession) -> ChatReply | Ready
     if earlier:
         sections.append(chat_history.postings_section(earlier))
     said = chat_history.section(remembered)
-    prompt = (
-        "CONTEXT:\n"
-        + "\n".join(sections)
-        + (f"\n\n{said}" if said else "")
-        + f"\n\nQUESTION:\n{question}"
-    )
+
+    def render(excerpt_labels: frozenset[str] | None = None) -> str:
+        rendered = list(sections)
+        if excerpt_labels is not None:
+            rendered[postings_index] = _postings_section(
+                found,
+                posting_gaps,
+                skill_lines(found, named_skills, requirements),
+                excerpt_labels=excerpt_labels,
+            )
+        return (
+            "CONTEXT:\n"
+            + "\n".join(rendered)
+            + (f"\n\n{said}" if said else "")
+            + f"\n\nQUESTION:\n{question}"
+        )
+
+    budget_report = None
+    if context_budget is None:
+        prompt = render()
+    else:
+        prompt, budget_report = pack(
+            system=SYSTEM,
+            render=render,
+            labels=[p.label for p in found.passages],
+            budget=context_budget,
+            answer_tokens=ANSWER_TOKENS,
+        )
     return Ready(
         selected=selected,
         include_mail=include_mail,
@@ -923,6 +957,7 @@ async def prepare(body: ChatRequest, session: AsyncSession) -> ChatReply | Ready
         remembered=remembered,
         earlier=earlier,
         mail_in_context=include_mail and body.application_id is not None,
+        budget=budget_report,
     )
 
 
