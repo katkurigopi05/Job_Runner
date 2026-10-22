@@ -61,13 +61,13 @@ def test_mandatory_context_too_large_refuses_without_a_model_call():
 
 @pytest.mark.parametrize("count", [-1, True, 1.2])
 def test_invalid_token_count_cannot_look_like_a_fitting_prompt(count):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="token counter"):
         pack(
             system="s",
             render=render,
             labels=["P1", "P2"],
             budget=PromptBudget(
-                counter=lambda s, p: count, tokenizer_id="test", context_tokens=100
+                counter=lambda s, p: count, tokenizer_id="test", context_tokens=10000
             ),
         )
 
