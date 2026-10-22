@@ -280,6 +280,21 @@ def test_prose_remote_counts_but_an_on_site_marker_overrides_it() -> None:
     )
 
 
+def test_on_site_marker_avoids_scanning_irrelevant_body(monkeypatch) -> None:
+    from packages.matching import locality
+
+    class UnreadBody:
+        def search(self, _text):
+            pytest.fail("an on-site title already rules out remote prose")
+
+    monkeypatch.setattr(locality, "_REMOTE_PROSE_RE", UnreadBody())
+    assert not reads_as_remote(
+        title="Backend Engineer (Hybrid)",
+        location="Austin, TX",
+        description="A long description that cannot change the verdict.",
+    )
+
+
 # --------------------------------------------------------------------------
 # The search area
 # --------------------------------------------------------------------------

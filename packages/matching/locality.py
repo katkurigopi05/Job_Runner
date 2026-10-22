@@ -40,6 +40,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from enum import StrEnum
+from functools import lru_cache
 
 
 class Locality(StrEnum):
@@ -146,8 +147,8 @@ def reads_as_remote(
     haystack = f"{title or ''} {location or ''}"
     if _REMOTE_RE.search(haystack):
         return True
-    return bool(_REMOTE_PROSE_RE.search(description or "")) and not _ONSITE_MARKER_RE.search(
-        haystack
+    return not _ONSITE_MARKER_RE.search(haystack) and bool(
+        _REMOTE_PROSE_RE.search(description or "")
     )
 
 
@@ -1038,6 +1039,9 @@ def _is_california(text: str, original: str) -> bool:
     return bool(_CALIFORNIA_RE.search(text) or _CALIFORNIA_CODE_RE.search(original))
 
 
+# A full match set repeats the same board locations across many titles.
+# Cache only these pure, bounded classifications, never posting bodies.
+@lru_cache(maxsize=4096)
 def locality_of(location: str | None) -> Locality:
     """Classify a posting's location string.
 
@@ -1117,6 +1121,7 @@ _NON_CA_US_REGION_RE = re.compile(
 )
 
 
+@lru_cache(maxsize=4096)
 def names_us_region(location: str | None) -> bool:
     """Whether a domestic location says *which part* of the country it is in.
 
