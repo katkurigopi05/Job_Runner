@@ -403,7 +403,10 @@ async def test_handler_error_retries_then_fails_the_application(
     assert private_sentinel not in repr(events.json())
 
 
-async def test_configured_worker_id_is_used(monkeypatch, committing_sessionmaker) -> None:
+@pytest.mark.parametrize("startup_delay", [0, 0.1])
+async def test_configured_worker_id_is_used(
+    monkeypatch, committing_sessionmaker, startup_delay
+) -> None:
     """WORKER_ID must reach the loop — the hostname is only a fallback.
 
     The loop now also writes heartbeats, so the sessionmaker is pointed at the
@@ -416,6 +419,14 @@ async def test_configured_worker_id_is_used(monkeypatch, committing_sessionmaker
     monkeypatch.setattr(core_db, "get_sessionmaker", lambda: committing_sessionmaker)
     get_settings.cache_clear()
     seen: list[str] = []
+    pulse = worker_run.Heartbeat.pulse
+
+    async def slow_pulse(self, **kwargs):
+        # A slow startup heartbeat must not hide a correctly configured ID.
+        await asyncio.sleep(startup_delay)
+        await pulse(self, **kwargs)
+
+    monkeypatch.setattr(worker_run.Heartbeat, "pulse", slow_pulse)
 
     async def _capture(*, worker_id: str, lease_seconds: int, heartbeat=None) -> bool:
         seen.append(worker_id)
@@ -425,12 +436,15 @@ async def test_configured_worker_id_is_used(monkeypatch, committing_sessionmaker
     monkeypatch.setattr(worker_run, "IDLE_SLEEP_SECONDS", 0.01)
 
     task = asyncio.create_task(worker_run.run_forever())
-    await asyncio.sleep(0.05)
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
-
-    get_settings.cache_clear()
+    try:
+        async with asyncio.timeout(5):
+            while not seen:
+                await asyncio.sleep(0.01)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        get_settings.cache_clear()
     assert seen and seen[0] == "configured-worker"
     async with committing_sessionmaker() as session:
         beat = await session.get(WorkerHeartbeat, "configured-worker")
