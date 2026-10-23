@@ -642,6 +642,18 @@ def _postings_section(
         )
     elif found.area_waived:
         lines.append("  search area: not applied, the question names a place outside it")
+    if found.place_total is not None:
+        reach = "" if found.place_counts_complete else " among retrieved candidates"
+        lines.append(
+            f"  place filter applied — in the Bay Area: {found.place_total}{reach}; "
+            f"{found.search_area_total} matching postings in your search area{reach} "
+            "before this filter."
+        )
+        lines.append(
+            f"  {found.remote_or_unplaced_not_listed} remote or unplaced roles "
+            "in your search area are not listed "
+            f"because they do not establish a Bay Area office{reach}."
+        )
     # With a level asked, the totals below count the postings listed for it,
     # and the level line after them says how many were not.
     listed_at_level = (
@@ -714,12 +726,16 @@ def _postings_section(
     if not found.passages:
         within = " in the search area" if found.outside_area else ""
         lines.append(
-            f"  no open postings at {', '.join(map(_one_line, found.companies))}{within}"
-            if found.companies
+            "  none in the Bay Area"
+            if found.place_total is not None
             else (
-                "  none in the search area"
-                if found.outside_area
-                else "  none shared anything with this question"
+                f"  no open postings at {', '.join(map(_one_line, found.companies))}{within}"
+                if found.companies
+                else (
+                    "  none in the search area"
+                    if found.outside_area
+                    else "  none shared anything with this question"
+                )
             )
         )
     if found.level is not None:
@@ -730,7 +746,13 @@ def _postings_section(
         # Totals use the same area rule as ranking. The displayed list stays
         # separate: experimental semantic candidates need not say the term.
         if found.match_total is not None:
-            scope = "in the search area" if found.area else "with search-area filtering not applied"
+            scope = (
+                "in the Bay Area"
+                if found.place_total is not None
+                else "in the search area"
+                if found.area
+                else "with search-area filtering not applied"
+            )
             if found.matched_term is not None:
                 lines.append(
                     f"  counted matches: {found.match_total} postings "
@@ -1113,6 +1135,11 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
         companies_matched_total=found.company_total,
         matched_term=found.matched_term,
         matched_companies=list(found.companies) if found.match_total is not None else [],
+        place_filter="Bay Area" if found.place_total is not None else None,
+        place_matched_total=found.place_total,
+        place_counts_complete=found.place_counts_complete,
+        search_area_matched_total=found.search_area_total,
+        remote_or_unplaced_not_listed=found.remote_or_unplaced_not_listed,
         matched_title_words=list(found.title_words),
         postings_related_total=found.related_total,
         matched_role_filter=found.role_keys[0] if len(found.role_keys) == 1 else None,

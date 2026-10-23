@@ -840,21 +840,44 @@ jobs" and "Nasdaq jobs" now name their employers, "T-robotics roles" names
 T-robotics, and "keep cloud costs at bay" names no one. "Postings that
 require Snowflake experience" and "jobs that use Grafana" still name no
 company. `make eval-retrieval` is identical before and after on the same
-corpus. Still open: "Bay Area" is not read as a place, so the 71 are the
-area's data engineers rather than the Bay Area's; and a shortened name over
+corpus. The Bay Area ranking-only limitation is addressed below. Still open:
+a shortened name over
 10% ("Scale" for Scale AI) is still not a name. `tests/test_retrieval_names.py`.
+
+### An explicitly named Bay Area is a filter
+
+Read `locality_of(question)` once. `BAY_AREA` (including its cities) narrows
+role, title, keyword and vector candidates before the cut, using the existing
+office splitting and locality classifier. A city still receives the location
+ranking weight within the region; this is not city-only filtering. California
+and United States questions retain their previous behavior, and a place abroad
+still waives the standing search area.
+
+Only a positively placed Bay Area office qualifies. US-remote jobs with no such
+office, and missing/unrecognized locations that the standing area allows, are
+omitted and counted as **remote or unplaced roles not listed**. This is a
+deliberate product choice, separate from the standing area. The context states
+the applied region, the narrower count, and the count before narrowing. Counts
+over vector candidates are explicitly qualified as covering retrieved
+candidates, not the complete match set. No model is asked to count.
 
 ## Counts for a simple search (2026-10-21)
 
 One distinguishing term, or an employer with no extra search subject, now
 gets an exact count beyond the ranked pool. The keyword ranking is explicitly
 read with `limit=None`; its displayed head and order stay unchanged. Totals
-load title/location/company metadata first. Only postings excluded as
+load title/location/company metadata first. Without an explicit region filter,
+only postings excluded as
 on-site outside California need descriptions rechecked: remote
 prose can admit them under the ordinary `area_exclusion` rule. The totals
 apply the same area/level predicates as ranking and count companies by id.
 Company-only totals read all open ids at the named employers, without a text
 scan. Other searches retain the unknown-total wording.
+
+Bay Area questions additionally recheck descriptions of otherwise-kept,
+known non-Bay locations to count remote work stated only in prose. Missing or
+unrecognized locations can be counted as unplaced from metadata alone. Prose
+does not establish a Bay Area office.
 
 `Retrieval.match_total`, `company_total` and `matched_term` reach both the
 context and reply/dock. These are mentions, never a claim that every matching

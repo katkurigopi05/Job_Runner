@@ -1255,6 +1255,34 @@ def locations_in(location: str | None) -> list[str]:
     return [part for part in parts if part]
 
 
+@lru_cache(maxsize=4096)
+def names_bay_area_office(location: str | None, *, title: str | None) -> bool:
+    """Positive Bay Area evidence, using the area rule's office/title reading.
+
+    A US-remote location is not a Bay Area office. Multiple offices use the
+    same split and locality classifier as `area_exclusion`. A title can place
+    a job only when the location field names no place, just as it can exclude
+    one abroad there; an explicit location always takes precedence.
+    """
+    parts = locations_in(location)
+    if any(locality_of(part) is Locality.BAY_AREA for part in parts):
+        return True
+    return all(names_no_place(part) for part in parts) and locality_of(title) is Locality.BAY_AREA
+
+
+@lru_cache(maxsize=4096)
+def has_unplaced_location(location: str | None) -> bool:
+    """No listed office supplies a recognized place (including an empty field).
+
+    These remain in the standing area. An explicit region filter counts their
+    omission rather than guessing that an unknown office lies in that region.
+    """
+    return all(
+        locality_of(part) in {Locality.UNKNOWN, Locality.UNPLACED}
+        for part in locations_in(location)
+    )
+
+
 def area_exclusion(
     location: str | None,
     *,
