@@ -286,8 +286,9 @@ async def test_crashed_run_is_resumed_not_deadlocked(
     assert polled.json()["status"] == ApplicationStatus.SUBMITTED
 
 
+@pytest.mark.parametrize("renewal_delay", [0, 0.6])
 async def test_lease_guard_stops_work_after_claim_handoff(
-    committing_sessionmaker, monkeypatch
+    committing_sessionmaker, monkeypatch, renewal_delay
 ) -> None:
     """A handler cannot continue to a later side effect after losing its generation."""
     from packages.core import db as core_db
@@ -306,14 +307,19 @@ async def test_lease_guard_stops_work_after_claim_handoff(
         await second_session.commit()
 
     monkeypatch.setattr(core_db, "get_sessionmaker", lambda: committing_sessionmaker)
-    reached_side_effect = False
+    renew = worker_run.renew_lease
 
+    async def slow_renew(*args, **kwargs):
+        await asyncio.sleep(renewal_delay)
+        return await renew(*args, **kwargs)
+
+    monkeypatch.setattr(worker_run, "renew_lease", slow_renew)
     with pytest.raises(ClaimOwnershipLost):
-        async with worker_run._keep_lease_alive(stale, 0.1):
-            await asyncio.sleep(0.5)
-            reached_side_effect = True
-
-    assert not reached_side_effect
+        async with asyncio.timeout(5):
+            async with worker_run._keep_lease_alive(stale, 0.1):
+                # Work stays in flight until the guard cancels it; database
+                # renewal latency is not bounded by a simulated work sleep.
+                await asyncio.Event().wait()
 
 
 async def test_redelivery_after_submission_does_not_resubmit(
