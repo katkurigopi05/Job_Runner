@@ -183,6 +183,7 @@ async def test_a_very_common_word_names_a_company_only_after_at(db_session) -> N
     other = await _company(db_session, "Acme")
     theirs = await _posting(db_session, based, "Founding Engineer")
     ours = await _posting(db_session, other, "Platform Engineer", "Based in San Francisco.")
+    ours.location = "San Francisco, CA"
     await _stats(db_session, based=71, founding=1)
 
     ordinary = await retrieve(db_session, "roles based in San Francisco")
@@ -393,6 +394,7 @@ async def test_a_common_word_after_at_is_a_name_only_where_a_name_would_be(
 async def test_the_same_word_where_a_name_would_be_still_names_it(db_session, question) -> None:
     fast = await _company(db_session, "Fast")
     theirs = await _posting(db_session, fast, "Founding Engineer")
+    theirs.location = "San Francisco, CA"
     await _stats(db_session, fast=50, founding=1)
 
     found = await retrieve(db_session, question)

@@ -801,6 +801,12 @@ class ChatReply(BaseModel):
     companies_matched_total: int | None = None
     matched_term: str | None = None
     matched_companies: list[str] = Field(default_factory=list)
+    #: Explicit regional narrowing, separate from the standing search area.
+    place_filter: str | None = None
+    place_matched_total: int | None = None
+    place_counts_complete: bool = False
+    search_area_matched_total: int | None = None
+    remote_or_unplaced_not_listed: int = 0
     #: The feed's `role` filter value, when exactly one role was named, so
     #: the dashboard can link to the same list on /matches.
     matched_role_filter: str | None = None

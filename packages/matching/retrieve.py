@@ -82,7 +82,7 @@ import re
 import threading
 import uuid
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import NamedTuple
 
@@ -110,7 +110,14 @@ from packages.matching.level import (
     sift,
     standing,
 )
-from packages.matching.locality import Locality, area_exclusion, locality_of, reads_as_remote
+from packages.matching.locality import (
+    Locality,
+    area_exclusion,
+    has_unplaced_location,
+    locality_of,
+    names_bay_area_office,
+    reads_as_remote,
+)
 from packages.matching.rerank import Reranker, fuse, get_reranker, reorder
 from packages.matching.retrieval_trace import stage, traced
 from packages.matching.roles import (
@@ -478,6 +485,11 @@ class Retrieval:
     #: the area. "None at Faculty" and "none at Faculty where you search" are
     #: different answers.
     outside_area: int = 0
+    #: An explicit Bay Area question narrows the standing search area.
+    place_total: int | None = None
+    place_counts_complete: bool = False
+    search_area_total: int | None = None
+    remote_or_unplaced_not_listed: int = 0
     #: The model that re-ordered the top results, or None when none did: no
     #: model is configured, it failed, or there was nothing to re-order.
     reranked_by: str | None = None
@@ -634,7 +646,7 @@ def _term_pattern(term: str) -> str:
     return f"{start}{escaped}{end}"
 
 
-def _search_area(question: str) -> str | None:
+def _search_area(place: Locality) -> str | None:
     """The owner's search area in words, or None when it does not apply.
 
     The feed's standing preference (`SEARCH_US_ONLY`), and on by default for
@@ -643,11 +655,48 @@ def _search_area(question: str) -> str | None:
     be filtering out the thing asked for.
     """
     settings = get_settings()
-    if not settings.search_us_only or locality_of(question) is Locality.ELSEWHERE:
+    if not settings.search_us_only or place is Locality.ELSEWHERE:
         return None
     if settings.search_remote_outside_california:
         return "the United States, and outside California remote only"
     return "the United States"
+
+
+@dataclass
+class _PlaceFilter:
+    """Count matching in-area postings before narrowing them to Bay Area offices.
+
+    IDs deduplicate the title, keyword and related-role paths. A remote job
+    with an explicit Bay Area office is listed; other remote jobs are counted
+    separately. Descriptions can establish remote work, never a Bay Area office.
+    """
+
+    inside: set[uuid.UUID] = field(default_factory=set)
+    bay: set[uuid.UUID] = field(default_factory=set)
+    omitted: set[uuid.UUID] = field(default_factory=set)
+
+    def keeps(self, hit: _Hit) -> bool:
+        return names_bay_area_office(hit.location, title=hit.title)
+
+    def record(
+        self, ident: uuid.UUID, title: str | None, location: str | None, description: str | None
+    ) -> bool:
+        self.inside.add(ident)
+        here = names_bay_area_office(location, title=title)
+        if here:
+            self.bay.add(ident)
+        elif has_unplaced_location(location) or reads_as_remote(
+            title=title, location=location, description=description
+        ):
+            self.omitted.add(ident)
+        return here
+
+    def narrow(self, hits: list[_Hit]) -> list[_Hit]:
+        return [
+            hit
+            for hit in hits
+            if self.record(hit.posting_id, hit.title, hit.location, hit.description)
+        ]
 
 
 def _outside_area(hit: _Hit) -> bool:
@@ -1270,6 +1319,7 @@ async def _matching_totals(
     area: bool,
     level: AskedLevel | None,
     allow_unknown: bool,
+    place_filter: _PlaceFilter | None = None,
 ) -> tuple[int, int, int]:
     """Count the keyword scan's complete match IDs, beyond its ranked pool.
 
@@ -1291,6 +1341,27 @@ async def _matching_totals(
     remote_outside = get_settings().search_remote_outside_california
     eligibility: dict[tuple[str | None, str | None], tuple[str | None, bool]] = {}
     recheck: dict[uuid.UUID, tuple[str | None, str | None, uuid.UUID | None, bool]] = {}
+    remote_recheck: dict[uuid.UUID, tuple[str | None, str | None]] = {}
+
+    def count(
+        ident: uuid.UUID,
+        title: str | None,
+        location: str | None,
+        company_id: uuid.UUID | None,
+        description: str | None = None,
+    ) -> None:
+        nonlocal total
+        if place_filter is not None and not place_filter.record(
+            ident, title, location, description
+        ):
+            # Prose can establish that a known non-Bay Californian job is remote.
+            if description is None and ident not in place_filter.omitted:
+                remote_recheck[ident] = (title, location)
+            return
+        total += 1
+        if company_id is not None:
+            employers.add(company_id)
+
     for ident, title, location, company_id in (await session.execute(query)).all():
         key = (title, location)
         if key not in eligibility:
@@ -1304,9 +1375,7 @@ async def _matching_totals(
         if reason is not None:
             outside += 1
         elif at_level:
-            total += 1
-            if company_id is not None:
-                employers.add(company_id)
+            count(ident, title, location, company_id)
     if recheck:
         descriptions = await session.execute(
             select(Posting.id, Posting.description_raw).where(Posting.id.in_(list(recheck)))
@@ -1327,9 +1396,14 @@ async def _matching_totals(
             if reason is not None:
                 outside += 1
             elif at_level:
-                total += 1
-                if company_id is not None:
-                    employers.add(company_id)
+                count(ident, title, location, company_id, description)
+    if remote_recheck and place_filter is not None:
+        descriptions = await session.execute(
+            select(Posting.id, Posting.description_raw).where(Posting.id.in_(list(remote_recheck)))
+        )
+        for ident, description in descriptions.all():
+            title, location = remote_recheck[ident]
+            place_filter.record(ident, title, location, description)
     return total, len(employers), outside
 
 
@@ -1670,6 +1744,7 @@ async def _nearest_unfound(
     *,
     in_area: bool,
     found: set[uuid.UUID],
+    in_place: Callable[[_Hit], bool] | None = None,
 ) -> tuple[list[_Hit], dict[uuid.UUID, tuple[int, int]]]:
     """The postings nearest the question that the keywords did not find, and
     the chunk each is nearest by. For a model that will judge every one.
@@ -1684,7 +1759,7 @@ async def _nearest_unfound(
         return [], {}
 
     def counts(hit: _Hit) -> bool:
-        return not (in_area and _outside_area(hit))
+        return not (in_area and _outside_area(hit)) and (in_place is None or in_place(hit))
 
     spans: dict[uuid.UUID, tuple[int, int]] = {}
     hits: dict[uuid.UUID, _Hit] = {}
@@ -1787,6 +1862,7 @@ async def _semantic_candidates(
     chunk_vectors: dict[str, list[float]],
     companies: list[uuid.UUID],
     area: str | None,
+    in_place: Callable[[_Hit], bool] | None = None,
 ) -> tuple[list[_Hit], dict[uuid.UUID, tuple[int, int]], set[uuid.UUID]]:
     """Bounded neural candidates, sharing the search's company/area rules.
 
@@ -1802,14 +1878,14 @@ async def _semantic_candidates(
 
     def counts(hit: _Hit) -> bool:
         away[hit.posting_id] = bool(area) and _outside_area(hit)
-        return not away[hit.posting_id]
+        return not away[hit.posting_id] and (in_place is None or in_place(hit))
 
     # The area is asked while reading, so two hundred chunks abroad do not
     # leave nothing to keep.
     read, nearest = await _nearest_kept(
         session, model, vector, companies=companies, want=KEYWORD_POOL, counts=counts
     )
-    kept = [hit for hit in read if not away[hit.posting_id]][:KEYWORD_POOL]
+    kept = [hit for hit in read if counts(hit)][:KEYWORD_POOL]
     outside = {hit.posting_id for hit in read if away[hit.posting_id]}
     return kept, {hit.posting_id: nearest[hit.posting_id] for hit in kept}, outside
 
@@ -1854,12 +1930,19 @@ def _fuse_candidates(*rankings: list[uuid.UUID]) -> dict[uuid.UUID, float]:
 _LEVEL_POOL = 500
 
 
-def _at_level(hits: list[_Hit], level: AskedLevel | None) -> tuple[list[_Hit], LevelCount | None]:
+def _at_level(
+    hits: list[_Hit], level: AskedLevel | None, *, place_filter: _PlaceFilter | None = None
+) -> tuple[list[_Hit], LevelCount | None]:
     """`hits` whose titles are at the level asked, and how all of them stood.
 
     Titles that name no level are left out or kept by the owner's setting
     (`CHAT_ALLOW_UNKNOWN_SENIORITY`); `retrieve` puts the kept ones last.
     """
+    if place_filter is not None:
+        # Omitted-region counts concern the same level, but the level's own
+        # breakdown must describe only jobs in the region that was asked for.
+        place_filter.narrow(_at_level(hits, level)[0])
+        hits = [hit for hit in hits if place_filter.keeps(hit)]
     if level is None:
         return hits, None
     return sift(
@@ -1881,6 +1964,8 @@ async def _stating_sponsorship(
     not_hiring: list[str],
     open_total: int,
     limit: int,
+    area: str | None,
+    place_filter: _PlaceFilter | None,
 ) -> Retrieval:
     """The postings that state they sponsor, for a question that asks which do.
 
@@ -1898,7 +1983,6 @@ async def _stating_sponsorship(
     engineer postings states it sponsors, one states it does not", which is
     the true answer when the list is short.
     """
-    area = _search_area(question)
     asked_roles = named_in(question)
     role_words = {
         word for aliases in asked_roles.values() for alias in aliases for word in alias.split()
@@ -1952,6 +2036,9 @@ async def _stating_sponsorship(
         over = "open postings that mention sponsorship or a visa"
 
     inside = [hit for hit in pool if not (area and _outside_area(hit))]
+    outside = len(pool) - len(inside)
+    if place_filter is not None:
+        inside = place_filter.narrow(inside)
     over += " in the search area" if area else ""
     stated = {hit.posting_id: verdict(hit.description) for hit in inside}
     offering = [hit for hit in inside if stated[hit.posting_id] is Sponsorship.AVAILABLE]
@@ -1979,7 +2066,11 @@ async def _stating_sponsorship(
         not_hiring=tuple(sorted(not_hiring)),
         area=area,
         area_waived=area is None and get_settings().search_us_only,
-        outside_area=len(pool) - len(inside),
+        outside_area=outside,
+        place_total=len(place_filter.bay) if place_filter is not None else None,
+        place_counts_complete=True,
+        search_area_total=len(place_filter.inside) if place_filter is not None else None,
+        remote_or_unplaced_not_listed=len(place_filter.omitted) if place_filter is not None else 0,
         ranked=len(offering),
         more=tuple(
             Listed(
@@ -2033,6 +2124,14 @@ async def retrieve(
     companies, company_words, company_names, not_hiring = await _named_companies(
         session, words, frequencies, question
     )
+    # Read the question's place once. State/country questions retain their
+    # existing behavior; a named Bay Area city narrows to its whole region.
+    place = locality_of(question)
+    place_filter = _PlaceFilter() if place is Locality.BAY_AREA else None
+    if place_filter is not None:
+        # A filter is not a skill to search descriptions for. Keep city words
+        # (San Francisco, etc.) so their existing location weight still sorts.
+        question = re.sub(r"\bbay\s+area\b", " ", question, flags=re.I)
     # Company recognition sees the question exactly as before. Only search
     # subjects lose this framing phrase, never the standalone word "right".
     question = _FRAMING_PHRASES.sub(" ", question)
@@ -2043,11 +2142,14 @@ async def retrieve(
         or (not about_my_applications and await _names_a_title(session, subject_terms))
     ):
         return Retrieval(attempted=False)
-    area = _search_area(question)
+    area = _search_area(place)
     allow_unknown = get_settings().chat_allow_unknown_seniority
 
     def in_area(hit: _Hit) -> bool:
         return not (area and _outside_area(hit))
+
+    def in_place(hit: _Hit) -> bool:
+        return place_filter is None or place_filter.keeps(hit)
 
     def passes(hit: _Hit) -> bool:
         """Whether the area and the level asked would both keep it.
@@ -2056,21 +2158,23 @@ async def retrieve(
         was not: thirty postings abroad, or five hundred at another level,
         otherwise fill a pool and the answer says there is none.
         """
-        if not in_area(hit):
+        if not in_area(hit) or not in_place(hit):
             return False
         if level is None:
             return True
         place = standing(hit.title, level)
         return place < 2 or (allow_unknown and place == 2)
 
-    filtering = area is not None or level is not None
+    filtering = area is not None or level is not None or place_filter is not None
     # Asked for by its whole title, whatever its words are: found before the
     # check below, so a posting titled "Open Application" is still a subject.
     titled = await _titles_in_question(
         session, question, companies, counts=passes if filtering else None
     )
+    place_ids = {hit.posting_id for hit in titled} if place_filter is not None else set()
+    only_place = place_filter is not None and not (subject_terms or companies or level)
     # A level alone names something: "internships" is every intern posting.
-    if not (subject_terms or companies or titled or level is not None):
+    if not (subject_terms or companies or titled or level is not None or only_place):
         return Retrieval(attempted=False, unnamed=True)
 
     open_total = (
@@ -2091,6 +2195,8 @@ async def retrieve(
             not_hiring=not_hiring,
             open_total=open_total,
             limit=limit,
+            area=area,
+            place_filter=place_filter,
         )
     space_rows = (
         await session.execute(
@@ -2172,7 +2278,7 @@ async def retrieve(
         of_the_role = await _role_hits(session, set(asked_roles), companies)
         role_pool = [hit for hit in of_the_role if not (area and _outside_area(hit))]
         left_out |= {hit.posting_id for hit in of_the_role} - {hit.posting_id for hit in role_pool}
-        role_pool, level_count = _at_level(role_pool, level)
+        role_pool, level_count = _at_level(role_pool, level, place_filter=place_filter)
         label_of = _kind_labels(role_pool)
         typed_kinds = {alias_label(alias) for alias in typed_aliases}
         kinds = _kinds(label_of, lambda label: int(label in typed_kinds), set(label_of.values()))
@@ -2215,7 +2321,7 @@ async def retrieve(
             left_out |= {hit.posting_id for hit in of_the_title} - {
                 hit.posting_id for hit in role_pool
             }
-            role_pool, level_count = _at_level(role_pool, level)
+            role_pool, level_count = _at_level(role_pool, level, place_filter=place_filter)
             title_words = tuple(_as_typed(question, word) for word in asked_words)
             label_of = _kind_labels(role_pool)
             kinds = _kinds(
@@ -2226,6 +2332,8 @@ async def retrieve(
             related_pool = await _related_titles(
                 session, frozenset(stems), companies, found=of_the_title, area=area, level=level
             )
+            if place_filter is not None:
+                related_pool = place_filter.narrow(related_pool)
             if related_pool:
                 related_labels = {
                     posting_id: f"{tiers.RELATED_PREFIX}{label}"
@@ -2268,7 +2376,7 @@ async def retrieve(
     reranker = None if only_names_a_company else await asyncio.to_thread(get_reranker)
     reranked_by: str | None = None
     more_hits: list[_Hit] = []
-    if terms or titled or role_pool is not None:
+    if terms or titled or role_pool is not None or only_place:
         pool = _AREA_POOL if area else KEYWORD_POOL
         if level is not None:
             pool = max(pool, _LEVEL_POOL)
@@ -2283,11 +2391,24 @@ async def retrieve(
                 return (
                     hit.posting_id not in set_apart
                     and in_area(hit)
+                    and in_place(hit)
                     and (asked_for is None or at_the_level(hit.title, asked_for))
                 )
 
-            ranking = await _keyword_ranking(session, terms, frequencies, companies, limit=None)
-            if count_simple:
+            ranking = (
+                list(
+                    (
+                        await session.scalars(
+                            select(Posting.id)
+                            .where(Posting.closed_at.is_(None))
+                            .order_by(Posting.first_seen_at.desc(), Posting.id)
+                        )
+                    ).all()
+                )
+                if only_place
+                else await _keyword_ranking(session, terms, frequencies, companies, limit=None)
+            )
+            if count_simple or place_filter is not None:
                 matching_ids = ranking
             scanned = await _read_until(
                 session,
@@ -2373,6 +2494,9 @@ async def retrieve(
                 hit.posting_id for hit in kept_titled + kept_scanned
             }
             titled, scanned = kept_titled, kept_scanned
+        if place_filter is not None:
+            titled = [hit for hit in titled if in_place(hit)]
+            scanned = [hit for hit in scanned if in_place(hit)]
         if level is not None:
             # After the area and before the cut. A posting asked for by its
             # whole title is held to it too: "Data Engineer" is the whole of a
@@ -2384,7 +2508,7 @@ async def retrieve(
             else:
                 kept_ids = {hit.posting_id for hit in role_pool}
             titled = [hit for hit in titled if hit.posting_id in kept_ids]
-        if role_pool is None and (area or level is not None):
+        if role_pool is None and filtering:
             # A role's postings are all listed, so they are not cut to a pool.
             if level is not None:
                 # The level asked ahead of no level, before the cut and not
@@ -2408,7 +2532,7 @@ async def retrieve(
                 _encode_chunk_queries, chunk_encoders, question
             )
             semantic, semantic_spans, excluded = await _semantic_candidates(
-                session, semantic_vectors, companies, area
+                session, semantic_vectors, companies, area, in_place=in_place
             )
             left_out |= excluded
             known = set(keyword_ids)
@@ -2444,12 +2568,19 @@ async def retrieve(
         # question says. They are found by title and never scored by the
         # keyword scan, so "software engineer jobs in London" put three in
         # San Jose first: the title was all that had been compared.
-        there = {hit.posting_id for hit in titled if _located_at(hit, terms)}
+        there = {
+            hit.posting_id: (
+                sum(_located_at(hit, [term]) for term in terms)
+                if place_filter is not None
+                else int(_located_at(hit, terms))
+            )
+            for hit in titled
+        }
         ordered = sorted(
             keyword,
             key=lambda hit: (
                 -by_title.get(hit.posting_id, 0),
-                hit.posting_id not in there,
+                -there.get(hit.posting_id, 0),
                 -fused[hit.posting_id],
             ),
         )
@@ -2502,7 +2633,12 @@ async def retrieve(
         added: list[_Hit] = []
         if reranker is not None and reranker.judges and role_pool is None and keyword:
             added, added_spans = await _nearest_unfound(
-                session, chunk_vectors, companies, in_area=bool(area), found=set(keyword_ids)
+                session,
+                chunk_vectors,
+                companies,
+                in_area=bool(area),
+                found=set(keyword_ids),
+                in_place=in_place,
             )
             among_spans.update(added_spans)
             # Quoted where it matched: it has none of the question's keywords,
@@ -2593,30 +2729,35 @@ async def retrieve(
                 if area and _outside_area(hit):
                     outside += 1
                     continue
+                if not in_place(hit):
+                    continue
                 chosen.append(hit)
         else:
             # The area first, so the re-ranker never spends a place on a
             # posting that would be left out anyway.
-            eligible = [hit for hit in ranked if not (area and _outside_area(hit))]
-            outside += len(ranked) - len(eligible)
+            eligible = [hit for hit in ranked if in_area(hit) and in_place(hit)]
+            outside += sum(1 for hit in ranked if not in_area(hit))
             eligible, reranked_by = await _reranked(reranker, question, eligible, chunk_spans)
             chosen = eligible[:limit]
             reranked_total = min(_rerank_pool(), len(eligible)) if reranked_by else 0
         shown = {hit.posting_id for hit in chosen}
         in_area_rest = [
-            hit
-            for hit in ranked
-            if hit.posting_id not in shown and not (area and _outside_area(hit))
+            hit for hit in ranked if hit.posting_id not in shown and in_area(hit) and in_place(hit)
         ]
         more_hits = in_area_rest[:MORE_LIMIT]
         ranked_total = len(chosen) + len(in_area_rest)
         searched = await _reachable(session, list(chunk_vectors), list(vectors))
         unsearchable = max(0, open_total - searched)
+        if place_filter is not None:
+            place_filter.narrow([hit for hit in ranked if in_area(hit)])
 
     match_total = company_total = None
     matched_term = None
-    if count_simple:
-        matched_term = None if only_names_a_company else _as_typed(question, terms[0])
+    if count_simple or (
+        place_filter is not None and role_pool is None and matching_ids is not None
+    ):
+        if count_simple:
+            matched_term = None if only_names_a_company else _as_typed(question, terms[0])
         if only_names_a_company:
             # A company filter needs no text scan. Also covers a registry
             # name composed entirely of framing words, with no keyword IDs.
@@ -2631,11 +2772,14 @@ async def retrieve(
             )
         match_total, company_total, outside = await _matching_totals(
             session,
-            matching_ids or [],
+            list(dict.fromkeys([*(matching_ids or []), *place_ids])),
             area=bool(area),
             level=level,
             allow_unknown=allow_unknown,
+            place_filter=place_filter,
         )
+        if not count_simple:
+            match_total = company_total = None
     statuses = await _application_statuses(session, [hit.posting_id for hit in chosen])
     passages = tuple(
         Passage(
@@ -2676,6 +2820,10 @@ async def retrieve(
         area=area,
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,
+        place_total=len(place_filter.bay) if place_filter is not None else None,
+        place_counts_complete=role_pool is not None or matching_ids is not None,
+        search_area_total=len(place_filter.inside) if place_filter is not None else None,
+        remote_or_unplaced_not_listed=len(place_filter.omitted) if place_filter is not None else 0,
         reranked_by=reranked_by,
         ranked=ranked_total,
         reranked=reranked_total,
