@@ -122,6 +122,7 @@ ALLOWED_PROVIDERS = (
     "openrouter",
     "tokenrouter",
     "ollama_cloud",
+    "kaggle",
 )
 
 #: Defined in packages/llm/prompts.py — see the note there on versioning.

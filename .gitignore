@@ -17,6 +17,7 @@
 .secrets/
 
 # PII / user data — resumes, tailored PDFs, screenshots, browser profiles
+storage
 storage/
 *.pdf
 *.docx
