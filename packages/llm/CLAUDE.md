@@ -11,6 +11,38 @@ Implementations: `OllamaProvider`, `OllamaCloudProvider`, `GeminiProvider`,
 Selected by `LLM_PROVIDER` env var. `StubProvider` returns deterministic canned output and
 is what tests use — no test may hit a network LLM.
 
+**Cloud contact masking is mandatory, across tasks.** Production callers use
+`build_provider`, which wraps every remote transport in `PrivacyProvider`
+(`packages/llm/privacy.py`), including providers added later such as hosted
+notebooks. Dashboard chat, tailoring, cover letters, comparisons and open-ended
+answers share this boundary. Direct transport constructors are for isolated
+transport tests; do not bypass the factory in production.
+
+Before each cloud call, read locally stored candidate/account contacts,
+profile contact answers and every résumé version's contact block. Mask known
+names (including their components), email addresses and common phone formats
+in both prompt messages. Identifying URL paths/queries are masked too, including
+percent encoding; structured schema defaults/enums/aliases are also covered.
+Use opaque per-call placeholders, never realistic invented contact details.
+The dictionary stays in memory and is not logged or persisted. The existing
+audit/quota trail records the masked prompt actually handed to the transport.
+An unreadable contact source or masking failure refuses the cloud call.
+
+Restore exact returned placeholders locally, including across stream chunks
+and before JSON validators and tailoring's fabrication guard. Damaged markers
+are refused; tailoring keeps its original bullet on a provider failure as
+before. Profile records, source résumés and rendered contact headers retain the
+original details. Local calls neither load the dictionary nor redact anything,
+and local fallback receives the original input. Only loopback Ollama endpoints
+qualify for the local exemption; a non-cloud model on another host is masked.
+
+This minimizes contact disclosure; **it does not anonymize a résumé or chat**.
+Unrecognized names, personal links with unrelated handles, employer/project
+history and other identifying prose can remain. Pattern matching may also
+mask ordinary words that coincide with a known name, or a long number shaped
+like a phone. Provider choice and the separate recruiter-mail consent gate
+still apply. No system prompt or task-routing default changes.
+
 Task routing (`packages/llm/router.py`):
 
 | Task | Default provider | Temp | Why |

@@ -85,7 +85,7 @@ def test_it_is_reachable_by_name(monkeypatch) -> None:
     monkeypatch.setenv("TOKENROUTER_API_KEY", "sk-tr-test")
 
     assert router._configured("tokenrouter") is True
-    assert isinstance(build_provider("tokenrouter"), TokenRouterProvider)
+    assert isinstance(build_provider("tokenrouter").inner, TokenRouterProvider)
 
 
 def test_it_can_be_the_remote_half_of_a_comparison(monkeypatch) -> None:
