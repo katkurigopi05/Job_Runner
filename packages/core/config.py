@@ -159,6 +159,10 @@ class Settings(BaseSettings):
     #: case sends no credential at all.
     ollama_api_key: str | None = None
 
+    #: Session credentials stay outside .env and source control. Refreshed
+    #: explicitly when the owner's Kaggle notebook session changes.
+    kaggle_connection_file: Path = Path("storage/kaggle-connection.json")
+
     #: Where to send "an application is waiting on you". Comma separated, any
     #: of: log, desktop, webhook. Unset means the log line only, which is the
     #: shipped default and sends nothing anywhere.

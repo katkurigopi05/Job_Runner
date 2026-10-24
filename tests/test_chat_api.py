@@ -399,8 +399,9 @@ async def test_the_local_model_always_sees_recruiter_mail(
     assert "recruiter@bigco.example" in seen["user"]
 
 
+@pytest.mark.parametrize("provider", ["gemini", "kaggle"])
 async def test_a_cloud_model_does_not_get_the_mail_unless_asked(
-    client: AsyncClient, worker_session, monkeypatch
+    client: AsyncClient, worker_session, monkeypatch, provider: str
 ) -> None:
     """The default that matters. Picking Gemini must not quietly take the mail.
 
@@ -416,7 +417,7 @@ async def test_a_cloud_model_does_not_get_the_mail_unless_asked(
 
     answered = await client.post(
         "/chat",
-        json={"message": "any replies?", "application_id": application_id, "provider": "gemini"},
+        json={"message": "any replies?", "application_id": application_id, "provider": provider},
     )
 
     assert answered.status_code == 200
@@ -429,8 +430,9 @@ async def test_a_cloud_model_does_not_get_the_mail_unless_asked(
     assert "withheld" in seen["user"]
 
 
+@pytest.mark.parametrize("provider", ["gemini", "kaggle"])
 async def test_a_cloud_model_gets_the_mail_when_the_owner_turns_it_on(
-    client: AsyncClient, worker_session, monkeypatch
+    client: AsyncClient, worker_session, monkeypatch, provider: str
 ) -> None:
     """The toggle has to actually work, or it is theatre."""
     import apps.api.routers.chat as chat_module
@@ -444,7 +446,7 @@ async def test_a_cloud_model_gets_the_mail_when_the_owner_turns_it_on(
         json={
             "message": "any replies?",
             "application_id": application_id,
-            "provider": "gemini",
+            "provider": provider,
             "share_mail": True,
         },
     )

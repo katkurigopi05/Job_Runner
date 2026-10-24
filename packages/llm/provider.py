@@ -1267,6 +1267,10 @@ def build_provider(name: str | None = None) -> LLMProvider:
         return TokenRouterProvider()
     elif selected == "ollama_cloud":
         return OllamaCloudProvider()
+    elif selected == "kaggle":
+        from packages.llm.kaggle import KaggleProvider
+
+        return KaggleProvider()
     else:
         raise LLMError(f"LLM provider {selected!r} is unknown or not implemented.")
 
