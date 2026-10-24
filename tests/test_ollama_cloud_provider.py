@@ -83,7 +83,7 @@ def test_the_local_provider_still_sends_nothing() -> None:
 
 
 def test_build_provider_knows_the_name() -> None:
-    assert isinstance(build_provider("ollama_cloud"), OllamaCloudProvider)
+    assert isinstance(build_provider("ollama_cloud").inner, OllamaCloudProvider)
 
 
 # ---------------------------------------------------------------------------

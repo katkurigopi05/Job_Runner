@@ -63,6 +63,14 @@ The reply carries `model` and `local`, both computed rather than inferred from
 the provider name, and the UI marks every remote turn. An answer that cost
 privacy must never look like one that did not.
 
+**Cloud contact masking is shared with tailoring.** `build_provider` masks
+known locally stored profile/résumé names and email/phone patterns before any
+cloud request, including the question, context, shared mail and conversation
+history. The provider boundary handles JSON and streaming too; restoration is
+local. The picker explains this while keeping clear that other identifying
+context may remain. This is contact minimization, not full anonymization, and
+it does not widen mail consent or change `assistant.system` v7.
+
 **Recruiter mail is gated separately, and defaults to withheld.** Choosing a
 cloud provider does not take the inbox with it. `ChatRequest.share_mail` is
 `False` unless the owner ticks the box for that question, and the `/chat` panel

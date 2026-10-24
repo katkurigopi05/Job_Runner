@@ -27,7 +27,7 @@ import json
 import os
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any, Protocol, TypeVar
 
 import httpx
@@ -117,7 +117,7 @@ async def stream_text(
     *,
     max_tokens: int = 1024,
     temperature: float = DEFAULT_TEMPERATURE,
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str, None]:
     """A provider's answer as it is written, or whole if it cannot say it that way.
 
     Only the Ollama providers have a `stream`. The others answer in one piece,
@@ -1246,7 +1246,14 @@ class TokenRouterProvider(_OpenAICompatibleProvider):
 
 
 def build_provider(name: str | None = None) -> LLMProvider:
-    """Select a provider by name. Only the stub exists until it is needed."""
+    """Production entry point: every cloud transport gets contact masking."""
+    from packages.llm.privacy import protect_provider
+
+    return protect_provider(_build_provider(name))
+
+
+def _build_provider(name: str | None = None) -> LLMProvider:
+    """Construct the transport before the mandatory cloud boundary."""
     from packages.core.config import get_settings
 
     selected = (name or get_settings().llm_provider).lower()

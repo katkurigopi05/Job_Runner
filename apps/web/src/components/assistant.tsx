@@ -565,7 +565,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
         <p
           className={`min-w-0 flex-1 text-xs ${chosen.local ? "text-ink-faint" : "text-attn"}`}
         >
-          {chosen.hint}
+          {chosen.hint}{!chosen.local && " Known profile names and email/phone patterns are masked before cloud calls. Other identifying context may remain."}
         </p>
       </div>
 

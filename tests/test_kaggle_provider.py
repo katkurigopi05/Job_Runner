@@ -170,9 +170,40 @@ def test_factory_uses_explicit_configuration(connection: Path, monkeypatch) -> N
     monkeypatch.setenv("KAGGLE_CONNECTION_FILE", str(connection))
     get_settings.cache_clear()
     try:
-        assert isinstance(build_provider("kaggle"), kaggle.KaggleProvider)
+        provider = build_provider("kaggle")
+        assert provider.name == "kaggle" and provider.model == MODEL
+        assert str(provider.connection.kernel_id) == KERNEL
     finally:
         get_settings.cache_clear()
+
+
+async def test_factory_masks_contacts_before_the_authenticated_kernel(
+    connection, monkeypatch
+) -> None:
+    from packages.core.config import get_settings
+    from packages.llm import privacy
+    from packages.llm.provider import stream_text
+
+    async def contacts():
+        return privacy.Identifiers(names=("Alex Morgan",))
+
+    monkeypatch.setattr(privacy, "load_identifiers", contacts)
+    kernel = Kernel()
+    serves(monkeypatch, kernel)
+    monkeypatch.setenv("KAGGLE_CONNECTION_FILE", str(connection))
+    get_settings.cache_clear()
+    guarded = build_provider("kaggle")
+    get_settings.cache_clear()
+    assert isinstance(guarded, privacy.PrivacyProvider)
+    prompt = "Alex Morgan, alex.morgan@example.net, +1 (202) 555-0147"
+    assert (
+        "".join([chunk async for chunk in stream_text(guarded, "Alex Morgan", prompt)]) == "3 jobs"
+    )
+    assert "Alex" not in json.dumps(kernel.sent) and "Morgan" not in json.dumps(kernel.sent)
+    assert "example.net" not in json.dumps(kernel.sent) and "555-0147" not in json.dumps(
+        kernel.sent
+    )
+    assert "JR_PRIVATE_" in json.dumps(kernel.sent)
 
 
 async def test_chat_can_choose_kaggle_but_not_as_default(client, monkeypatch) -> None:

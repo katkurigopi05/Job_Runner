@@ -85,7 +85,7 @@ def test_but_it_is_configured_so_it_can_be_asked_for_by_name(monkeypatch) -> Non
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
 
     assert router._configured("openrouter") is True
-    assert isinstance(build_provider("openrouter"), OpenRouterProvider)
+    assert isinstance(build_provider("openrouter").inner, OpenRouterProvider)
 
 
 def test_it_is_choosable_for_the_three_uploading_tasks(monkeypatch) -> None:
@@ -102,7 +102,7 @@ def test_it_is_choosable_for_the_three_uploading_tasks(monkeypatch) -> None:
     get_settings.cache_clear()
     try:
         assert router._chosen("tailor_resume") == "openrouter"
-        assert isinstance(router.tailor_resume(), OpenRouterProvider)
+        assert isinstance(router.tailor_resume().inner, OpenRouterProvider)
     finally:
         get_settings.cache_clear()
 

@@ -605,6 +605,21 @@ def _tmp_audit_trail(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _synthetic_cloud_contacts(monkeypatch):
+    """Transport unit tests never read real contacts or need an implicit DB.
+
+    Privacy tests override the loader with synthetic identities; source-query
+    tests exercise read_identifiers against the transactional test session.
+    """
+    from packages.llm import privacy
+
+    async def empty():
+        return privacy.Identifiers()
+
+    monkeypatch.setattr(privacy, "load_identifiers", empty)
+
+
 @pytest_asyncio.fixture
 async def client(committing_sessionmaker, monkeypatch) -> AsyncIterator[AsyncClient]:
     """HTTP client bound to the real app, talking to the test database."""

@@ -271,6 +271,20 @@ Raise `LLM_CALL_INTERVAL_S` for a real batch.
 
 #### Free and paid providers
 
+All cloud LLM calls use contact masking, including chat, résumé tailoring and
+cover letters. Known names from local profiles/résumé contact blocks, email
+addresses and common phone formats become per-call placeholders before they
+leave this machine. Returned placeholders are restored locally; original
+profile data and résumé contact headers keep their real values. A failure to
+read the contact dictionary blocks the cloud call. Local models on a loopback
+Ollama endpoint remain unmasked; another machine's Ollama endpoint is masked.
+
+This is **not full anonymization**: unknown names, unrelated personal handles,
+employment/project history and other identifying prose can remain. Matching
+may mask ordinary words that coincide with a known name. Cloud provider choice
+and the separate recruiter-mail consent still matter. No setting enables an
+unmasked cloud path.
+
 ```dotenv
 GEMINI_API_KEY=
 ANTHROPIC_API_KEY=

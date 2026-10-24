@@ -6,6 +6,13 @@ application/profile/skill context. Recruiter mail and mail-bearing history
 remain withheld unless **share mail** is enabled for that question. Protected
 profile questions are still refused in code. Nothing falls back to another model.
 
+The shared cloud guard masks known local profile/résumé names and email/phone
+patterns before the request reaches Kaggle, then restores exact returned
+placeholders locally. Identifying URLs are masked when they contain these
+contacts. Other identifying prose can remain; this does not anonymize the
+context or replace the separate mail-consent choice. The mapping is held only
+in local memory, not sent to the notebook, logged or persisted.
+
 ## Connect a session
 
 1. Start a private Kaggle GPU notebook, attach your saved model and load

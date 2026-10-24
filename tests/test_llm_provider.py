@@ -55,8 +55,8 @@ def test_build_provider_known(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     assert isinstance(build_provider("stub"), StubProvider)
     assert isinstance(build_provider("ollama"), OllamaProvider)
-    assert isinstance(build_provider("gemini"), GeminiProvider)
-    assert isinstance(build_provider("anthropic"), AnthropicProvider)
+    assert isinstance(build_provider("gemini").inner, GeminiProvider)
+    assert isinstance(build_provider("anthropic").inner, AnthropicProvider)
 
 
 @pytest.mark.asyncio
