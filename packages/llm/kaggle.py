@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, SecretStr
 from websockets.asyncio.client import connect as WebSocketConnect
+from websockets.exceptions import InvalidStatus
 
 from packages.llm.audit import record
 from packages.llm.provider import DEFAULT_TEMPERATURE, LLMError, PromptTooLong
@@ -163,6 +164,14 @@ class KaggleProvider:
                         break
         except LLMError:
             raise
+        except InvalidStatus as exc:
+            if exc.response.status_code in {401, 403, 404}:
+                raise LLMError(
+                    "Kaggle session expired or its kernel is no longer available. "
+                    "Run .venv/bin/python -m scripts.configure_kaggle with a fresh "
+                    "VSCode Compatible URL. Connecting the IDE alone does not update Jobrunner."
+                ) from None
+            raise LLMError("Kaggle session did not answer. Check the running notebook.") from None
         except Exception:
             # Exceptions from the handshake can quote both URL and response.
             # Neither may reach an API error or traceback via a chained cause.

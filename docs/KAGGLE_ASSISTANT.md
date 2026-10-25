@@ -40,8 +40,12 @@ in local memory, not sent to the notebook, logged or persisted.
    .venv/bin/python -m scripts.configure_kaggle
    ```
 
-   Paste the URL into the hidden prompt and enter the kernel ID. This stores
-   `storage/kaggle-connection.json` with owner-only permissions. It does not
+   Paste the URL into the hidden prompt. The command verifies the session and
+   automatically selects its kernel when only one is active. If multiple kernels
+   are active, enter the ID of the one holding the loaded model; an ID outside
+   this session is refused. A failed check leaves the previous connection intact.
+   The verified connection is stored in `storage/kaggle-connection.json` with
+   owner-only permissions. It does not
    edit `.env`. `KAGGLE_CONNECTION_FILE` can select another private location.
 5. Select **Kaggle GPU (remote)** and ask a question. The reply names the model
    and marks it remote. The existing audit records digests and sizes only.
@@ -56,8 +60,14 @@ disabled because handshake URLs carry credentials.
 
 Stopping the Kaggle session ends GPU usage and invalidates the connection.
 A new session requires reloading the model, reinstalling the helper, and
-refreshing the saved URL and kernel ID. An expired session returns an error;
-it never loads a local model. The saved Kaggle model dataset is unaffected.
+refreshing the saved URL and kernel ID. Connecting an IDE to the notebook does
+not refresh Jobrunner: run `.venv/bin/python -m scripts.configure_kaggle` locally
+with the new VSCode Compatible URL each time the session restarts. You do not
+need to download the saved dataset again. Kaggle controls session expiration,
+so a connection cannot be kept valid across stopped sessions.
+
+An expired or missing kernel returns a reconnect instruction; it never loads a
+local model. The saved Kaggle model dataset is unaffected.
 To release model memory within a running session, delete `jobrunner_complete`,
 `model` and `tokenizer`, then collect garbage and empty the CUDA cache. Stop
 the session as well when finished to avoid spending GPU quota.
