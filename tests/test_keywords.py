@@ -113,3 +113,42 @@ def test_a_term_the_bullet_already_ended_on_is_not_borrowed() -> None:
     rewrite = "Built payments services for the backend."
 
     assert borrowed_terms(original, rewrite, ("payments",)) == []
+
+
+# --------------------------------------------------------------------------
+# A verb the posting uses as a noun is still grammar (2026-10-24)
+# --------------------------------------------------------------------------
+
+#: The CoreWeave posting's shape: "development" as a noun, more than once.
+DEV_JD = """Software and AI Engineer. Contribute across the development lifecycle,
+including product development, management of internal tools, process
+improvement, and the creation of new designs. Kubernetes required."""
+
+
+@pytest.mark.parametrize(
+    "noun", ["development", "management", "improvement", "creation", "designs"]
+)
+def test_a_noun_form_of_an_ordinary_verb_is_not_a_posting_term(noun: str) -> None:
+    assert noun not in [term.lower() for term in job_terms(DEV_JD)]
+
+
+def test_a_rewrite_opening_developed_does_not_borrow_development() -> None:
+    original = "Built packages for editor state and playback."
+    forbidden = tuple(analyze(DEV_JD, SourceCorpus.from_texts(original)).missing)
+    candidate = "Developed packages for editor state and playback."
+    assert borrowed_terms(original, candidate, forbidden) == []
+
+
+def test_a_real_posting_term_is_still_borrowed() -> None:
+    original = "Built packages for editor state and playback."
+    forbidden = tuple(analyze(DEV_JD, SourceCorpus.from_texts(original)).missing)
+    candidate = "Built Kubernetes packages for editor state and playback."
+    assert borrowed_terms(original, candidate, forbidden) == ["Kubernetes"]
+
+
+@pytest.mark.parametrize("role", ["developer", "manager", "designer"])
+def test_a_role_noun_does_not_fold_into_its_verb(role: str) -> None:
+    from packages.tailor.guard import stem
+    from packages.tailor.keywords import _VERB_STEMS
+
+    assert stem(role) not in _VERB_STEMS
