@@ -241,6 +241,7 @@ def test_setup_saves_the_real_url_privately_without_printing_it(
         lambda: SimpleNamespace(kaggle_connection_file=destination),
     )
     monkeypatch.setattr(configure_kaggle.getpass, "getpass", lambda _: SERVER)
+    monkeypatch.setattr(configure_kaggle, "discover_kernels", lambda _: [kaggle.UUID(KERNEL)])
     monkeypatch.setattr("builtins.input", lambda _: KERNEL)
     configure_kaggle.main()
     assert destination.stat().st_mode & 0o777 == 0o600
