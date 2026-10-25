@@ -100,6 +100,7 @@ ROLE_ALIASES: dict[str, tuple[str, ...]] = {
         "ml engineer",
         "mle",
         "ai engineer",
+        "ai ml engineer",
         "artificial intelligence engineer",
         "deep learning engineer",
         "applied machine learning engineer",
@@ -166,6 +167,8 @@ def _surface(title: str) -> str:
     the unlevelled one, so a title that is only recognizable with its rung
     words still resolves.
     """
+    # The slash in AI/ML joins one role name; other slashes still start a qualifier.
+    title = re.sub(r"\bai\s*/\s*ml\b", "ai ml", title, flags=re.I)
     text = _QUALIFIER_RE.sub(" ", title.lower())
     return _SPACE_RE.sub(" ", _PUNCT_RE.sub(" ", text)).strip()
 

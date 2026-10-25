@@ -894,3 +894,17 @@ standalone **right** remains searchable, including **right to work**. Company
 name recognition is unchanged. `tests/test_retrieval_totals.py` covers the
 full set beyond 120 rows, selective body reads, mixed remote/on-site postings
 sharing metadata, phrase framing, and the existing unknown-total cases.
+
+Count questions also remove **how many** and question phrases such as **what's
+the percentage**, rather than treating them as extra skills. A bare
+`percentage` used as a subject is preserved. The role table recognizes
+`AI/ML Engineer`, `AI / ML Engineer`, and `AI ML Engineer` as one AI/ML role;
+the slash in that compound name does not begin a title qualifier.
+
+Only a percentage request with a complete matching count scans the denominator:
+all open postings under the same area/place rule, including descriptions that
+establish an otherwise excluded job is remote. The denominator has no role,
+company or level restriction; its scope is stated. This accounting uses a
+separate place filter so it cannot alter the query's omitted-role counts.
+Ordinary role queries do not pay for the denominator scan. No model performs
+division. `tests/test_chat_posting_share.py`.
