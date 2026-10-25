@@ -17,13 +17,14 @@ Two constraints shape the output:
 from __future__ import annotations
 
 import html
+import re
 from dataclasses import replace
 
 import structlog
 from pydantic import BaseModel, Field
 
 from packages.core.models import Project
-from packages.tailor.dates import date_only, trailing_date
+from packages.tailor.dates import contains_date, date_only, trailing_date
 from packages.tailor.parse import ParsedResume
 from packages.tailor.projects import (
     LinkStyle,
@@ -189,13 +190,84 @@ _PLAIN_SECTIONS: frozenset[str] = frozenset({"skills", "languages", "interests"}
 #: what the disagreement cost.
 
 
+#: A link annotation at the end of a title: `Attorney.AI — ... [GitHub]`. The
+#: source document had a hyperlink there. Parsing keeps the word and loses
+#: the link, so printed it is a bracketed word that goes nowhere. `classify`
+#: still reads the marker to know the line is a title; it is only not printed.
+_LINK_TAG_RE = re.compile(
+    r"\s*\[(?:GitHub|GitLab|LinkedIn|Portfolio|Link|Demo|Website)\]\s*$", re.IGNORECASE
+)
+
+#: A school's location, split off an education entry so it does not run into
+#: the name: `California State University East Bay Hayward, CA`. The source
+#: set the location apart with space that text extraction collapsed, so
+#: nothing marks where the name ends but the shape `City, ST`.
+#:
+#: Only education entries, and only when the part before names a school.
+#: An employment line has the same shape for other reasons (`Data Engineer,
+#: Stripe, NY`). A city of two words that is not listed below is split at
+#: its last word, which is the limit of reading a location without a gazetteer.
+_MULTI_WORD_CITIES = (
+    "Fort Worth",
+    "Hong Kong",
+    "Kansas City",
+    "Las Vegas",
+    "Los Angeles",
+    "New Delhi",
+    "New York",
+    "Salt Lake City",
+    "San Antonio",
+    "San Diego",
+    "San Francisco",
+    "San Jose",
+    "Santa Clara",
+    "St. Louis",
+)
+_LOCATION_RE = re.compile(
+    rf"\b(?:{'|'.join(re.escape(city) for city in _MULTI_WORD_CITIES)}|[A-Z][a-z]+),"
+    r"\s*(?:[A-Z]{2}|India|USA|UK|Canada)\s*$"
+)
+_INSTITUTION_RE = re.compile(
+    r"\b(?:university|college|institute|school|academy|polytechnic|iit|nit)\b", re.IGNORECASE
+)
+
+
+def trailing_location(line: str) -> tuple[str, str] | None:
+    """`("California State University East Bay", "Hayward, CA")`, or None."""
+    match = _LOCATION_RE.search(line)
+    if match is None:
+        return None
+    school = line[: match.start()].strip()
+    if not _INSTITUTION_RE.search(school):
+        return None
+    return school, match.group(0).strip()
+
+
 def _render_lines(lines: list[str]) -> str:
     items = "\n".join(f"<li>{html.escape(line)}</li>" for line in lines)
     return f"<ul>\n{items}\n</ul>"
 
 
+def _render_plain_item(line: str) -> str:
+    """`Languages  Python, Rust` as **Languages:** Python, Rust.
+
+    The source separates a category from its members with a wide gap, and
+    HTML collapses any run of spaces to one, so the PDF read `Languages
+    Python, Rust` with nothing between the two. The split is
+    `skills._split_label`, the one the Skills reorder uses, so a line is
+    labelled here exactly when it is labelled there.
+    """
+    from packages.tailor.skills import _split_label
+
+    label, _gap, rest = _split_label(line.strip())
+    label = label.strip().rstrip(":").strip()
+    if not label or not rest.strip():
+        return f"<li>{html.escape(line)}</li>"
+    return f"<li><strong>{html.escape(label)}:</strong> {html.escape(rest.strip())}</li>"
+
+
 def _render_plain(lines: list[str]) -> str:
-    items = "\n".join(f"<li>{html.escape(line)}</li>" for line in lines)
+    items = "\n".join(_render_plain_item(line) for line in lines)
     return f"<ul class='plain'>\n{items}\n</ul>"
 
 
@@ -203,7 +275,7 @@ def _render_paragraphs(lines: list[str]) -> str:
     return "\n".join(f"<p>{html.escape(line)}</p>" for line in lines)
 
 
-def _render_entry_name(line: str) -> str:
+def _render_entry_name(line: str, *, split_location: bool = False) -> str:
     """An entry name, with any trailing date range split into its own span.
 
     The date stays *inline* after the name — styled, not floated. Splitting it
@@ -217,19 +289,61 @@ def _render_entry_name(line: str) -> str:
     never reads `Jan 2021 – Present Acme Corp` and has to guess which half is
     the employer.
     """
-    split = trailing_date(line)
-    if split is None:
-        return f"<div class='entry'><span class='entry-name'>{html.escape(line)}</span></div>"
-    name, date = split
-    return (
-        "<div class='entry'>"
-        f"<span class='entry-name'>{html.escape(name)}</span>"
-        f"<span class='entry-date'>{html.escape(date)}</span>"
-        "</div>"
-    )
+    name = _LINK_TAG_RE.sub("", line).strip()
+    date = ""
+    split = trailing_date(name)
+    if split is not None:
+        name, date = split
+    location = ""
+    if split_location:
+        found = trailing_location(name)
+        if found is not None:
+            name, location = found
+
+    spans = [f"<span class='entry-name'>{html.escape(name)}</span>"]
+    if location:
+        spans.append(f"<span class='entry-location'>{html.escape(location)}</span>")
+    if date:
+        spans.append(f"<span class='entry-date'>{html.escape(date)}</span>")
+    return "<div class='entry'>" + "".join(spans) + "</div>"
 
 
-def _render_entries(lines: list[str]) -> str:
+#: Items a labelled line needs before it reads as a list. Three, the count
+#: `bullets._is_labelled_list` uses for the same question about Skills lines.
+_LABELLED_LIST_ITEMS = 3
+
+
+def _reads_as_supporting(line: str, listed: frozenset[str]) -> bool:
+    """A line `classify` calls a name that prints as the line under one.
+
+    `Python, GitHub Actions` (a two-item stack) and `Courses: Data Structures,
+    Networks, Operating Systems` (a labelled list) were set in bold, as though
+    each were a project or a school. Both are ENTRY to `classify`, which is
+    correct for what matters there: neither is a bullet, so neither is sent
+    to the model. This changes only the typography.
+
+    It stays out of `classify` on purpose. Teaching `_is_list` that two items
+    make a list, or that any colon starts a label, also turns `Barista,
+    Starbucks` into a stack and `Result: cut latency 40%, saved $2M` into a
+    line nobody rewrites — `test_resume_entry_typography.py` holds both.
+    """
+    from packages.tailor.skills import _split_label, _split_skills
+    from packages.tailor.technologies import names_only_listed
+
+    label, _gap, rest = _split_label(line.strip())
+    if label.strip():
+        items = [item for item in (_split_skills(rest) or []) if item]
+        if len(items) >= _LABELLED_LIST_ITEMS:
+            return True
+    return names_only_listed(line, listed)
+
+
+def _render_entries(
+    lines: list[str],
+    *,
+    listed: frozenset[str] = frozenset(),
+    split_location: bool = False,
+) -> str:
     """Lay a section out as entries rather than as one undifferentiated list.
 
     Before this every line in a section was an `<li>` in a `<ul>` with
@@ -241,7 +355,8 @@ def _render_entries(lines: list[str]) -> str:
     Grouping uses `packages.tailor.bullets.classify`, the same function that
     decides what the model is asked to rewrite. One answer to "what is this
     line", so the document cannot be laid out on one reading of it and
-    tailored on another.
+    tailored on another. `_reads_as_supporting` only changes how a name is
+    set, never whether a line is a bullet.
     """
     from packages.tailor.bullets import LineKind, classify
 
@@ -278,8 +393,8 @@ def _render_entries(lines: list[str]) -> str:
             parts.append(f"<p class='entry-meta'>{html.escape(line)}</p>")
             continue
 
-        if kind is LineKind.ENTRY:
-            parts.append(_render_entry_name(line))
+        if kind is LineKind.ENTRY and not _reads_as_supporting(line, listed):
+            parts.append(_render_entry_name(line, split_location=split_location))
             open_entry = len(parts) - 1
         else:
             parts.append(f"<p class='entry-meta'>{html.escape(line)}</p>")
@@ -307,14 +422,25 @@ def _with_date(entry_html: str, date: str) -> str:
     )
 
 
-def _render_body(name: str, lines: list[str]) -> str:
+#: Leading glyphs a source puts on a list item. Stripped where every line of a
+#: section becomes a bullet, so a line that had one does not print two.
+_ITEM_GLYPHS = "-•*‣◦–— "
+
+
+def _render_body(name: str, lines: list[str], listed: frozenset[str] = frozenset()) -> str:
     """The lines of one section, laid out the way that section reads."""
     if name == "summary":
         return _render_paragraphs(lines)
     if name in _PLAIN_SECTIONS:
         return _render_plain(lines)
+    if name == "certifications" and not any(contains_date(line) for line in lines):
+        # Entry layout exists for a certificate, its date and its detail (see
+        # `_ENTRY_SECTIONS`). With no date anywhere, each line is a whole
+        # certificate, and the entry reading set some in bold as names and
+        # others as bullets, depending on how each one happened to open.
+        return _render_lines([line.lstrip(_ITEM_GLYPHS) for line in lines if line.strip()])
     if name in _ENTRY_SECTIONS:
-        return _render_entries(lines)
+        return _render_entries(lines, listed=listed, split_location=name == "education")
     return _render_lines(lines)
 
 
@@ -331,7 +457,12 @@ def assemble_html(
     opts = options or AssemblyOptions()
     chosen = projects or []
 
+    from packages.tailor.technologies import inventory
+
     parts = [_render_contact(resume)]
+    # What the résumé lists as its technologies, so a stack line under a
+    # title is set as one (`_reads_as_supporting`).
+    listed = inventory(resume)
 
     rendered_projects = ""
     if opts.include_projects and chosen:
@@ -360,7 +491,7 @@ def assemble_html(
                 heading = "Projects" if not rendered_projects else "Selected Project Experience"
                 parts.append(
                     f"<section><h2>{html.escape(heading)}</h2>"
-                    f"{_render_body('projects', source_projects)}</section>"
+                    f"{_render_body('projects', source_projects, listed)}</section>"
                 )
                 emitted.add("projects")
             continue
@@ -369,7 +500,9 @@ def assemble_html(
         if not lines:
             continue
         title = SECTION_TITLES.get(name, name.title())
-        parts.append(f"<section><h2>{html.escape(title)}</h2>{_render_body(name, lines)}</section>")
+        parts.append(
+            f"<section><h2>{html.escape(title)}</h2>{_render_body(name, lines, listed)}</section>"
+        )
         emitted.add(name)
 
     # A section the parser found but the layout does not know about is kept,
@@ -380,7 +513,9 @@ def assemble_html(
         if name == "projects" and opts.replace_source_projects and rendered_projects:
             continue
         title = SECTION_TITLES.get(name, name.title())
-        parts.append(f"<section><h2>{html.escape(title)}</h2>{_render_body(name, lines)}</section>")
+        parts.append(
+            f"<section><h2>{html.escape(title)}</h2>{_render_body(name, lines, listed)}</section>"
+        )
 
     return "\n".join(parts)
 

@@ -86,6 +86,33 @@ def inventory(parsed: ParsedResume) -> frozenset[str]:
     return frozenset(terms)
 
 
+def names_only_listed(line: str, listed: frozenset[str]) -> bool:
+    """Whether every item of a comma list is a technology the résumé lists.
+
+    `Python, GitHub Actions` under a project title is that project's stack.
+    With two items it is one comma short of what `bullets._is_list` counts as
+    a list, and `Barista, Starbucks` has exactly the same shape, so the shape
+    cannot tell them apart. The words can: a stack names only things the
+    résumé's own Skills section lists, and a job title does not.
+
+    Read with the inventory's own tokenizer and filter, so a word the
+    inventory never keeps (a common word, a number) neither confirms nor
+    sinks a fragment; every fragment still needs one listed term.
+    """
+    if not listed or "," not in line or line.rstrip().endswith("."):
+        return False
+    for fragment in line.split(","):
+        terms = [normalize(match.group(0)) for match in _TOKEN_RE.finditer(_separated(fragment))]
+        kept = [
+            term
+            for term in terms
+            if len(term) >= _MIN_TERM_LENGTH and term not in _COMMON_WORDS and not term.isdigit()
+        ]
+        if not kept or any(term not in listed for term in kept):
+            return False
+    return True
+
+
 def dropped(original: str, candidate: str, listed: frozenset[str]) -> tuple[str, ...]:
     """Listed technologies the original names and the candidate does not.
 

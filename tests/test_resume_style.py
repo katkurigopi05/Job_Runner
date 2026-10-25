@@ -41,6 +41,10 @@ from packages.tailor.style import (
 #: The template the page-layout tests were measured against. The default
 #: style has to reproduce it exactly, or every fixture that counts lines on a
 #: page is counting a different document.
+#:
+#: The two `.entry-location` rules were added on 2026-10-24. They style only a
+#: span the education layout emits for a school's location, so a document
+#: without one is set exactly as before.
 TEMPLATE_BEFORE_STYLES = """
 @page { size: Letter; margin: 0.55in; }
 body { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
@@ -61,6 +65,8 @@ li { break-inside: avoid; }
 .entry-name { font-weight: 700; }
 .entry-date { font-size: 9pt; color: #444; font-weight: 400; }
 .entry-date::before { content: "  \\00b7  "; color: #999; }
+.entry-location { font-size: 9pt; color: #444; font-weight: 400; font-style: italic; }
+.entry-location::before { content: "  \\00b7  "; color: #999; font-style: normal; }
 .entry-meta { font-style: italic; color: #444; font-size: 9pt; margin: 0 0 3pt; }
 ul { list-style: none; padding: 0; margin: 0 0 2pt; }
 li { margin: 0 0 3pt; padding-left: 11pt; text-indent: -11pt; }
