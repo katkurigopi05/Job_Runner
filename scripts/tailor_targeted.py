@@ -40,7 +40,7 @@ from packages.llm import router as llm_router
 from packages.llm.provider import build_provider
 from packages.tailor import targeted, verify
 from packages.tailor.assemble import assemble_pdf
-from packages.tailor.evidence import matched_job_terms
+from packages.tailor.evidence import linked_evidence, matched_job_terms
 from packages.tailor.parse import ParsedResume
 from packages.tailor.publish import apply_rewrites, assembly_options, publish_tailored
 from packages.tailor.rewrite import BulletRewrite, TailorResult
@@ -156,7 +156,8 @@ async def main(posting_id: uuid.UUID, *, run: bool, provider_name: str | None) -
         async with get_sessionmaker()() as session:
             posting, profile, base, parsed, projects = await _load(session, posting_id)
             text = posting.description_raw or ""
-            plan = targeted.classify(parsed, text, projects=projects)
+            linked = await linked_evidence(session, base.candidate_id)
+            plan = targeted.classify(parsed, text, projects=projects, linked=linked)
             print(f"{posting.title} | base résumé v{base.version}")
             print("\n".join(describe_plan(plan)))
             if not plan.targets or not run:
@@ -175,7 +176,9 @@ async def main(posting_id: uuid.UUID, *, run: bool, provider_name: str | None) -
                 )
                 return 1
 
-            revision = await targeted.revise(provider, parsed, text, projects=projects, plan=plan)
+            revision = await targeted.revise(
+                provider, parsed, text, projects=projects, plan=plan, linked=linked
+            )
             answered = getattr(provider, "answered_by", None) or name
             print(f"\n{revision.message}; answered by {answered}")
             for outcome in revision.outcomes:

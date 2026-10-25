@@ -680,3 +680,63 @@ Seen and not fixed here: grammar words sit on the off-limits list for 11,054
 of those postings ("what" 5,520, "through" 4,020, "who" 3,943, "how" 3,654),
 because `ats._GRAMMAR` is kept on the measurement side. Freeing the verb
 slots added 49 postings to that count.
+
+## A repository linked to a résumé project is evidence for it (2026-10-25)
+
+The owner asked for this after a GitHub scan found tools in their own
+repositories that their résumé never named (PyTorch, LlamaIndex, Supabase,
+Vitest, Playwright, the Gemini API). Rule §2.1 was amended to allow it; the
+owner approved the text.
+
+How it works:
+
+- **The sync reads dependency files** (`packages/github/manifests.py`):
+  `requirements*.txt`, `pyproject.toml`, `package.json`, `Cargo.toml`,
+  anywhere in the tree except vendored, installed, build and fixture
+  directories. One tree call per repository, files from the raw host, and a
+  repository is read again only after a new push. A rate limit stops the
+  pass and the rest wait for the next sync; it is never stored as "uses
+  nothing". Forks are not read.
+- **Only packages in `TECHNOLOGY_NAMES` count.** An unknown package is
+  ignored, never turned into a name by rule. Adding a row is a decision about
+  what may appear on a résumé.
+- **The owner links a repository to a Projects entry** on the Résumés page
+  (`Project.resume_entry`, by `guard.entry_key`). No MCP tool can set it
+  (`apps/mcp/CLAUDE.md`).
+- **The guard** gives every line under that entry's title the repository's
+  technology facts as `CorpusItem.evidence`. Not `tokens`, so a link never
+  counts as the entry *claiming* a word and withdrawing it from the Skills
+  list for other entries. An Experience entry is never linked. A title is a
+  name-like line that is not directly under another title, unless it carries
+  a link tag; that keeps a two-item stack line (`Python, FastAPI`) from
+  cutting a project's bullets off from its repository.
+- **Targeted tailoring** targets a term a linked repository backs at that
+  project's bullets. The term is its own evidence, so the revision may add
+  the term and nothing else (`brought_in`).
+- **The cache key** carries a digest of the links; with none it is the key
+  it always was.
+
+What was measured:
+
+- **The evidence is technology facts only**: primary language, topics, and
+  declared tools. Not the repository's name or description. The first
+  version used the full source text, and over 400 open postings mentioning
+  one of the owner's tools the terms it offered most were "features" (40),
+  "fix", "review" and "foundational": prose, not skills. With technology
+  facts only, 51 of those 400 postings gain a target, 61 targetable terms
+  become 119, and the gains are Elasticsearch/Elastic, PyTorch, Gemini,
+  Playwright, Supabase and Vitest.
+- **On the CoreWeave posting it gains nothing.** That posting's term list is
+  the noisy one (CoreWeave, Finance, guidance), so no gap is a tool a
+  repository could back. Fixing how terms are read from a posting is a
+  separate change.
+- **The owner's real repositories**: 19 read with no rate limit, and the
+  four name suggestions (Job_Runner, StreambreakerAi, Attorney.AI,
+  color-harmony) were right.
+
+Seen and left: the recombination check refuses "LlamaIndex hybrid
+retrieval", because the repository says the project uses LlamaIndex and not
+that the hybrid retrieval is LlamaIndex's. That is correct. A team project's
+dependencies include teammates' parts, which the dashboard says beside the
+control; the link is the owner's statement that the code is theirs. A
+notebook-only repository declares nothing, so it backs nothing.

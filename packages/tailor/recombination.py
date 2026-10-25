@@ -158,12 +158,13 @@ def find(
     An unsupported token is already a violation, and reporting it twice under
     two names would make the guard's output harder to read, not safer.
     """
-    source_text = scope.text if scope is not None else corpus.text
+    # A linked repository's own record is source text for its project too.
+    source_text = f"{scope.text}\n{scope.evidence_text}" if scope is not None else corpus.text
     source = _segments(source_text)
     if not source:
         return []
 
-    available = scope.tokens if scope is not None else corpus.tokens
+    available = (scope.tokens | scope.evidence) if scope is not None else corpus.tokens
     findings: list[Recombination] = []
     seen: set[tuple[str, str]] = set()
 

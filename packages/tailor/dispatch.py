@@ -19,7 +19,7 @@ A targeted document is read back from its PDF before anything attaches it
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -87,6 +87,7 @@ def plan_needed_calls(
     *,
     projects: Sequence[Project] = (),
     mode: str | None = None,
+    linked: Mapping[str, str] | None = None,
 ) -> int:
     """The most calls tailoring this posting can make, for a quota check.
 
@@ -98,7 +99,7 @@ def plan_needed_calls(
     if not bullets:
         return 0
     if active_mode(mode) is TailorMode.TARGETED:
-        return classify(parsed, posting_text, projects=projects).calls_needed
+        return classify(parsed, posting_text, projects=projects, linked=linked).calls_needed
     return len(bullets)
 
 
@@ -111,16 +112,18 @@ async def tailor(
     corpus: SourceCorpus | None = None,
     mode: str | None = None,
     plan: Plan | None = None,
+    linked: Mapping[str, str] | None = None,
 ) -> Tailored:
     """Tailor `parsed` for the posting, in the mode in force.
 
     `provider_factory` is called at most once, and not at all for a targeted
-    run with nothing to gain.
+    run with nothing to gain. `linked` is `evidence.linked_evidence`: the
+    repositories the owner linked to the résumé's projects.
     """
     chosen = active_mode(mode)
 
     if chosen is TailorMode.TARGETED:
-        plan = plan or classify(parsed, posting_text, projects=projects)
+        plan = plan or classify(parsed, posting_text, projects=projects, linked=linked)
         if not plan.targets:
             log.info("targeted_tailor_no_gain")
             unchanged = [BulletRewrite(original=b, tailored=b) for b in plan.bullets]
@@ -129,7 +132,7 @@ async def tailor(
             )
 
         revision = await revise(
-            provider_factory(), parsed, posting_text, projects=projects, plan=plan
+            provider_factory(), parsed, posting_text, projects=projects, plan=plan, linked=linked
         )
         return Tailored(
             result=revision.result,
@@ -143,7 +146,10 @@ async def tailor(
 
     _, bullets = tailorable_bullets(parsed)
     result = await tailor_bullets(
-        provider_factory(), bullets, posting_text, corpus or SourceCorpus.from_resume(parsed)
+        provider_factory(),
+        bullets,
+        posting_text,
+        corpus or SourceCorpus.from_resume(parsed, linked=linked),
     )
     return Tailored(result=result, mode=chosen, calls=len(bullets))
 

@@ -18,14 +18,28 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import structlog
 from pydantic import BaseModel, Field
 
+from packages.github.manifests import is_manifest_path, packages_in, technologies
+
 log = structlog.get_logger(__name__)
 
 API_ROOT = "https://api.github.com"
+
+#: File contents come from here, not the contents API: the API answers in
+#: base64 and every file costs one of the 60 unauthenticated calls an hour.
+RAW_ROOT = "https://raw.githubusercontent.com"
+
+#: Dependency files read per repository, shallowest first. A monorepo with a
+#: package.json per package is covered well before this.
+MAX_MANIFESTS = 25
+
+#: A dependency file larger than this is not one a person wrote.
+MAX_MANIFEST_BYTES = 512_000
 
 #: GitHub caps this at 100.
 PAGE_SIZE = 100
@@ -59,6 +73,7 @@ class Repository(BaseModel):
     is_archived: bool = False
     is_private: bool = False
     pushed_at: datetime | None = None
+    default_branch: str | None = None
 
     @classmethod
     def from_api(cls, payload: dict[str, Any]) -> Repository:
@@ -77,6 +92,7 @@ class Repository(BaseModel):
             is_archived=bool(payload.get("archived")),
             is_private=bool(payload.get("private")),
             pushed_at=payload.get("pushed_at"),
+            default_branch=payload.get("default_branch") or None,
         )
 
 
@@ -148,6 +164,56 @@ class GitHubClient:
 
         log.info("github_repos_fetched", username=username, count=len(repositories))
         return repositories
+
+    async def repository_technologies(self, repository: Repository) -> list[str]:
+        """What `repository`'s own dependency files say it uses, by résumé name.
+
+        One API call (the tree listing); the files themselves come from the
+        raw host. A rate limit is raised, never read as "uses nothing". A tree
+        GitHub answers in an unexpected shape reads as nothing.
+        """
+        branch = repository.default_branch or "HEAD"
+        async with httpx.AsyncClient(
+            transport=self._transport, timeout=self._timeout, headers=self._headers()
+        ) as client:
+            response = await client.get(
+                f"{self.api_root}/repos/{repository.full_name}/git/trees/{quote(branch)}",
+                params={"recursive": "1"},
+            )
+            self._raise_for_status(response)
+            listing = response.json()
+            tree = listing.get("tree") if isinstance(listing, dict) else None
+            if not isinstance(tree, list):
+                return []
+            paths = sorted(
+                (
+                    entry["path"]
+                    for entry in tree
+                    if isinstance(entry, dict)
+                    and entry.get("type") == "blob"
+                    and isinstance(entry.get("path"), str)
+                    and is_manifest_path(entry["path"])
+                ),
+                key=lambda path: (path.count("/"), path),
+            )[:MAX_MANIFESTS]
+
+            declared: set[str] = set()
+            for path in paths:
+                raw = await client.get(
+                    f"{RAW_ROOT}/{repository.full_name}/{quote(branch)}/{quote(path)}"
+                )
+                if raw.status_code != 200 or len(raw.content) > MAX_MANIFEST_BYTES:
+                    continue
+                declared |= packages_in(path, raw.text)
+
+        found = technologies(declared)
+        log.info(
+            "github_dependencies_read",
+            repository=repository.full_name,
+            files=len(paths),
+            technologies=len(found),
+        )
+        return found
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code == 200:

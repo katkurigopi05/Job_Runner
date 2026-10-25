@@ -42,6 +42,12 @@ These are correctness requirements, not preferences. Violating any of them is a 
    description, primary language, and topics, and must keep them attributed to that project.
    It may not add a skill, employer, date, credential, or metric absent from those sources.
    There is a test suite for this (`tests/test_no_fabrication.py`) and it is a merge gate.
+
+   **Amended 2026-10-25, owner approved:** a repository the owner links to a résumé
+   Projects entry, on the dashboard only, is evidence for that entry's bullets: its primary
+   language, topics, and the tools its own dependency files declare, named through the fixed
+   table in `packages/github/manifests.py`. Never its description's prose, never another
+   entry, never an employer, never a fork. Details in `packages/tailor/CLAUDE.md`.
 2. **Work-authorization and employment-history answers are copied verbatim from the profile.**
    Never LLM-generated. These have legal consequences for the applicant.
 3. **Nothing submits without explicit approval by default.** `AUTO_SUBMIT=false` is the

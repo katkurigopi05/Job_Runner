@@ -247,3 +247,13 @@ profile by its id and not by its label.
 `apps/mcp/server.py` is past 1,200 lines with these. Splitting it means
 moving the shared `server` and `_client` into a module of their own, which
 every MCP test's monkeypatch touches, so it is a change of its own.
+
+
+## No tool links a repository to a résumé entry (2026-10-25)
+
+`Project.resume_entry` widens what the fabrication guard accepts on one
+résumé project (CLAUDE.md §2.1, as amended). The owner sets it on the
+Résumés page. `curate_project` sends `pinned` and `include` and nothing
+else, and `tests/test_mcp.py::test_no_tool_can_link_a_repository_to_a_resume_entry`
+fails if any tool's schema gains the field. A model that could set it could
+put any repository's stack onto any project it chose.

@@ -45,6 +45,7 @@ whole design, and it is why the checks below reject on doubt.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -466,6 +467,17 @@ class CorpusItem:
     ref: str
     text: str
     tokens: frozenset[str]
+    #: What a repository the owner linked to this entry reports of itself:
+    #: its GitHub description, language, topics and declared dependencies
+    #: (`packages/tailor/evidence.py`). Usable by this entry's bullets only,
+    #: and deliberately not part of `tokens`, so it never counts as the entry
+    #: *claiming* a word and withdrawing it from the shared Skills list.
+    evidence: frozenset[str] = frozenset()
+    #: The same evidence as text, for targeted tailoring's term matching.
+    evidence_text: str = ""
+    #: For a Projects line, the `entry_key` of the title it sits under. Every
+    #: line under one title carries the same key and the same evidence.
+    entry: str = ""
 
 
 def _index(text: str) -> set[str]:
@@ -500,6 +512,45 @@ def _index(text: str) -> set[str]:
     tokens |= expand_tokens(tokens)
     tokens |= expand_phrases(" ".join(normalize(m.group(0)) for m in _TOKEN_RE.finditer(text)))
     return tokens
+
+
+#: A link annotation at the end of a title, and the dash between a project's
+#: name and its subtitle: `Attorney.AI — Legal Research Assistant [GitHub]`.
+_ENTRY_TAG_RE = re.compile(r"\s*\[[^\]]{1,20}\]\s*$")
+_ENTRY_DASH_RE = re.compile(r"\s+[\u2014\u2013]\s+")
+
+
+def entry_name(title: str) -> str:
+    """An entry's name as written: its title before the dash, without a link tag."""
+    head = _ENTRY_DASH_RE.split(_ENTRY_TAG_RE.sub("", title.strip()), maxsplit=1)[0]
+    return " ".join(head.split())
+
+
+def entry_key(name: str) -> str:
+    """How an entry is found by name: `entry_name`, ignoring case.
+
+    The owner links a repository to an entry by this name, and a tailoring
+    may rewrite nothing in a title (`bullets.classify` never sends one), so
+    the name holds across versions of the résumé. `Attorney.AI` and
+    `attorney.ai  — Legal [GitHub]` are one entry.
+    """
+    return entry_name(name).casefold()
+
+
+def project_names(resume: ParsedResume) -> list[str]:
+    """The names of the résumé's Projects entries, read the way the guard reads them."""
+    from packages.tailor.technologies import inventory
+
+    listed = inventory(resume)
+    names: list[str] = []
+    after_title = False
+    for entry in _split_entries(resume.section("projects")):
+        first = entry.split("\n", 1)[0]
+        opens = _opens_a_project(first, listed, after_title=after_title)
+        if opens and entry_name(first) and entry_name(first) not in names:
+            names.append(entry_name(first))
+        after_title = opens
+    return names
 
 
 #: A bullet continues the entry above it; anything else starts a new one.
@@ -577,12 +628,23 @@ class SourceCorpus:
         return cls(tokens=tokens, text="\n".join(joined), shared=frozenset(tokens))
 
     @classmethod
-    def from_resume(cls, resume: ParsedResume, *extra_texts: str) -> SourceCorpus:
+    def from_resume(
+        cls,
+        resume: ParsedResume,
+        *extra_texts: str,
+        linked: Mapping[str, str] | None = None,
+    ) -> SourceCorpus:
         """Index a parsed résumé, keeping each job and project separable.
 
         `extra_texts` is verified outside material — GitHub projects — and is
         indexed as its own item rather than shared, for the same reason a job
         is: a project's stack does not belong on an employer's bullet.
+
+        `linked` maps a Projects entry's name (`entry_key`) to what the
+        repositories the owner linked to it report of themselves. That becomes
+        the entry's `evidence`, usable by its own bullets and no other's
+        (CLAUDE.md §2.1). A name that is not a Projects entry links nothing:
+        an employer's bullet never takes a repository's stack.
         """
         items: list[CorpusItem] = []
         shared_texts: list[str] = [*resume.preamble]
@@ -591,16 +653,42 @@ class SourceCorpus:
         shared_texts += [v for v in (contact.name, contact.email, contact.phone) if v]
         shared_texts += contact.links
 
+        by_key = {entry_key(name): text for name, text in (linked or {}).items() if text.strip()}
+        by_key.pop("", None)
+
+        # Local import: `technologies` reads `bullets.classify`, which imports
+        # `parse`, and `parse` is imported here. Deferred the same way the
+        # alias table is in `_index` above.
+        from packages.tailor.technologies import inventory
+
+        listed = inventory(resume)
+
         for name, lines in resume.sections.items():
             if name not in _ATTRIBUTED_SECTIONS:
                 shared_texts.extend(lines)
                 continue
+            # A parsed bullet carries no glyph, so `_split_entries` makes each
+            # line its own item. Which project a line belongs to is the title
+            # above it, read the way the renderer reads one.
+            title = ""
+            after_title = False
             for position, entry in enumerate(_split_entries(lines)):
+                evidence: str | None = None
+                if name == "projects":
+                    first = entry.split("\n", 1)[0]
+                    opens = _opens_a_project(first, listed, after_title=after_title)
+                    if opens:
+                        title = entry_key(first)
+                    after_title = opens
+                    evidence = by_key.get(title)
                 items.append(
                     CorpusItem(
                         ref=f"{name}:{position}",
                         text=entry,
                         tokens=frozenset(_index(entry)),
+                        evidence=frozenset(_index(evidence)) if evidence else frozenset(),
+                        evidence_text=evidence or "",
+                        entry=title if name == "projects" else "",
                     )
                 )
 
@@ -612,20 +700,16 @@ class SourceCorpus:
         shared = frozenset(_index("\n".join(shared_texts)))
         tokens = set(shared)
         for item in items:
-            tokens |= item.tokens
+            tokens |= item.tokens | item.evidence
 
-        # Local import: `technologies` reads `bullets.classify`, which imports
-        # `parse`, and `parse` is imported here. Deferred the same way the
-        # alias table is in `_index` above.
-        from packages.tailor.technologies import inventory
-
-        full = "\n".join([*resume.raw_lines, *extra_texts])
+        evidence_texts = list(dict.fromkeys(i.evidence_text for i in items if i.evidence_text))
+        full = "\n".join([*resume.raw_lines, *extra_texts, *evidence_texts])
         return cls(
             tokens=tokens,
             text=full.lower(),
             items=tuple(items),
             shared=shared,
-            technologies=inventory(resume),
+            technologies=listed,
         )
 
     def locate(self, snippet: str) -> CorpusItem | None:
@@ -678,7 +762,9 @@ class SourceCorpus:
         owner at all, and the answer does not depend on attribution.
         """
         available = (
-            self.tokens if scope is None else (scope.tokens | (self.shared - self.attributed))
+            self.tokens
+            if scope is None
+            else (scope.tokens | scope.evidence | (self.shared - self.attributed))
         )
 
         if entity.normalized in available or singular(entity.normalized) in available:
@@ -686,6 +772,24 @@ class SourceCorpus:
         # A hyphenated or slashed compound is supported when each part is.
         parts = [p for p in re.split(r"[-/]", entity.normalized) if p]
         return len(parts) > 1 and all(part in available for part in parts)
+
+
+def _opens_a_project(line: str, listed: frozenset[str], *, after_title: bool) -> bool:
+    """Whether a Projects line is a project's title rather than a line under one.
+
+    `bullets.classify` has to call it a name. That is not enough on its own:
+    a two-item stack (`Python, FastAPI`) is one comma short of what it calls
+    a list, and taking it for a title would cut the project's bullets off from
+    its repository. So a name directly under a title is that title's
+    supporting line, unless it carries a link tag, which only titles do; and
+    a stack of the résumé's own listed technologies is never a title.
+    """
+    from packages.tailor.bullets import _LINK_MARKER_RE, LineKind, classify
+    from packages.tailor.technologies import names_only_listed
+
+    if classify(line) is not LineKind.ENTRY or names_only_listed(line, listed):
+        return False
+    return not after_title or bool(_LINK_MARKER_RE.search(line))
 
 
 def _split_entries(lines: list[str]) -> list[str]:
@@ -729,7 +833,7 @@ def _spelled_out_forms(
     if not normalized:
         return frozenset()
 
-    available = corpus.tokens if scope is None else (scope.tokens | corpus.shared)
+    available = corpus.tokens if scope is None else (scope.tokens | scope.evidence | corpus.shared)
     covered: set[str] = set()
     for phrase, forms in phrase_groups():
         if phrase not in normalized:

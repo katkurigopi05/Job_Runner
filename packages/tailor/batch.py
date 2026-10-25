@@ -48,7 +48,7 @@ from packages.llm.provider import LLMProvider
 from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
 from packages.tailor.dispatch import active_mode, hold_to_pdf, plan_needed_calls, tailor
-from packages.tailor.evidence import matched_job_terms
+from packages.tailor.evidence import evidence_digest, linked_evidence, matched_job_terms
 from packages.tailor.parse import ParsedResume
 from packages.tailor.publish import publish_tailored
 from packages.tailor.targeted import NO_GAIN
@@ -179,8 +179,13 @@ async def run(
             if project.pinned or matched_job_terms(project, posting.description_raw or "")
         ]
 
+        linked = await linked_evidence(session, profile.candidate_id)
         needed_calls = plan_needed_calls(
-            parsed, posting.description_raw or "", projects=relevant_projects, mode=mode
+            parsed,
+            posting.description_raw or "",
+            projects=relevant_projects,
+            mode=mode,
+            linked=linked,
         )
 
         # Checked per posting rather than once: the count moves as the batch
@@ -212,6 +217,7 @@ async def run(
             provider=provider_name,
             model=getattr(provider, "model", None),
             mode=mode,
+            evidence=evidence_digest(linked),
         )
         cached = await find_cached(session, candidate_id=profile.candidate_id, key=cache_key)
         if cached is not None:
@@ -230,6 +236,7 @@ async def run(
                 posting.description_raw or "",
                 projects=relevant_projects,
                 mode=mode,
+                linked=linked,
             )
             rewrites = tailored.result
         except Exception as exc:  # noqa: BLE001 - one posting must not end the night

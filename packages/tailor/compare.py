@@ -56,6 +56,7 @@ from packages.tailor.bullets import tailorable_bullets
 from packages.tailor.cache import find_cached, tailoring_key
 from packages.tailor.diff import summarize
 from packages.tailor.dispatch import HEURISTIC_NOTICE, hold_to_pdf, tailor
+from packages.tailor.evidence import evidence_digest, linked_evidence
 from packages.tailor.guard import SourceCorpus
 from packages.tailor.parse import ParsedResume
 from packages.tailor.publish import publish_tailored
@@ -170,12 +171,14 @@ async def tailor_with(
     except Exception as exc:  # noqa: BLE001 - an unconfigured side is a result, not a crash
         return Candidate(requested=provider_name, error=_reason(exc))
 
+    linked = await linked_evidence(session, resume.candidate_id)
     cache_key = tailoring_key(
         source_resume_id=resume.id,
         content_hash=content_hash,
         projects=projects,
         provider=getattr(provider, "name", provider_name),
         model=getattr(provider, "model", None),
+        evidence=evidence_digest(linked),
     )
     cached = await find_cached(session, candidate_id=resume.candidate_id, key=cache_key)
     if cached is not None:
@@ -190,7 +193,7 @@ async def tailor_with(
 
     try:
         result = await tailor_bullets(
-            provider, bullets, posting_text, SourceCorpus.from_resume(parsed)
+            provider, bullets, posting_text, SourceCorpus.from_resume(parsed, linked=linked)
         )
     except Exception as exc:  # noqa: BLE001 - see the docstring
         log.warning("compare_side_failed", provider=provider_name, error=type(exc).__name__)
@@ -305,7 +308,8 @@ async def _targeted_side(
         return Candidate(requested=label, mode=label, heuristic_notice=HEURISTIC_NOTICE, **fields)
 
     try:
-        plan = classify(parsed, posting_text, projects=projects)
+        linked = await linked_evidence(session, resume.candidate_id)
+        plan = classify(parsed, posting_text, projects=projects, linked=linked)
         if not plan.targets and not projects:
             return side(unchanged=len(bullets), error=f"{NO_GAIN}; nothing was sent")
 
@@ -318,6 +322,7 @@ async def _targeted_side(
             provider=name,
             model=getattr(provider, "model", None),
             mode=TailorMode.TARGETED,
+            evidence=evidence_digest(linked),
         )
         cached = await find_cached(session, candidate_id=resume.candidate_id, key=cache_key)
         if cached is not None:
@@ -330,6 +335,7 @@ async def _targeted_side(
             projects=projects,
             mode=TailorMode.TARGETED,
             plan=plan,
+            linked=linked,
         )
     except Exception as exc:  # noqa: BLE001 - an unconfigured side is a result, not a crash
         log.warning("compare_side_failed", provider=label, error=type(exc).__name__)

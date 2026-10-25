@@ -11,8 +11,9 @@ from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.config import get_settings
 from packages.core.enums import ErrorCode
-from packages.core.models import Candidate, Project
+from packages.core.models import Candidate, Project, Resume
 from packages.core.schemas import (
+    ProjectEntriesOut,
     ProjectOut,
     ProjectPreview,
     ProjectUpdate,
@@ -22,7 +23,9 @@ from packages.core.schemas import (
 from packages.github.client import GitHubError, RateLimited
 from packages.github.select import score, select_projects
 from packages.github.sync import sync_from_github
-from packages.tailor.evidence import matched_job_terms
+from packages.tailor.evidence import matched_job_terms, suggest_links
+from packages.tailor.guard import project_names
+from packages.tailor.parse import ParsedResume
 from packages.tailor.projects import LinkStyle, ProjectEntry, link_text
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -53,7 +56,13 @@ async def sync_github(body: SyncGitHubRequest, session: SessionDep) -> SyncResul
         raise ApiError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
 
     await session.commit()
-    return SyncResultOut(added=result.added, updated=result.updated, total=result.total)
+    return SyncResultOut(
+        added=result.added,
+        updated=result.updated,
+        total=result.total,
+        dependencies_read=result.dependencies_read,
+        dependencies_skipped=result.dependencies_skipped,
+    )
 
 
 @router.get("", response_model=list[ProjectOut])
@@ -66,11 +75,28 @@ async def list_projects(session: SessionDep, candidate_id: uuid.UUID) -> list[Pr
     return list(result.all())
 
 
+@router.get("/entries", response_model=ProjectEntriesOut)
+async def resume_project_entries(resume_id: uuid.UUID, session: SessionDep) -> ProjectEntriesOut:
+    """The résumé's Projects entries a repository can be linked to, with suggestions."""
+    resume = await session.get(Resume, resume_id)
+    if resume is None or not resume.parsed_json:
+        raise ApiError(ErrorCode.NOT_FOUND, "résumé not found or not parsed")
+    names = project_names(ParsedResume.model_validate(resume.parsed_json))
+    projects = list(
+        (
+            await session.scalars(
+                select(Project).where(Project.candidate_id == resume.candidate_id)
+            )
+        ).all()
+    )
+    return ProjectEntriesOut(entries=names, suggestions=suggest_links(names, projects))
+
+
 @router.patch("/{project_id}", response_model=ProjectOut)
 async def update_project(
     project_id: uuid.UUID, body: ProjectUpdate, session: SessionDep
 ) -> Project:
-    """Curate a project: force it in, force it out, or pin it."""
+    """Curate a project: force it in, force it out, pin it, or link it to a résumé entry."""
     project = await session.get(Project, project_id)
     if project is None:
         raise ApiError(ErrorCode.NOT_FOUND, "project not found")
@@ -80,6 +106,9 @@ async def update_project(
         project.include = fields["include"]
     if "pinned" in fields:
         project.pinned = fields["pinned"]
+    if "resume_entry" in fields:
+        entry = " ".join((fields["resume_entry"] or "").split())
+        project.resume_entry = entry or None
 
     await session.commit()
     await session.refresh(project)
