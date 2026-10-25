@@ -54,9 +54,10 @@ from packages.tailor import practices
 #: different component lists cannot flatten to the same string.
 _SEP = "\x1f"
 
-# Earlier output may drop facts stated only inside a bullet. Keep it available
+# Earlier output may drop facts stated only inside a bullet, or turn work in
+# progress into "developed" or "implemented" (2026-10-25). Keep it available
 # for review, but require both tailoring modes to pass the current guard.
-TAILORING_REVISION = "bullet-facts-v4"
+TAILORING_REVISION = "claim-strength-v5"
 
 
 def tailoring_key(

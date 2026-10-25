@@ -43,7 +43,11 @@ same so too very just as at by in of on to up out off down
 job role position candidate applicant company team work working experience
 years year skills ability able strong excellent good great required requirement
 requirements responsibilities responsible qualifications preferred plus nice
-opportunity looking seeking join help build building including etc
+opportunity looking seeking join help including etc
+"""
+
+_VERBS_TEXT = """
+build building
 improve improved improving increase increased increasing
 scale scaled scaling manage managed managing lead led leading
 support supported supporting create created creating
@@ -55,7 +59,20 @@ deliver delivered delivering
 # that said "improved" was rejected for taking a term from the posting — the
 # guard firing on grammar rather than on a claim.
 
-_STOPWORDS: frozenset[str] = frozenset(_STOPWORDS_TEXT.split())
+_STOPWORDS: frozenset[str] = frozenset(_STOPWORDS_TEXT.split()) | frozenset(_VERBS_TEXT.split())
+
+#: The stems of those verbs, so their nouns are grammar too.
+#:
+#: Listing `developed` was not enough, because `borrowed_terms` compares
+#: stems and this list was matched word for word. A posting that said
+#: "development" put that noun on the off-limits list, and every rewrite
+#: opening "Developed ..." borrowed it. On 2026-10-24, 12 of 15 refusals in
+#: one tailoring run were that one word. `management`, `improvement`,
+#: `creation`, `supports` and `builds` fold the same way. Role nouns do not
+#: (`developer`, `manager`, `designer`), and neither does `scalability`.
+#: Whether a verb overstates the work is `guard.claim_strength_refusal`'s
+#: question, not this list's.
+_VERB_STEMS: frozenset[str] = frozenset(stem(word) for word in _VERBS_TEXT.split())
 
 #: Words naming the role rather than the work.
 #:
@@ -125,7 +142,7 @@ def job_terms(job_description: str, *, limit: int = 40) -> list[str]:
         key = normalize(raw)
         if not key or len(key) < 3:
             continue
-        if key in _STOPWORDS or key in _ROLE_WORDS:
+        if key in _STOPWORDS or key in _ROLE_WORDS or stem(key) in _VERB_STEMS:
             continue
         if key in consumed:
             continue

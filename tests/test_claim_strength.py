@@ -19,6 +19,22 @@ def test_in_progress_cannot_become_finished(source: str, target: str) -> None:
     assert reason and "claim strength" in reason and source.lower() in reason
 
 
+@pytest.mark.parametrize("source", ["Designing", "Building", "Exploring"])
+@pytest.mark.parametrize("target", ["Developed", "Implemented", "Completed", "Deployed"])
+def test_in_progress_cannot_become_developed_or_deployed(source: str, target: str) -> None:
+    # Added 2026-10-25. A model turned "Designing" into "Developed" and only a
+    # borrowed posting word stopped it. The verbs are in the corpus here, so
+    # nothing but the claim-strength check can refuse the rewrite.
+    original = f"{source} a search engine in Python."
+    accepted, reason, _ = vet(
+        original,
+        f"{target} a search engine in Python.",
+        SourceCorpus.from_texts(original, "Developed Implemented Completed Deployed"),
+    )
+    assert not accepted
+    assert reason and "claim strength" in reason and source.lower() in reason
+
+
 @pytest.mark.parametrize("source", ["Contributed to", "Helped", "Assisted"])
 @pytest.mark.parametrize("target", ["Led", "Owned", "Managed", "Architected"])
 def test_participation_cannot_become_ownership(source: str, target: str) -> None:

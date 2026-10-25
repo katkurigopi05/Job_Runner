@@ -890,7 +890,22 @@ def check_or_raise(
 _CLAIM_BOUNDARIES = (
     (
         ("designing", "building", "exploring"),
-        ("created", "built", "shipped", "launched", "delivered"),
+        # `developed`, `implemented`, `completed` and `deployed` added
+        # 2026-10-25. "Designing" to "Developed" passed every check, and was
+        # refused in a live run only because the model also added a posting
+        # word; allowing "development" as grammar (keywords._VERB_STEMS)
+        # would have let it through.
+        (
+            "created",
+            "built",
+            "shipped",
+            "launched",
+            "delivered",
+            "developed",
+            "implemented",
+            "completed",
+            "deployed",
+        ),
     ),
     (("contributed to", "helped", "assisted"), ("led", "owned", "managed", "architected")),
 )
