@@ -647,3 +647,36 @@ a list and `_is_labelled_list` that any colon starts a label, which turned
   `_MULTI_WORD_CITIES` is split at its last word.
 - **Certifications with no date anywhere** are one bullet list. With a date,
   the entry layout `_ENTRY_SECTIONS` describes is kept.
+
+## A noun form of an ordinary verb, and "developed" as a completion (2026-10-25)
+
+A Kaggle run on 2026-10-24 (Qwen3 8B, one CoreWeave posting, 16 bullets)
+accepted 1 rewrite. 12 of its 15 refusals were "takes 'development' from the
+posting". PR #32 had put `developed` among the stopwords so a rewrite saying
+it was not refused for grammar, but the list was matched word for word and
+`borrowed_terms` compares stems. The posting's noun "development" stayed on
+the off-limits list, and every "Developed ..." borrowed it.
+
+`keywords._VERB_STEMS` drops a posting word whose stem is one of those
+verbs'. Over the 13,275 open postings it changed 5,029 term lists, and every
+removal was such a noun or inflection: management (2,705 postings),
+development (2,190), improvement(s), builds, leads, designs, creation,
+supports, scales, and two misspellings. Role nouns do not fold (`developer`,
+`manager`, `designer`), and neither does `scalability`.
+
+Loosening that alone would have let a real overstatement through. Bullet 2
+of the same run turned "Designing" (work in progress) into "Developed", and
+only a second borrowed word ("platforms") refused it. So
+`guard._CLAIM_BOUNDARIES` gained `developed`, `implemented`, `completed`
+and `deployed` in the same change, and `cache.TAILORING_REVISION` moved so
+output vetted before is not reused.
+
+Measured on that run's 16 cached answers: 1 accepted before, 5 after
+(`tests/test_keywords.py`, `tests/test_claim_strength.py`). The 4 new ones
+swap a verb or reword and gain no keyword; the other 11 refusals are
+unchanged and correct. Bullet 2 is refused for claim strength on its own.
+
+Seen and not fixed here: grammar words sit on the off-limits list for 11,054
+of those postings ("what" 5,520, "through" 4,020, "who" 3,943, "how" 3,654),
+because `ats._GRAMMAR` is kept on the measurement side. Freeing the verb
+slots added 49 postings to that count.
