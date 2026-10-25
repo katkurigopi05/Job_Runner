@@ -43,6 +43,13 @@ interface RelatedRole {
   filter: string;
 }
 
+interface PostingShare {
+  matching: number;
+  open_total: number;
+  percentage: number | null;
+  scope: string;
+}
+
 /** How many further matches one click reveals. */
 const MORE_PAGE = 10;
 
@@ -66,6 +73,7 @@ interface Turn {
   /** The kind of job the question named, and how many open postings are one. */
   matchedRole?: string | null;
   matchedTotal?: number | null;
+  postingsShare?: PostingShare | null;
   matchedTerm?: string | null;
   matchedCompanies?: string[];
   companiesTotal?: number | null;
@@ -263,13 +271,22 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
  */
 function RetrievedPostings({ turn }: { turn: Turn }) {
   const sources = turn.sources ?? [];
-  if (sources.length === 0) return null;
+  if (sources.length === 0 && !turn.postingsShare) return null;
   const cited = sources.filter((source) => source.cited);
   const uncited = sources.filter((source) => !source.cited);
   const total = (turn.searched ?? 0) + (turn.unsearchable ?? 0);
 
   return (
     <div className="mt-1.5 max-w-[90%] space-y-1.5 text-left text-xs">
+      {turn.postingsShare ? (
+        <p className="text-ink-soft">
+          {turn.postingsShare.matching} of {turn.postingsShare.open_total} open postings in{" "}
+          {turn.postingsShare.scope}
+          {turn.postingsShare.percentage == null
+            ? " · percentage undefined (no open postings)"
+            : ` · ${turn.postingsShare.percentage.toFixed(2)}%`}
+        </p>
+      ) : null}
       {cited.length > 0 ? (
         <ul className="space-y-0.5">
           {cited.map((source) => (
@@ -344,6 +361,7 @@ interface Reply {
   more_sources?: Source[];
   matched_role?: string | null;
   postings_matched_total?: number | null;
+  postings_share?: PostingShare | null;
   matched_term?: string | null;
   matched_companies?: string[];
   companies_matched_total?: number | null;
@@ -370,6 +388,7 @@ function turnFrom(body: Reply): Turn {
     more: body.more_sources,
     matchedRole: body.matched_role,
     matchedTotal: body.postings_matched_total,
+    postingsShare: body.postings_share,
     matchedTerm: body.matched_term,
     matchedCompanies: body.matched_companies,
     companiesTotal: body.companies_matched_total,

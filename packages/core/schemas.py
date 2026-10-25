@@ -770,6 +770,17 @@ class ChatRelatedRole(BaseModel):
     filter: str
 
 
+class ChatPostingShare(BaseModel):
+    """A computed percentage with its complete numerator and denominator."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    matching: int
+    open_total: int
+    percentage: float | None
+    scope: str
+
+
 class ChatReply(BaseModel):
     """Response from the chat assistant."""
 
@@ -823,6 +834,7 @@ class ChatReply(BaseModel):
     #: company-only question. Simple-search totals count mentions, not
     #: requirements; their area check is the search's ordinary rule.
     postings_matched_total: int | None = None
+    postings_share: ChatPostingShare | None = None
     companies_matched_total: int | None = None
     matched_term: str | None = None
     matched_companies: list[str] = Field(default_factory=list)

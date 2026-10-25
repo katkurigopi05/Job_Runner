@@ -70,6 +70,7 @@ from packages.core.models import Application, Company, InboundMessage, Posting, 
 from packages.core.notify import ParkReason, asks, needs_owner
 from packages.core.schemas import (
     ChatKind,
+    ChatPostingShare,
     ChatRelatedRole,
     ChatReply,
     ChatRequest,
@@ -629,6 +630,23 @@ def _postings_section(
     lines = [f"POSTINGS: searched {found.searched} of {total} open postings"]
     if found.unsearchable:
         lines[0] += f" ({found.unsearchable} are not searchable yet)"
+    if found.share is not None:
+        share = found.share
+        percent = (
+            f"{share.percentage:.2f}%"
+            if share.percentage is not None
+            else "percentage undefined because there are no open postings"
+        )
+        lines.append(
+            f"  computed posting share: {share.matching} of {share.open_total} open postings "
+            f"in {share.scope} ({percent}). Repeat this computed share and its denominator; "
+            "it is not a résumé match score."
+        )
+    elif found.share_requested:
+        lines.append(
+            "  percentage unavailable: this compound search has no complete matching total. "
+            "Do not derive a percentage from the ranked sample or the unfiltered role count."
+        )
     # Stated whenever it applies, and what it left out with it: "nothing at
     # Faculty" and "nothing at Faculty where you search" are different answers.
     if found.area:
@@ -1134,6 +1152,7 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
             else found.match_total
         ),
         companies_matched_total=found.company_total,
+        postings_share=ChatPostingShare.model_validate(found.share) if found.share else None,
         matched_term=found.matched_term,
         matched_companies=list(found.companies) if found.match_total is not None else [],
         place_filter="Bay Area" if found.place_total is not None else None,

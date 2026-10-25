@@ -105,6 +105,15 @@ the prompt is a request and this is a rule — the check runs in code.
 application, and its recent replies, and told to say when it does not know. An
 assistant that invents an application status is worse than no assistant.
 
+**A posting percentage has an explicit denominator.** A question asking what
+percentage a role or other completely counted search represents gets its share
+of all open postings within the applied search area or regional filter. The
+count and percentage are computed in code, supplied together in context, and
+exposed as `postings_share` in plain and streamed replies. The dock shows them
+even if the model omits them. An incomplete two-term search receives no share;
+an empty corpus has an undefined percentage. This is a share of postings, not
+a résumé fit score. `tests/test_chat_posting_share.py`.
+
 **An employer's applications have their own section** (2026-10-21).
 `prepare` uses retrieval's shared first-person application-status rule and
 `found.companies` to supply `YOUR APPLICATIONS AT …`: the code counts and lists

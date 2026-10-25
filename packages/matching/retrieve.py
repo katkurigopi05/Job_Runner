@@ -389,9 +389,14 @@ _APPLICATION_STATE = frozenset(_APPLICATION_STATE_TEXT.split())
 
 _RAW_WORD = re.compile(r"[a-z0-9+#.]+")
 _SENTENCE_START = re.compile(r"(?<=[.!?;])\s+")
-#: A temporal framing phrase. "right" alone still distinguishes a question
-#: about the right to work from one about any work.
-_FRAMING_PHRASES = re.compile(r"\bright\s+now\b", re.IGNORECASE)
+#: Question framing is stripped as phrases, after company recognition. "right"
+#: in "right to work" and "percentage" as a subject remain searchable.
+_PERCENTAGE_REQUEST = re.compile(
+    r"\bwhat(?:['’]s|s)?\s+(?:is\s+)?(?:the\s+)?percent(?:age)?\b", re.IGNORECASE
+)
+_FRAMING_PHRASES = re.compile(
+    rf"\bright\s+now\b|\bhow\s+many\b|{_PERCENTAGE_REQUEST.pattern}", re.IGNORECASE
+)
 
 
 def asks_about_own_applications(question: str) -> bool:
@@ -451,6 +456,17 @@ class Listed:
 
 
 @dataclass(frozen=True)
+class PostingShare:
+    matching: int
+    open_total: int
+    scope: str
+
+    @property
+    def percentage(self) -> float | None:
+        return round(100 * self.matching / self.open_total, 2) if self.open_total else None
+
+
+@dataclass(frozen=True)
 class Retrieval:
     #: False when nothing was searched: the question was not about postings,
     #: or (`unnamed`) it was and named nothing to look for.
@@ -472,6 +488,9 @@ class Retrieval:
     match_total: int | None = None
     company_total: int | None = None
     matched_term: str | None = None
+    #: Supplied only for a requested percentage with a complete matching count.
+    share: PostingShare | None = None
+    share_requested: bool = False
     #: Registry companies whose one-word name the question says and was not
     #: taken to be about: they have nothing open, and other employers'
     #: postings say the word (`_only_others_say_it`). "any posting on postman"
@@ -1299,7 +1318,10 @@ async def _read_until(
     return read
 
 
-@lru_cache(maxsize=4096)
+# A complete denominator revisits the whole corpus. A 4,096-entry cache
+# evicted its own metadata before the next request and repeated every place
+# parse. Keep it bounded, but large enough for an ordinary full-corpus scan.
+@lru_cache(maxsize=32768)
 def _metadata_area_exclusion(
     title: str | None, location: str | None, remote_outside: bool
 ) -> str | None:
@@ -1314,7 +1336,7 @@ def _metadata_area_exclusion(
 @stage("metadata_totals")
 async def _matching_totals(
     session: AsyncSession,
-    posting_ids: list[uuid.UUID],
+    posting_ids: list[uuid.UUID] | None,
     *,
     area: bool,
     level: AskedLevel | None,
@@ -1327,15 +1349,20 @@ async def _matching_totals(
     metadata first, then fetch descriptions only for on-site
     exclusions outside California, the only verdict prose can change.
     Counts use the search's own area and level rules, without reordering it.
+    None selects every open posting for a requested percentage's denominator.
     """
-    if not posting_ids:
+    if posting_ids is None and place_filter is None and level is None:
+        return await _open_area_total(session, area=area), 0, 0
+    if posting_ids == []:
         return 0, 0, 0
     query = select(
         Posting.id,
         Posting.title,
         Posting.location,
         Posting.company_id,
-    ).where(Posting.closed_at.is_(None), Posting.id.in_(posting_ids))
+    ).where(Posting.closed_at.is_(None))
+    if posting_ids is not None:
+        query = query.where(Posting.id.in_(posting_ids))
     total, outside = 0, 0
     employers: set[uuid.UUID] = set()
     remote_outside = get_settings().search_remote_outside_california
@@ -1405,6 +1432,62 @@ async def _matching_totals(
             title, location = remote_recheck[ident]
             place_filter.record(ident, title, location, description)
     return total, len(employers), outside
+
+
+async def _open_area_total(session: AsyncSession, *, area: bool) -> int:
+    """The denominator needs a count, without IDs or employers for every row.
+
+    Group identical title/location pairs before reading metadata. A group whose
+    on-site verdict prose can flip is still checked one description at a time:
+    identical metadata does not mean identical remote-work evidence.
+    """
+    if not area:
+        return int(
+            await session.scalar(select(func.count()).where(Posting.closed_at.is_(None))) or 0
+        )
+    rows = await session.execute(
+        select(Posting.title, Posting.location, func.count())
+        .where(Posting.closed_at.is_(None))
+        .group_by(Posting.title, Posting.location)
+    )
+    remote_outside = get_settings().search_remote_outside_california
+    total = 0
+    pending: set[tuple[str | None, str | None]] = set()
+    for title, location, count in rows.all():
+        reason = _metadata_area_exclusion(title, location, remote_outside)
+        if reason is None:
+            total += count
+        elif reason.endswith(" is on-site outside California"):
+            pending.add((title, location))
+    if not pending:
+        return total
+    # A short location prefilter avoids a large tuple-IN disjunction. Check
+    # the exact title/location key in Python before considering its prose.
+    locations = {location for _, location in pending if location is not None}
+    clauses: list[ColumnElement[bool]] = [Posting.location.in_(locations)]
+    if any(location is None for _, location in pending):
+        clauses.append(Posting.location.is_(None))
+    descriptions = await session.execute(
+        select(Posting.title, Posting.location, Posting.description_raw).where(
+            Posting.closed_at.is_(None), or_(*clauses)
+        )
+    )
+    for title, location, description in descriptions.all():
+        if (title, location) not in pending:
+            continue
+        if not reads_as_remote(title=None, location=None, description=description):
+            continue
+        if (
+            area_exclusion(
+                location,
+                title=title,
+                description=description,
+                remote_outside_california=remote_outside,
+            )
+            is None
+        ):
+            total += 1
+    return total
 
 
 @stage("keyword")
@@ -2097,6 +2180,7 @@ async def retrieve(
     session: AsyncSession, question: str, *, limit: int = DEFAULT_LIMIT
 ) -> Retrieval:
     """The open postings `question` is about, and how much of the corpus was read."""
+    wants_share = bool(_PERCENTAGE_REQUEST.search(question))
     for spelled_out, as_titles_say_it in _SPELLED_OUT:
         question = spelled_out.sub(as_titles_say_it, question)
     # Trailing dots off, as `tokenize` does: "Show me remote jobs." ends in
@@ -2780,6 +2864,38 @@ async def retrieve(
         )
         if not count_simple:
             match_total = company_total = None
+    share = None
+    if wants_share:
+        # A role/title pool is complete; a keyword pool is not. The exact simple
+        # search total is usable too, but never a role's unfiltered fallback.
+        exact = (
+            len(role_pool) - related_total
+            if role_pool is not None and not beyond
+            else match_total
+            if role_pool is None
+            else None
+        )
+        if exact is not None:
+            denominator, _, _ = await _matching_totals(
+                session,
+                None,
+                area=bool(area),
+                level=None,
+                allow_unknown=True,
+                # Independent accounting: do not alter the query's omitted counts.
+                place_filter=_PlaceFilter() if place_filter is not None else None,
+            )
+            share = PostingShare(
+                matching=exact,
+                open_total=denominator,
+                scope=(
+                    "the Bay Area"
+                    if place_filter is not None
+                    else "your search area"
+                    if area
+                    else "the full open-posting corpus"
+                ),
+            )
     statuses = await _application_statuses(session, [hit.posting_id for hit in chosen])
     passages = tuple(
         Passage(
@@ -2816,6 +2932,8 @@ async def retrieve(
         match_total=match_total,
         company_total=company_total,
         matched_term=matched_term,
+        share=share,
+        share_requested=wants_share,
         not_hiring=tuple(sorted(not_hiring)),
         area=area,
         area_waived=area is None and get_settings().search_us_only,
