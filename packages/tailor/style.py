@@ -119,6 +119,8 @@ li { break-inside: avoid; }
 .entry-name { font-weight: 700; }
 .entry-date { font-size: ${small}pt; color: #444; font-weight: 400; }
 .entry-date::before { content: "  \\00b7  "; color: #999; }
+.entry-location { font-size: ${small}pt; color: #444; font-weight: 400; font-style: italic; }
+.entry-location::before { content: "  \\00b7  "; color: #999; font-style: normal; }
 .entry-meta { font-style: italic; color: #444; font-size: ${small}pt; margin: 0 0 3pt; }
 ul { list-style: none; padding: 0; margin: 0 0 2pt; }
 li { margin: 0 0 ${item_gap}pt; padding-left: 11pt; text-indent: -11pt; }

@@ -617,3 +617,33 @@ On the frozen postings with no model available, posting 10 gains its required
 from the rendered two-page PDFs. `TAILORING_REVISION` is unchanged: a cached
 targeted result from before is still one the guard accepted, only without the
 expansion. `tests/test_acronym_expansion.py`.
+
+## Typography on the rendered résumé (2026-10-24)
+
+The owner's PDF read `Languages Python, ...` with nothing between a Skills
+category and its list, printed `[GitHub]` after every project title with no
+link behind it, set a two-item stack and the coursework line in bold as if
+each were a name, ran a school into its city, and set three certifications
+as bold names and two as bullets.
+
+All five are fixed in `assemble.py`, and none of the fixes touches
+`bullets.classify`. That is the point: `classify` also decides what the
+model is asked to rewrite. A first fix taught `_is_list` that two items make
+a list and `_is_labelled_list` that any colon starts a label, which turned
+`Teaching Assistant, CSUEB` into a bullet sent to the model and
+`Result: cut latency 40%, saved $2M` into a line nobody rewrites.
+`tests/test_resume_entry_typography.py` holds both.
+
+- **Skills labels** are split with `skills._split_label`, the split the
+  Skills reorder uses, and set as **Label:** list.
+- **`[GitHub]`** is not printed. `classify` still reads it to know a title.
+- **A stack or labelled list** that `classify` calls a name is set as the
+  supporting line under one (`_reads_as_supporting`): a two-item line counts
+  only when every item is a technology the résumé's own Skills list names
+  (`technologies.names_only_listed`), because `Barista, Starbucks` has the
+  same shape. A labelled line needs three items, as `_is_labelled_list` does.
+- **A school's location** is split off only in Education and only when the
+  part before it names a school. A two-word city missing from
+  `_MULTI_WORD_CITIES` is split at its last word.
+- **Certifications with no date anywhere** are one bullet list. With a date,
+  the entry layout `_ENTRY_SECTIONS` describes is kept.
