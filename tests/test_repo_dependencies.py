@@ -160,12 +160,12 @@ def _repo(name: str = "Attorney.AI", **overrides: object) -> Repository:
     return Repository.from_api(payload)
 
 
-def _github(files: dict[str, str], *, tree_status: int = 200, calls: list[str] | None = None):
+def _github(files: dict[str, str], *, tree_status: int = 200, hosts: list[str] | None = None):
     """A tree listing of `files`, and their contents on the raw host."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if calls is not None:
-            calls.append(f"{request.url.host}{request.url.path}")
+        if hosts is not None:
+            hosts.append(request.url.host)
         if request.url.host == "raw.githubusercontent.com":
             path = request.url.path.split("/main/", 1)[1]
             if path in files:
@@ -214,11 +214,12 @@ async def test_an_unexpected_tree_shape_reads_as_nothing() -> None:
 
 
 async def test_file_contents_come_from_the_raw_host_not_the_api() -> None:
-    calls: list[str] = []
-    client = _github({"requirements.txt": "torch\n"}, calls=calls)
+    hosts: list[str] = []
+    client = _github({"requirements.txt": "torch\n"}, hosts=hosts)
     await client.repository_technologies(_repo())
-    api_calls = [call for call in calls if call.startswith("api.github.com")]
-    assert len(api_calls) == 1  # the tree listing; the file itself is not an API call
+    # One API call (the tree listing); the file itself came from the raw host.
+    assert hosts.count("api.github.com") == 1
+    assert hosts.count("raw.githubusercontent.com") == 1
 
 
 def test_forks_and_repos_unchanged_since_their_last_read_are_not_read_again() -> None:
