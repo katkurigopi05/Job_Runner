@@ -67,6 +67,7 @@ def tailoring_key(
     provider: str,
     model: str | None,
     mode: str = "rewrite",
+    evidence: str = "",
 ) -> str | None:
     """The cache key for one tailoring, or None when it must not be cached.
 
@@ -81,6 +82,10 @@ def tailoring_key(
     two postings the same posting, and without it the only honest options are
     to key on something weaker or not to cache. Guessing serves one posting's
     résumé for another.
+
+    `evidence` is `evidence.evidence_digest` of the repositories linked to the
+    résumé's projects: a link changes what a rewrite may say. Empty leaves the
+    key exactly as it was before links existed.
     """
     content_hash = (content_hash or "").strip()
     if not content_hash:
@@ -106,6 +111,7 @@ def tailoring_key(
             provider,
             model or "",
             ",".join(project_ids),
+            *([evidence] if evidence else []),
         ]
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()

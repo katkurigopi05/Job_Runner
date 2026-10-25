@@ -116,3 +116,55 @@ export async function saveResumeEdit(
     throw error;
   }
 }
+
+
+export interface ProjectActionResult {
+  ok: boolean;
+  message: string;
+}
+
+/**
+ * Link a GitHub repository to the résumé project it backs.
+ *
+ * A link lets tailoring name what that repository's own dependency files
+ * declare, on that project's bullets and no other's (CLAUDE.md §2.1). It is
+ * set here, by the owner, and by nothing an assistant can call.
+ */
+export async function linkProject(
+  _prev: ProjectActionResult | null,
+  form: FormData,
+): Promise<ProjectActionResult> {
+  const projectId = String(form.get("project_id") ?? "");
+  const entry = String(form.get("resume_entry") ?? "").trim();
+  if (!projectId) return { ok: false, message: "No repository to link." };
+  try {
+    await api.linkProject(projectId, entry || null);
+  } catch (error) {
+    return { ok: false, message: error instanceof ApiError ? error.message : "Link failed." };
+  }
+  revalidatePath("/resumes");
+  return { ok: true, message: entry ? `linked to ${entry}` : "unlinked" };
+}
+
+/** Re-read the owner's repositories, and the dependency files of any pushed to since. */
+export async function syncProjects(
+  _prev: ProjectActionResult | null,
+  form: FormData,
+): Promise<ProjectActionResult> {
+  const candidateId = String(form.get("candidate_id") ?? "");
+  const username = String(form.get("username") ?? "").trim();
+  if (!candidateId || !username) return { ok: false, message: "A GitHub username is needed." };
+  try {
+    const result = await api.syncProjects(candidateId, username);
+    revalidatePath("/resumes");
+    const skipped = result.dependencies_skipped
+      ? `; ${result.dependencies_skipped} left for the next sync (GitHub rate limit)`
+      : "";
+    return {
+      ok: true,
+      message: `${result.total} repositories; dependency files read for ${result.dependencies_read}${skipped}`,
+    };
+  } catch (error) {
+    return { ok: false, message: error instanceof ApiError ? error.message : "Sync failed." };
+  }
+}

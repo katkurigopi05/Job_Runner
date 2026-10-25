@@ -163,6 +163,10 @@ class Target:
     #: True when the evidence is a tool and the term its practice
     #: (`practices.py`); False when the term is the evidence written out.
     practice: bool = False
+    #: True when the evidence is a repository the owner linked to this
+    #: project, not a word in the bullet. `evidence` is then the term itself,
+    #: so a revision may add the term and nothing else (`brought_in`).
+    from_repository: bool = False
 
 
 @dataclass(frozen=True)
@@ -297,10 +301,19 @@ def expand_acronyms(bullet: str, targets: Sequence[Target]) -> str | None:
 
 
 def classify(
-    parsed: ParsedResume, job_description: str, *, projects: Sequence[Project] = ()
+    parsed: ParsedResume,
+    job_description: str,
+    *,
+    projects: Sequence[Project] = (),
+    linked: Mapping[str, str] | None = None,
 ) -> Plan:
-    """Sort a posting's terms against a résumé. No model is asked anything."""
-    corpus = SourceCorpus.from_resume(parsed)
+    """Sort a posting's terms against a résumé. No model is asked anything.
+
+    `linked` is `evidence.linked_evidence`: what repositories the owner linked
+    to the résumé's projects report of themselves. A term one of them backs is
+    a target of that project's bullets, and of no other.
+    """
+    corpus = SourceCorpus.from_resume(parsed, linked=linked)
     section, bullets = tailorable_bullets(parsed)
     whole = Said(_document(parsed))
     shared_text = _shared(parsed)
@@ -308,14 +321,36 @@ def classify(
     said_at = [(ref, Said(text)) for ref, text in places]
     said_by = [Said(bullet) for bullet in bullets]
     github = [(project, Said(project_source_text(project))) for project in projects]
+    # One per linked project, not one per line: every line under a title
+    # carries the same evidence.
+    repositories = list(
+        {
+            item.entry: (item, Said(item.evidence_text))
+            for item in corpus.items
+            if item.evidence_text
+        }.values()
+    )
 
     room: dict[int, list[Target]] = {}
 
-    def claim(candidates: list[tuple[int, str]], term: str, *, practice: bool) -> int | None:
+    def claim(
+        candidates: list[tuple[int, str]],
+        term: str,
+        *,
+        practice: bool,
+        from_repository: bool = False,
+    ) -> int | None:
         for index, evidence in candidates:
             taken = room.setdefault(index, [])
             if len(taken) < MAX_TARGETS_PER_BULLET:
-                taken.append(Target(term=term, evidence=evidence, practice=practice))
+                taken.append(
+                    Target(
+                        term=term,
+                        evidence=evidence,
+                        practice=practice,
+                        from_repository=from_repository,
+                    )
+                )
                 return index
         return None
 
@@ -376,6 +411,31 @@ def classify(
         # substring, and "how" is inside "show": a project's description
         # backed a term it never used.
         forms = equivalents(key) or {key}
+
+        # A repository linked to one of the résumé's projects: the term goes on
+        # that project's bullets (§2.1). Nothing in a bullet says it, so the
+        # term is its own evidence and the revision may add only the term.
+        backing = next(
+            (item for item, says in repositories if any(says.says(f) for f in sorted(forms))),
+            None,
+        )
+        if backing is not None:
+            holding = [
+                (index, term)
+                for index, bullet in enumerate(bullets)
+                if (found := corpus.locate(bullet)) is not None and found.entry == backing.entry
+            ]
+            terms.append(
+                Term(
+                    term,
+                    Status.SUPPORTED,
+                    sources=(f"github-link:{backing.entry}",),
+                    via=backing.entry,
+                    bullet=claim(holding, term, practice=False, from_repository=True),
+                )
+            )
+            continue
+
         project = next(
             (p for p, says in github if any(says.says(form) for form in sorted(forms))), None
         )
@@ -489,7 +549,12 @@ def _prompt(bullet: str, targets: Sequence[Target], refused: str | None) -> str:
     parts = [
         f"Original bullet:\n{bullet.strip()}",
         "Target terms, and the evidence in this bullet for each:\n"
-        + "\n".join(f"- {target.term} (evidence: {target.evidence})" for target in targets),
+        + "\n".join(
+            f"- {target.term} (evidence: this project's own GitHub repository declares it)"
+            if target.from_repository
+            else f"- {target.term} (evidence: {target.evidence})"
+            for target in targets
+        ),
     ]
     if refused is not None:
         parts.append(
@@ -639,14 +704,15 @@ async def revise(
     *,
     projects: Sequence[Project] = (),
     plan: Plan | None = None,
+    linked: Mapping[str, str] | None = None,
 ) -> Revision:
     """Revise the bullets that have something to gain. The rest are untouched.
 
     With no opportunity the provider is never called, and the result is the
     résumé as it stands with `Revision.message` saying why.
     """
-    plan = plan or classify(parsed, job_description, projects=projects)
-    corpus = SourceCorpus.from_resume(parsed)
+    plan = plan or classify(parsed, job_description, projects=projects, linked=linked)
+    corpus = SourceCorpus.from_resume(parsed, linked=linked)
 
     rewrites: list[BulletRewrite] = []
     outcomes: list[Outcome] = []

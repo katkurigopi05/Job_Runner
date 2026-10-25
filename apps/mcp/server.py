@@ -1256,8 +1256,9 @@ async def sync_github_projects(
 ) -> dict[str, Any]:
     """Import the owner's GitHub repositories as résumé project material.
 
-    Re-running updates in place. Your `pinned` and `include` choices are never
-    overwritten by a sync.
+    Re-running updates in place. Your `pinned` and `include` choices, and the
+    résumé entry a repository is linked to, are never overwritten by a sync.
+    Each of your own repositories' dependency files is read after a new push.
     """
     return await _call(
         "POST",

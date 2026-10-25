@@ -903,6 +903,37 @@ export interface ScreenedQuestion {
   finding: "knock_out" | "caution";
 }
 
+/** An imported GitHub repository, as `GET /projects` returns it. */
+export interface Project {
+  id: string;
+  name: string;
+  url: string;
+  description: string | null;
+  language: string | null;
+  is_fork: boolean;
+  is_private: boolean;
+  pushed_at: string | null;
+  /** What the repository's own dependency files declare, by résumé name. */
+  dependency_technologies: string[];
+  /** The résumé Projects entry this repository backs, as the owner linked it. */
+  resume_entry: string | null;
+}
+
+/** A résumé's Projects entries, and which repository plainly is which. */
+export interface ProjectEntries {
+  entries: string[];
+  /** Project id to the entry name it matches exactly. A suggestion only. */
+  suggestions: Record<string, string>;
+}
+
+export interface ProjectSyncResult {
+  added: number;
+  updated: number;
+  total: number;
+  dependencies_read: number;
+  dependencies_skipped: number;
+}
+
 export interface Candidate {
   id: string;
   name: string;
@@ -1196,6 +1227,22 @@ export const api = {
       `/resumes?candidate_id=${encodeURIComponent(candidateId)}`,
     ),
   resumeParsed: (id: string) => request<ResumeParsed>(`/resumes/${id}/parsed`),
+
+  projects: (candidateId: string) =>
+    request<Project[]>(`/projects?candidate_id=${encodeURIComponent(candidateId)}`),
+  projectEntries: (resumeId: string) =>
+    request<ProjectEntries>(`/projects/entries?resume_id=${encodeURIComponent(resumeId)}`),
+  /** Link a repository to the résumé project it backs, or unlink it (null). */
+  linkProject: (projectId: string, resumeEntry: string | null) =>
+    request<Project>(`/projects/${projectId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ resume_entry: resumeEntry }),
+    }),
+  syncProjects: (candidateId: string, username: string) =>
+    request<ProjectSyncResult>("/projects/sync/github", {
+      method: "POST",
+      body: JSON.stringify({ candidate_id: candidateId, username }),
+    }),
 
   /** How an ATS reads this profile's résumé against one posting. */
   postingAts: (postingId: string, profileId: string) =>

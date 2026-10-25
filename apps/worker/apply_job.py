@@ -552,6 +552,7 @@ async def _tailor(
     try:
         from packages.tailor.diff import summarize
         from packages.tailor.dispatch import HEURISTIC_NOTICE, hold_to_pdf, tailor
+        from packages.tailor.evidence import evidence_digest, linked_evidence
         from packages.tailor.guard import SourceCorpus
         from packages.tailor.parse import ParsedResume
         from packages.tailor.publish import apply_rewrites, publish_tailored
@@ -564,8 +565,10 @@ async def _tailor(
 
         # from_resume, not from_texts: the guard has to be able to tell one
         # employer's entry from another's, or a rewrite can move a metric
-        # between them and still trace to "the résumé".
-        corpus = SourceCorpus.from_resume(parsed)
+        # between them and still trace to "the résumé". Repositories the owner
+        # linked to a project are evidence for that project (§2.1).
+        linked = await linked_evidence(session, resume.candidate_id)
+        corpus = SourceCorpus.from_resume(parsed, linked=linked)
 
         # Chosen before the key rather than inside the publish call, because
         # which projects get attached changes the document and so has to be
@@ -578,7 +581,7 @@ async def _tailor(
         # attached, no provider is built, and `_resume_path` uploads the base.
         plan = None
         if mode is TailorMode.TARGETED:
-            plan = classify(parsed, posting_text, projects=projects)
+            plan = classify(parsed, posting_text, projects=projects, linked=linked)
             if not plan.targets and not projects:
                 application.tailored_resume_id = None
                 log.info("tailoring_no_gain")
@@ -612,6 +615,7 @@ async def _tailor(
             provider=getattr(provider, "name", "unknown"),
             model=getattr(provider, "model", None),
             mode=mode,
+            evidence=evidence_digest(linked),
         )
         cached = await find_cached(session, candidate_id=resume.candidate_id, key=cache_key)
         if cached is not None:
@@ -639,6 +643,7 @@ async def _tailor(
             corpus=corpus,
             mode=mode,
             plan=plan,
+            linked=linked,
         )
         result = tailored.result
         # After the rewrites, never before — see `_answered_by`. And nobody,

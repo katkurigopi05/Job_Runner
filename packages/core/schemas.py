@@ -287,6 +287,11 @@ class SyncResultOut(BaseModel):
     added: int
     updated: int
     total: int
+    #: Repositories whose dependency files were read this sync.
+    dependencies_read: int = 0
+    #: Repositories due a read that did not get one (a rate limit). The next
+    #: sync tries them again.
+    dependencies_skipped: int = 0
 
 
 class ProjectOut(BaseModel):
@@ -309,13 +314,33 @@ class ProjectOut(BaseModel):
     pushed_at: datetime | None
     include: bool | None
     pinned: bool
+    #: What the repository's own dependency files declare, by résumé name.
+    dependency_technologies: list[str] = Field(default_factory=list)
+    #: The résumé Projects entry this repository backs, as the owner linked it.
+    resume_entry: str | None = None
+
+
+class ProjectEntriesOut(BaseModel):
+    """A résumé's Projects entries, and which repository plainly is which."""
+
+    #: Entry names as the guard reads them (`guard.project_names`).
+    entries: list[str]
+    #: Project id to the entry name it matches exactly. A suggestion only.
+    suggestions: dict[uuid.UUID, str] = Field(default_factory=dict)
 
 
 class ProjectUpdate(BaseModel):
-    """Owner curation. A sync never overwrites these."""
+    """Owner curation. A sync never overwrites these.
+
+    `resume_entry` widens what the fabrication guard accepts on that entry
+    (CLAUDE.md §2.1), so only the dashboard sends it. `apps/mcp/server.py`
+    has no tool that can.
+    """
 
     include: bool | None = None
     pinned: bool | None = None
+    #: The name of a résumé Projects entry, or None (or blank) to unlink.
+    resume_entry: str | None = Field(default=None, max_length=200)
 
 
 class ProjectPreview(BaseModel):

@@ -1046,6 +1046,20 @@ class Project(Base):
     #: Always put this one on the résumé, ahead of ranked picks.
     pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
+    #: What the repository's own dependency files declare, by the name a
+    #: résumé uses (`packages/github/manifests.py`). A source fact like
+    #: `language`: refreshed by a sync, never written by a model.
+    dependency_technologies: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    #: The push those were read at. A sync reads a repository again only after
+    #: a newer push, which keeps it inside GitHub's 60 calls an hour.
+    dependencies_pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: The name of the résumé Projects entry this repository backs, set by the
+    #: owner on the dashboard. Its GitHub facts become evidence for that entry
+    #: only (CLAUDE.md §2.1). No MCP tool writes it.
+    resume_entry: Mapped[str | None] = mapped_column(Text)
+
     synced_at: Mapped[datetime] = _created_at()
     created_at: Mapped[datetime] = _created_at()
 

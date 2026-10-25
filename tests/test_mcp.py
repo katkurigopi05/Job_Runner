@@ -1038,6 +1038,17 @@ async def test_a_relayed_edit_is_stored_and_attached(client, complete_candidate)
     assert result["adopted_as_base"] is False
 
 
+async def test_no_tool_can_link_a_repository_to_a_resume_entry() -> None:
+    """A link widens what the guard accepts on that entry (§2.1).
+
+    Set by the owner on the dashboard. A model that could set it could put a
+    repository's stack onto any project it chose, so no tool offers it.
+    """
+    tools = await mcp_server.server.list_tools()
+    for tool in tools:
+        assert "resume_entry" not in tool.input_schema.get("properties", {}), tool.name
+
+
 async def test_the_tool_cannot_turn_the_guard_off() -> None:
     """A settable guard is an opt-out from §2.1 by argument.
 

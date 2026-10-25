@@ -1,7 +1,26 @@
-import { ApiError, api, type Profile, type Resume, type ResumeParsed } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  type Profile,
+  type Project,
+  type ProjectEntries,
+  type Resume,
+  type ResumeParsed,
+} from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
+import { ProjectLinks } from "@/components/project-links";
 import { ResumeUpload } from "@/components/resume-upload";
 import { ResumeEditor } from "@/components/resume-editor";
+
+/** The GitHub account a résumé links to in its contact line, if any. */
+function githubUserOf(document: ResumeParsed | undefined): string {
+  const links = (document?.parsed.contact?.links ?? []) as unknown[];
+  for (const link of links) {
+    const match = typeof link === "string" ? /github\.com\/([A-Za-z0-9-]+)/i.exec(link) : null;
+    if (match) return match[1];
+  }
+  return "";
+}
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +57,25 @@ export default async function ResumesPage() {
   const baseFor = (resumeId: string) =>
     profiles.filter((profile) => profile.base_resume_id === resumeId).map((p) => p.label);
 
+  // Links are made against the résumé applications send: the profile's base,
+  // else the default, else the newest.
+  const linkTarget =
+    resumes.find((resume) => resume.id === profiles[0]?.base_resume_id) ??
+    resumes.find((resume) => resume.is_default) ??
+    [...resumes].sort((a, b) => b.version - a.version)[0];
+  let projects: Project[] = [];
+  let entries: ProjectEntries = { entries: [], suggestions: {} };
+  if (candidateId && linkTarget) {
+    try {
+      [projects, entries] = await Promise.all([
+        api.projects(candidateId),
+        api.projectEntries(linkTarget.id),
+      ]);
+    } catch {
+      // The rest of the page does not depend on this panel.
+    }
+  }
+
   return (
     <div className="space-y-10">
       <header>
@@ -50,6 +88,16 @@ export default async function ResumesPage() {
 
       {candidateId ? (
         <ResumeUpload candidateId={candidateId} profileId={profiles[0]?.id} />
+      ) : null}
+
+      {candidateId && linkTarget ? (
+        <ProjectLinks
+          candidateId={candidateId}
+          githubUser={githubUserOf(parsed.get(linkTarget.id))}
+          projects={projects}
+          entries={entries.entries}
+          suggestions={entries.suggestions}
+        />
       ) : null}
 
       {resumes.length === 0 ? (
