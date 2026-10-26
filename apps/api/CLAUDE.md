@@ -114,6 +114,30 @@ even if the model omits them. An incomplete two-term search receives no share;
 an empty corpus has an undefined percentage. This is a share of postings, not
 a résumé fit score. `tests/test_chat_posting_share.py`.
 
+**Rates and charts of the owner's applications come from code** (2026-10-25).
+The owner asked why the assistant gave no percentages or graphs. The model may
+repeat numbers and derive none, the context held no rates, and the dock
+printed replies as plain text. `apps/api/chat_figures.py`:
+
+- **A rate question** (a rate word *and* an application word: "what share of
+  my applications got replies") gets a `RATES` section from
+  `analytics/funnel.py`: every rate beside its counts, and "too few to read a
+  rate" under 5 submitted. `assistant.system` v8 says to repeat these and
+  compute nothing. If retrieval also read "what percentage" as a posting share
+  it could not count, its "percentage unavailable" line is dropped for that
+  question, so the two never contradict.
+- **A chart request** (a chart word that opens the request, or one beside
+  "my") is answered in `prepare` before any model, like the crawl command, as
+  provider `chart` with `ChatReply.chart`. Three subjects: by status, per week
+  (12 weeks) and engagement by match score, with bands under 5 submitted
+  marked. A chart of postings, jobs or skills gets the list of what can be
+  drawn, never a chart of the wrong thing.
+- **The dock** draws `chart` as a table of bars (`assistant-chart.tsx`, colour
+  `--color-data`, which means nothing else) and lays out lists and tables in
+  replies (`reply-text.tsx`), as text and never as HTML.
+
+`tests/test_chat_figures.py`, `tests/test_assistant_reply_display.py`.
+
 **An employer's applications have their own section** (2026-10-21).
 `prepare` uses retrieval's shared first-person application-status rule and
 `found.companies` to supply `YOUR APPLICATIONS AT …`: the code counts and lists
