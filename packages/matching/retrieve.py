@@ -84,7 +84,7 @@ import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import structlog
 from sqlalchemy import ColumnElement, Float, and_, case, exists, func, literal, or_, select
@@ -118,6 +118,12 @@ from packages.matching.locality import (
     names_bay_area_office,
     reads_as_remote,
 )
+from packages.matching.required_skills import (
+    RequiredSkillCount,
+    demand_class,
+    fresh_requirements,
+    requested_skill,
+)
 from packages.matching.rerank import Reranker, fuse, get_reranker, reorder
 from packages.matching.retrieval_trace import stage, traced
 from packages.matching.roles import (
@@ -129,6 +135,7 @@ from packages.matching.roles import (
     related_to,
 )
 from packages.matching.roles import normalize as role_words_of
+from packages.matching.skill_vocab import Skill
 from packages.matching.sponsored import (
     MENTIONS as SPONSORSHIP_MENTIONS,
 )
@@ -485,6 +492,7 @@ class Retrieval:
     #: Exact in-area totals only for one distinguishing term or a company
     #: with no additional subject. These count mentions, not requirements,
     #: using the same area and level predicates as the search.
+    required_skill: RequiredSkillCount | None = None
     match_total: int | None = None
     company_total: int | None = None
     matched_term: str | None = None
@@ -2175,6 +2183,119 @@ async def _stating_sponsorship(
     )
 
 
+async def _requiring_skill(
+    session: AsyncSession,
+    skill: Skill,
+    companies: list[uuid.UUID],
+    company_names: list[str],
+    *,
+    area: str | None,
+    level: AskedLevel | None,
+    allow_unknown: bool,
+    place_filter: _PlaceFilter | None,
+    open_total: int,
+    limit: int,
+) -> Retrieval:
+    """Classify the uncapped keyword match set before selecting required examples."""
+    # Reuse the extractor's vocabulary, including aliases such as K8s. A
+    # raw-keyword scan cannot establish complete coverage for a canonical skill.
+    searchable = func.concat_ws(" ", Posting.title, Posting.location, Posting.description_raw)
+    query = select(Posting.id).where(
+        Posting.closed_at.is_(None),
+        searchable.regexp_match(
+            skill.pattern.pattern, flags="i" if skill.pattern.flags & re.I else None
+        ),
+    )
+    if companies:
+        query = query.where(Posting.company_id.in_(companies))
+    ids = list(
+        (await session.scalars(query.order_by(Posting.first_seen_at.desc(), Posting.id))).all()
+    )
+    hits = await _read_until(session, ids, first=250)
+    metadata: dict[uuid.UUID, tuple[dict[str, Any] | None, int | None, uuid.UUID | None]] = {}
+    for offset in range(0, len(ids), 250):
+        rows = await session.execute(
+            select(
+                Posting.id,
+                Posting.requirements_json,
+                Posting.requirements_version,
+                Posting.company_id,
+            ).where(Posting.id.in_(ids[offset : offset + 250]))
+        )
+        metadata.update(
+            (ident, (stored, version, company_id))
+            for ident, stored, version, company_id in rows.all()
+        )
+    inside = [hit for hit in hits if not (area and _outside_area(hit))]
+    outside = len(hits) - len(inside)
+    inside, level_count = _at_level(inside, level, place_filter=place_filter)
+    counts = dict.fromkeys(("required", "options", "preferred", "named", "unread"), 0)
+    required: list[_Hit] = []
+    quotes: dict[uuid.UUID, str] = {}
+    employers: set[uuid.UUID] = set()
+    required_employers: set[uuid.UUID] = set()
+    names: set[str] = set()
+    for hit in inside:
+        stored, version, company_id = metadata[hit.posting_id]
+        if company_id is not None:
+            employers.add(company_id)
+        reading, quote = demand_class(fresh_requirements(stored, version, hit.description), skill)
+        counts[reading] += 1
+        if reading == "required":
+            required.append(hit)
+            quotes[hit.posting_id] = quote or ""
+            if company_id is not None:
+                required_employers.add(company_id)
+            if hit.company:
+                names.add(hit.company)
+    chosen = required[:limit]
+    statuses = await _application_statuses(session, [hit.posting_id for hit in chosen])
+    return Retrieval(
+        attempted=True,
+        searched=open_total,
+        companies=tuple(sorted(company_names)),
+        match_total=len(inside),
+        company_total=len(employers),
+        matched_term=skill.label,
+        required_skill=RequiredSkillCount(
+            skill.label,
+            counts["required"],
+            counts["options"],
+            counts["preferred"],
+            counts["named"],
+            counts["unread"],
+            tuple(sorted(names)),
+            len(required_employers),
+        ),
+        passages=tuple(
+            Passage(
+                f"P{index}",
+                hit.posting_id,
+                hit.title or "(untitled)",
+                hit.company,
+                hit.location,
+                hit.url,
+                quotes[hit.posting_id],
+                statuses.get(hit.posting_id),
+            )
+            for index, hit in enumerate(chosen, 1)
+        ),
+        more=tuple(
+            Listed(hit.posting_id, hit.title or "(untitled)", hit.company, hit.location, hit.url)
+            for hit in required[limit : limit + MORE_LIMIT]
+        ),
+        ranked=len(required),
+        area=area,
+        area_waived=area is None and get_settings().search_us_only,
+        outside_area=outside,
+        place_total=len(place_filter.bay) if place_filter is not None else None,
+        search_area_total=len(place_filter.inside) if place_filter is not None else None,
+        remote_or_unplaced_not_listed=len(place_filter.omitted) if place_filter is not None else 0,
+        place_counts_complete=True,
+        level=level_count,
+    )
+
+
 @traced
 async def retrieve(
     session: AsyncSession, question: str, *, limit: int = DEFAULT_LIMIT
@@ -2267,6 +2388,21 @@ async def retrieve(
         )
         or 0
     )
+    demand_terms = [term for term in subject_terms if term not in company_words]
+    demanded = requested_skill(question, demand_terms) if not named_in(question) else None
+    if demanded is not None:
+        return await _requiring_skill(
+            session,
+            demanded,
+            companies,
+            company_names,
+            area=area,
+            level=level,
+            allow_unknown=allow_unknown,
+            place_filter=place_filter,
+            open_total=open_total,
+            limit=limit,
+        )
     if asks_which_sponsor(question):
         # Answered from what postings state, and not from the words that ask.
         return await _stating_sponsorship(

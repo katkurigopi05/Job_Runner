@@ -651,3 +651,16 @@ the same jam.
 The selection now requires a description, the rule `embed_postings` and
 `chunks.chunk_postings` already used. On the live database the next pass
 selects exactly the 536. `tests/test_incremental_matching.py`.
+
+### Requirement evidence version 3
+
+`required_skills.py` handles explicit, single-skill demand questions separately
+from mention ranking. Its full candidate scan uses `skill_vocab` spellings,
+including aliases, applies existing area/level/place rules, then classifies
+requirements before selecting examples. An unread source prevents an exact
+required total. Compound skill or role questions retain existing retrieval.
+
+`requirements.py` records option status before truncating quotes, recognizes
+Essential headings through the shared experience reader, and compares skill
+clauses independently. Current stored readings are reused. Stale readings are
+re-extracted in memory where source text exists; no live backfill is automatic.

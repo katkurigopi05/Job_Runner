@@ -186,6 +186,42 @@ def test_a_years_line_under_a_requirements_heading_is_mandatory(heading: str) ->
     assert read_posting(f"{heading}\n5+ years of experience with Kubernetes").mandatory_minimum == 5
 
 
+@pytest.mark.parametrize(
+    "heading",
+    ["Essential", "Essential qualifications", "Essential requirements", "Essential skills:"],
+)
+def test_an_essential_heading_makes_a_years_demand_mandatory(heading: str) -> None:
+    """Synthetic placement exercises the shared requirements-heading reader."""
+    read = read_posting(f"{heading}\n5+ years of experience with Python")
+
+    assert read.mandatory_minimum == 5
+    assert [d.demand for d in read.demands] == [Demand.MANDATORY]
+
+
+def test_an_essential_heading_still_yields_to_inline_preferred_wording() -> None:
+    read = read_posting("Essential skills\n5+ years of experience with Python preferred")
+
+    assert read.mandatory_minimum is None
+    assert read.preferred_minimum == 5
+
+
+def test_an_unknown_heading_resets_an_essential_section() -> None:
+    read = read_posting(
+        "Essential\n5+ years of experience with Python\n"
+        "Benefits\nSabbatical after 7 years of experience here"
+    )
+
+    assert [d.demand for d in read.demands] == [Demand.MANDATORY, Demand.AMBIGUOUS]
+
+
+@pytest.mark.parametrize("heading", ["Essentials", "Essentials tooling", "Essential tools"])
+def test_essentials_product_or_tooling_headings_are_not_requirements(heading: str) -> None:
+    read = read_posting(f"Requirements\n{heading}\n5+ years of experience with Python")
+
+    assert read.mandatory_minimum is None
+    assert [d.demand for d in read.demands] == [Demand.AMBIGUOUS]
+
+
 def test_the_line_outranks_the_heading_in_both_directions() -> None:
     under_required = read_posting("Requirements\n8+ years of experience preferred")
     assert under_required.mandatory_minimum is None

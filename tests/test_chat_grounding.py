@@ -289,7 +289,7 @@ async def test_a_posting_whose_requirements_were_not_read_says_that(
     client: AsyncClient, worker_session, monkeypatch
 ) -> None:
     profile, company = await _owner(worker_session)
-    await _target(worker_session, profile, company, "Stream Engineer", "Kafka pipelines.", None)
+    await _target(worker_session, profile, company, "Kafka Stream Engineer", "", None)
     await worker_session.commit()
     seen = _answers(monkeypatch, "ok")
 

@@ -15,6 +15,7 @@ from httpx import AsyncClient
 
 from packages.core.models import Candidate, Company, Match, Posting, Profile, Resume, User
 from packages.llm.provider import StubProvider
+from packages.matching.requirements import EXTRACTOR_VERSION
 
 #: Distinctive enough that finding it in the prompt means the text leaked.
 RESUME_LINES = ["Built Python services at Initech", "Streamed events with Kafka"]
@@ -69,6 +70,7 @@ async def _target(session, profile, company, title, body, requirements, score=0.
         location="Remote, US",
         description_raw=body,
         requirements_json=requirements,
+        requirements_version=EXTRACTOR_VERSION if requirements is not None else None,
     )
     session.add(posting)
     await session.flush()

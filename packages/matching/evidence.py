@@ -70,6 +70,10 @@ _EXAMPLE_BEFORE = re.compile(
 _CLAUSE_END = re.compile(r"[.;!?]")
 #: Its full stops are not the end of a clause.
 _EG = re.compile(r"\be\.\s?g\.?", re.IGNORECASE)
+#: A dotted release number immediately after a skill is part of its name,
+#: not sentence punctuation or another list item: "PyTorch 2.0 or TensorFlow".
+#: Leave any following full stop in place so "PyTorch 2.0. Or ..." stays two clauses.
+_VERSION_AFTER = re.compile(r"^\s+v?\d+(?:\.(?:\d+|x))+\+?(?=\s|[,/;.!?)]|$)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -105,7 +109,7 @@ def is_option(quote: str, skill: Skill) -> bool:
     quote = _EG.sub("eg", quote)
     for match in skill.pattern.finditer(quote):
         before = quote[: match.start()]
-        after = quote[match.end() :]
+        after = _VERSION_AFTER.sub("", quote[match.end() :], count=1)
         ends = [found.end() for found in _CLAUSE_END.finditer(before)]
         clause_before = before[ends[-1] :] if ends else before
         stop = _CLAUSE_END.search(after)
@@ -140,7 +144,11 @@ def skill_evidence(requirements: Mapping[str, Any] | None, skill_key: str) -> Sk
                 skill=skill_key,
                 label=label,
                 strength=strength,
-                option=bool(skill is not None and quote and is_option(quote, skill)),
+                option=(
+                    entry["option"]
+                    if type(entry.get("option")) is bool
+                    else bool(skill is not None and quote and is_option(quote, skill))
+                ),
                 quote=quote,
             )
     return SkillEvidence(skill=skill_key, label=label, strength=Strength.UNREAD)

@@ -114,7 +114,7 @@ async def test_a_rare_subject_is_still_what_is_searched_for(db_session) -> None:
     """Keywords decide relevance (§14); only the connective stops being one."""
     await _common(db_session, "ai")
     company = await _company(db_session)
-    kafka = await _posting(db_session, company, "Engineer", "We run Kafka.")
+    kafka = await _posting(db_session, company, "Engineer", "Requirements\nKafka experience.")
     await _posting(db_session, company, "Recruiter", "A role requiring patience.")
 
     found = await retrieve(db_session, "roles requiring Kafka")

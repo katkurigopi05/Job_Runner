@@ -492,7 +492,10 @@ async def test_a_shortened_name_counts_where_the_question_asks_about_the_employe
         await _posting(db_session, snowflake, "Solutions Engineer"),
     ]
     tool = await _posting(
-        db_session, fivetran, "Partner Solutions Architect", "Experience with Snowflake."
+        db_session,
+        fivetran,
+        "Partner Solutions Architect",
+        "Requirements\nExperience with Snowflake.",
     )
 
     # "right now" is left off: in a test corpus that has never seen the words

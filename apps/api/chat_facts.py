@@ -183,6 +183,21 @@ def count_facts(found: Retrieval) -> tuple[ChatCountFact, ...]:
             exact=found.place_counts_complete,
             over="your standing search area before the place filter",
         )
+    if found.required_skill is not None:
+        count = found.required_skill
+        add(
+            "required_skill",
+            count.required,
+            f"direct requirements for {count.skill}",
+            exact=count.complete,
+        )
+        add(
+            "required_companies",
+            count.company_total,
+            f"companies directly requiring {count.skill}",
+            unit="companies",
+            exact=count.complete,
+        )
     return tuple(facts)
 
 
@@ -202,6 +217,8 @@ def render_postings(found: Retrieval, evidence: Mapping[uuid.UUID, list[str]] | 
         lines.append(f"Search area: {one_line(found.area)}.")
     elif found.area_waived:
         lines.append("Your standing search-area filter was waived for the named place.")
+    if found.required_skill is not None:
+        lines.append(found.required_skill.in_words())
     if found.share is not None:
         share = found.share
         percent = (
@@ -215,7 +232,9 @@ def render_postings(found: Retrieval, evidence: Mapping[uuid.UUID, list[str]] | 
         )
     elif found.share_requested:
         lines.append(
-            "Percentage unavailable: the complete matching count for this compound search "
+            "Percentage unavailable: a required-skill share has not been computed."
+            if found.required_skill is not None
+            else "Percentage unavailable: the complete matching count for this compound search "
             "is unknown. The available corpus or role count cannot supply that numerator."
         )
     if found.role_total is not None:
@@ -318,6 +337,8 @@ def render_postings(found: Retrieval, evidence: Mapping[uuid.UUID, list[str]] | 
             )
             lines.append(label + metadata)
             lines.extend(one_line(line) for line in (evidence or {}).get(passage.posting_id, []))
-            if found.sponsorship is not None and passage.excerpt:
+            if (
+                found.sponsorship is not None or found.required_skill is not None
+            ) and passage.excerpt:
                 lines.append("Source: " + one_line(passage.excerpt))
     return "\n".join(lines)
