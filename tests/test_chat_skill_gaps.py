@@ -82,6 +82,17 @@ async def _ask(client, monkeypatch, question: str) -> tuple[dict, dict[str, str]
 
     recorder, seen = _recorder()
     monkeypatch.setattr(chat_module.llm_router, "build_provider", lambda name=None: recorder())
+    original_prepare = chat_module.prepare
+
+    async def capture_prepared(*args, **kwargs):
+        ready = await original_prepare(*args, **kwargs)
+        # These shared helpers inspect context construction, including paths
+        # that now render fixed facts without sending that context to a model.
+        if isinstance(ready, chat_module.Ready) and ready.factual_answer is not None:
+            seen["system"], seen["user"] = chat_module.SYSTEM, ready.prompt
+        return ready
+
+    monkeypatch.setattr(chat_module, "prepare", capture_prepared)
     answered = await client.post("/chat", json={"message": question})
     assert answered.status_code == 200, answered.text
     return answered.json(), seen

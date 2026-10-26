@@ -197,7 +197,7 @@ async def test_a_rate_question_hands_the_model_the_computed_rates(
 async def test_an_ordinary_question_gets_no_rates(client: AsyncClient, monkeypatch) -> None:
     seen = _answers(monkeypatch, "Nothing needs you.")
 
-    await client.post("/chat", json={"message": "What needs me?"})
+    await client.post("/chat", json={"message": "Explain what you can help with"})
 
     assert "RATES" not in seen["user"]
 

@@ -134,14 +134,16 @@ async def test_computed_share_reaches_the_context_and_reply(
     await posting(worker_session, "AI Engineer")
     await posting(worker_session, "Data Engineer")
     await worker_session.commit()
-    seen = {}
 
     class Recorder(StubProvider):
         async def complete(self, system, user, **kwargs):
-            seen["user"] = user
-            return "1 of 2 open postings in your search area (50.00%)."
+            pytest.fail("Computed percentages must not ask a model")
 
     monkeypatch.setattr(chat.llm_router, "build_provider", lambda name: Recorder())
+    from packages.core.schemas import ChatRequest
+
+    ready = await chat.prepare(ChatRequest(message=QUESTION), worker_session)
+    assert isinstance(ready, chat.Ready)
     response = await client.post(route, json={"message": QUESTION})
     assert response.status_code == 200
     if route.endswith("stream"):
@@ -155,9 +157,11 @@ async def test_computed_share_reaches_the_context_and_reply(
         "percentage": 50.0,
         "scope": "your search area",
     }
-    assert "50.00%" in seen["user"]
-    assert "1 of 2 open postings in your search area" in seen["user"]
-    assert "mentions percentage" not in seen["user"]
+    assert body["provider"] == "facts"
+    assert "50.00%" in body["reply"]
+    assert "50.00%" in ready.prompt
+    assert "1 of 2 open postings in your search area" in ready.prompt
+    assert "mentions percentage" not in ready.prompt
 
 
 @pytest.mark.parametrize("title", ["AI/ML Engineer", "Senior AI / ML Engineer", "AI ML Engineer"])

@@ -52,6 +52,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api import chat_history
 from apps.api.chat_budget import BudgetReport, PromptBudget, pack
+from apps.api.chat_facts import (
+    ApplicationFact,
+    CompanyApplications,
+    OwnerFacts,
+    asks_for_application_snapshot,
+    asks_for_counts,
+    count_facts,
+    render_postings,
+)
 from apps.api.chat_figures import (
     asks_for_application_rates,
     asks_for_chart,
@@ -153,9 +162,20 @@ def _one_line(text: object) -> str:
     return " ".join(str(text or "").split())
 
 
-async def _context(
+def _application_fact(application: Application, title: str | None = None) -> ApplicationFact:
+    return ApplicationFact(
+        title=_one_line(title or application.url),
+        url=_one_line(application.url),
+        status=application.status,
+        failure_reason=application.failure_reason,
+        created=application.created_at.isoformat(),
+        updated=application.updated_at.isoformat(),
+    )
+
+
+async def _read_context(
     session: SessionDep, application_id: uuid.UUID | None, *, include_mail: bool
-) -> str:
+) -> OwnerFacts:
     """Facts the model is allowed to speak from.
 
     `include_mail` gates the recruiter correspondence — the only thing in here
@@ -206,10 +226,12 @@ async def _context(
                 f"auto_submit={profile.auto_submit}, min_match_score={profile.min_match_score}"
             )
 
+    selected_application = None
     if application_id is not None:
         application = await session.get(Application, application_id)
         if application is None:
             raise ApiError(ErrorCode.NOT_FOUND, "application not found")
+        selected_application = _application_fact(application)
 
         lines += [
             "THE APPLICATION BEING ASKED ABOUT:",
@@ -249,10 +271,24 @@ async def _context(
             # a different and wrong answer.
             lines.append("  recent replies: withheld — not shared with a remote model")
 
-    return "\n".join(lines)
+    return OwnerFacts(
+        context="\n".join(lines),
+        statuses=tuple(sorted(counts.items())),
+        waiting=tuple((reason, parked[reason]) for reason in ParkReason if reason in parked),
+        application=selected_application,
+    )
 
 
-async def _company_applications(session: AsyncSession, companies: tuple[str, ...]) -> str:
+async def _context(
+    session: SessionDep, application_id: uuid.UUID | None, *, include_mail: bool
+) -> str:
+    """Text projection retained for context inspection and callers."""
+    return (await _read_context(session, application_id, include_mail=include_mail)).context
+
+
+async def _company_application_facts(
+    session: AsyncSession, companies: tuple[str, ...]
+) -> tuple[CompanyApplications, ...]:
     """Application facts for named employers, including unlinked board URLs.
 
     A linked posting is authoritative. Only an application with no posting
@@ -274,7 +310,7 @@ async def _company_applications(session: AsyncSession, companies: tuple[str, ...
             .order_by(Application.created_at, Application.id)
         )
     ).all()
-    lines = []
+    facts = []
     for company in employers:
         slug = company.slug or slug_from_ats_url((company.careers_url or "").rstrip("/") + "/")
         matched = [
@@ -288,23 +324,22 @@ async def _company_applications(session: AsyncSession, companies: tuple[str, ...
                 and (slug_from_ats_url(application.url) or "").casefold() == slug.casefold()
             )
         ]
-        name = _one_line(company.name)
-        lines.append(f"YOUR APPLICATIONS AT {name}:")
-        lines.append(
-            f"  {len(matched)} application{'' if len(matched) == 1 else 's'} at {name}; "
-            "global status counts cover all companies."
-        )
-        if not matched:
-            lines.append(f"  no applications at {name}")
-        for application, title in matched:
-            lines.append(
-                f"  - {_one_line(title or application.url)}; url={_one_line(application.url)}; "
-                f"status={_one_line(application.status)}; "
-                f"failure_reason={_one_line(application.failure_reason) or 'none'}; "
-                f"created={application.created_at.isoformat()}; "
-                f"updated={application.updated_at.isoformat()}"
+        facts.append(
+            CompanyApplications(
+                name=_one_line(company.name),
+                applications=tuple(
+                    _application_fact(application, title) for application, title in matched
+                ),
             )
-    return "\n".join(lines)
+        )
+    return tuple(facts)
+
+
+async def _company_applications(session: AsyncSession, companies: tuple[str, ...]) -> str:
+    """Company-specific context from the same typed records as fixed answers."""
+    return "\n".join(
+        fact.context() for fact in await _company_application_facts(session, companies)
+    )
 
 
 #: Questions about what the owner is missing. Only these get the résumé-derived
@@ -883,6 +918,8 @@ class Ready:
     mail_in_context: bool = False
     #: Only explicit evaluation callers opt into packing; live routes leave it off.
     budget: BudgetReport | None = None
+    #: Rendered by code from scoped facts; no provider is needed for this answer.
+    factual_answer: str | None = None
 
 
 async def prepare(
@@ -945,7 +982,8 @@ async def prepare(
     # the owner's choice and its effect.
     include_mail = selected == LOCAL_PROVIDER or body.share_mail
 
-    context = await _context(session, body.application_id, include_mail=include_mail)
+    owner_facts = await _read_context(session, body.application_id, include_mail=include_mail)
+    context = owner_facts.context
     found = await retrieve(session, question)
     # A rate of the owner's applications is computed here and handed over. If
     # retrieval also took "what percentage" as a posting share it could not
@@ -957,13 +995,14 @@ async def prepare(
     named_skills = skills_asked_about(question)
     requirements = await _requirements_of(session, found) if (gaps or named_skills) else {}
     posting_gaps = _unmet_by_posting(found, gaps, requirements) if gaps else None
+    company_facts = (
+        await _company_application_facts(session, found.companies)
+        if found.companies and asks_about_own_applications(question)
+        else ()
+    )
     sections = [
         context,
-        *(
-            [await _company_applications(session, found.companies)]
-            if found.companies and asks_about_own_applications(question)
-            else []
-        ),
+        *(["\n".join(fact.context() for fact in company_facts)] if company_facts else []),
         _postings_section(found, posting_gaps, skill_lines(found, named_skills, requirements)),
     ]
     postings_index = len(sections) - 1
@@ -1009,6 +1048,18 @@ async def prepare(
             budget=context_budget,
             answer_tokens=ANSWER_TOKENS,
         )
+    factual_answer = None
+    if gaps is None and not wants_rates and not remembered.turns and not earlier:
+        if company_facts and asks_for_application_snapshot(question):
+            factual_answer = "\n".join(fact.answer() for fact in company_facts)
+        elif (
+            not found.attempted
+            and body.application_id is None
+            and asks_for_application_snapshot(question)
+        ):
+            factual_answer = owner_facts.answer()
+        elif found.attempted and asks_for_counts(question):
+            factual_answer = render_postings(found, skill_lines(found, named_skills, requirements))
     return Ready(
         selected=selected,
         include_mail=include_mail,
@@ -1019,6 +1070,7 @@ async def prepare(
         earlier=earlier,
         mail_in_context=include_mail and body.application_id is not None,
         budget=budget_report,
+        factual_answer=factual_answer,
     )
 
 
@@ -1116,6 +1168,7 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
     cited = cited_labels(answer)
     return ChatReply(
         reply=answer,
+        count_facts=list(count_facts(found)),
         provider=selected,
         model=model,
         grounded=True,
@@ -1198,12 +1251,30 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
     )
 
 
+def fixed_reply(ready: Ready) -> ChatReply | None:
+    """Same source metadata as model answers, truthful local/provider labels."""
+    if ready.factual_answer is None:
+        return None
+    return reply_for(ready, None, ready.factual_answer).model_copy(
+        update={
+            "provider": "facts",
+            "model": None,
+            "local": True,
+            "shared_mail": False,
+            "mail_in_context": False,
+        }
+    )
+
+
 @router.post("", response_model=ChatReply)
 async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     """Answer a question about the owner's own job search."""
     ready = await prepare(body, session)
     if isinstance(ready, ChatReply):
         return ready
+    fixed = fixed_reply(ready)
+    if fixed is not None:
+        return fixed
     try:
         provider, model = provider_for(ready.selected)
         answer = await provider.complete(

@@ -105,6 +105,18 @@ the prompt is a request and this is a rule — the check runs in code.
 application, and its recent replies, and told to say when it does not know. An
 assistant that invents an application status is worse than no assistant.
 
+**Count snapshots are rendered in code** (2026-10-26). A standalone quantitative
+posting question, named-employer application-status question, or global status
+snapshot can be answered without a provider call. Both chat routes use the same
+renderer. `ChatReply.count_facts` preserves each count's predicate, scope and
+coverage (`exact`, `at_least`, or `unknown`); unknown is never zero. A role total
+is distinct from additional-subject mentions, and mentions do not establish
+remote eligibility or required skills. Regional omission notices remain part
+of the answer. Incomplete regional accounting is labelled as candidate coverage.
+These replies use provider `facts`, no model, and no mail-sharing provenance.
+Selected review details, conversation follow-ups, skill gaps and application
+rates keep their existing paths. No system prompt changed.
+
 **A posting percentage has an explicit denominator.** A question asking what
 percentage a role or other completely counted search represents gets its share
 of all open postings within the applied search area or regional filter. The

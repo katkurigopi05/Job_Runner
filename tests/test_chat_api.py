@@ -140,30 +140,20 @@ async def test_an_unknown_provider_is_refused(client: AsyncClient) -> None:
 
 
 async def test_the_answer_is_grounded_in_real_counts(client: AsyncClient, monkeypatch) -> None:
-    """The model is handed facts, not left to invent a status."""
+    """A status snapshot is rendered without giving a model authority over counts."""
     import apps.api.routers.chat as chat_module
 
-    seen: dict[str, str] = {}
+    def forbidden(*args, **kwargs):
+        pytest.fail("A status snapshot must not call a model")
 
-    class Recorder(StubProvider):
-        async def complete(
-            self,
-            system: str,
-            user: str,
-            *,
-            max_tokens: int = 1024,
-            temperature: float = 0.2,
-        ) -> str:
-            seen["user"] = user
-            return "three are waiting"
-
-    monkeypatch.setattr(chat_module.llm_router, "build_provider", lambda name=None: Recorder())
+    monkeypatch.setattr(chat_module.llm_router, "build_provider", forbidden)
 
     answered = await client.post("/chat", json={"message": "what needs me?"})
 
     assert answered.status_code == 200
-    assert answered.json()["reply"] == "three are waiting"
-    assert "APPLICATIONS BY STATUS:" in seen["user"]
+    assert answered.json()["provider"] == "facts"
+    assert "0 applications across all companies" in answered.json()["reply"]
+    assert "Nothing is waiting on you" in answered.json()["reply"]
 
 
 async def test_what_waits_on_the_owner_is_named_with_its_reason(
@@ -214,14 +204,13 @@ async def test_what_waits_on_the_owner_is_named_with_its_reason(
     answered = await client.post("/chat", json={"message": "what needs me?"})
 
     assert answered.status_code == 200
-    lines = seen["user"].splitlines()
-    waiting: list[str] = []
-    for line in lines[lines.index("WAITING ON YOU:") + 1 :]:
-        if not line.startswith("  "):
-            break
-        waiting.append(line)
-    assert any(line.startswith("  review: 1 ") for line in waiting), waiting
-    assert any(line.startswith("  manual_completion_required: 2 ") for line in waiting), waiting
+    assert seen == {}, "No prompt is sent for this deterministic answer"
+    lines = answered.json()["reply"].splitlines()
+    waiting = lines[
+        lines.index("Waiting on you (already counted above, not additional applications):") + 1 :
+    ]
+    assert any(line.startswith("review: 1 ") for line in waiting), waiting
+    assert any(line.startswith("manual_completion_required: 2 ") for line in waiting), waiting
     assert not any("site_error" in line for line in waiting), (
         "a pipeline failure is not the owner's"
     )

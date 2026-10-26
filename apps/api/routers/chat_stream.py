@@ -36,6 +36,7 @@ from apps.api.routers.chat import (
     SYSTEM,
     Ready,
     did_not_answer,
+    fixed_reply,
     prepare,
     provider_for,
     reply_for,
@@ -131,6 +132,11 @@ async def chat_stream(body: ChatRequest) -> StreamingResponse:
     if isinstance(ready, ChatReply):
         return StreamingResponse(
             _unwritten(ready), media_type=STREAM_MEDIA_TYPE, headers=STREAM_HEADERS
+        )
+    fixed = fixed_reply(ready)
+    if fixed is not None:
+        return StreamingResponse(
+            _unwritten(fixed), media_type=STREAM_MEDIA_TYPE, headers=STREAM_HEADERS
         )
     try:
         provider, model = provider_for(ready.selected)

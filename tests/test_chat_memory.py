@@ -350,7 +350,8 @@ async def test_the_reply_says_whether_mail_was_in_its_context(
 
     assert about_one.json()["mail_in_context"] is True
     assert about_none.json()["mail_in_context"] is False
-    assert about_none.json()["shared_mail"] is True
+    assert about_none.json()["shared_mail"] is False
+    assert about_none.json()["provider"] == "facts"
 
 
 # --------------------------------------------------------------------------
