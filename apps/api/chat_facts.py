@@ -207,7 +207,12 @@ def count_facts(found: Retrieval) -> tuple[ChatCountFact, ...]:
     return tuple(facts)
 
 
-def render_postings(found: Retrieval, evidence: Mapping[uuid.UUID, list[str]] | None = None) -> str:
+def render_postings(
+    found: Retrieval,
+    evidence: Mapping[uuid.UUID, list[str]] | None = None,
+    *,
+    include_sources: bool = True,
+) -> str:
     """State exact counts and sample limits, followed by supplied source facts."""
     # Validate coverage/values before rendering even callers outside chat.prepare.
     count_facts(found)
@@ -221,6 +226,8 @@ def render_postings(found: Retrieval, evidence: Mapping[uuid.UUID, list[str]] | 
     if found.work_mode:
         scope += " with remote-work evidence"
     lines = [f"Searched {found.searched} of {found.searched + found.unsearchable} open postings."]
+    if found.not_hiring:
+        lines.extend(f"no open postings at {one_line(name)}" for name in found.not_hiring)
     if found.area:
         lines.append(f"Search area: {one_line(found.area)}.")
     elif found.area_waived:
@@ -336,6 +343,8 @@ def render_postings(found: Retrieval, evidence: Mapping[uuid.UUID, list[str]] | 
             f"{level.unknown} name no level and {level.other} name a different level. "
             "Titles naming a different level are not listed."
         )
+    if not include_sources:
+        return "\n".join(lines)
     if not found.passages:
         lines.append(f"No retrieved postings are available in {scope} for this question.")
     else:

@@ -41,6 +41,7 @@ not the same answer as over all of them.
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from dataclasses import dataclass, replace
@@ -66,6 +67,12 @@ from apps.api.chat_figures import (
     asks_for_chart,
     chart_reply,
     rates_section,
+)
+from apps.api.chat_selection import (
+    EvidenceItem,
+    SelectionResult,
+    parse_selection,
+    render_selection,
 )
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
@@ -949,6 +956,9 @@ class Ready:
     budget: BudgetReport | None = None
     #: Rendered by code from scoped facts; no provider is needed for this answer.
     factual_answer: str | None = None
+    #: A posting answer accepts only allowed source IDs, never model prose.
+    selection_evidence: tuple[EvidenceItem, ...] | None = None
+    selection_summary: str = ""
 
 
 async def prepare(
@@ -1066,17 +1076,6 @@ async def prepare(
             + f"\n\nQUESTION:\n{question}"
         )
 
-    budget_report = None
-    if context_budget is None:
-        prompt = render()
-    else:
-        prompt, budget_report = pack(
-            system=SYSTEM,
-            render=render,
-            labels=[p.label for p in found.passages],
-            budget=context_budget,
-            answer_tokens=ANSWER_TOKENS,
-        )
     factual_answer = None
     if gaps is None and not wants_rates and not remembered.turns and not earlier:
         if company_facts and asks_for_application_snapshot(question):
@@ -1089,6 +1088,77 @@ async def prepare(
             factual_answer = owner_facts.answer()
         elif found.attempted and (asks_for_counts(question) or found.required_skill is not None):
             factual_answer = render_postings(found, skill_lines(found, named_skills, requirements))
+    selection_evidence = None
+    selection_summary = ""
+    if (
+        factual_answer is None
+        and found.attempted
+        and gaps is None
+        and not wants_rates
+        and not asks_about_own_applications(question)
+        and body.application_id is None
+    ):
+        selection_evidence = tuple(
+            EvidenceItem(id=p.label, text=p.excerpt or p.title, source_label=p.label)
+            for p in (*found.passages, *earlier)
+        )
+        selection_summary = render_postings(found, include_sources=False)
+        if not selection_evidence:
+            factual_answer = selection_summary
+
+        def render_selection_prompt(excerpt_labels: frozenset[str] | None = None) -> str:
+            allowed = [
+                item
+                for item in selection_evidence or ()
+                if excerpt_labels is None or item.id in excerpt_labels
+            ]
+            context = _postings_section(
+                found,
+                posting_gaps,
+                skill_lines(found, named_skills, requirements),
+                excerpt_labels=excerpt_labels,
+            )
+            if earlier:
+                context += "\n" + chat_history.postings_section(
+                    tuple(p for p in earlier if excerpt_labels is None or p.label in excerpt_labels)
+                )
+            return (
+                "EVIDENCE_SELECTION\nCONTEXT:\n"
+                + context
+                + "\n"
+                + json.dumps(
+                    {
+                        "question": question,
+                        "evidence": [
+                            {"id": item.id, "source_label": item.source_label} for item in allowed
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+        render = render_selection_prompt
+        # The selection path supplies postings only, never mailbox,
+        # application, resume or previous model-written context.
+        include_mail = False
+    budget_report = None
+    if context_budget is None:
+        prompt = render()
+    else:
+        prompt, budget_report = pack(
+            system=SYSTEM,
+            render=render,
+            labels=[p.label for p in (*found.passages, *earlier)],
+            budget=context_budget,
+            answer_tokens=ANSWER_TOKENS,
+        )
+        if selection_evidence is not None:
+            removed = set(budget_report.removed_excerpts)
+            selection_evidence = tuple(
+                item for item in selection_evidence if item.id not in removed
+            )
+            if not selection_evidence:
+                factual_answer = selection_summary
     return Ready(
         selected=selected,
         include_mail=include_mail,
@@ -1100,6 +1170,8 @@ async def prepare(
         mail_in_context=include_mail and body.application_id is not None,
         budget=budget_report,
         factual_answer=factual_answer,
+        selection_evidence=selection_evidence,
+        selection_summary=selection_summary,
     )
 
 
@@ -1296,6 +1368,49 @@ def fixed_reply(ready: Ready) -> ChatReply | None:
     )
 
 
+async def selected_reply(ready: Ready) -> ChatReply:
+    """Validate the complete selection before exposing any model-dependent text."""
+    evidence = ready.selection_evidence
+    assert evidence is not None
+    try:
+        provider, model = provider_for(ready.selected)
+        raw = await provider.complete(SYSTEM, ready.prompt, max_tokens=180, temperature=0.0)
+    except LLMError as exc:
+        raise did_not_answer(ready.selected, exc) from exc
+    selection = parse_selection(raw, evidence)
+    if not selection.valid or not selection.items:
+        lead = (
+            "No answer to the requested task was established by this selection. "
+            "Closest retrieved source excerpts follow."
+        )
+        selection = SelectionResult(items=evidence[:8])
+    else:
+        lead = (
+            "Selected source excerpts follow. They do not establish an exhaustive list "
+            "or independently verify the requested task."
+        )
+    answer = "\n\n".join(
+        (
+            ready.selection_summary or render_postings(ready.found, include_sources=False),
+            lead,
+            render_selection(selection),
+        )
+    )
+    reply = reply_for(ready, model, answer)
+    # Citation-looking text inside a source quote is source material. Only
+    # validated catalogue labels may supply the response citation metadata.
+    labels = set(selection.source_labels)
+    return reply.model_copy(
+        update={
+            "unsupported_citations": [],
+            "sources": [
+                source.model_copy(update={"cited": source.label in labels})
+                for source in reply.sources
+            ],
+        }
+    )
+
+
 @router.post("", response_model=ChatReply)
 async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     """Answer a question about the owner's own job search."""
@@ -1305,6 +1420,8 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     fixed = fixed_reply(ready)
     if fixed is not None:
         return fixed
+    if ready.selection_evidence is not None:
+        return await selected_reply(ready)
     try:
         provider, model = provider_for(ready.selected)
         answer = await provider.complete(

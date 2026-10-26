@@ -146,7 +146,9 @@ async def test_a_named_company_with_nothing_open_says_so(
     answered = await client.post("/chat", json={"message": "Mistral AI jobs"})
 
     assert answered.status_code == 200
-    assert "no open postings at Mistral AI" in seen["user"]
+    assert "0 open postings at Mistral AI in your search area" in answered.json()["reply"]
+    assert answered.json()["provider"] == "facts"
+    assert seen == {}
 
 
 # --- an ordinary word is not a company ---------------------------------------------

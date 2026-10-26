@@ -444,3 +444,13 @@ Audit records are retained for 365 days and optional timing records for 90.
 Pruning runs under the same lock and replaces a journal atomically; old v1
 JSONL records remain readable. The application never stores prompt, résumé, or
 answer text in either journal.
+
+### Assistant evidence selection, prompt v9
+
+Posting selection uses the existing guarded text-completion call at temperature
+0 with a 180-token output cap. It does not use `complete_json`, so the Kaggle
+provider's lack of structured-output support does not require a new transport.
+The entire response is parsed against an explicit evidence allowlist before
+any result is displayed. Privacy masking, audit, quota, provider choice and
+no-fallback behavior still apply. Other conversations retain their existing
+completion or streaming path.
