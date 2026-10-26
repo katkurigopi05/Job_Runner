@@ -494,15 +494,37 @@ class _PostingGaps:
 async def _requirements_of(
     session: AsyncSession, found: Retrieval
 ) -> dict[uuid.UUID, dict[str, Any] | None]:
-    """What each retrieved posting was read as asking for, or None when it was not read."""
+    """Current requirements for supplied postings, refreshed in memory when stale.
+
+    Only stale or missing selected readings need their raw descriptions. The
+    stored extraction stays unchanged; missing source text remains unknown.
+    """
     if not found.passages:
         return {}
+
+    from packages.matching.requirements import EXTRACTOR_VERSION, extract
+
     rows = await session.execute(
-        select(Posting.id, Posting.requirements_json).where(
+        select(Posting.id, Posting.requirements_json, Posting.requirements_version).where(
             Posting.id.in_([passage.posting_id for passage in found.passages])
         )
     )
-    return {posting_id: requirements for posting_id, requirements in rows.all()}
+    readings: dict[uuid.UUID, dict[str, Any] | None] = {}
+    stale: list[uuid.UUID] = []
+    for posting_id, requirements, version in rows.all():
+        if requirements is not None and version == EXTRACTOR_VERSION:
+            readings[posting_id] = requirements
+        else:
+            readings[posting_id] = None
+            stale.append(posting_id)
+    if stale:
+        descriptions = await session.execute(
+            select(Posting.id, Posting.description_raw).where(Posting.id.in_(stale))
+        )
+        for posting_id, description in descriptions.all():
+            if description and description.strip():
+                readings[posting_id] = extract(description).as_json()
+    return readings
 
 
 def _unmet_by_posting(
@@ -714,6 +736,8 @@ def _postings_section(
             "in your search area are not listed "
             f"because they do not establish a Bay Area office{reach}."
         )
+    if found.required_skill is not None:
+        lines.append(found.required_skill.in_words())
     # With a level asked, the totals below count the postings listed for it,
     # and the level line after them says how many were not.
     listed_at_level = (
@@ -1058,7 +1082,7 @@ async def prepare(
             and asks_for_application_snapshot(question)
         ):
             factual_answer = owner_facts.answer()
-        elif found.attempted and asks_for_counts(question):
+        elif found.attempted and (asks_for_counts(question) or found.required_skill is not None):
             factual_answer = render_postings(found, skill_lines(found, named_skills, requirements))
     return Ready(
         selected=selected,

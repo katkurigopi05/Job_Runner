@@ -45,7 +45,7 @@ async def _corpus(session):
 
 async def test_one_term_counts_all_matches_and_employers(db_session):
     posts = await _corpus(db_session)
-    found = await retrieve(db_session, "any companies required skill of kafka list them")
+    found = await retrieve(db_session, "jobs using Kafka")
     assert found.match_total == 7
     assert found.company_total == 2
     assert found.matched_term.lower() == "kafka"
@@ -225,7 +225,7 @@ async def test_missing_word_gets_zero_not_vector_fallback(db_session):
 async def test_route_exposes_totals_and_scope(client, worker_session, monkeypatch):
     await _corpus(worker_session)
     await worker_session.commit()
-    body, seen = await _ask(client, monkeypatch, "any companies required skill of kafka list them")
+    body, seen = await _ask(client, monkeypatch, "jobs using Kafka")
     assert body["postings_matched_total"] == 7
     assert body["companies_matched_total"] == 2
     assert body["matched_term"].lower() == "kafka"

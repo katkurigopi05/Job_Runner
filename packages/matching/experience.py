@@ -108,6 +108,7 @@ _MANDATORY_HEADING = re.compile(
     r"^(?:"
     r"requirements?"
     r"|qualifications?"
+    r"|essential(?:\s+(?:qualifications?|requirements?|skills?))?$"
     r"|(?:minimum|basic|required|core|must[- ]have)\s+(?:qualifications?|requirements?|skills?)"
     r"|who\s+you\s+are"
     r"|your\s+background"

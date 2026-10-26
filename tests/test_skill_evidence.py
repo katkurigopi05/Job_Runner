@@ -72,6 +72,39 @@ def test_the_other_half_of_that_line_is_the_option() -> None:
     assert is_option(line, PYTHON) and not is_option(line, KAFKA)
 
 
+@pytest.mark.parametrize("skill_key", ["pytorch", "tensorflow"])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Experience with PyTorch 2.0 or TensorFlow 2.1",
+        "Experience with TensorFlow 2.1 or PyTorch 2.0",
+        "Experience with PyTorch v2.0+ or TensorFlow 2.x",
+    ],
+)
+def test_versioned_frameworks_can_be_alternatives(line: str, skill_key: str) -> None:
+    assert is_option(line, BY_KEY[skill_key])
+
+
+@pytest.mark.parametrize("skill_key", ["pytorch", "tensorflow"])
+def test_versioned_frameworks_joined_by_and_are_not_alternatives(skill_key: str) -> None:
+    assert not is_option("Experience with PyTorch 2.0 and TensorFlow 2.1", BY_KEY[skill_key])
+
+
+@pytest.mark.parametrize(
+    ("line", "skill_key"),
+    [
+        ("PyTorch 2.0. Or explain another approach.", "pytorch"),
+        ("Kafka. Or tell us what you would use instead.", "kafka"),
+        ("Operate Kafka for teams building CI/CD pipelines", "kafka"),
+        ("Build CI/CD pipelines using Kafka", "cicd"),
+    ],
+)
+def test_version_handling_preserves_sentence_and_technology_boundaries(
+    line: str, skill_key: str
+) -> None:
+    assert not is_option(line, BY_KEY[skill_key])
+
+
 def test_required_is_said_with_the_line_it_was_read_from() -> None:
     found = skill_evidence(_requirements(required=("kafka", "5+ years running Kafka")), "kafka")
 
@@ -123,3 +156,13 @@ def test_the_strongest_stored_reading_is_the_one_given() -> None:
     requirements = _requirements(required=("kafka", "Kafka"), preferred=("kafka", "Kafka a plus"))
 
     assert skill_evidence(requirements, "kafka").strength is Strength.REQUIRED
+
+
+def test_alternative_beyond_quote_limit_is_still_an_option():
+    from packages.matching.requirements import extract
+
+    # A concise list with a long qualifier is still an alternative to Kafka.
+    line = "Kafka (" + "production systems " * 20 + ") or Kinesis"
+    found = skill_evidence(extract("Requirements\n" + line).as_json(), "kafka")
+    assert len(found.quote) <= 240
+    assert found.option is True

@@ -570,3 +570,16 @@ other of the two is in `.claude/rules/assistant-search.md`.
   from before [P6]" was reported as a source the model made up, and the dock
   said so under the answer. `unsupported_citations` and `postings_supplied`
   count both. `tests/test_chat_grounding.py`.
+
+### Explicit required-skill answers
+
+A single-skill requirement question uses the shared skill vocabulary across
+all matching postings before choosing examples. Counts keep direct demands,
+alternatives, preferences, mentions and unread sources separate. The shared
+facts renderer answers on both routes without a provider. Its level, area,
+place and coverage notices also apply to these counts.
+
+Selected stale requirements are refreshed from their source descriptions in
+memory. No request backfills stored postings. Missing source text remains
+unknown. Extractor v3 reads Essential headings and preserves alternatives
+before quote truncation; a direct requirement can supersede an alternative.

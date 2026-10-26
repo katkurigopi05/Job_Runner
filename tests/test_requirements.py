@@ -125,6 +125,63 @@ def test_required_anywhere_beats_preferred_elsewhere() -> None:
     assert "3+ years" in python.quote
 
 
+@pytest.mark.parametrize("direct_first", [False, True])
+@pytest.mark.parametrize(
+    ("key", "option", "direct"),
+    [
+        ("kafka", "Experience with Kafka or Kinesis", "Experience operating Kafka in production"),
+        (
+            "pytorch",
+            "Experience with PyTorch 2.0 or TensorFlow",
+            "Experience deploying PyTorch models",
+        ),
+    ],
+)
+def test_a_direct_required_quote_wins_over_an_equally_required_option(
+    key: str, option: str, direct: str, direct_first: bool
+) -> None:
+    lines = [direct, option] if direct_first else [option, direct]
+    reading = extract("Requirements\n" + "\n".join(f"- {line}" for line in lines))
+    mention = next(mention for mention in reading.skills if mention.skill == key)
+
+    assert mention.requirement is Requirement.REQUIRED
+    assert mention.quote == f"- {direct}"
+
+
+def test_a_required_option_still_beats_a_direct_preferred_mention() -> None:
+    reading = extract(
+        "Requirements\n- Experience with Kafka or Kinesis\n"
+        "Preferred skills\n- Experience operating Kafka in production"
+    )
+    mention = next(mention for mention in reading.skills if mention.skill == "kafka")
+
+    assert mention.requirement is Requirement.REQUIRED
+    assert mention.quote == "- Experience with Kafka or Kinesis"
+
+
+@pytest.mark.parametrize(
+    "later",
+    [
+        "Experience with Kafka or Pulsar",
+        "Kafka is not required",
+        "Kafka experience is not necessary",
+    ],
+)
+def test_a_later_option_or_negation_does_not_displace_the_first_required_option(later: str) -> None:
+    reading = extract(f"Requirements\n- Experience with Kafka or Kinesis\n- {later}")
+    mention = next(mention for mention in reading.skills if mention.skill == "kafka")
+
+    assert mention.requirement is Requirement.REQUIRED
+    assert mention.quote == "- Experience with Kafka or Kinesis"
+
+
+def test_equally_direct_required_mentions_keep_the_first_quote() -> None:
+    reading = extract("Requirements\n- Experience operating Kafka\n- Experience deploying Kafka")
+    mention = next(mention for mention in reading.skills if mention.skill == "kafka")
+
+    assert mention.quote == "- Experience operating Kafka"
+
+
 def test_ordinary_english_is_not_a_technology() -> None:
     reading = extract(
         "Requirements\n"

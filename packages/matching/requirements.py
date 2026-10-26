@@ -40,13 +40,15 @@ from packages.matching.experience import Demand, heading_kind, line_demand
 from packages.matching.skill_vocab import BY_KEY, find_skills
 
 #: Bump when extraction changes, so the backfill knows which rows to redo.
-EXTRACTOR_VERSION = 2
+EXTRACTOR_VERSION = 3
 #: Version history, because a bump re-reads every stored posting:
 #:   1 — first reading.
 #:   2 — found by sampling the live corpus: "€95.000" read as 95, benefit
 #:       budgets ("annual L&D budget of €2000", "401(k) match up to
 #:       $6,000/year") read as pay, and implausible figures ($0, $179M/year)
 #:       accepted.
+#:   3 — read Essential headings; prefer direct required evidence over an
+#:       equally required alternative, including versioned framework options.
 
 #: Evidence is a quote for a person to check, not a copy of the posting.
 MAX_QUOTE = 240
@@ -67,6 +69,13 @@ _FROM_DEMAND = {
 
 #: Stronger first: a skill required in one line and preferred in another is required.
 _STRENGTH = {Requirement.REQUIRED: 0, Requirement.PREFERRED: 1, Requirement.UNCLASSIFIED: 2}
+#: Such a line cannot upgrade an alternative into direct required evidence.
+#: This protects quote selection; it is not a general negation classifier.
+_NOT_REQUIRED = re.compile(
+    r"\b(?:not|never)\s+(?:strictly\s+)?(?:required|needed|necessary|mandatory)\b"
+    r"|\bno\s+[^.;!?\n]{0,100}\b(?:required|needed|necessary|mandatory)\b",
+    re.I,
+)
 
 EDUCATION_LEVELS = ("high_school", "associate", "bachelor", "master", "phd")
 
@@ -301,9 +310,15 @@ class SkillMention:
     label: str
     requirement: Requirement
     quote: str
+    option: bool = False
 
-    def as_dict(self) -> dict[str, str]:
-        return {"skill": self.skill, "label": self.label, "quote": self.quote}
+    def as_dict(self) -> dict[str, str | bool]:
+        return {
+            "skill": self.skill,
+            "label": self.label,
+            "quote": self.quote,
+            "option": self.option,
+        }
 
 
 @dataclass(frozen=True)
@@ -369,6 +384,10 @@ def extract(text: str | None) -> PostingRequirements:
     if not text:
         return PostingRequirements()
 
+    # Imported when reading, so the evidence reader can also depend on the
+    # stored-requirements schema without creating an initialization cycle.
+    from packages.matching.evidence import is_option
+
     heading = Demand.AMBIGUOUS
     best: dict[str, SkillMention] = {}
     education: list[Education] = []
@@ -382,11 +401,30 @@ def extract(text: str | None) -> PostingRequirements:
             heading = kind
             continue
         requirement = _FROM_DEMAND[line_demand(line, heading)]
-
-        for skill in find_skills(line):
-            current = best.get(skill.key)
-            if current is None or _STRENGTH[requirement] < _STRENGTH[current.requirement]:
-                best[skill.key] = SkillMention(skill.key, skill.label, requirement, _quote(line))
+        # Demand/negation belongs to the clause naming this skill. A denied
+        # Python demand must not erase required Kafka in the preceding clause.
+        for clause in re.split(r"[;!?]|\.(?=\s|$)|\bbut\b", line, flags=re.I):
+            skill_requirement = _FROM_DEMAND[line_demand(clause, heading)]
+            if _NOT_REQUIRED.search(clause):
+                skill_requirement = Requirement.UNCLASSIFIED
+            for skill in find_skills(clause):
+                current = best.get(skill.key)
+                option = is_option(clause, skill)
+                direct_required = (
+                    current is not None
+                    and skill_requirement is Requirement.REQUIRED
+                    and current.requirement is Requirement.REQUIRED
+                    and current.option
+                    and not option
+                )
+                if (
+                    current is None
+                    or _STRENGTH[skill_requirement] < _STRENGTH[current.requirement]
+                    or direct_required
+                ):
+                    best[skill.key] = SkillMention(
+                        skill.key, skill.label, skill_requirement, _quote(clause), option
+                    )
 
         levels = [level for level, pattern in _EDUCATION_PATTERNS if pattern.search(line)]
         if levels:
