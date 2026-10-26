@@ -126,12 +126,16 @@ async def test_actual_prepare_preserves_default_and_facts_when_packed(worker_ses
     assert small.budget.removed_excerpts == ["P1"]
     assert mandatory in small.prompt
     assert "preferred" in small.prompt.lower()
-    assert small.prompt.endswith("QUESTION:\njobs using kafka")
+    assert '"question": "jobs using kafka"' in small.prompt
+    assert '"evidence": []' in small.prompt
+    assert small.selection_evidence == ()
     assert "excerpt: withheld to fit the context budget" in small.prompt
-    assert "Which streaming roles did we discuss?" in small.prompt
+    assert "Which streaming roles did we discuss?" not in small.prompt
     assert [
-        line for line in small.prompt.splitlines() if not line.startswith("       excerpt:")
-    ] == [line for line in ready.prompt.splitlines() if not line.startswith("       excerpt:")]
+        line for line in small.prompt.splitlines() if not line.startswith(("       excerpt:", "{"))
+    ] == [
+        line for line in ready.prompt.splitlines() if not line.startswith(("       excerpt:", "{"))
+    ]
     answer = await StubProvider().complete(chat.SYSTEM, small.prompt)
     assert (
         chat.reply_for(small, "stub", answer).sources

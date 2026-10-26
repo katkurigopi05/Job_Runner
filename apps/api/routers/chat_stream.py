@@ -40,6 +40,7 @@ from apps.api.routers.chat import (
     prepare,
     provider_for,
     reply_for,
+    selected_reply,
 )
 from packages.core import db as core_db
 from packages.core.schemas import ChatReply, ChatRequest
@@ -137,6 +138,11 @@ async def chat_stream(body: ChatRequest) -> StreamingResponse:
     if fixed is not None:
         return StreamingResponse(
             _unwritten(fixed), media_type=STREAM_MEDIA_TYPE, headers=STREAM_HEADERS
+        )
+    if ready.selection_evidence is not None:
+        reply = await selected_reply(ready)
+        return StreamingResponse(
+            _unwritten(reply), media_type=STREAM_MEDIA_TYPE, headers=STREAM_HEADERS
         )
     try:
         provider, model = provider_for(ready.selected)
