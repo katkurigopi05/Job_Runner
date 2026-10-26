@@ -860,6 +860,7 @@ class ChatReply(BaseModel):
     #: Open postings the search covered, and the ones it could not — no vector
     #: yet, or one from a model this process cannot encode into. "Nothing
     #: found" means less when the second number is large.
+    postings_work_mode: Literal["remote"] | None = None
     postings_searched: int = 0
     postings_unsearchable: int = 0
     #: The local model that re-ordered `sources`, or None when the search's
