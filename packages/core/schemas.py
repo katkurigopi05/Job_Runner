@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from packages.core.enums import (
     ApplicationStatus,
@@ -804,12 +804,32 @@ class ChatChart(BaseModel):
     points: list[ChatChartPoint]
 
 
+class ChatCountFact(BaseModel):
+    """A count is meaningful only with its predicate, coverage and scope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    key: str
+    value: int | None = Field(default=None, ge=0, strict=True)
+    coverage: Literal["exact", "at_least", "unknown"] = "exact"
+    unit: Literal["postings", "companies"] = "postings"
+    predicate: str = Field(min_length=1)
+    scope: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def known_value(self) -> Self:
+        if (self.value is None) != (self.coverage == "unknown"):
+            raise ValueError("Unknown counts have no value; known counts require one")
+        return self
+
+
 class ChatReply(BaseModel):
     """Response from the chat assistant."""
 
     model_config = ConfigDict(from_attributes=True)
 
     reply: str
+    count_facts: list[ChatCountFact] = Field(default_factory=list)
     #: Which provider answered, or "refused" when a §2.2 boundary stopped it.
     provider: str
     #: The exact model, so "ollama" cannot stand in for a cloud-served one and

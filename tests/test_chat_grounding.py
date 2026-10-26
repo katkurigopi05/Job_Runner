@@ -24,7 +24,7 @@ import json
 import pytest
 from httpx import AsyncClient
 
-from packages.core.models import Posting
+from packages.core.models import Application, Posting
 from packages.core.schemas import ChatReply
 from packages.llm.provider import StubProvider
 from tests.test_chat_skill_gaps import _owner, _requirements, _target
@@ -116,7 +116,7 @@ async def test_a_citation_where_nothing_was_searched_is_one_too(
     """No posting was handed over at all, so any label is invented."""
     _answers(monkeypatch, "One is waiting [P1].")
 
-    body = (await client.post("/chat", json={"message": "what needs me?"})).json()
+    body = (await client.post("/chat", json={"message": "hello"})).json()
 
     assert body["sources"] == []
     assert body["unsupported_citations"] == ["P1"]
@@ -142,9 +142,7 @@ async def test_a_posting_read_again_from_an_earlier_answer_was_supplied(
         "cited": [str(posts["required"].id)],
     }
 
-    body = (
-        await client.post("/chat", json={"message": "what needs me?", "history": [earlier]})
-    ).json()
+    body = (await client.post("/chat", json={"message": "hello", "history": [earlier]})).json()
 
     assert body["unsupported_citations"] == []
     assert body["postings_supplied"] == 1, "nothing was searched, and one was read again"
@@ -164,9 +162,7 @@ async def test_a_label_past_what_was_carried_over_is_still_invented(
         "cited": [str(posts["required"].id)],
     }
 
-    body = (
-        await client.post("/chat", json={"message": "what needs me?", "history": [earlier]})
-    ).json()
+    body = (await client.post("/chat", json={"message": "hello", "history": [earlier]})).json()
 
     assert body["unsupported_citations"] == ["P2"]
 
@@ -211,9 +207,54 @@ async def test_an_answer_that_searched_nothing_carries_no_corpus_size(
     await _kafka_postings(worker_session)
     _answers(monkeypatch, "ok")
 
-    body = (await client.post("/chat", json={"message": "what needs me?"})).json()
+    body = (await client.post("/chat", json={"message": "hello"})).json()
 
     assert body["postings_open"] == body["postings_searched"] == body["postings_ranked"] == 0
+
+
+@pytest.mark.parametrize("route", ["/chat", "/chat/stream"])
+@pytest.mark.parametrize(
+    "question",
+    ["Why is my application waiting for review?", "How many applications need my review?"],
+)
+async def test_selected_application_keeps_its_full_context(
+    client: AsyncClient, worker_session, monkeypatch, route, question
+) -> None:
+    """The review dock must retain parked questions and global queue context."""
+    profile, _ = await _owner(worker_session)
+    parked_question = "Which portfolio sample should we use?"
+    application = Application(
+        candidate_id=profile.candidate_id,
+        profile_id=profile.id,
+        url="https://example.test/jobs/990000099",
+        status="needs_review",
+        review_json={"unanswered": [{"question": parked_question}]},
+    )
+    worker_session.add(application)
+    await worker_session.commit()
+    seen = _answers(monkeypatch, "The selected application's review details are available.")
+
+    response = await client.post(
+        route, json={"message": question, "application_id": str(application.id)}
+    )
+
+    assert response.status_code == 200
+    assert "THE APPLICATION BEING ASKED ABOUT:" in seen["user"]
+    assert "questions it is parked on:" in seen["user"]
+    assert parked_question in seen["user"]
+    assert "APPLICATIONS BY STATUS:" in seen["user"]
+    assert "WAITING ON YOU:" in seen["user"]
+    body = (
+        next(
+            frame["reply"]
+            for frame in map(json.loads, response.text.splitlines())
+            if frame["type"] == "done"
+        )
+        if route.endswith("stream")
+        else response.json()
+    )
+    assert body["provider"] == "ollama"
+    assert body["reply"] == "The selected application's review details are available."
 
 
 def test_grounded_is_documented_as_where_the_answer_came_from() -> None:

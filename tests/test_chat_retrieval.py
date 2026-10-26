@@ -657,7 +657,7 @@ async def test_a_question_that_is_not_about_postings_says_they_were_not_searched
     recorder, seen = _recorder("ok")
     monkeypatch.setattr(chat_module.llm_router, "build_provider", lambda name=None: recorder())
 
-    answered = await client.post("/chat", json={"message": "what needs me?"})
+    answered = await client.post("/chat", json={"message": "hello"})
 
     assert answered.status_code == 200
     assert "POSTINGS: not searched" in seen["user"]
