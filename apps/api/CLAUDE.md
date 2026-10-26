@@ -589,3 +589,29 @@ before quote truncation; a direct requirement can supersede an alternative.
 `postings_work_mode` records an applied remote constraint. The prompt, typed
 count scopes and facts renderer repeat it, including mode-only searches that
 name no company. Plain and streaming count answers use the same renderer.
+
+### Posting answers select evidence before display
+
+When no deterministic answer applies, a posting question can ask the selected
+provider only for allowed source IDs. The response must be one strict JSON
+object. Extra keys, duplicate or unknown IDs, trailing prose and oversized
+responses fail closed. The server copies source excerpts inside fences and
+renders count, scope and omission notices itself. It does not accept model
+prose or treat a valid ID as proof of relevance. Invalid output or abstention
+shows a conservative evidence fallback without another provider call.
+
+Plain and streaming routes call the same selection function. The streaming
+route sends no partial model selection or factual prose; validation finishes
+before its closing reply. Provider failures retain the existing error and
+no-fallback behavior.
+
+Selection context contains postings and their computed evidence notices,
+including freshly reread earlier postings. It excludes mailbox, application,
+resume and prior model-written prose. Context packing budgets this exact
+prompt; removed excerpts disappear from both the allowed catalogue and quote
+fallback. The response's citation metadata comes from validated source labels,
+not citation-like text inside source quotes. Assistant system prompt is v9.
+
+Application, recruiter-mail, rate and skill-gap conversations retain their
+existing paths. The selection protocol does not establish semantic accuracy;
+manual source review and useful-answer coverage remain evaluation requirements.

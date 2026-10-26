@@ -165,8 +165,10 @@ async def test_a_company_hiring_only_abroad_says_so(
     answered = await client.post("/chat", json={"message": "jobs at Faculty"})
 
     assert answered.status_code == 200
-    assert "1 matching posting outside it left out" in seen["user"]
-    assert "no open postings at Faculty in the search area" in seen["user"]
+    assert "1 matching postings outside your search area were left out" in answered.json()["reply"]
+    assert "0 open postings at Faculty in your search area" in answered.json()["reply"]
+    assert answered.json()["provider"] == "facts"
+    assert seen == {}
 
 
 async def test_a_place_asked_for_ranks_the_postings_located_there(db_session) -> None:
