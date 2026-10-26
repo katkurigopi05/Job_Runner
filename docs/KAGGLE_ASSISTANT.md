@@ -13,6 +13,33 @@ contacts. Other identifying prose can remain; this does not anonymize the
 context or replace the separate mail-consent choice. The mapping is held only
 in local memory, not sent to the notebook, logged or persisted.
 
+## Quick start: one command per session
+
+1. Start the Kaggle notebook session with a GPU and the model dataset attached.
+   Running cells is not needed.
+2. In Kaggle, **Run → Kaggle Jupyter Server**, copy the **VSCode Compatible URL**.
+3. In your own terminal (the prompt is hidden, so it needs a real terminal),
+   run `make kaggle-setup`. When Jobrunner has no working link it asks for this
+   one; it checks the session answers, and saves nothing unless setup succeeds.
+   (Reconnect in the dashboard assistant saves a link too.) Never paste the link
+   in chat. It takes about 3–4 minutes the first time in a session:
+   - a kernel that is already ready is left alone, and one that already holds
+     the model only gets the helper;
+   - otherwise it starts a kernel, installs the libraries, finds the attached
+     4-bit Qwen3 8B by its `config.json` (no path is kept in this repository),
+     copies it to working disk, loads it on the GPU, and installs the helper
+     sent from this checkout's `scripts/kaggle_helper.py` (nothing is
+     downloaded, and there is no hash to pin);
+   - it points Jobrunner at that kernel and deletes kernels that are idle with
+     nothing attached, so a second copy of the model never holds GPU memory.
+     A kernel running a cell, or one VS Code is attached to, is kept.
+     `make kaggle-setup fresh=1` deletes every kernel first.
+
+   It prints progress only, never the link or a kernel ID. Don't restart that
+   kernel afterwards: a restart clears the model and changes the kernel ID.
+
+The manual steps below do the same by hand.
+
 ## Connect a session
 
 1. Start a private Kaggle GPU notebook, attach your saved model and load
@@ -82,8 +109,8 @@ Stopping the Kaggle session ends GPU usage and invalidates the connection.
 A new session requires reloading the model, reinstalling the helper, and
 refreshing the saved URL and kernel ID. Connecting an IDE to the notebook does
 not refresh Jobrunner: use **Reconnect** in the assistant (or the CLI above)
-with the new VSCode Compatible URL each time the session restarts. You do not
-need to download the saved dataset again. Kaggle controls session expiration,
+with the new VSCode Compatible URL each time the session restarts, then
+`make kaggle-setup`. You do not need to download the saved dataset again. Kaggle controls session expiration,
 so a connection cannot be kept valid across stopped sessions.
 
 An expired or missing kernel returns a reconnect instruction; it never loads a
