@@ -8,6 +8,7 @@ import { ThinkingOrb } from "thinking-orbs";
 
 import { AssistantChart, type Chart } from "@/components/assistant-chart";
 import { EditQuestion, TurnActions } from "@/components/assistant-turn-actions";
+import { KaggleConnection } from "@/components/kaggle-connection";
 import { ReplyText } from "@/components/reply-text";
 import { historyFrom } from "@/lib/chat-history";
 import { readFrames } from "@/lib/chat-stream";
@@ -594,6 +595,8 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           {chosen.hint}{!chosen.local && " Known profile names and email/phone patterns are masked before cloud calls. Other identifying context may remain."}
         </p>
       </div>
+
+      {provider === "kaggle" ? <KaggleConnection /> : null}
 
       {/* The mail gate. Shown only for a remote model, because for the local
           one there is no boundary to gate: it always sees the mail and saying

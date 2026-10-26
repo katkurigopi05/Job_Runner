@@ -20,6 +20,7 @@ from apps.api.routers import (
     events,
     inbox,
     judgments,
+    kaggle,
     labels,
     matches,
     postings,
@@ -58,6 +59,7 @@ app.include_router(postings.router)
 app.include_router(inbox.router)
 app.include_router(chat.router)
 app.include_router(chat_stream.router)
+app.include_router(kaggle.router)
 app.include_router(crawl.router)
 app.include_router(companies.router)
 app.include_router(matches.router)

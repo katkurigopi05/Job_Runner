@@ -73,6 +73,11 @@ class Kernel:
     async def recv(self) -> str:
         if self.failure:
             raise OSError(self.failure)
+        result = (
+            {"state": "ready", "model": MODEL, "protocol": 1, "context_tokens": 4096}
+            if "jobrunner_health" in self.sent["content"]["user_expressions"]["jobrunner"]
+            else self.result
+        )
         return json.dumps(
             {
                 "msg_type": "execute_reply",
@@ -82,7 +87,7 @@ class Kernel:
                     "user_expressions": {
                         "jobrunner": {
                             "status": "ok",
-                            "data": {"text/plain": repr(json.dumps(self.result))},
+                            "data": {"text/plain": repr(json.dumps(result))},
                         }
                     },
                 },
@@ -236,8 +241,7 @@ def test_setup_saves_the_real_url_privately_without_printing_it(
 
     destination = tmp_path / "storage" / "connection.json"
     monkeypatch.setattr(
-        configure_kaggle,
-        "get_settings",
+        "packages.core.config.get_settings",
         lambda: SimpleNamespace(kaggle_connection_file=destination),
     )
     monkeypatch.setattr(configure_kaggle.getpass, "getpass", lambda _: SERVER)

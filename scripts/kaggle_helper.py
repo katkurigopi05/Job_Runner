@@ -74,4 +74,23 @@ def install(model: Any, tokenizer: Any) -> Callable[[str], str]:
             pass
         return json.dumps(result)
 
+    def health() -> dict[str, Any]:
+        ready = (
+            getattr(model, "is_loaded_in_4bit", False)
+            and getattr(getattr(model, "device", None), "type", None) == "cuda"
+            and all(getattr(model.config, key, None) == value for key, value in expected.items())
+            and callable(getattr(model, "generate", None))
+            and callable(tokenizer)
+            and callable(getattr(tokenizer, "apply_chat_template", None))
+            and callable(getattr(tokenizer, "decode", None))
+            and type(getattr(tokenizer, "eos_token_id", None)) is int
+        )
+        return {
+            "state": "ready" if ready else "model_not_ready",
+            "protocol": 1,
+            "model": MODEL,
+            "context_tokens": CONTEXT_TOKENS,
+        }
+
+    complete.jobrunner_health = health  # type: ignore[attr-defined]
     return complete
