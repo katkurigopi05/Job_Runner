@@ -13,7 +13,7 @@ from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
-from packages.llm import kaggle
+from packages.llm import kaggle, kaggle_connection
 from packages.llm.provider import LLMError
 from scripts import configure_kaggle
 
@@ -26,8 +26,7 @@ OTHER = UUID("00000000-0000-4000-8000-000000000002")
 def setup(tmp_path, monkeypatch):
     destination = tmp_path / "storage" / "connection.json"
     monkeypatch.setattr(
-        configure_kaggle,
-        "get_settings",
+        "packages.core.config.get_settings",
         lambda: SimpleNamespace(kaggle_connection_file=destination),
     )
     monkeypatch.setattr(configure_kaggle.getpass, "getpass", lambda _: SERVER)
@@ -125,7 +124,7 @@ def transport(monkeypatch, status=200, payload=None, failure=None):
         def close(self):
             seen["closed"] = True
 
-    monkeypatch.setattr(configure_kaggle.http.client, "HTTPSConnection", HTTPS)
+    monkeypatch.setattr(kaggle_connection.http.client, "HTTPSConnection", HTTPS)
     return seen
 
 
