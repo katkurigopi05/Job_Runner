@@ -6,7 +6,9 @@ import { countedMatches } from "@/lib/chat-counts";
 import { useEffect, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 
+import { AssistantChart, type Chart } from "@/components/assistant-chart";
 import { EditQuestion, TurnActions } from "@/components/assistant-turn-actions";
+import { ReplyText } from "@/components/reply-text";
 import { historyFrom } from "@/lib/chat-history";
 import { readFrames } from "@/lib/chat-stream";
 
@@ -92,6 +94,8 @@ interface Turn {
   unsearchable?: number;
   /** Labels the answer cites that were never among its sources: "P7" over five. */
   unsupportedCitations?: string[];
+  /** A chart the API drew from the database for a chart request. No model wrote it. */
+  chart?: Chart | null;
 }
 
 /** One retrieved posting, linked to its page. */
@@ -373,6 +377,7 @@ interface Reply {
   postings_searched?: number;
   postings_unsearchable?: number;
   unsupported_citations?: string[];
+  chart?: Chart | null;
 }
 
 function turnFrom(body: Reply): Turn {
@@ -400,6 +405,7 @@ function turnFrom(body: Reply): Turn {
     searched: body.postings_searched,
     unsearchable: body.postings_unsearchable,
     unsupportedCitations: body.unsupported_citations,
+    chart: body.chart,
   };
 }
 
@@ -420,6 +426,7 @@ function remembered(body: Reply): string {
 function answeredBy(body: Reply): string {
   if (body.provider === "refused") return "refused · this one comes from your profile";
   if (body.provider === "crawler") return "crawler · started from your command, no model asked";
+  if (body.provider === "chart") return "chart · drawn from your applications, no model asked";
   // `body.local` is computed server-side from the model, not inferred from the
   // provider name: an Ollama-served `:cloud` model is not local, and the
   // status line must not say otherwise.
@@ -659,6 +666,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
                 {turn.role}
                 {turn.provider === "refused" ? " · refused" : ""}
                 {turn.provider === "crawler" ? " · crawler" : ""}
+                {turn.provider === "chart" ? " · chart" : ""}
                 {turn.role === "assistant" && turn.provider !== "refused" && turn.local === false ? (
                   <span className="text-attn">
                     {" · "}
@@ -701,9 +709,10 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
                         : "border border-rule bg-paper"
                   }`}
                 >
-                  {turn.text}
+                  {turn.role === "assistant" ? <ReplyText text={turn.text} /> : turn.text}
                 </div>
               )}
+              {turn.role === "assistant" && turn.chart ? <AssistantChart chart={turn.chart} /> : null}
               {turn.role === "assistant" ? <InventedCitations turn={turn} /> : null}
               {turn.role === "assistant" ? <RetrievedPostings turn={turn} /> : null}
             </div>

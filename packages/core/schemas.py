@@ -781,6 +781,29 @@ class ChatPostingShare(BaseModel):
     scope: str
 
 
+class ChatChartPoint(BaseModel):
+    """One bar: a label and a value counted from the database."""
+
+    label: str
+    value: float
+    #: The counts behind a rate, as words: "1 of 5 submitted".
+    note: str | None = None
+    #: False when the value stands on too few applications to read.
+    reliable: bool = True
+
+
+class ChatChart(BaseModel):
+    """A chart the API drew from the database. No model wrote any of it."""
+
+    kind: str = "bar"
+    title: str
+    #: "applications" for counts, "%" for rates.
+    unit: str
+    #: What was counted, shown under the chart.
+    caption: str
+    points: list[ChatChartPoint]
+
+
 class ChatReply(BaseModel):
     """Response from the chat assistant."""
 
@@ -835,6 +858,9 @@ class ChatReply(BaseModel):
     #: requirements; their area check is the search's ordinary rule.
     postings_matched_total: int | None = None
     postings_share: ChatPostingShare | None = None
+    #: A chart of the owner's applications, drawn in code for a chart request
+    #: (`apps/api/chat_figures.py`). None for every other reply.
+    chart: ChatChart | None = None
     companies_matched_total: int | None = None
     matched_term: str | None = None
     matched_companies: list[str] = Field(default_factory=list)

@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from fastapi import APIRouter
@@ -52,6 +52,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api import chat_history
 from apps.api.chat_budget import BudgetReport, PromptBudget, pack
+from apps.api.chat_figures import (
+    asks_for_application_rates,
+    asks_for_chart,
+    chart_reply,
+    rates_section,
+)
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from apps.api.protected_questions import (  # noqa: F401
@@ -912,6 +918,12 @@ async def prepare(
     if asks_to_crawl(question):
         return await _start_crawl(session)
 
+    # "chart my applications by status": drawn from the database in code. A
+    # model may repeat numbers and may derive none, so it is not asked to
+    # draw any (`apps/api/chat_figures.py`).
+    if asks_for_chart(question):
+        return await chart_reply(session, question)
+
     selected = (body.provider or LOCAL_PROVIDER).strip().lower()
     if selected not in ALLOWED_PROVIDERS:
         raise ApiError(
@@ -935,6 +947,12 @@ async def prepare(
 
     context = await _context(session, body.application_id, include_mail=include_mail)
     found = await retrieve(session, question)
+    # A rate of the owner's applications is computed here and handed over. If
+    # retrieval also took "what percentage" as a posting share it could not
+    # count, its "percentage unavailable" line would contradict the rates.
+    wants_rates = asks_for_application_rates(question)
+    if wants_rates and found.share is None and found.share_requested:
+        found = replace(found, share_requested=False)
     gaps = await target_gaps(session) if asks_about_gaps(question) else None
     named_skills = skills_asked_about(question)
     requirements = await _requirements_of(session, found) if (gaps or named_skills) else {}
@@ -951,6 +969,8 @@ async def prepare(
     postings_index = len(sections) - 1
     if gaps is not None:
         sections.append(_gaps_section(gaps))
+    if wants_rates:
+        sections.append(await rates_section(session))
 
     # The conversation so far. `include_mail` already says whether mail may go
     # to this model, and an earlier answer written with mail in hand is mail.

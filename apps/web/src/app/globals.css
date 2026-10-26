@@ -34,6 +34,10 @@
   --color-stop-soft: #2e1a1f;
   --color-wait: #7c5cff;
   --color-wait-soft: #1e1b33;
+  /* Chart bars only, and only in charts the API drew from the database.
+     Blue because every accent above already means something; checked with
+     the dataviz validator against this surface (2026-10-25). */
+  --color-data: #3987e5;
 
   --color-glow: #1a1f2e;
   --color-on-accent: #0c0e14;
@@ -70,6 +74,7 @@
   --color-stop-soft: #fce4e6;
   --color-wait: #6a4bfa;
   --color-wait-soft: #ebe7fe;
+  --color-data: #2a78d6;
   --color-glow: #dfe3f5;
   --color-on-accent: #ffffff;
   --shadow-panel: 0 8px 26px rgba(30, 34, 60, 0.12);
@@ -95,6 +100,7 @@
     --color-stop-soft: #fce4e6;
     --color-wait: #6a4bfa;
     --color-wait-soft: #ebe7fe;
+  --color-data: #2a78d6;
     --color-glow: #dfe3f5;
     --color-on-accent: #ffffff;
     --shadow-panel: 0 8px 26px rgba(30, 34, 60, 0.12);
