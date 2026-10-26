@@ -632,3 +632,22 @@ Over the 4,543 open matched postings, before and after:
 `software engineer` lost 229 postings that only ever said "software
 engineering". That is the narrowing working, not a loss: the role filter is
 the question "is this job a software engineer job".
+
+## Postings with no description jammed the embedding batch (2026-10-26)
+
+The owner asked why new postings were not all embedded. Of 19,768 open
+postings, 8,382 had no vector: 7,846 Workday postings with no description
+(the list endpoint returns none; the bounded detail pass fills them later)
+and 536 older postings that had text.
+
+`postings_needing_embedding` selected open postings with no vector, newest
+first, 2,000 a pass. `embed_postings` skips a posting with no description, so
+those never got a vector and were selected again on every pass: all 2,000
+places, measured. Only postings newer than the jam got through, which is why
+a crawl's new postings were embedded and the 536 never were. A Workday
+posting whose description arrived later from the detail pass waited behind
+the same jam.
+
+The selection now requires a description, the rule `embed_postings` and
+`chunks.chunk_postings` already used. On the live database the next pass
+selects exactly the 536. `tests/test_incremental_matching.py`.

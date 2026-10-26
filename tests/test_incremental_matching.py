@@ -305,3 +305,53 @@ async def test_a_full_pass_takes_everything(db_session, full) -> None:
     outstanding = await postings_needing_scoring(db_session, profile, limit=100, full=full)
 
     assert len(outstanding) == (3 if full else 0)
+
+
+# --------------------------------------------------------------------------
+# A posting with nothing to embed is not embedding work (2026-10-26)
+# --------------------------------------------------------------------------
+
+
+async def _bare(db_session, count: int, *, description: str | None = None) -> list[Posting]:
+    """Postings as a Workday list endpoint delivers them: a title and no body."""
+    made = [
+        Posting(
+            url=f"https://example.com/bare/{n}",
+            external_id=f"bare-{n}",
+            title=f"Software Engineer {n}",
+            description_raw=description,
+        )
+        for n in range(count)
+    ]
+    db_session.add_all(made)
+    await db_session.flush()
+    return made
+
+
+@pytest.mark.parametrize("description", [None, ""])
+async def test_a_posting_with_no_description_is_not_embedding_work(
+    db_session, description: str | None
+) -> None:
+    await _bare(db_session, 2, description=description)
+
+    pending = await postings_needing_embedding(db_session, revision=1, limit=100)
+
+    assert pending == []
+
+
+async def test_postings_with_no_description_cannot_crowd_out_older_ones_with_text(
+    db_session,
+) -> None:
+    """Found on the owner's database: 7,846 Workday postings with no body filled
+    the newest-first batch of 2,000 on every pass, `embed_postings` skipped
+    them, and 536 older postings with text were never reached."""
+    from datetime import UTC, datetime, timedelta
+
+    (older,) = await _postings(db_session, 1, prefix="Data Engineer")
+    older.first_seen_at = datetime.now(UTC) - timedelta(days=5)
+    await _bare(db_session, 3)
+    await db_session.flush()
+
+    await run_matching_pass(db_session, limit=2)
+
+    assert older.description_embedding is not None

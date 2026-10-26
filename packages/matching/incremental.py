@@ -96,7 +96,17 @@ async def postings_needing_embedding(
     no longer exist, and cosine across those two spaces does not fail — it
     returns a plausible number.
     """
-    query = select(Posting).where(Posting.closed_at.is_(None))
+    # Only a posting with a description: `embed_postings` skips the rest, so
+    # selecting them only took a place in the batch. On the owner's database
+    # 7,846 Workday postings arrive with no body (the list endpoint has none),
+    # filled the newest-first batch of 2,000 on every pass, and 536 older
+    # postings with text were never reached. Same rule as `embed_postings`
+    # and `chunks.chunk_postings`: no text, no vector.
+    query = select(Posting).where(
+        Posting.closed_at.is_(None),
+        Posting.description_raw.is_not(None),
+        Posting.description_raw != "",
+    )
     if not full:
         query = query.where(
             or_(
