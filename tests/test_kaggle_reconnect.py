@@ -96,9 +96,12 @@ async def test_expired_sessions_explain_the_separate_jobrunner_refresh(
         yield  # pragma: no cover
 
     monkeypatch.setattr(kaggle, "SessionConnection", expired)
-    with pytest.raises(LLMError, match="session expired") as raised:
+    # The session listing is refused too: the link itself is dead, not a kernel.
+    transport(monkeypatch, status=status)
+    with pytest.raises(kaggle.SessionGone, match="is not answering") as raised:
         await kaggle.KaggleProvider(connection_file=path).complete("system", "synthetic prompt")
-    assert "scripts.configure_kaggle" in str(raised.value)
+    assert kaggle.RECONNECT in str(raised.value)
+    assert "does not update Jobrunner" in str(raised.value)
     assert SERVER not in str(raised.value)
     assert raised.value.__suppress_context__
 
@@ -125,7 +128,7 @@ def transport(monkeypatch, status=200, payload=None, failure=None):
         def close(self):
             seen["closed"] = True
 
-    monkeypatch.setattr(configure_kaggle.http.client, "HTTPSConnection", HTTPS)
+    monkeypatch.setattr(kaggle.http.client, "HTTPSConnection", HTTPS)
     return seen
 
 

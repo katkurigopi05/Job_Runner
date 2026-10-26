@@ -34,10 +34,11 @@ in local memory, not sent to the notebook, logged or persisted.
 3. In Kaggle, **Run → Kaggle Jupyter Server**, copy the **VSCode Compatible URL**.
    This entire URL is a credential, including its path. Do not paste it in
    chat, issues, screenshots, shell command arguments or tracked files.
-4. Locally, from this checkout, run:
+4. Locally, from this checkout, in a terminal of your own (the prompt is
+   hidden, so it needs a real terminal), run:
 
    ```sh
-   .venv/bin/python -m scripts.configure_kaggle
+   make kaggle-connect
    ```
 
    Paste the URL into the hidden prompt. The command verifies the session and
@@ -47,6 +48,9 @@ in local memory, not sent to the notebook, logged or persisted.
    The verified connection is stored in `storage/kaggle-connection.json` with
    owner-only permissions. It does not
    edit `.env`. `KAGGLE_CONNECTION_FILE` can select another private location.
+   It then sends one short test prompt and prints either "Connected" or the
+   reason it failed. `make kaggle-check` sends the same test prompt over the
+   saved connection at any time. Neither prints the link or the kernel ID.
 5. Select **Kaggle GPU (remote)** and ask a question. The reply names the model
    and marks it remote. The existing audit records digests and sizes only.
 
@@ -59,15 +63,29 @@ disabled because handshake URLs carry credentials.
 ## End or resume
 
 Stopping the Kaggle session ends GPU usage and invalidates the connection.
-A new session requires reloading the model, reinstalling the helper, and
-refreshing the saved URL and kernel ID. Connecting an IDE to the notebook does
-not refresh Jobrunner: run `.venv/bin/python -m scripts.configure_kaggle` locally
-with the new VSCode Compatible URL each time the session restarts. You do not
-need to download the saved dataset again. Kaggle controls session expiration,
-so a connection cannot be kept valid across stopped sessions.
+Kaggle issues a new link for every session and controls when a session ends,
+so a saved connection cannot outlive its session, and connecting the GPU or an
+IDE inside Kaggle does not update Jobrunner. Each new session needs:
 
-An expired or missing kernel returns a reconnect instruction; it never loads a
-local model. The saved Kaggle model dataset is unaffected.
+1. reload the model and run the helper cell;
+2. `make kaggle-connect` locally, with the new VSCode Compatible URL.
+
+You do not need to download the saved dataset again.
+
+What each failure means, as the assistant and `make kaggle-check` report it:
+
+| Message | What happened | Fix |
+|---|---|---|
+| "The Kaggle session link Jobrunner saved on … is not answering" | The session ended or restarted, so the saved link is dead. | `make kaggle-connect` with the new link. |
+| "The Kaggle kernel has no Jobrunner helper" | The kernel restarted, or the helper cell was never run. | Load the model and run the helper cell. |
+| "…the session now runs N kernels" | The kernel restarted, and more than one is running. | `make kaggle-connect`, then enter the loaded model's kernel ID. |
+| "…connected, but the kernel did not finish answering" | The kernel is busy or stalled. | Check that no other cell is running. |
+
+A restarted kernel inside a running session keeps the link and changes only
+the kernel ID. When exactly one kernel is running, Jobrunner switches to it,
+saves the new ID and asks again, the same rule setup uses. With several
+kernels running it never guesses. A failure never loads a local model. The
+saved Kaggle model dataset is unaffected.
 To release model memory within a running session, delete `jobrunner_complete`,
 `model` and `tokenizer`, then collect garbage and empty the CUDA cache. Stop
 the session as well when finished to avoid spending GPU quota.
