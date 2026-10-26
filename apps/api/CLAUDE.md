@@ -583,3 +583,9 @@ Selected stale requirements are refreshed from their source descriptions in
 memory. No request backfills stored postings. Missing source text remains
 unknown. Extractor v3 reads Essential headings and preserves alternatives
 before quote truncation; a direct requirement can supersede an alternative.
+
+### Remote counts retain their predicate
+
+`postings_work_mode` records an applied remote constraint. The prompt, typed
+count scopes and facts renderer repeat it, including mode-only searches that
+name no company. Plain and streaming count answers use the same renderer.

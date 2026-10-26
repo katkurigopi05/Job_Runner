@@ -92,6 +92,63 @@ async def test_named_city_keeps_the_region_and_ranks_the_city_first(db_session):
     assert {p.posting_id for p in (*found.passages, *found.more)} == {p.id for p in posts[:2]}
 
 
+async def test_named_city_outranks_a_different_citys_exact_role_title(db_session):
+    company = await _company(db_session)
+    elsewhere = await _posting(
+        db_session, company, "San Jose, CA", "Software Engineer", "Build services."
+    )
+    here = await _posting(
+        db_session,
+        company,
+        "San Francisco, CA",
+        "Software Engineer, Context Engine",
+        "Build services.",
+    )
+    found = await retrieve(db_session, "software engineer jobs in San Francisco")
+    assert found.passages[0].posting_id == here.id
+    assert {p.posting_id for p in (*found.passages, *found.more)} == {here.id, elsewhere.id}
+    assert found.beyond_role == ()
+    assert found.role_total == found.place_total == 2
+
+
+async def test_a_shared_city_word_is_not_a_match_for_the_whole_city(db_session):
+    company = await _company(db_session)
+    here = await _posting(
+        db_session, company, "San Francisco, CA", "Specialist", "Kafka pipelines."
+    )
+    await _posting(db_session, company, "San Jose, CA", "Kafka Specialist", "Kafka pipelines.")
+    found = await retrieve(db_session, "Kafka jobs in San Francisco")
+    assert found.passages[0].posting_id == here.id
+    assert found.match_total == 2
+    assert found.matched_term == "Kafka"
+
+
+async def test_city_and_skill_keep_only_the_skill_as_beyond_role_subject(db_session):
+    company = await _company(db_session)
+    with_skill = await _posting(
+        db_session, company, "San Jose, CA", "Data Engineer, Kafka", "Kafka pipelines."
+    )
+    without_skill = await _posting(
+        db_session, company, "San Francisco, CA", "Data Engineer", "Build pipelines."
+    )
+    found = await retrieve(db_session, "data engineer jobs in San Francisco using Kafka")
+    assert found.beyond_role == ("Kafka",)
+    assert found.passages[0].posting_id == with_skill.id
+    assert without_skill.id in {p.posting_id for p in (*found.passages, *found.more)}
+    assert found.role_total == 2
+
+
+async def test_company_and_city_preserve_employer_recognition_and_regional_counts(db_session):
+    company = await _company(db_session, "Acme")
+    here = await _posting(db_session, company, "San Francisco, CA", "Specialist", "Build.")
+    elsewhere = await _posting(db_session, company, "San Jose, CA", "Specialist", "Build.")
+    found = await retrieve(db_session, "jobs at Acme in San Francisco")
+    assert found.companies == ("Acme",)
+    assert found.passages[0].posting_id == here.id
+    assert found.match_total == 2
+    assert {p.posting_id for p in (*found.passages, *found.more)} == {here.id, elsewhere.id}
+
+
 async def test_multiple_offices_and_remote_prose_use_the_shared_place_reading(db_session):
     company = await _company(db_session)
     here = await _posting(

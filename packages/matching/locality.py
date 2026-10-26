@@ -104,8 +104,25 @@ _ONSITE_MARKER_RE = re.compile(r"\b(?:on[- ]?site|onsite|in[- ]?office|hybrid)\b
 #: Remote proper, as a *location or title* declares it. A subset of
 #: `_WORKING_MODE_RE`: "hybrid" and "flexible" describe a mode without
 #: promising the owner never has to be in the office.
+#: A technical use of remote describes the work, not its working mode.
+_REMOTE_WORD = (
+    r"remote(?![-\s]+(?:sensing|procedure|access|desktop|monitoring|control|execution)\b)"
+)
 _REMOTE_RE = re.compile(
-    r"\b(?:remote|work from home|wfh|telecommute|home[- ]?based|distributed|anywhere)\b",
+    rf"\b(?:{_REMOTE_WORD}|work from home|wfh|telecommute|home[- ]?based|distributed|anywhere)\b",
+    re.I,
+)
+
+# Remove the denied expression, not the whole description: a different role
+# in a separate sentence may have an affirmative remote-work offer.
+_REMOTE_DENIAL_RE = re.compile(
+    r"\b(?:not|no|never|without|cannot|can't|can’t)(?:[ \t]+[\w'-]+){0,3}[ \t]+"
+    r"(?:remote(?:ly)?|work(?:ing)? (?:remotely|from home|from anywhere)|wfh|telecommute|"
+    r"home[- ]?based)\b"
+    r"|\bnon[- ]remote\b"
+    r"|\b(?:remote(?: (?:work|working|roles?|positions?|jobs?))?|work(?:ing)? remotely)"
+    r"[ \t]+(?:(?:is|are|will be|would be)[ \t]+)?"
+    r"(?:not|never|unavailable|prohibited|forbidden|disallowed)\b",
     re.I,
 )
 
@@ -123,7 +140,7 @@ _REMOTE_RE = re.compile(
 #: A location field is a declaration about the job. Prose is not, so it only
 #: counts where it says so unambiguously.
 _REMOTE_PROSE_RE = re.compile(
-    r"\b(?:remote|work from home|wfh|telecommute|home[- ]?based)\b"
+    rf"\b(?:{_REMOTE_WORD}|work(?:ing)? remotely|work from home|wfh|telecommute|home[- ]?based)\b"
     r"|\b(?:fully|geographically)? ?distributed "
     r"(?:team|workforce|company|organisation|organization)\b"
     r"|\bwork from anywhere\b",
@@ -142,7 +159,7 @@ def _prose_reads_as_remote(description: str) -> bool:
     try:
         remote = _REMOTE_PROSE_CACHE.pop(key)
     except KeyError:
-        remote = bool(_REMOTE_PROSE_RE.search(description))
+        remote = bool(_REMOTE_PROSE_RE.search(_REMOTE_DENIAL_RE.sub(" ", description)))
     _REMOTE_PROSE_CACHE[key] = remote
     if len(_REMOTE_PROSE_CACHE) > 4096:
         _REMOTE_PROSE_CACHE.popitem(last=False)
@@ -165,6 +182,8 @@ def reads_as_remote(
     "Hybrid" whose benefits blurb mentions remote work is not remote.
     """
     haystack = f"{title or ''} {location or ''}"
+    if _REMOTE_DENIAL_RE.search(haystack):
+        return False
     if _REMOTE_RE.search(haystack):
         return True
     return not _ONSITE_MARKER_RE.search(haystack) and _prose_reads_as_remote(description or "")
@@ -996,6 +1015,20 @@ _CALIFORNIA_RE = re.compile(r"\bcalifornia\b", re.I)
 _CALIFORNIA_CODE_RE = re.compile(r"\bCA\b")
 
 _BAY_AREA_RE = re.compile(r"\b(?:" + "|".join(_BAY_AREA_CITIES) + r")\b", re.I)
+
+
+def bay_area_place_spans(text: str) -> tuple[tuple[int, int], ...]:
+    """Original-text spans of Bay Area names already recognized by this module.
+
+    A caller that has classified a question as Bay Area can consume these
+    names as place constraints while retaining their surfaces for ranking.
+    This is vocabulary lookup, not another locality decision: country and
+    state precedence still belongs to `locality_of`. Match the original text
+    so Unicode normalization cannot shift the offsets used to remove a span.
+    """
+    return tuple(match.span() for match in _BAY_AREA_RE.finditer(text))
+
+
 _CALIFORNIA_CITY_RE = re.compile(r"\b(?:" + "|".join(_CALIFORNIA_CITIES) + r")\b", re.I)
 
 

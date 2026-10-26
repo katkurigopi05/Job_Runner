@@ -736,6 +736,11 @@ def _postings_section(
             "in your search area are not listed "
             f"because they do not establish a Bay Area office{reach}."
         )
+    if found.work_mode:
+        lines.append(
+            "Work mode filter: remote-work evidence is required; "
+            "eligibility conditions still apply."
+        )
     if found.required_skill is not None:
         lines.append(found.required_skill.in_words())
     # With a level asked, the totals below count the postings listed for it,
@@ -1221,6 +1226,7 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
         history_used=len(ready.remembered.turns),
         history_withheld=ready.remembered.withheld,
         mail_in_context=ready.mail_in_context,
+        postings_work_mode="remote" if found.work_mode == "remote" else None,
         postings_searched=found.searched,
         postings_unsearchable=found.unsearchable,
         postings_reranked_by=found.reranked_by,
