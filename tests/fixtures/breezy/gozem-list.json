@@ -1,0 +1,187 @@
+[
+ {
+  "id": "122cd38baac5",
+  "friendly_id": "122cd38baac5-agent-support-client",
+  "name": "Agent support client",
+  "url": "https://gozem.breezy.hr/p/122cd38baac5-agent-support-client",
+  "published_date": "2026-10-26T15:26:57.725Z",
+  "type": {
+   "id": "fullTime",
+   "name": "Temps plein"
+  },
+  "location": {
+   "id": "0a1842a820f0",
+   "country": {
+    "name": "Togo",
+    "id": "TG"
+   },
+   "city": "Lomé",
+   "primary": true,
+   "is_remote": false,
+   "name": "Lomé, TG"
+  },
+  "department": "",
+  "salary": "",
+  "company": {
+   "name": "Gozem",
+   "logo_url": null,
+   "friendly_id": "gozem",
+   "isMultipleLocationsEnabled": true
+  },
+  "locations": [
+   {
+    "id": "0a1842a820f0",
+    "country": {
+     "name": "Togo",
+     "id": "TG"
+    },
+    "city": "Lomé",
+    "primary": true,
+    "is_remote": false,
+    "name": "Lomé, TG"
+   }
+  ]
+ },
+ {
+  "id": "d8fbe0000b50",
+  "friendly_id": "d8fbe0000b50-candidature-spontanee",
+  "name": "Candidature spontanée",
+  "url": "https://gozem.breezy.hr/p/d8fbe0000b50-candidature-spontanee",
+  "published_date": "2026-02-25T16:48:42.070Z",
+  "type": {
+   "id": "fullTime",
+   "name": "Temps plein"
+  },
+  "location": {
+   "country": {
+    "name": "Togo",
+    "id": "TG"
+   },
+   "city": "Lomé",
+   "primary": true,
+   "is_remote": false,
+   "name": "Lomé, TG",
+   "id": "f3f2868c3d54",
+   "job_id": "d8fbe0000b50-f3f2868c3d54-1754300931478"
+  },
+  "department": null,
+  "salary": "",
+  "company": {
+   "name": "Gozem",
+   "logo_url": null,
+   "friendly_id": "gozem",
+   "isMultipleLocationsEnabled": true
+  },
+  "locations": [
+   {
+    "country": {
+     "name": "Togo",
+     "id": "TG"
+    },
+    "city": "Lomé",
+    "primary": true,
+    "is_remote": false,
+    "name": "Lomé, TG",
+    "id": "f3f2868c3d54",
+    "job_id": "d8fbe0000b50-f3f2868c3d54-1771239294599"
+   },
+   {
+    "country": {
+     "name": "Bénin",
+     "id": "BJ"
+    },
+    "city": "Cotonou",
+    "primary": false,
+    "is_remote": false,
+    "name": "Cotonou, BJ",
+    "id": "675a1c0b1f1c",
+    "job_id": "d8fbe0000b50-675a1c0b1f1c-1771239294599"
+   },
+   {
+    "country": {
+     "name": "Cameroun",
+     "id": "CM"
+    },
+    "city": "Douala",
+    "primary": false,
+    "is_remote": false,
+    "name": "Douala, CM",
+    "id": "c9a41187fad5",
+    "job_id": "d8fbe0000b50-c9a41187fad5-1771239294599"
+   },
+   {
+    "country": {
+     "name": "Gabon",
+     "id": "GA"
+    },
+    "city": "Libreville",
+    "primary": false,
+    "is_remote": false,
+    "name": "Libreville, GA",
+    "id": "f4ec0365352d",
+    "job_id": "d8fbe0000b50-f4ec0365352d-1771239294599"
+   },
+   {
+    "country": {
+     "name": "Congo",
+     "id": "CG"
+    },
+    "city": "brazzaville",
+    "primary": false,
+    "is_remote": false,
+    "name": "brazzaville, CG",
+    "id": "4277d578bfdc",
+    "job_id": "d8fbe0000b50-4277d578bfdc-1771239294599"
+   }
+  ]
+ },
+ {
+  "id": "4ba5bc0d9700",
+  "friendly_id": "4ba5bc0d9700-senior-platform-engineer",
+  "name": "Senior Platform Engineer",
+  "url": "https://gozem.breezy.hr/p/4ba5bc0d9700-senior-platform-engineer",
+  "published_date": "2026-10-22T17:39:19.377Z",
+  "type": {
+   "id": "fullTime",
+   "name": "Full-Time"
+  },
+  "location": {
+   "id": "3d3a9ca783f4",
+   "country": {
+    "name": "United States",
+    "id": "US"
+   },
+   "primary": true,
+   "is_remote": true,
+   "remote_details": {
+    "value": "remote",
+    "label": "Fully remote, no location restrictions"
+   },
+   "name": "United States"
+  },
+  "department": "Engineering",
+  "salary": "",
+  "company": {
+   "name": "Localize",
+   "logo_url": "https://gallery-cdn.breezy.hr/de4a8294-15b2-4cb8-b4be-775cd8febf4a/Picture1.jpg",
+   "friendly_id": "localize",
+   "isMultipleLocationsEnabled": true
+  },
+  "locations": [
+   {
+    "id": "3d3a9ca783f4",
+    "country": {
+     "name": "United States",
+     "id": "US"
+    },
+    "primary": true,
+    "is_remote": true,
+    "remote_details": {
+     "value": "remote",
+     "label": "Fully remote, no location restrictions"
+    },
+    "name": "United States"
+   }
+  ]
+ }
+]

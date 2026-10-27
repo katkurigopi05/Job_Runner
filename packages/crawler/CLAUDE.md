@@ -552,3 +552,41 @@ per-row table is recorded with PR #198 and its post-merge amendment.
 The explicit legacy
 `merge-duplicate-boards` repair/registry absorption is unchanged; this gate
 covers automatic discovery and deep dives, not an operator-directed merge.
+
+## Breezy and Rippling boards (2026-10-26)
+
+The owner's sheet had about 3,600 companies on no board Jobrunner read. A
+search assistant filled in boards for the first 100 (`storage/exports/
+careers_links_2026-10-26`), and Breezy (14) and Rippling (12) were the two
+largest systems among them. Both are read now.
+
+- **Neither list carries a description.** Breezy's `/json` and Rippling's
+  board page list title, place and link; the text is on each job's own page.
+  Workday had the same shape, so its bounded detail reading moved to
+  `details.py` and all three use it: five job pages per crawl, cached against
+  the listed title, place and URL. A reader that has a `hydrate` method gets
+  it; `crawl._poll_paged` no longer checks for Workday by name. The two
+  cursor columns keep their Workday names: a company has one board.
+- **Workday stays strict, the new two are lenient.** A failed Workday detail
+  is the board's own API failing, so the board fails as before. A Breezy or
+  Rippling job page is HTML that can close between the list and the request;
+  one bad page leaves that posting waiting for its text. robots.txt refusing
+  a job page still refuses the board.
+- **Rippling repeats a job once per location**, under the same id. `branch`
+  reported 24 items that were 14 jobs on 2026-10-26. `merge_rows` makes one
+  posting carrying every place, and completeness is judged on rows read
+  against `totalItems`, which counts rows. The discovery probe reads one page,
+  so for a multi-page board its job count is that row total.
+- **`ats.rippling.com` is not in `SHARED_API_HOSTS`.** It serves every Rippling
+  company's board, which is the §2.6 amendment's criterion, but that list is
+  the owner's decision. Until they add it, every Rippling company waits behind
+  one 60 s counter. Breezy boards are each company's own subdomain.
+- **Two of the assistant's "high confidence" Breezy boards did not exist**
+  (`Career portal not found`, HTTP 404). A suggested board is probed before
+  it is trusted; that is what discovery does with any link.
+- **Applying is not supported for either**, so their postings are read and
+  matched, and applied to by hand.
+
+`tests/test_breezy_reader.py`, `tests/test_rippling_reader.py`, with trimmed
+public payloads and their provenance in `tests/fixtures/breezy` and
+`tests/fixtures/rippling`.

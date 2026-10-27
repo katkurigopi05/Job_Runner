@@ -1,0 +1,7 @@
+{
+ "recorded": "2026-10-26",
+ "board": "https://ats.rippling.com/branch/jobs and ?page=1",
+ "detail": "https://ats.rippling.com/branch/jobs/454f3d28-ca85-4640-9cfe-c48f1931cfdc",
+ "trimmed": "embedded data only; three jobs in four rows across two pages, the first job listed again on page 1 under Bengaluru as the live board lists it (Rippling repeats a job per location, same id); page size and totals set to match; the job page keeps jobPost's uuid, name, description, workLocations, createdOn and url",
+ "robots": "https://ats.rippling.com/robots.txt disallows only /internal/"
+}

@@ -536,9 +536,32 @@ JSONLD_ATS = "jsonld"
 _jsonld_extractor: PostingExtractor | None = None
 
 
+#: Boards read with a list plus job pages (`crawler.details`), created on
+#: first use: each module imports this one. Kept out of `EXTRACTORS`, whose
+#: callers iterate slug-to-JSON board APIs.
+_DETAIL_BOARDS: dict[str, PostingExtractor] = {}
+
+
+def _detail_board(ats: str) -> PostingExtractor | None:
+    if ats not in _DETAIL_BOARDS:
+        if ats == "breezy":
+            from packages.crawler.breezy import BreezyExtractor
+
+            _DETAIL_BOARDS[ats] = BreezyExtractor()
+        elif ats == "rippling":
+            from packages.crawler.rippling import RipplingExtractor
+
+            _DETAIL_BOARDS[ats] = RipplingExtractor()
+        else:
+            return None
+    return _DETAIL_BOARDS[ats]
+
+
 def extractor_for(ats: str) -> PostingExtractor | None:
     if ats == "workday" and "workday" not in EXTRACTORS:
         _register_workday()
+    if ats in {"breezy", "rippling"}:
+        return _detail_board(ats)
     global _jsonld_extractor
     if ats == JSONLD_ATS:
         if _jsonld_extractor is None:

@@ -272,8 +272,33 @@ async def _probe(
     if vendor == "workday":
         postings, url, blocked, total = await _workday_probe(fetcher, slug)
         return total if postings is not None else None, url, blocked
+    if vendor == "rippling":
+        return await _rippling_probe(fetcher, slug)
     postings, url, blocked = await fetch_board(fetcher, vendor, slug)
     return (None if postings is None else len(postings)), url, blocked
+
+
+async def _rippling_probe(fetcher: PoliteFetcher, slug: str) -> tuple[int | None, str, str | None]:
+    """The board's first page names its total; one request, not a full read."""
+    from packages.crawler.rippling import RipplingExtractor, parse_page
+
+    url = ""
+    try:
+        url = RipplingExtractor().board_url(slug)
+        response = await fetcher.fetch(url)
+        if not response.ok:
+            return None, url, None
+        rows, pages, total, _ = parse_page(response.text, slug)
+        if pages == 1:
+            # The whole board is on this page: count jobs, not job-location rows.
+            return len({row.external_id for row in rows}), url, None
+        # Several pages: the reported rows, which can count a job once per city.
+        return total, url, None
+    except Blocked as exc:
+        return None, url, str(exc)
+    except Exception as exc:  # noqa: BLE001 - one host cannot stop discovery
+        log.debug("rippling_probe_failed", slug=slug, error=type(exc).__name__)
+        return None, url, None
 
 
 async def _workday_probe(
@@ -402,11 +427,18 @@ def board_root(url: str) -> tuple[str, str] | None:
     """`(vendor, slug)` when the URL is a board's front page."""
     # Read-only board recognition is deliberately independent of ATS form
     # detection: no Workday URL becomes supported by the apply path.
+    from packages.crawler import breezy, rippling
     from packages.crawler.workday import slug_for
 
     workday_slug = slug_for(url)
     if workday_slug:
         return "workday", workday_slug
+    # Any page on a Breezy subdomain, or under a Rippling board, names the
+    # board: a careers page links to one posting more often than to the list.
+    for vendor, read in (("breezy", breezy.slug_for), ("rippling", rippling.slug_for)):
+        slug = read(url)
+        if slug:
+            return vendor, slug
     for vendor, pattern in _BOARD_ROOT_RES:
         match = pattern.match(url.strip())
         if match:
@@ -713,6 +745,8 @@ _ATS_URL_IN_PAGE_RE = re.compile(
         |jobs\.ashbyhq\.com
         |apply\.workable\.com
         |[a-z0-9-]+\.wd[0-9]+\.myworkdayjobs\.com
+        |[a-z0-9-]+\.breezy\.hr
+        |ats\.rippling\.com
     )/[^\s"'<>\\)\]]*""",
     re.I | re.X,
 )

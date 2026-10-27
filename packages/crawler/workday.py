@@ -23,13 +23,14 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
 import structlog
 
+from packages.crawler.details import DETAIL_REQUESTS_PER_CRAWL, BoardPages, hydrate
 from packages.crawler.extract import ExtractedPosting, posting_hash, strip_html
 from packages.crawler.fetch import Blocked, PoliteFetcher
 
@@ -45,30 +46,8 @@ PAGE_SIZE = 20
 #: reported truncated rather than quietly halved.
 MAX_PAGES = 60
 
-# Five extra minutes at the company-host floor, never one request per job.
-DETAIL_REQUESTS_PER_CRAWL = 5
 _HOST_RE = re.compile(r"(?P<tenant>[a-z0-9-]+)\.wd[0-9]+\.myworkdayjobs\.com")
 _SITE_RE = re.compile(r"[A-Za-z0-9_-]+")
-
-
-@dataclass
-class BoardPages:
-    """Every page of a board, and what was parsed out of them."""
-
-    #: Raw bodies in order. Hashed together for board-level change detection,
-    #: which is why they are kept rather than discarded after parsing.
-    bodies: list[str] = field(default_factory=list)
-    postings: list[ExtractedPosting] = field(default_factory=list)
-    waited_seconds: float = 0.0
-    #: True when `MAX_PAGES` stopped the walk before the board ended. The
-    #: caller must not close anything on a truncated read.
-    truncated: bool = False
-
-    @property
-    def body(self) -> str:
-        """One string standing for the whole board, for hashing."""
-        # A detail-only edit must invalidate an otherwise identical listing.
-        return "\n".join([*self.bodies, *(p.content_hash for p in self.postings)])
 
 
 class WorkdayBoardError(RuntimeError):
@@ -223,56 +202,28 @@ async def hydrate_details(
 ) -> tuple[str | None, str | None]:
     """Prioritize missing/changed text; rotate bounded validation of the rest.
 
-    A listing has no revision stamp. One rotating slot (all five once caught
-    up) detects edits to descriptions that leave the listing unchanged.
-    Cached text is retained only while its title, location and URL agree.
+    The budget, the cache and the rotation are `details.hydrate`'s. Workday
+    is strict: its detail endpoint is the board's own API, so one failure is
+    the board failing.
     """
     host, tenant, site = company_slug.split("|")
-    pending: list[ExtractedPosting] = []
-    cached: list[ExtractedPosting] = []
-    for item in pages.postings:
-        prior = previous.get(item.external_id)
-        same = prior is not None and (prior.title, prior.location, prior.url) == (
-            item.title,
-            item.location,
-            item.url,
-        )
-        if prior is not None:
-            item.published_at = prior.published_at
-        if same and prior is not None and prior.description_raw:
-            item.description_raw = prior.description_raw
-            cached.append(item)
-        elif prior is not None or not (
-            max_age_days > 0
-            and item.minimum_age_days is not None
-            and item.minimum_age_days > max_age_days
-        ):
-            pending.append(item)
-        item.content_hash = posting_hash(item)
 
-    # Rotate even the unheld jobs: a detail that proves a job too old is
-    # filtered by _store, so it appears pending again on the next crawl.
-    pending.sort(key=lambda item: (item.external_id <= (pending_cursor or ""), item.external_id))
-    cached.sort(key=lambda item: (item.external_id <= (cursor or ""), item.external_id))
-    # Preserve a validation slot while draining the pending descriptions.
-    reserved = 1 if cached else 0
-    selected = pending[: DETAIL_REQUESTS_PER_CRAWL - reserved]
-    selected += cached[: DETAIL_REQUESTS_PER_CRAWL - len(selected)]
-    for item in selected:
+    def detail_url(item: ExtractedPosting) -> str:
         path = urlparse(item.url).path.removeprefix(f"/{site}")
-        response = await fetcher.fetch(f"https://{host}/wday/cxs/{tenant}/{site}{path}")
-        pages.waited_seconds += response.waited
-        if not response.ok:
-            raise WorkdayBoardError(f"{response.url}: HTTP {response.status} in detail")
-        hydrated = read_detail(response.text, item)
-        item.description_raw = hydrated.description_raw
-        item.published_at = hydrated.published_at
-        item.content_hash = hydrated.content_hash
-        if item in cached:
-            cursor = item.external_id
-        else:
-            pending_cursor = item.external_id
-    return cursor, pending_cursor
+        return f"https://{host}/wday/cxs/{tenant}/{site}{path}"
+
+    return await hydrate(
+        fetcher,
+        pages,
+        previous,
+        cursor,
+        detail_url=detail_url,
+        read_detail=read_detail,
+        max_age_days=max_age_days,
+        pending_cursor=pending_cursor,
+        strict=True,
+        board_error=WorkdayBoardError,
+    )
 
 
 @dataclass
@@ -311,6 +262,27 @@ class WorkdayExtractor:
         host, _, site = company_slug.split("|")
         postings, _ = parse_page(body, host, site)
         return postings
+
+    async def hydrate(
+        self,
+        fetcher: PoliteFetcher,
+        company_slug: str,
+        pages: BoardPages,
+        previous: dict[str, ExtractedPosting],
+        cursor: str | None,
+        pending_cursor: str | None,
+        *,
+        max_age_days: int,
+    ) -> tuple[str | None, str | None]:
+        return await hydrate_details(
+            fetcher,
+            company_slug,
+            pages,
+            previous,
+            cursor,
+            max_age_days=max_age_days,
+            pending_cursor=pending_cursor,
+        )
 
     async def collect(self, fetcher: PoliteFetcher, company_slug: str) -> BoardPages:
         """Walk every page of the board. Raises rather than half-reading it.
@@ -410,6 +382,7 @@ def slug_for(careers_url: str) -> str | None:
 __all__ = [
     "MAX_PAGES",
     "PAGE_SIZE",
+    "DETAIL_REQUESTS_PER_CRAWL",
     "Blocked",
     "BoardPages",
     "WorkdayBoardError",
