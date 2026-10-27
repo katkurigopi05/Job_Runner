@@ -407,6 +407,16 @@ _FRAMING_PHRASES = re.compile(
 )
 
 
+#: Characters read either side of a work-mode word. Every repeat in
+#: `_remote_work_spans` is bounded too (`_GAP`, `_WORD`), so a question of
+#: 4,000 spaces costs what a short one does: unbounded `\s+` searches here were
+#: CodeQL `py/polynomial-redos` alerts on #230 and #233. The longest phrase a
+#: pattern can match is about 160 characters, so the window loses nothing.
+_WORK_MODE_CONTEXT = 200
+_GAP = r"\s{1,8}"
+_WORD = r"[\w'-]{1,40}"
+
+
 def _remote_work_spans(question: str) -> tuple[tuple[int, int], ...]:
     """Explicit work-mode framing, rather than every use of the word remote.
 
@@ -416,47 +426,48 @@ def _remote_work_spans(question: str) -> tuple[tuple[int, int], ...]:
     aliases = {alias for values in named_in(question).values() for alias in values}
     level = asked_level(question)
     levels = "|".join(re.escape(word) for word in (level.words if level else ()))
-    level_prefix = rf"(?:(?:{levels})\s+)*" if levels else ""
+    level_prefix = rf"(?:(?:{levels}){_GAP}){{0,3}}" if levels else ""
     negated = re.compile(
-        r"\b(?:not|no|non|except|excluding|without|other\s+than|cannot|can't)"
-        r"(?:[ \t]+[\w'-]+){0,3}[ \t-]*$",
+        rf"\b(?:not|no|non|except|excluding|without|other{_GAP}than|cannot|can't)"
+        rf"(?:[ \t]{{1,8}}{_WORD}){{0,3}}[ \t-]{{0,8}}$",
         re.I,
     )
+    jobs = r"(?:jobs?|roles?|positions?|postings?|openings?)"
     spans: list[tuple[int, int]] = []
-    for match in re.finditer(r"\b(?:remote(?:[ -]only)?|wfh|work\s+from\s+home)\b", question, re.I):
-        before, after = question[: match.start()], question[match.end() :]
-        if negated.search(before) or re.match(r"\s+(?:(?:is|are)\s+)?(?:not|never)\b", after, re.I):
+    for match in re.finditer(
+        rf"\b(?:remote(?:[ -]only)?|wfh|work{_GAP}from{_GAP}home)\b", question, re.I
+    ):
+        before = question[max(0, match.start() - _WORK_MODE_CONTEXT) : match.start()]
+        after = question[match.end() : match.end() + _WORK_MODE_CONTEXT]
+        if negated.search(before) or re.match(
+            rf"{_GAP}(?:(?:is|are){_GAP})?(?:not|never)\b", after, re.I
+        ):
             continue
         if re.match(
-            r"[ -]+(?:sensing|procedure|access|desktop|monitoring|control|execution)\b", after, re.I
+            r"[ -]{1,8}(?:sensing|procedure|access|desktop|monitoring|control|execution)\b",
+            after,
+            re.I,
         ):
             continue
         surface = match.group().lower()
-        before_jobs = bool(
-            re.match(r"\s+(?:jobs?|roles?|positions?|postings?|openings?)\b", after, re.I)
-        )
+        before_jobs = bool(re.match(rf"{_GAP}{jobs}\b", after, re.I))
         after_jobs = bool(
             re.search(
-                r"\b(?:jobs?|roles?|positions?|postings?|openings?)\s+"
-                r"(?:(?:(?:that|which)\s+)?are\s+)?$",
+                rf"\b{jobs}{_GAP}(?:(?:(?:that|which){_GAP})?are{_GAP})?$",
                 before,
                 re.I,
             )
         )
         before_role = any(
-            re.match(rf"\s+{level_prefix}{re.escape(alias)}\b", after, re.I) for alias in aliases
+            re.match(rf"{_GAP}{level_prefix}{re.escape(alias)}\b", after, re.I) for alias in aliases
         )
         before_qualified_jobs = bool(
-            re.match(
-                r"\s+(?:[\w+#.-]+\s+){1,6}(?:jobs?|roles?|positions?|postings?|openings?)\b",
-                after,
-                re.I,
-            )
+            re.match(rf"{_GAP}(?:[\w+#.-]{{1,40}}{_GAP}){{1,6}}{jobs}\b", after, re.I)
         )
         work_clause = bool(
-            re.match(r"\s+work\b", after, re.I)
+            re.match(rf"{_GAP}work\b", after, re.I)
             and re.search(
-                r"\b(?:allow|allows|offer|offers|support|supports)\s+$",
+                rf"\b(?:allow|allows|offer|offers|support|supports){_GAP}$",
                 before,
                 re.I,
             )
