@@ -1377,6 +1377,13 @@ async def selected_reply(ready: Ready) -> ChatReply:
         raw = await provider.complete(SYSTEM, ready.prompt, max_tokens=180, temperature=0.0)
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
+    return selection_reply_for(ready, model, raw)
+
+
+def selection_reply_for(ready: Ready, model: str | None, raw: str) -> ChatReply:
+    """Render captured selections through the same validation as live replies."""
+    evidence = ready.selection_evidence
+    assert evidence is not None
     selection = parse_selection(raw, evidence)
     if not selection.valid or not selection.items:
         lead = (
