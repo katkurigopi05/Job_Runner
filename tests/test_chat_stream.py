@@ -208,10 +208,10 @@ async def test_the_model_is_asked_the_way_the_plain_route_asks_it(
     assert (max_tokens, temperature) == (600, 0.2)
 
 
-async def test_citations_are_read_from_the_finished_text(
+async def test_selection_citations_are_read_after_validation(
     live_api: AsyncClient, monkeypatch
 ) -> None:
-    """A label can be split across two pieces. Only the whole answer can be read for them."""
+    """Posting selection validates complete output before assigning source citations."""
 
     def posting(label: str, title: str) -> Passage:
         return Passage(
@@ -233,7 +233,7 @@ async def test_citations_are_read_from_the_finished_text(
         )
 
     monkeypatch.setattr(chat_module, "retrieve", found)
-    _answered_by(monkeypatch, _Writer(["Data Engineer uses Kafka [P", "1]."]))
+    _answered_by(monkeypatch, _Writer(['{"ids":["P', '1"]}']))
 
     *_, done = await _all_frames(live_api, {"message": "Which open roles use Kafka?"})
 

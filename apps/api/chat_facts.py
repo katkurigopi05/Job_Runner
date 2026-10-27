@@ -130,6 +130,8 @@ def count_facts(found: Retrieval) -> tuple[ChatCountFact, ...]:
         if found.area
         else "the searched area"
     )
+    if found.work_mode:
+        scope += " with remote-work evidence"
     facts: list[ChatCountFact] = []
 
     def add(
@@ -158,7 +160,11 @@ def count_facts(found: Retrieval) -> tuple[ChatCountFact, ...]:
     add(
         "matched",
         found.match_total,
-        "requested term mentions" if found.matched_term else "company postings",
+        "requested term mentions"
+        if found.matched_term
+        else "company postings"
+        if found.companies
+        else "postings with remote-work evidence",
     )
     if found.company_total is not None:
         add("companies", found.company_total, "companies of matched postings", unit="companies")
@@ -201,7 +207,12 @@ def count_facts(found: Retrieval) -> tuple[ChatCountFact, ...]:
     return tuple(facts)
 
 
-def render_postings(found: Retrieval, evidence: Mapping[uuid.UUID, list[str]] | None = None) -> str:
+def render_postings(
+    found: Retrieval,
+    evidence: Mapping[uuid.UUID, list[str]] | None = None,
+    *,
+    include_sources: bool = True,
+) -> str:
     """State exact counts and sample limits, followed by supplied source facts."""
     # Validate coverage/values before rendering even callers outside chat.prepare.
     count_facts(found)
@@ -212,11 +223,20 @@ def render_postings(found: Retrieval, evidence: Mapping[uuid.UUID, list[str]] | 
         if found.area
         else "the searched area"
     )
+    if found.work_mode:
+        scope += " with remote-work evidence"
     lines = [f"Searched {found.searched} of {found.searched + found.unsearchable} open postings."]
+    if found.not_hiring:
+        lines.extend(f"no open postings at {one_line(name)}" for name in found.not_hiring)
     if found.area:
         lines.append(f"Search area: {one_line(found.area)}.")
     elif found.area_waived:
         lines.append("Your standing search-area filter was waived for the named place.")
+    if found.work_mode:
+        lines.append(
+            "Work mode: remote; supported by title, location or description. "
+            "Eligibility conditions still apply."
+        )
     if found.required_skill is not None:
         lines.append(found.required_skill.in_words())
     if found.share is not None:
@@ -263,11 +283,13 @@ def render_postings(found: Retrieval, evidence: Mapping[uuid.UUID, list[str]] | 
                 f"{one_line(found.matched_term)} in {scope}. "
                 "These are mentions, not requirements or proof of actual use."
             )
-        else:
+        elif found.companies:
             lines.append(
                 f"{found.match_total} open postings at "
                 f"{', '.join(map(one_line, found.companies))} in {scope}."
             )
+        else:
+            lines.append(f"{found.match_total} open postings in {scope}.")
     elif found.sponsorship is None:
         lines.append(
             "The total matching count is unknown; the ranked sample does not "
@@ -321,6 +343,8 @@ def render_postings(found: Retrieval, evidence: Mapping[uuid.UUID, list[str]] | 
             f"{level.unknown} name no level and {level.other} name a different level. "
             "Titles naming a different level are not listed."
         )
+    if not include_sources:
+        return "\n".join(lines)
     if not found.passages:
         lines.append(f"No retrieved postings are available in {scope} for this question.")
     else:

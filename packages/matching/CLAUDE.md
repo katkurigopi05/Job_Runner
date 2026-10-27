@@ -664,3 +664,16 @@ required total. Compound skill or role questions retain existing retrieval.
 Essential headings through the shared experience reader, and compares skill
 clauses independently. Current stored readings are reused. Stale readings are
 re-extracted in memory where source text exists; no live backfill is automatic.
+
+### Place and remote intent
+
+Recognized Bay Area names are consumed as regional constraints before choosing
+search subjects. Their full original surfaces still prefer the named city;
+sharing the word San does not make San Jose a San Francisco match.
+
+An explicit remote work request filters every candidate path before selection
+and full-set counts. Its percentage denominator remains all in-area postings.
+Requirement and sponsorship paths retain the same mode constraint. The shared
+locality reader rejects technical and negative remote mentions; negative
+metadata overrides weaker company prose. Counts describe work-mode evidence,
+not an independent verification of applicant eligibility.
