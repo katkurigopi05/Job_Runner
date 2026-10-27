@@ -1,0 +1,6 @@
+{
+ "recorded": "2026-10-26",
+ "list": "https://gozem.breezy.hr/json (first entry and one multi-location entry), plus a remote entry from https://localize.breezy.hr/json with its URL moved to gozem's host",
+ "detail": "https://gozem.breezy.hr/p/122cd38baac5-agent-support-client, trimmed to its JobPosting JSON-LD",
+ "robots": "https://gozem.breezy.hr/robots.txt disallows only /css, /fonts, /stylesheets, /javascripts"
+}
