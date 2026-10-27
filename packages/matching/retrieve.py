@@ -404,6 +404,14 @@ _SENTENCE_START = re.compile(r"(?<=[.!?;])\s+")
 _PERCENTAGE_REQUEST = re.compile(
     r"\bwhat(?:['’]s|s)?\s+(?:is\s+)?(?:the\s+)?percent(?:age)?\b", re.IGNORECASE
 )
+# An explicit population changes the denominator: "of data engineer roles
+# are remote" asks about those roles, while "of jobs are remote data engineer
+# roles" and a trailing "what's the percentage" retain the corpus population.
+_REMOTE_ROLE_SHARE = re.compile(
+    r"\bpercent(?:age)?\s{1,8}of\s{1,8}(?P<population>[^\n?!]{1,200}?)"
+    r"\s{1,8}(?:are|is)\s{1,8}(?P<mode>(?:fully\s{1,8})?(?:remote(?:[ -]only)?|wfh))\b",
+    re.IGNORECASE,
+)
 _FRAMING_PHRASES = re.compile(
     rf"\bright\s+now\b|\bhow\s+many\b|{_PERCENTAGE_REQUEST.pattern}", re.IGNORECASE
 )
@@ -2456,6 +2464,8 @@ async def retrieve(
     wants_share = bool(_PERCENTAGE_REQUEST.search(question))
     for spelled_out, as_titles_say_it in _SPELLED_OUT:
         question = spelled_out.sub(as_titles_say_it, question)
+    population = _REMOTE_ROLE_SHARE.search(question) if wants_share else None
+    remote_share_roles = set(named_in(population.group("population"))) if population else set()
     # Trailing dots off, as `tokenize` does: "Show me remote jobs." ends in
     # "jobs.", and "I applied to Stripe." in "stripe.".
     words = {word.rstrip(".") for word in _RAW_WORD.findall(question.lower())}
@@ -2482,6 +2492,12 @@ async def retrieve(
         session, words, frequencies, question
     )
     mode_spans = _remote_work_spans(question)
+    if population is not None and remote_share_roles:
+        # The explicit predicate remains a work mode when a city or level
+        # separates the role noun from "are remote" in the original question.
+        mode = population.span("mode")
+        if not any(start <= mode[0] and mode[1] <= end for start, end in mode_spans):
+            mode_spans = tuple(sorted((*mode_spans, mode)))
     remote_only = bool(mode_spans)
     for start, end in reversed(mode_spans):
         question = question[:start] + " " + question[end:]
@@ -2665,6 +2681,7 @@ async def retrieve(
     # title) and is still one posting the area left out.
     left_out: set[uuid.UUID] = set()
     role_pool: list[_Hit] | None = None
+    role_population_ids: list[uuid.UUID] | None = None
     kinds: list[tuple[str, int]] = []
     label_of: dict[uuid.UUID, str] = {}
     title_words: tuple[str, ...] = ()
@@ -2675,6 +2692,10 @@ async def retrieve(
     related_total = 0
     if asked_roles:
         of_the_role = await _role_hits(session, set(asked_roles), companies)
+        if remote_only and remote_share_roles and remote_share_roles == set(asked_roles):
+            # Save the complete role population before the requested work mode.
+            # The independent count below reapplies its area/place/level scope.
+            role_population_ids = [hit.posting_id for hit in of_the_role]
         role_pool = [hit for hit in of_the_role if not (area and _outside_area(hit))]
         left_out |= {hit.posting_id for hit in of_the_role} - {hit.posting_id for hit in role_pool}
         role_pool = [hit for hit in role_pool if in_work_mode(hit)]
@@ -3209,25 +3230,31 @@ async def retrieve(
         if exact is not None:
             denominator, _, _ = await _matching_totals(
                 session,
-                None,
+                role_population_ids,
                 area=bool(area),
-                level=None,
-                allow_unknown=True,
+                level=level if role_population_ids is not None else None,
+                allow_unknown=allow_unknown if role_population_ids is not None else True,
                 # Independent accounting: do not alter the query's omitted counts.
                 place_filter=_PlaceFilter(cities=place_filter.cities)
                 if place_filter is not None
                 else None,
             )
+            scope = (
+                place_filter.scope
+                if place_filter is not None
+                else "your search area"
+                if area
+                else "the full open-posting corpus"
+            )
+            if role_population_ids is not None:
+                role = " or ".join(display_name(key) for key in sorted(asked_roles))
+                if level is not None:
+                    role = f"{level.spoken} {role}"
+                scope = f"the {role} role population in {scope}"
             share = PostingShare(
                 matching=exact,
                 open_total=denominator,
-                scope=(
-                    place_filter.scope
-                    if place_filter is not None
-                    else "your search area"
-                    if area
-                    else "the full open-posting corpus"
-                ),
+                scope=scope,
             )
     statuses = await _application_statuses(session, [hit.posting_id for hit in chosen])
     passages = tuple(

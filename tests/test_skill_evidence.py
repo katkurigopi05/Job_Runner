@@ -166,3 +166,83 @@ def test_alternative_beyond_quote_limit_is_still_an_option():
     found = skill_evidence(extract("Requirements\n" + line).as_json(), "kafka")
     assert len(found.quote) <= 240
     assert found.option is True
+
+
+@pytest.mark.parametrize("skill_key", ["pytorch", "tensorflow"])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Familiarity with at least one ML framework (pytorch, tensorflow etc)",
+        "Experience with one or more deep-learning frameworks (PyTorch, TensorFlow)",
+        "Proficiency in one of the following frameworks (TensorFlow, PyTorch)",
+    ],
+)
+def test_quantified_framework_choices_do_not_require_each_named_framework(line, skill_key):
+    from packages.matching.requirements import extract
+
+    found = skill_evidence(extract("Requirements\n" + line).as_json(), skill_key)
+    assert found.strength is Strength.REQUIRED
+    assert found.option is True
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Familiarity with PyTorch",
+        "Familiarity with at least one ML framework (PyTorch)",
+        "Use PyTorch and TensorFlow",
+        "Expertise in tools including but not limited to PyTorch, Ray, vLLM",
+        "At least one project (TensorFlow, Python); PyTorch proficiency is required",
+        "At least one ML framework (TensorFlow, Python); PyTorch proficiency is required",
+    ],
+)
+def test_quantified_choice_rule_does_not_weaken_direct_pytorch_evidence(line):
+    assert not is_option(line, BY_KEY["pytorch"])
+
+
+@pytest.mark.parametrize("direct_first", [False, True])
+def test_direct_pytorch_demand_outranks_quantified_framework_choice(direct_first):
+    from packages.matching.requirements import extract
+
+    option = "Familiarity with at least one ML framework (pytorch, tensorflow etc)"
+    direct = "Proficiency with PyTorch is required"
+    lines = [direct, option] if direct_first else [option, direct]
+    found = skill_evidence(extract("Requirements\n" + "\n".join(lines)).as_json(), "pytorch")
+    assert found.option is False
+    assert found.quote == direct
+
+
+def test_version_three_quantified_framework_reading_is_refreshed_without_mutation():
+    from packages.matching.required_skills import demand_class, fresh_requirements
+    from packages.matching.requirements import EXTRACTOR_VERSION, extract
+
+    description = (
+        "Requirements\nFamiliarity with at least one ML framework (pytorch, tensorflow etc)"
+    )
+    legacy = extract(description).as_json()
+    legacy["version"] = 3
+    pytorch = next(item for item in legacy["skills"]["required"] if item["skill"] == "pytorch")
+    pytorch["option"] = False
+
+    current = fresh_requirements(legacy, 3, description)
+
+    assert EXTRACTOR_VERSION > 3
+    assert current["version"] == EXTRACTOR_VERSION
+    assert demand_class(current, BY_KEY["pytorch"])[0] == "options"
+    assert legacy["version"] == 3 and pytorch["option"] is False
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Proficiency in PyTorch and at least one ML framework (PyTorch, TensorFlow)",
+        "Familiarity with at least one ML framework (PyTorch, TensorFlow) "
+        "and proficiency in PyTorch",
+    ],
+)
+def test_same_clause_direct_demand_survives_quantified_framework_choice(line):
+    from packages.matching.requirements import extract
+
+    reading = extract("Requirements\n" + line).as_json()
+    assert skill_evidence(reading, "pytorch").option is False
+    assert skill_evidence(reading, "tensorflow").option is True
