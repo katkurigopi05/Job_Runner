@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "border-beam": "1.4.1",
-    "next": "15.5.4",
+    "next": "15.5.28",
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "thinking-orbs": "0.3.2"
@@ -23,8 +23,13 @@
     "@types/react": "19.1.13",
     "@types/react-dom": "19.1.9",
     "eslint": "9.37.0",
-    "eslint-config-next": "15.5.4",
+    "eslint-config-next": "15.5.28",
     "tailwindcss": "4.1.14",
     "typescript": "5.9.2"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.26"
+    }
   }
 }
