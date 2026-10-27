@@ -86,7 +86,7 @@ async def _kafka_postings(session) -> dict[str, Posting]:
 # --------------------------------------------------------------------------
 
 
-async def test_a_citation_of_a_posting_that_was_never_supplied_is_reported(
+async def test_model_prose_with_an_unknown_citation_is_rejected(
     client: AsyncClient, worker_session, monkeypatch
 ) -> None:
     """Three were handed over. "[P7]" is a source the model made up."""
@@ -95,8 +95,10 @@ async def test_a_citation_of_a_posting_that_was_never_supplied_is_reported(
 
     body = (await client.post("/chat", json={"message": "Which jobs use Kafka?"})).json()
 
-    assert body["unsupported_citations"] == ["P7"]
-    assert [s["label"] for s in body["sources"] if s["cited"]] == ["P1"]
+    assert body["unsupported_citations"] == []
+    assert "P7" not in body["reply"]
+    assert "Stream Engineer needs it" not in body["reply"]
+    assert {s["label"] for s in body["sources"] if s["cited"]} == {"P1", "P2", "P3"}
 
 
 async def test_citing_only_what_was_supplied_reports_nothing(
@@ -331,8 +333,9 @@ async def test_nothing_found_says_how_much_was_read_to_find_it(
 
     body = (await client.post("/chat", json={"message": "Which jobs use Zig?"})).json()
 
-    assert "POSTINGS: searched 3 of 3 open postings" in seen["user"]
-    assert "none shared anything with this question" in seen["user"]
+    assert "Searched 3 of 3 open postings" in body["reply"]
+    assert body["provider"] == "facts"
+    assert seen == {}
     assert body["sources"] == [] and body["postings_ranked"] == 0
 
 
