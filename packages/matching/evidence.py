@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from packages.matching.skill_vocab import BY_KEY, Skill
+from packages.matching.skill_vocab import BY_KEY, Skill, find_skills
 
 
 class Strength(StrEnum):
@@ -74,6 +74,15 @@ _EG = re.compile(r"\be\.\s?g\.?", re.IGNORECASE)
 #: not sentence punctuation or another list item: "PyTorch 2.0 or TensorFlow".
 #: Leave any following full stop in place so "PyTorch 2.0. Or ..." stays two clauses.
 _VERSION_AFTER = re.compile(r"^\s+v?\d+(?:\.(?:\d+|x))+\+?(?=\s|[,/;.!?)]|$)", re.IGNORECASE)
+#: Quantified category choices can list alternatives without writing "or":
+#: "at least one ML framework (PyTorch, TensorFlow)". Only the parenthetical
+#: list is optional; another direct skill demand outside it is unchanged.
+_QUANTIFIED_LIST = re.compile(
+    r"\b(?:at least one|one or more|one of)\s+"
+    r"(?:[\w-]{1,40}\s+){0,4}"
+    r"(?:frameworks?|librar(?:y|ies)|languages?|tools?|databases?|platforms?)\s*\(",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -107,7 +116,18 @@ def is_option(quote: str, skill: Skill) -> bool:
     plus" offers Python and does not offer Kafka.
     """
     quote = _EG.sub("eg", quote)
+    quantified_choices = []
+    for heading in _QUANTIFIED_LIST.finditer(quote):
+        end = quote.find(")", heading.end())
+        if end != -1 and len({entry.key for entry in find_skills(quote[heading.end() : end])}) > 1:
+            quantified_choices.append((heading.end(), end))
+    quantified_option = False
+    direct_outside_choice = False
     for match in skill.pattern.finditer(quote):
+        in_choice = any(
+            start <= match.start() and match.end() <= end for start, end in quantified_choices
+        )
+        quantified_option |= in_choice
         before = quote[: match.start()]
         after = _VERSION_AFTER.sub("", quote[match.end() :], count=1)
         ends = [found.end() for found in _CLAUSE_END.finditer(before)]
@@ -122,7 +142,11 @@ def is_option(quote: str, skill: Skill) -> bool:
             or _EXAMPLE_BEFORE.search(clause_before)
         ):
             return True
-    return False
+        if not in_choice:
+            direct_outside_choice = True
+    # The quantified list cannot weaken a separate direct occurrence of this
+    # skill in the same quote. Existing or/slash/example readings stay intact.
+    return quantified_option and not direct_outside_choice
 
 
 def skill_evidence(requirements: Mapping[str, Any] | None, skill_key: str) -> SkillEvidence | None:
