@@ -24,6 +24,15 @@ MAX_RESPONSE_CHARS = 16_384
 _EvidenceId = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=64)]
 _SourceLabel = Annotated[str, StringConstraints(strict=True, pattern=r"^P[1-9][0-9]*$")]
 
+_CUSTOMER_AUDIENCE = r"(?:customers?|clients?)"
+_CUSTOMER_SUPPORT_QUERY = re.compile(
+    rf"\b(?P<negated>(?:no|not|without)\s+)?(?:"
+    rf"{_CUSTOMER_AUDIENCE}(?:\s*/\s*{_CUSTOMER_AUDIENCE})?[\s-]+(?:support|services?)"
+    rf"|support(?:\s+(?:for|to))?\s+{_CUSTOMER_AUDIENCE})\b",
+    re.IGNORECASE,
+)
+_CUSTOMER_MENTION = re.compile(rf"\b{_CUSTOMER_AUDIENCE}\b", re.IGNORECASE)
+
 
 class EvidenceItem(BaseModel):
     """One exact, caller-supplied statement; source labels name posting citations."""
@@ -153,3 +162,22 @@ def render_selection(result: SelectionResult) -> str:
         fence = "`" * max(3, longest + 1)
         blocks.append(f"Source text{citation}:\n{fence}text\n{item.text}\n{fence}")
     return "\n\n".join(blocks)
+
+
+def constrain_selection(result: SelectionResult, question: str) -> SelectionResult:
+    """Enforce a necessary audience scope for explicit customer-support queries.
+
+    Customer/client support or service requires an explicit customer/client
+    mention in each excerpt. This neither proves full semantic entailment nor
+    adds evidence: a generic LLM or employee-support excerpt cannot establish
+    the requested audience. Directly negated scope phrases do not activate it.
+    Invalid results remain invalid; removing all items is a valid abstention.
+    """
+    if not result.valid or not result.items:
+        return result
+    if not any(
+        match.group("negated") is None for match in _CUSTOMER_SUPPORT_QUERY.finditer(question)
+    ):
+        return result
+    items = tuple(item for item in result.items if _CUSTOMER_MENTION.search(item.text))
+    return result if items == result.items else SelectionResult(items=items)

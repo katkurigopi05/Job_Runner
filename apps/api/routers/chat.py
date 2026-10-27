@@ -71,6 +71,7 @@ from apps.api.chat_figures import (
 from apps.api.chat_selection import (
     EvidenceItem,
     SelectionResult,
+    constrain_selection,
     parse_selection,
     render_selection,
 )
@@ -81,7 +82,12 @@ from apps.api.protected_questions import (  # noqa: F401
     is_refused,
     names_a_protected_field,
 )
-from apps.api.routers.chat_evidence import skill_lines, skills_asked_about, unsupported_citations
+from apps.api.routers.chat_evidence import (
+    compound_required_evidence,
+    skill_lines,
+    skills_asked_about,
+    unsupported_citations,
+)
 from apps.worker.crawl_job import request_crawl
 from packages.ats.registry import detect_ats
 from packages.core import heartbeat
@@ -960,6 +966,7 @@ class Ready:
     #: A posting answer accepts only allowed source IDs, never model prose.
     selection_evidence: tuple[EvidenceItem, ...] | None = None
     selection_summary: str = ""
+    question: str = ""
 
 
 async def prepare(
@@ -1089,6 +1096,29 @@ async def prepare(
             factual_answer = owner_facts.answer()
         elif found.attempted and (asks_for_counts(question) or found.required_skill is not None):
             factual_answer = render_postings(found, skill_lines(found, named_skills, requirements))
+        elif (
+            found.attempted
+            and body.application_id is None
+            and not asks_about_own_applications(question)
+        ):
+            direct = compound_required_evidence(question, found, requirements)
+            if direct is not None:
+                factual_answer = "\n\n".join(
+                    (
+                        render_postings(found, include_sources=False),
+                        "Direct requirements established among the supplied postings follow. "
+                        "Alternatives, preferences and stack mentions are excluded. "
+                        "This sample does not establish an exhaustive required total."
+                        if direct.items
+                        else "No supplied posting establishes those direct requirements. "
+                        "This does not establish that no matching jobs exist.",
+                        render_selection(direct),
+                    )
+                ).rstrip()
+            elif found.roles and not found.beyond_role:
+                factual_answer = render_postings(
+                    found, skill_lines(found, named_skills, requirements)
+                )
     selection_evidence = None
     selection_summary = ""
     if (
@@ -1173,6 +1203,7 @@ async def prepare(
         factual_answer=factual_answer,
         selection_evidence=selection_evidence,
         selection_summary=selection_summary,
+        question=question,
     )
 
 
@@ -1405,7 +1436,7 @@ def selection_reply_for(ready: Ready, model: str | None, raw: str) -> ChatReply:
     """Render captured selections through the same validation as live replies."""
     evidence = ready.selection_evidence
     assert evidence is not None
-    selection = parse_selection(raw, evidence)
+    selection = constrain_selection(parse_selection(raw, evidence), ready.question)
     if not selection.valid or not selection.items:
         lead = (
             "No answer to the requested task was established by this selection. "

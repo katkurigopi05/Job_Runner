@@ -219,6 +219,7 @@ def _ready(case: dict[str, Any]) -> chat.Ready:
     found = TypeAdapter(Retrieval).validate_python(case["found"])
     return chat.Ready(
         selected="kaggle",
+        question=case["question"],
         include_mail=False,
         prompt=case["prompt"],
         found=found,

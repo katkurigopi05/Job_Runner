@@ -108,3 +108,18 @@ useful coverage, abstention, latency and total inference work before considering
 a separately reviewed change.
 
 New plans use schema version 2 and freeze separate prose and selection system hashes, plus the prompt registry source. Existing version-1 artifacts remain unchanged and require their original pinned checkout; do not rewrite them to bypass identity checks. New selection snapshots must carry the dedicated selection system, and prose snapshots must carry the prose system. Prose captures reject selection-protocol JSON rather than presenting it as an answer.
+
+
+Live selection and pilot captures apply the same narrow audience constraint:
+explicit customer/client support questions require a customer/client mention in
+each selected excerpt. This is a necessary scope check, not proof that every
+remaining excerpt entails the full question. Invalid selections remain invalid.
+
+The live preparation path answers pure role listings from structured retrieval,
+including title-only postings. Recognized two-skill AND/OR requirement questions
+use recorded direct-required classifications and exclude alternatives, preferences
+and stack mentions. Questions with extra task qualifiers, personal-application
+questions and selected-application context retain their existing answer paths.
+These local answers describe the supplied sample, not an exhaustive semantic
+search result. A focused frozen-retrieval replay can verify these routes without
+establishing general answer accuracy or replacing independent source review.

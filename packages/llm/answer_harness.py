@@ -18,7 +18,12 @@ from dataclasses import asdict, dataclass
 from types import MappingProxyType
 from typing import Any
 
-from apps.api.chat_selection import EvidenceItem, parse_selection, render_selection
+from apps.api.chat_selection import (
+    EvidenceItem,
+    constrain_selection,
+    parse_selection,
+    render_selection,
+)
 from packages.llm.provider import LLMProvider
 
 MAX_GUIDANCE = 800
@@ -220,7 +225,7 @@ async def capture_selection(
     prompt = selection_prompt(case, guidance)
     started = time.monotonic()
     raw = await caller.complete(case.system, prompt, stage=stage, max_tokens=180, temperature=0)
-    selected = parse_selection(raw, case.evidence)
+    selected = constrain_selection(parse_selection(raw, case.evidence), case.question)
     # Exercise the exact runtime renderer; model prose is never used as an answer.
     render_selection(selected)
     run = SelectionRun(
@@ -260,7 +265,7 @@ def validate_baseline(
             raise ValueError("Baseline has unknown, duplicate, or non-baseline runs")
         if run.system_sha256 != digest(case.system) or run.prompt_sha256 != digest(case.prompt):
             raise ValueError("Baseline does not match the frozen prompts")
-        parsed = parse_selection(run.raw, case.evidence)
+        parsed = constrain_selection(parse_selection(run.raw, case.evidence), case.question)
         failure = str(parsed.failure) if parsed.failure else None
         if (run.valid, run.ids, run.failure) != (parsed.valid, parsed.ids, failure):
             raise ValueError("Baseline protocol observations do not match its raw output")
