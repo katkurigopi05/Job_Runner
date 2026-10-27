@@ -105,19 +105,19 @@ DETAILS: dict[str, str] = {
     ),
     "kernel_missing": (
         "The saved kernel is no longer active in this Kaggle session. Reconnect here to "
-        "select the current kernel."
+        "select the current kernel, or run `make kaggle-setup`."
     ),
     "helper_missing": (
         "Kaggle kernel is reachable, but the Jobrunner helper is not loaded. Run the "
-        "model and helper cell in this kernel."
+        "model and helper cell in this kernel, or run `make kaggle-setup`."
     ),
     "helper_outdated": (
         "Kaggle kernel is reachable, but its helper cannot verify readiness. Run the "
-        "current Jobrunner helper cell again."
+        "current Jobrunner helper cell again, or run `make kaggle-setup`."
     ),
     "model_not_ready": (
         "Kaggle is connected, but the expected Qwen3 8B 4-bit GPU model is not ready. "
-        "Load it and run the helper in this kernel."
+        "Load it and run the helper in this kernel, or run `make kaggle-setup`."
     ),
     "ready": ("Qwen3 8B is loaded on the GPU and the Jobrunner helper is ready."),
     "select_kernel": (
