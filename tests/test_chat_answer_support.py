@@ -155,7 +155,7 @@ async def test_project_chat_capture_uses_exact_stub_context(client, worker_sessi
     ready = await chat.prepare(ChatRequest(message="jobs using kafka"), worker_session)
     assert isinstance(ready, chat.Ready)
     provider = StubProvider()
-    answer = await provider.complete(chat.SYSTEM, ready.prompt)
+    answer = await provider.complete(chat.SELECTION_SYSTEM, ready.prompt)
     reply = chat.reply_for(ready, "stub", answer)
     record = answer_support.capture("project-kafka", ready, reply)
     assert record.prompt == ready.prompt

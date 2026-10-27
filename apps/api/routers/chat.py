@@ -101,7 +101,7 @@ from packages.core.schemas import (
 from packages.crawler.discover import slug_from_ats_url
 from packages.llm import router as llm_router
 from packages.llm.audit import is_local
-from packages.llm.prompts import CHAT_SYSTEM
+from packages.llm.prompts import CHAT_SELECTION_SYSTEM, CHAT_SYSTEM
 from packages.llm.provider import (
     LLMError,
     ModelMissing,
@@ -150,6 +150,7 @@ ALLOWED_PROVIDERS = (
 
 #: Defined in packages/llm/prompts.py — see the note there on versioning.
 SYSTEM = CHAT_SYSTEM.text
+SELECTION_SYSTEM = CHAT_SELECTION_SYSTEM.text
 
 
 def _one_line(text: object) -> str:
@@ -734,14 +735,14 @@ def _postings_section(
     if found.place_total is not None:
         reach = "" if found.place_counts_complete else " among retrieved candidates"
         lines.append(
-            f"  place filter applied — in the Bay Area: {found.place_total}{reach}; "
+            f"  place filter applied — in {found.place_scope}: {found.place_total}{reach}; "
             f"{found.search_area_total} matching postings in your search area{reach} "
             "before this filter."
         )
         lines.append(
             f"  {found.remote_or_unplaced_not_listed} remote or unplaced roles "
             "in your search area are not listed "
-            f"because they do not establish a Bay Area office{reach}."
+            f"because they do not establish {found.place_office}{reach}."
         )
     if found.work_mode:
         lines.append(
@@ -822,7 +823,7 @@ def _postings_section(
     if not found.passages:
         within = " in the search area" if found.outside_area else ""
         lines.append(
-            "  none in the Bay Area"
+            f"  none in {found.place_scope}"
             if found.place_total is not None
             else (
                 f"  no open postings at {', '.join(map(_one_line, found.companies))}{within}"
@@ -843,7 +844,7 @@ def _postings_section(
         # separate: experimental semantic candidates need not say the term.
         if found.match_total is not None:
             scope = (
-                "in the Bay Area"
+                f"in {found.place_scope}"
                 if found.place_total is not None
                 else "in the search area"
                 if found.area
@@ -1146,7 +1147,7 @@ async def prepare(
         prompt = render()
     else:
         prompt, budget_report = pack(
-            system=SYSTEM,
+            system=SELECTION_SYSTEM if selection_evidence is not None else SYSTEM,
             render=render,
             labels=[p.label for p in (*found.passages, *earlier)],
             budget=context_budget,
@@ -1263,6 +1264,24 @@ def did_not_answer(selected: str, exc: LLMError) -> ApiError:
     )
 
 
+def validate_prose_answer(answer: str) -> None:
+    """Reject selection protocol data where the caller requested prose."""
+    raw = answer.strip()
+    if raw.startswith("```") and raw.endswith("```"):
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    try:
+        payload = json.loads(raw)
+    except (ValueError, RecursionError):
+        return
+    if isinstance(payload, dict) and set(payload) == {"ids"}:
+        raise LLMError("The model returned selection data instead of an answer.")
+
+
+def prose_reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
+    validate_prose_answer(answer)
+    return reply_for(ready, model, answer)
+
+
 def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
     """The finished answer and everything the dock lists under it."""
     selected, include_mail, found = ready.selected, ready.include_mail, ready.found
@@ -1330,7 +1349,7 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
         postings_share=ChatPostingShare.model_validate(found.share) if found.share else None,
         matched_term=found.matched_term,
         matched_companies=list(found.companies) if found.match_total is not None else [],
-        place_filter="Bay Area" if found.place_total is not None else None,
+        place_filter=found.place_name if found.place_total is not None else None,
         place_matched_total=found.place_total,
         place_counts_complete=found.place_counts_complete,
         search_area_matched_total=found.search_area_total,
@@ -1374,7 +1393,9 @@ async def selected_reply(ready: Ready) -> ChatReply:
     assert evidence is not None
     try:
         provider, model = provider_for(ready.selected)
-        raw = await provider.complete(SYSTEM, ready.prompt, max_tokens=180, temperature=0.0)
+        raw = await provider.complete(
+            SELECTION_SYSTEM, ready.prompt, max_tokens=180, temperature=0.0
+        )
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
     return selection_reply_for(ready, model, raw)
@@ -1434,6 +1455,7 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
         answer = await provider.complete(
             SYSTEM, ready.prompt, max_tokens=ANSWER_TOKENS, temperature=ANSWER_TEMPERATURE
         )
+        validate_prose_answer(answer)
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
     return reply_for(ready, model, answer)

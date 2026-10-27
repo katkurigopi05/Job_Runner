@@ -10,6 +10,7 @@ import pytest
 
 from apps.api.chat_selection import EvidenceItem
 from packages.llm.answer_harness import (
+    GUIDANCE_POLICIES,
     MAX_GUIDANCE,
     BudgetedCaller,
     FrozenSelectionCase,
@@ -20,6 +21,7 @@ from packages.llm.answer_harness import (
     digest,
     make_split,
     run_pilot,
+    selection_prompt,
     validate_baseline,
 )
 
@@ -27,9 +29,10 @@ from packages.llm.answer_harness import (
 class FakeProvider:
     name = "fake"
 
-    def __init__(self, *, response=None, delay=0):
+    def __init__(self, *, response=None, delay=0, guidance_key="all_constraints"):
         self.response = response
         self.delay = delay
+        self.guidance_key = guidance_key
         self.calls = []
 
     async def complete(self, system, user, *, max_tokens, temperature):
@@ -39,7 +42,7 @@ class FakeProvider:
         if self.response is not None:
             return self.response
         if max_tokens == 256:
-            return '{"guidance":"Select only directly relevant existing evidence IDs."}'
+            return json.dumps({"guidance": self.guidance_key})
         return '{"ids":["E1"]}'
 
 
@@ -106,11 +109,12 @@ async def test_capture_preserves_system_and_catalog_and_uses_runtime_parser():
     provider = FakeProvider(response='{"ids":["invented"]}')
     events = []
     caller = BudgetedCaller(provider, max_calls=1, max_seconds=10, emit=events.append)
-    run = await capture_selection(case, caller, guidance="Prefer exact evidence.")
+    guidance = GUIDANCE_POLICIES["direct_evidence"]
+    run = await capture_selection(case, caller, guidance=guidance)
     assert provider.calls == [
         (
             case.system,
-            case.prompt + "\n\nExperimental selection guidance:\nPrefer exact evidence.",
+            case.prompt + "\n\nExperimental selection guidance:\n" + guidance,
             180,
             0,
         )
@@ -126,16 +130,25 @@ async def test_capture_preserves_system_and_catalog_and_uses_runtime_parser():
     assert events[-1]["run"]["raw"] == '{"ids":["invented"]}'
 
 
-async def test_full_pilot_uses_76_requests_and_never_leaks_holdout_to_improver():
+@pytest.mark.parametrize("guidance_key", GUIDANCE_POLICIES)
+async def test_full_pilot_uses_76_requests_and_never_leaks_holdout_to_improver(guidance_key):
     selected = cases()
     split = make_split(selected)
-    provider = FakeProvider()
+    provider = FakeProvider(guidance_key=guidance_key)
     caller = BudgetedCaller(provider, max_calls=76, max_seconds=30)
     result = await run_pilot(selected, split, baseline_for(selected), caller)
     assert caller.calls == len(provider.calls) == 76
     assert len(result["runs"]) == 72
     assert result["chosen"] == "baseline" and result["promotion"] == "requires_owner_review"
     assert result["lesson"]["status"] == "unreviewed"
+    advice = GUIDANCE_POLICIES[guidance_key]
+    assert set(result["guidance"].values()) == {advice}
+    assert result["lesson"]["guidance"] == advice
+    assert len(advice) <= MAX_GUIDANCE
+    selections = [user for _, user, tokens, _ in provider.calls if tokens == 180]
+    assert all(
+        prompt.endswith("\n\nExperimental selection guidance:\n" + advice) for prompt in selections
+    )
     improver_prompts = [user for _, user, tokens, _ in provider.calls if tokens == 256]
     assert len(improver_prompts) == 4
     for case in selected:
@@ -181,7 +194,15 @@ async def test_full_pilot_uses_76_requests_and_never_leaks_holdout_to_improver()
         '{"guidance":""}',
         '{"guidance":true}',
         '{"guidance":"x","guidance":"y"}',
+        '{"guidance":"all_constraints "}',
+        json.dumps({"guidance": GUIDANCE_POLICIES["all_constraints"]}),
         json.dumps({"guidance": "x" * (MAX_GUIDANCE + 1)}),
+        json.dumps(
+            {
+                "guidance": "Select evidence that explicitly mentions Kafka and low-latency "
+                "streaming pipelines, prioritizing Kafka-specific requirements."
+            }
+        ),
     ],
 )
 async def test_malformed_improvement_aborts_without_probe(raw):
@@ -191,6 +212,22 @@ async def test_malformed_improvement_aborts_without_probe(raw):
     with pytest.raises(ValueError):
         await run_pilot(selected, make_split(selected), baseline_for(selected), caller)
     assert caller.calls == len(provider.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "guidance", ["all_constraints", "Focus on Kafka and low-latency pipelines."]
+)
+async def test_capture_rejects_unapproved_suffix_before_provider_dispatch(guidance):
+    provider = FakeProvider()
+    caller = BudgetedCaller(provider, max_calls=1, max_seconds=10)
+    with pytest.raises(ValueError, match="fixed selection policy"):
+        await capture_selection(cases(1)[0], caller, guidance=guidance)
+    assert caller.calls == 0 and not provider.calls
+
+
+def test_baseline_prompt_has_no_experimental_suffix():
+    case = cases(1)[0]
+    assert selection_prompt(case) == case.prompt
 
 
 @pytest.mark.parametrize(

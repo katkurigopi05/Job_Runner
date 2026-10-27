@@ -33,7 +33,7 @@ from packages.core import db
 from packages.core.config import get_settings, settings_env_file
 from packages.core.schemas import ChatReply
 from packages.llm import answer_harness as pilot_method
-from packages.llm import kaggle_connection
+from packages.llm import kaggle_connection, prompts
 from packages.llm.answer_harness import (
     BudgetedCaller,
     FrozenSelectionCase,
@@ -63,6 +63,7 @@ def runtime_identity() -> dict[str, str]:
         "selection_protocol": selection_protocol.__file__,
         "chat_renderer": chat.__file__,
         "answer_review": answer_support.__file__,
+        "prompt_registry": prompts.__file__,
     }
     return {name: digest(Path(path).read_text()) for name, path in files.items()}
 
@@ -120,7 +121,8 @@ def selection_cases(cases: list[dict[str, Any]]) -> list[FrozenSelectionCase]:
             # They have no prompt or retrieval state and must never call a model.
             ChatReply.model_validate(case["code_reply"])
             continue
-        if case["system"] != chat.SYSTEM:
+        expected_system = chat.SELECTION_SYSTEM if case["mode"] == "selection" else chat.SYSTEM
+        if case["system"] != expected_system:
             raise ValueError("Frozen system differs from this checkout")
         if case["mode"] == "selection":
             selected.append(
@@ -149,11 +151,12 @@ def prepare(source: Path, output: Path) -> dict[str, Any]:
     if baseline_calls + pilot_calls > 200:
         raise ValueError("Frozen set exceeds the bounded pilot request ceiling")
     plan = {
-        "schema_version": 1,
+        "schema_version": 2,
         "upstream_commit": UPSTREAM,
         "method": "Harness2-inspired; existing Jobrunner guarded provider",
         "source_sha256": digest(_json(cases)),
         "system_sha256": digest(chat.SYSTEM),
+        "selection_system_sha256": digest(chat.SELECTION_SYSTEM),
         "runtime_sha256": runtime_identity(),
         "split": asdict(split),
         "cases": len(cases),
@@ -186,7 +189,7 @@ def load_plan(run: Path) -> tuple[list[dict[str, Any]], dict[str, Any], PilotSpl
     split = make_split(selected)
     expected_split = json.loads(_json(asdict(split)))
     if (
-        plan["schema_version"] != 1
+        plan["schema_version"] != 2
         or plan["upstream_commit"] != UPSTREAM
         or plan["runtime_sha256"] != runtime_identity()
         or plan["cases"] != len(cases)
@@ -201,6 +204,7 @@ def load_plan(run: Path) -> tuple[list[dict[str, Any]], dict[str, Any], PilotSpl
         or plan["promotion"] != "requires_owner_review"
         or plan["source_sha256"] != digest(_json(cases))
         or plan["system_sha256"] != digest(chat.SYSTEM)
+        or plan["selection_system_sha256"] != digest(chat.SELECTION_SYSTEM)
         or plan["split"] != expected_split
         or plan["repeats"] != REPEATS
         or plan["provider"] != "kaggle"
@@ -397,7 +401,7 @@ async def run_phase(run: Path, phase: str) -> dict[str, Any]:
                                     max_tokens=chat.ANSWER_TOKENS,
                                     temperature=chat.ANSWER_TEMPERATURE,
                                 )
-                                reply = chat.reply_for(_ready(case), MODEL, raw)
+                                reply = chat.prose_reply_for(_ready(case), MODEL, raw)
                             key = f"{case['id']}:baseline:{repeat}"
                             state["responses"].append(
                                 {

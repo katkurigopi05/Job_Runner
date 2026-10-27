@@ -33,9 +33,7 @@ class FakeProvider:
         if self.fail:
             raise RuntimeError("PRIVATE_PROMPT_CREDENTIAL_MUST_NOT_ESCAPE")
         if max_tokens == 256:
-            return (
-                '{"guidance":"Use only relevant catalogue IDs and preserve exact source evidence."}'
-            )
+            return '{"guidance":"all_constraints"}'
         if user == "PROSE_WITH_MAIL_EXCLUDED":
             return "Recruiter mail was excluded."
         return '{"ids":["P1"]}'
@@ -63,7 +61,7 @@ def frozen_cases():
         {
             "id": f"selection-{index}",
             "mode": "selection",
-            "system": chat.SYSTEM,
+            "system": chat.SELECTION_SYSTEM,
             "question": f"Question {index}?",
             "prompt": 'EVIDENCE_SELECTION\n{"id":"P1","text":"Source requires Python."}'
             f"\nQuestion {index}?",
@@ -301,7 +299,7 @@ async def test_candidate_reviews_freeze_exact_sent_prompt_and_pending_owner_revi
     actual_selection_prompts = [user for _, user, tokens, _ in provider.calls[37:] if tokens == 180]
     assert len(actual_selection_prompts) == len(reviews)
     assert [record["prompt"] for record in reviews] == actual_selection_prompts
-    assert all(record["system"] == chat.SYSTEM for record in reviews)
+    assert all(record["system"] == chat.SELECTION_SYSTEM for record in reviews)
     assert all(AnswerReview.model_validate(record) for record in reviews)
     assert all(
         line["verdict"] == "pending" and line["reviewer"] is None

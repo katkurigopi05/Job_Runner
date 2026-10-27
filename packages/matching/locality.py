@@ -1303,6 +1303,33 @@ def names_bay_area_office(location: str | None, *, title: str | None) -> bool:
     return all(names_no_place(part) for part in parts) and locality_of(title) is Locality.BAY_AREA
 
 
+def bay_area_city_names(text: str) -> tuple[str, ...]:
+    """Canonical complete city names, excluding regional labels."""
+    names = []
+    for match in _BAY_AREA_RE.finditer(_fold(text)):
+        name = match.group().casefold()
+        if name in {"bay area", "silicon valley"}:
+            continue
+        name = "san francisco" if name == "sf" else name
+        if name not in names:
+            names.append(name)
+    return tuple(names)
+
+
+def names_city_office(location: str | None, *, title: str | None, cities: tuple[str, ...]) -> bool:
+    """Match a complete city in an eligible office; location outranks title."""
+
+    def matches(part: str | None) -> bool:
+        return locality_of(part) is Locality.BAY_AREA and bool(
+            set(bay_area_city_names(part or "")) & set(cities)
+        )
+
+    parts = locations_in(location)
+    if any(matches(part) for part in parts):
+        return True
+    return all(names_no_place(part) for part in parts) and matches(title)
+
+
 @lru_cache(maxsize=4096)
 def has_unplaced_location(location: str | None) -> bool:
     """No listed office supplies a recognized place (including an empty field).

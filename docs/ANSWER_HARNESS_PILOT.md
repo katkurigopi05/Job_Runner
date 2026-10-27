@@ -55,11 +55,17 @@ set requires at most 91 requests (30 semantic cases × three, plus one prose
 case). Inference uses only the existing privacy-protected Kaggle provider with
 its readiness, audit, quota and 4096-token context checks. There is no fallback.
 
-`pilot` requires the complete matching baseline. It proposes two bounded
-instruction variants, probes each on development cases, composes a third and
+`pilot` requires the complete matching baseline. It chooses two policies from a fixed
+local allowlist, probes each on development cases, chooses a composed policy and
 probes that variant on development and heldout cases. Every semantic probe runs
 three times. Improvement and reflection receive development evidence only;
-heldout outputs never become improvement feedback. All source material stays
+heldout outputs never become improvement feedback. Improvement/reflection JSON must
+be exactly `{"guidance":"policy-key"}`, where the key is `all_constraints`,
+`direct_evidence`, or `conservative`. The runner expands keys into immutable,
+query-neutral instructions locally. Arbitrary generated instruction text is rejected
+before any probe; examples cannot add a Kafka or other topic constraint to unrelated
+questions. Composition selects one approved policy rather than writing new text.
+All source material stays
 intact; an oversized request fails rather than silently truncating evidence.
 
 The pilot permits at most 76 requests: 54 development probes, 18 heldout probes,
@@ -100,3 +106,5 @@ and `promotion=requires_owner_review`. No candidate is automatically promoted,
 including one with better protocol-validity counts. Compare semantic support,
 useful coverage, abstention, latency and total inference work before considering
 a separately reviewed change.
+
+New plans use schema version 2 and freeze separate prose and selection system hashes, plus the prompt registry source. Existing version-1 artifacts remain unchanged and require their original pinned checkout; do not rewrite them to bypass identity checks. New selection snapshots must carry the dedicated selection system, and prose snapshots must carry the prose system. Prose captures reject selection-protocol JSON rather than presenting it as an answer.
