@@ -37,6 +37,20 @@ selects that notebook automatically. Otherwise the picker shows labels such as
 of opaque kernel IDs. Two ready notebooks still require an explicit choice.
 The other notebook is not deleted or restarted.
 
+For a new Harness evaluation, opt into the currently ready model when freezing
+the plan:
+
+```sh
+python -m scripts.run_answer_harness prepare CASES OUTPUT --auto-model
+```
+
+The detected model is pinned in that plan. Baseline and pilot phases refuse a
+different loaded model and report the pinned identity in every captured reply.
+They also require enough shared quota for the complete planned phase before
+sending any inference prompt; a quota-blocked zero-call phase is retryable.
+Preparing a plan performs readiness checks only, not inference. Existing sealed
+evaluation files are never edited. Omitting the option retains the 8B default.
+
 For an already staged and verified 27B engine, run the contents of
 `scripts/kaggle_qwen38_helper.py` in its kernel, then install:
 
