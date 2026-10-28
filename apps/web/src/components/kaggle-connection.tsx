@@ -18,6 +18,7 @@ interface KaggleStatus {
   detail: string;
   kernel_id: string | null;
   kernels: string[];
+  kernel_options?: { id: string; label: string; state: KaggleState; model: string | null }[];
   model: string | null;
   context_tokens: number | null;
 }
@@ -182,7 +183,11 @@ export function KaggleConnection() {
                 required
               >
                 <option value="">Choose a notebook</option>
-                {status.kernels.map((kernel) => <option key={kernel} value={kernel}>{kernel}</option>)}
+                {status.kernels.map((kernel, index) => (
+                  <option key={kernel} value={kernel}>
+                    {status.kernel_options?.find((option) => option.id === kernel)?.label ?? `Notebook ${index + 1}`}
+                  </option>
+                ))}
               </select>
             </div>
           ) : null}

@@ -30,6 +30,13 @@ than relabelled. This does not change the default local provider or enable
 fallback during a question. An unknown model needs a reviewed helper contract
 before it can join auto selection.
 
+When a session has multiple notebooks, reconnect checks their readiness without
+generating answers. If exactly one notebook has a ready supported model, it
+selects that notebook automatically. Otherwise the picker shows labels such as
+“Notebook 2 — Qwen3.8 27B Q6_K” or “Notebook 1 — no model helper loaded” instead
+of opaque kernel IDs. Two ready notebooks still require an explicit choice.
+The other notebook is not deleted or restarted.
+
 For an already staged and verified 27B engine, run the contents of
 `scripts/kaggle_qwen38_helper.py` in its kernel, then install:
 
@@ -98,7 +105,9 @@ The manual steps below do the same by hand.
    chat, issues, screenshots, shell command arguments or tracked files.
 4. In the dashboard assistant, select **Kaggle GPU (remote)**, click
    **Reconnect**, and paste the URL into the password field. Click **Save and
-   check**. If several kernels are active, choose the ID printed in step 2.
+   check**. If several notebooks are active and exactly one is ready, it is
+   selected automatically. Otherwise choose a notebook using its model/readiness
+   label. The printed kernel ID remains useful for the CLI/manual connection.
    The URL is stored privately on this machine and is never returned by the API.
 
    The panel distinguishes an unavailable session, a restarted kernel, a missing

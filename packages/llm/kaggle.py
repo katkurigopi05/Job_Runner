@@ -131,6 +131,15 @@ DETAILS: dict[str, str] = {
 }
 
 
+class KaggleKernelOption(BaseModel):
+    """Human-readable readiness alongside the opaque kernel identifier."""
+
+    id: UUID
+    label: str
+    state: State
+    model: str | None = None
+
+
 class KaggleStatus(BaseModel):
     """Public connection state, never its credential-bearing server URL."""
 
@@ -138,6 +147,7 @@ class KaggleStatus(BaseModel):
     detail: str
     kernel_id: UUID | None = None
     kernels: list[UUID] = Field(default_factory=list)
+    kernel_options: list[KaggleKernelOption] = Field(default_factory=list)
     model: str | None = None
     context_tokens: int | None = None
 
