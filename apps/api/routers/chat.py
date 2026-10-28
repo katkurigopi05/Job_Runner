@@ -1207,13 +1207,9 @@ async def prepare(
     )
 
 
-async def provider_for(selected: str) -> tuple[Any, str | None]:
+def provider_for(selected: str) -> tuple[Any, str | None]:
     """The provider that was asked for, refused if it is not what its name says."""
-    provider: Any = llm_router.build_provider(selected)
-    if selected == "kaggle":
-        health = await provider.health()
-        if health.state != "ready":
-            raise LLMError(health.detail)
+    provider = llm_router.build_provider(selected)
     model = getattr(provider, "model", None)
     # Kept even though remote providers are now permitted, because this
     # check was never only about where the answer came from — it is about
@@ -1427,13 +1423,13 @@ async def selected_reply(ready: Ready) -> ChatReply:
     evidence = ready.selection_evidence
     assert evidence is not None
     try:
-        provider, model = await provider_for(ready.selected)
+        provider, model = provider_for(ready.selected)
         raw = await provider.complete(
             SELECTION_SYSTEM, ready.prompt, max_tokens=180, temperature=0.0
         )
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
-    return selection_reply_for(ready, model, raw)
+    return selection_reply_for(ready, getattr(provider, "model", model), raw)
 
 
 def selection_reply_for(ready: Ready, model: str | None, raw: str) -> ChatReply:
@@ -1486,11 +1482,11 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     if ready.selection_evidence is not None:
         return await selected_reply(ready)
     try:
-        provider, model = await provider_for(ready.selected)
+        provider, model = provider_for(ready.selected)
         answer = await provider.complete(
             SYSTEM, ready.prompt, max_tokens=ANSWER_TOKENS, temperature=ANSWER_TEMPERATURE
         )
         validate_prose_answer(answer)
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
-    return reply_for(ready, model, answer)
+    return reply_for(ready, getattr(provider, "model", model), answer)

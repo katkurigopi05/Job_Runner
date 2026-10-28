@@ -216,9 +216,6 @@ async def test_chat_can_choose_kaggle_but_not_as_default(client, monkeypatch) ->
 
     stub = StubProvider({"": "A supported answer."})
     stub.model = MODEL
-    from unittest.mock import AsyncMock
-
-    stub.health = AsyncMock(return_value=kaggle.KaggleStatus(state="ready", detail="Ready"))
     selected: list[str] = []
 
     def build(name):
