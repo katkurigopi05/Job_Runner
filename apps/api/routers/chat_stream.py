@@ -175,7 +175,7 @@ async def chat_stream(body: ChatRequest) -> StreamingResponse:
             _unwritten(reply), media_type=STREAM_MEDIA_TYPE, headers=STREAM_HEADERS
         )
     try:
-        provider, model = provider_for(ready.selected)
+        provider, model = await provider_for(ready.selected)
         pieces = _prose_pieces(
             stream_text(
                 provider,

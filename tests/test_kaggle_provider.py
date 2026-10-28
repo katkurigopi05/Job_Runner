@@ -176,7 +176,7 @@ def test_factory_uses_explicit_configuration(connection: Path, monkeypatch) -> N
     get_settings.cache_clear()
     try:
         provider = build_provider("kaggle")
-        assert provider.name == "kaggle" and provider.model == MODEL
+        assert provider.name == "kaggle" and provider.model is None  # resolved by live readiness
         assert str(provider.connection.kernel_id) == KERNEL
     finally:
         get_settings.cache_clear()
@@ -216,6 +216,9 @@ async def test_chat_can_choose_kaggle_but_not_as_default(client, monkeypatch) ->
 
     stub = StubProvider({"": "A supported answer."})
     stub.model = MODEL
+    from unittest.mock import AsyncMock
+
+    stub.health = AsyncMock(return_value=kaggle.KaggleStatus(state="ready", detail="Ready"))
     selected: list[str] = []
 
     def build(name):

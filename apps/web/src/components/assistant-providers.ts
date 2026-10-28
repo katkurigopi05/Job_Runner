@@ -16,8 +16,8 @@ export const PROVIDERS = [
   },
   {
     value: "kaggle",
-    label: "Kaggle GPU (remote)",
-    hint: "Uses Qwen3 8B in your running Kaggle notebook. Sends your question and retrieved application, profile and résumé skill context to Kaggle. Recruiter mail is withheld unless you share it.",
+    label: "Kaggle GPU (auto, remote)",
+    hint: "Automatically uses a ready supported model in your running Kaggle notebook. Check the connection for the selected model. Sends your question and retrieved application, profile and résumé skill context to Kaggle. Recruiter mail is withheld unless you share it.",
     local: false,
   },
   {

@@ -93,22 +93,38 @@ def serve(monkeypatch, session: FakeSession) -> None:
                     out.append("Installed the Jobrunner helper.")
                 else:
                     error = ("NameError", "name 'model' is not defined")
+            elif "install(jobrunner27_engine" in code:
+                kernel["qwen38_helper"] = True
+                out.append("Installed the Jobrunner helper.")
             results = {}
             for name, expression in content["user_expressions"].items():
                 if expression == kaggle_setup.PROBE:
                     value = {
                         "model": bool(kernel.get("model")),
-                        "helper": bool(kernel.get("helper")),
+                        "helper": bool(kernel.get("helper") or kernel.get("qwen38_helper")),
+                        "qwen38_model": bool(kernel.get("qwen38_model")),
                     }
                 elif "jobrunner_health" in expression:
                     value = (
                         {
                             "state": "ready",
                             "protocol": 1,
-                            "model": kaggle.MODEL,
+                            "model": kaggle.QWEN38_MODEL
+                            if kernel.get("qwen38_helper")
+                            else kaggle.MODEL,
                             "context_tokens": 4096,
+                            **(
+                                {
+                                    "helper": "jobrunner_qwen38_complete",
+                                    "gpu_count": 2,
+                                    "thinking": False,
+                                    "model_sha256": kaggle.QWEN38_SHA256,
+                                }
+                                if kernel.get("qwen38_helper")
+                                else {}
+                            ),
                         }
-                        if kernel.get("helper")
+                        if kernel.get("helper") or kernel.get("qwen38_helper")
                         else {"state": "helper_missing"}
                     )
                 else:
@@ -177,6 +193,26 @@ async def test_a_ready_saved_kernel_is_left_alone(saved_file, monkeypatch):
     assert state == "ready"
     assert session.started == [] and session.deleted == [] and session.cells == []
     assert saved_file.read_bytes() == before
+    assert_private(said, session)
+
+
+async def test_auto_keeps_ready_27b_without_loading_8b(saved_file, monkeypatch):
+    session = FakeSession({SAVED: {"qwen38_model": True, "qwen38_helper": True, "clients": 1}})
+    serve(monkeypatch, session)
+    state, said = await run(session, saved_file)
+    assert state == "ready"
+    assert session.started == session.deleted == session.cells == []
+    assert "Qwen3.8 27B" in said
+    assert_private(said, session)
+
+
+async def test_loaded_27b_gets_only_its_helper(saved_file, monkeypatch):
+    session = FakeSession({SAVED: {"qwen38_model": True}})
+    serve(monkeypatch, session)
+    state, said = await run(session, saved_file)
+    assert state == "ready" and session.started == []
+    assert [code for _, code in session.cells] == [kaggle_setup.helper_cell(qwen38=True)]
+    assert "Loading the model" not in said
     assert_private(said, session)
 
 

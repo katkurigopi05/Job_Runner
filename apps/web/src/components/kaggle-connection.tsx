@@ -138,7 +138,8 @@ export function KaggleConnection() {
         </button>
       </div>
       <p className="text-xs text-ink-faint">
-        IDE connection is separate. Restarting Kaggle requires reconnecting here and loading the model/helper.
+        Auto uses a ready supported model in this notebook. IDE connection is separate.
+        Restarting Kaggle requires reconnecting here and loading the model/helper.
       </p>
       {error ? <p role="alert" className="text-xs text-stop">{error}</p> : null}
       {expanded ? (

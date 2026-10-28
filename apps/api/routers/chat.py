@@ -1207,9 +1207,13 @@ async def prepare(
     )
 
 
-def provider_for(selected: str) -> tuple[Any, str | None]:
+async def provider_for(selected: str) -> tuple[Any, str | None]:
     """The provider that was asked for, refused if it is not what its name says."""
-    provider = llm_router.build_provider(selected)
+    provider: Any = llm_router.build_provider(selected)
+    if selected == "kaggle":
+        health = await provider.health()
+        if health.state != "ready":
+            raise LLMError(health.detail)
     model = getattr(provider, "model", None)
     # Kept even though remote providers are now permitted, because this
     # check was never only about where the answer came from — it is about
@@ -1423,7 +1427,7 @@ async def selected_reply(ready: Ready) -> ChatReply:
     evidence = ready.selection_evidence
     assert evidence is not None
     try:
-        provider, model = provider_for(ready.selected)
+        provider, model = await provider_for(ready.selected)
         raw = await provider.complete(
             SELECTION_SYSTEM, ready.prompt, max_tokens=180, temperature=0.0
         )
@@ -1482,7 +1486,7 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
     if ready.selection_evidence is not None:
         return await selected_reply(ready)
     try:
-        provider, model = provider_for(ready.selected)
+        provider, model = await provider_for(ready.selected)
         answer = await provider.complete(
             SYSTEM, ready.prompt, max_tokens=ANSWER_TOKENS, temperature=ANSWER_TEMPERATURE
         )

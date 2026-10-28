@@ -1,6 +1,6 @@
 # Kaggle GPU dashboard assistant
 
-Choose **Kaggle GPU (remote)** per question in the dashboard assistant.
+Choose **Kaggle GPU (auto, remote)** per question in the dashboard assistant.
 The default remains local Ollama. Kaggle receives the question and retrieved
 application/profile/skill context. Recruiter mail and mail-bearing history
 remain withheld unless **share mail** is enabled for that question. Protected
@@ -12,6 +12,41 @@ placeholders locally. Identifying URLs are masked when they contain these
 contacts. Other identifying prose can remain; this does not anonymize the
 context or replace the separate mail-consent choice. The mapping is held only
 in local memory, not sent to the notebook, logged or persisted.
+
+## Auto model selection
+
+The connection panel checks the helpers already loaded in the selected kernel,
+without generating an answer or loading weights. It supports:
+
+| Loaded model | Helper | Readiness requirements |
+|---|---|---|
+| Qwen3.8 27B UD-Q6_K | `jobrunner_qwen38_complete` | Pinned artifact SHA-256, two GPUs, thinking disabled, 4,096-token context |
+| Qwen3 8B 4-bit | `jobrunner_complete` | Existing verified protocol-1 GPU helper, 4,096-token context |
+
+Auto prefers ready 27B, otherwise ready 8B. It binds that choice before a question
+is sent and refuses a model change during the request. The status panel, reply
+metadata and audit name the actual model; unsupported models are refused rather
+than relabelled. This does not change the default local provider or enable
+fallback during a question. An unknown model needs a reviewed helper contract
+before it can join auto selection.
+
+For an already staged and verified 27B engine, run the contents of
+`scripts/kaggle_qwen38_helper.py` in its kernel, then install:
+
+```python
+jobrunner_qwen38_complete = install(
+    jobrunner27_engine, jobrunner27_tokenizer, jobrunner27_identity
+)
+```
+
+The identity must come from the artifact-hash and two-GPU allocation checks in
+the loader, not an invented model label. The supported GGUF SHA-256 is
+`c9c206812fbe4ac7b76a729e25928b63f2ae89d37f69da7a71c20aec763cd436`.
+Installing this helper does not download or reload the model. `make kaggle-setup`
+preserves a ready 27B helper; if the three `jobrunner27_*` globals above survive,
+it can reinstall just that helper. It does not stage or download 27B weights.
+After a complete session restart, stage and load 27B again before using auto;
+the existing fresh-kernel setup path still loads the attached 8B dataset.
 
 ## Quick start: one command per session
 
