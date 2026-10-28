@@ -1316,6 +1316,27 @@ def has_unplaced_location(location: str | None) -> bool:
     )
 
 
+def wholly_abroad(location: str | None) -> bool:
+    """Every office the location lists is explicitly outside the United States.
+
+    Stricter than `area_exclusion`, which also excludes on-site jobs in other
+    states: this is the rule for *not storing* a posting, so it needs positive
+    evidence that no part of it is American. A field that names no place, a
+    part no rule recognizes ("2 Locations"), or a bare name shared with a
+    Californian city ("Dublin", `_AMBIGUOUS_CALIFORNIA_CITIES`) is not that
+    evidence, and one American office keeps the whole posting.
+    """
+    parts = locations_in(location)
+    if not parts:
+        return False
+    for part in parts:
+        if locality_of(part) is not Locality.ELSEWHERE:
+            return False
+        if _fold(part).strip(" .").lower() in _AMBIGUOUS_CALIFORNIA_CITIES:
+            return False
+    return True
+
+
 def area_exclusion(
     location: str | None,
     *,

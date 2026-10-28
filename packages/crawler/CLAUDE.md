@@ -590,3 +590,29 @@ largest systems among them. Both are read now.
 `tests/test_breezy_reader.py`, `tests/test_rippling_reader.py`, with trimmed
 public payloads and their provenance in `tests/fixtures/breezy` and
 `tests/fixtures/rippling`.
+
+## New postings wholly abroad are not stored (2026-10-28)
+
+The crawler stored every posting a board listed and left the search area to
+the scoring gate and the feed. After the 244 sheet boards were added, one
+sweep stored 12,573 postings in six hours, 3,703 of them wholly abroad; the
+owner had 9,175 deleted (backup first, list in
+`storage/exports/non_us_postings/`). Boards poll hourly, so a deleted posting
+came straight back as new.
+
+`_store` now skips a **new** posting when `locality.wholly_abroad` says every
+office it lists is abroad and `Settings.search_us_only` is on, beside the age
+rule and with the same exception: a posting already held is still stamped as
+seen, or `_close_missing` would close a listed job. What must not be undone:
+
+- **One American office keeps the posting** ("San Francisco, CA; Toronto, ON").
+- **No evidence is not evidence of abroad.** A location that names no place,
+  a part no rule places ("2 Locations", Workday's list form), and a bare name
+  shared with a Californian city ("Dublin", `_AMBIGUOUS_CALIFORNIA_CITIES`)
+  are all stored, and the area rule decides at read time as before.
+- **It follows the setting.** With `search_us_only` off everything is stored
+  again from the next poll; postings skipped earlier come back only when a
+  board is next read, since nothing was kept to restore.
+
+`StoreResult.abroad` counts the skips and `abroad_postings_not_stored` logs
+them per company. `tests/test_crawl_skips_abroad.py`.
