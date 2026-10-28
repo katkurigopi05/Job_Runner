@@ -148,7 +148,13 @@ async def test_discovery_counts_the_whole_board_from_its_first_page():
     assert len(calls) == 1
 
 
-async def test_a_crawl_stores_every_page_and_reads_job_pages_within_budget(db_session):
+async def test_a_crawl_stores_every_page_and_reads_job_pages_within_budget(db_session, monkeypatch):
+    from packages.core.config import get_settings
+
+    # One of Branch's jobs is abroad, which a US-only search does not store
+    # (tests/test_crawl_skips_abroad.py). This test is about paging and the
+    # job-page budget, so it reads the whole board.
+    monkeypatch.setattr(get_settings(), "search_us_only", False)
     seed = CompanySeed(name="Branch", slug="branch", ats="rippling", poll_interval_s=0)
     fetcher, calls = _board()
     result = await crawl_company(db_session, seed, fetcher, force=True)
