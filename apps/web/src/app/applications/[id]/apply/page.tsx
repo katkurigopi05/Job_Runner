@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { API_BASE, ApiError, api, type ApplicationPacket } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
 import { CopyRow } from "@/components/copy-row";
+import { APPLY_LINK } from "@/lib/external";
 
 export const dynamic = "force-dynamic";
 
@@ -79,7 +80,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
 
           <a
             href={packet.apply_url}
-            target="jobrunner-form"
+            {...APPLY_LINK}
             className="mt-6 inline-block rounded-[var(--radius)] bg-go px-5 py-2.5 font-mono text-sm text-on-accent transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-go"
           >
             Open the application form ↗

@@ -11,6 +11,7 @@ import { ResumeDiffView } from "@/components/resume-diff";
 import { TailoringCompare } from "@/components/tailoring-compare";
 import { CoverLetterView } from "@/components/cover-letter";
 import { FillRate, StatusPill } from "@/components/status";
+import { POSTING_LINK } from "@/lib/external";
 import {
   approve,
   reject,
@@ -140,8 +141,7 @@ export function ReviewCard({
             <h2 className="font-display text-2xl leading-tight">{host}</h2>
             <a
               href={application.url}
-              target="jobrunner-form"
-              rel="noreferrer"
+              {...POSTING_LINK}
               className="mt-1 block truncate font-mono text-xs text-ink-faint underline-offset-4 hover:text-ink-soft hover:underline"
             >
               {application.url}

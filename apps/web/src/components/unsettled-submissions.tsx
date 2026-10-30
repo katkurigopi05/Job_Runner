@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import type { UnsettledSubmission } from "@/lib/api";
 import { recordNotSubmitted, recordSubmitted } from "@/app/finish/actions";
-import { openExternal } from "@/lib/external";
+import { openApplyForm } from "@/lib/external";
 
 /**
  * Attempts to send that nobody has vouched for, one answer each.
@@ -63,7 +63,7 @@ export function UnsettledSubmissions({ initial }: { initial: UnsettledSubmission
             <div className="mt-3 flex flex-wrap gap-3">
               <button
                 type="button"
-                onClick={() => openExternal(row.url)}
+                onClick={() => openApplyForm(row.url)}
                 className="rounded-[var(--radius)] border border-rule px-3 py-1.5 font-mono text-xs text-ink-soft transition-colors hover:border-go hover:text-go"
               >
                 open posting
