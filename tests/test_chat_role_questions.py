@@ -246,8 +246,9 @@ async def test_the_reply_carries_the_count_and_the_rest_of_the_list(
     assert len(body["sources"]) == 5
     assert len(body["more_sources"]) == 3
     assert all(source["cited"] is False for source in body["more_sources"])
-    assert "8 open postings" in seen["user"], "the model is told how many there are"
-    assert "AI / ML engineer" in seen["user"]
+    assert "8 open postings" in body["reply"]
+    assert "AI / ML engineer" in body["reply"]
+    assert body["provider"] == "facts" and seen == {}
 
 
 # --- the dashboard -----------------------------------------------------------------
@@ -429,8 +430,9 @@ async def test_the_reply_carries_the_dictionary(
         "deep learning engineer",
     }
     assert {"label": "data scientist", "filter": "data_scientist"} in body["related_roles"]
-    assert "2 AI engineer" in seen["user"], "the model is told the breakdown"
-    assert "2 machine learning engineer" in seen["user"]
+    assert "2 AI engineer" in body["reply"]
+    assert "2 machine learning engineer" in body["reply"]
+    assert body["provider"] == "facts" and seen == {}
 
 
 def test_the_dock_groups_the_list_under_each_kind() -> None:

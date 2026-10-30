@@ -226,7 +226,12 @@ async def test_the_context_says_what_was_left_out(
 
     await client.post("/chat", json={"message": "senior data engineer jobs"})
 
-    context = seen["user"]
+    from apps.api.routers import chat
+    from packages.core.schemas import ChatRequest
+
+    ready = await chat.prepare(ChatRequest(message="senior data engineer jobs"), worker_session)
+    context = ready.prompt
+    assert seen == {}
     assert "level asked for: senior" in context
     assert "2 at that level by title" in context
     assert "1 naming no level" in context
@@ -243,8 +248,13 @@ async def test_the_context_says_when_they_are_listed_after(
 
     await client.post("/chat", json={"message": "senior data engineer jobs"})
 
-    assert "listed after" in seen["user"]
-    assert "do not call one senior" in seen["user"]
+    from apps.api.routers import chat
+    from packages.core.schemas import ChatRequest
+
+    ready = await chat.prepare(ChatRequest(message="senior data engineer jobs"), worker_session)
+    assert "listed after" in ready.prompt
+    assert "do not call one senior" in ready.prompt
+    assert seen == {}
 
 
 # --------------------------------------------------------------------------

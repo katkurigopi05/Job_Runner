@@ -13,7 +13,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from apps.api.routers.chat import SYSTEM, Ready, cited_labels
+from apps.api.routers.chat import SELECTION_SYSTEM, SYSTEM, Ready, cited_labels
 from packages.core.schemas import ChatReply
 
 Verdict = Literal["pending", "supported", "contradicted", "unsupported", "uncertain", "non_factual"]
@@ -96,7 +96,7 @@ def capture(case_id: str, ready: Ready, reply: ChatReply) -> AnswerReview:
     """
     return freeze(
         case_id=case_id,
-        system=SYSTEM,
+        system=SELECTION_SYSTEM if ready.selection_evidence is not None else SYSTEM,
         prompt=ready.prompt,
         answer=reply.reply,
         model=reply.model,

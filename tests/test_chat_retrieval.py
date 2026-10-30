@@ -636,7 +636,7 @@ async def test_the_model_is_handed_the_retrieved_postings(
     assert answered.status_code == 200
     assert "[P1] Senior Data Engineer — Streamco" in seen["user"]
     assert "Kafka and Flink" in seen["user"], "the excerpt is what the model can quote"
-    assert "cite" in seen["system"].lower()
+    assert seen["system"] == chat_module.SELECTION_SYSTEM
 
     body = answered.json()
     assert body["postings_searched"] == 2

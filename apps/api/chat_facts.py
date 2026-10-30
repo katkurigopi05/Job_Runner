@@ -124,7 +124,7 @@ def count_facts(found: Retrieval) -> tuple[ChatCountFact, ...]:
     if not found.attempted:
         return ()
     scope = (
-        "the Bay Area"
+        found.place_scope
         if found.place_total is not None
         else "your search area"
         if found.area
@@ -179,13 +179,13 @@ def count_facts(found: Retrieval) -> tuple[ChatCountFact, ...]:
         add(
             "place_total",
             found.place_total,
-            "postings establishing a Bay Area office",
+            f"postings establishing {found.place_office}",
             exact=found.place_counts_complete,
         )
         add(
             "remote_or_unplaced",
             found.remote_or_unplaced_not_listed,
-            "remote or unplaced roles omitted by the regional filter",
+            "remote or unplaced roles omitted by the place filter",
             exact=found.place_counts_complete,
             over="your standing search area before the place filter",
         )
@@ -217,7 +217,7 @@ def render_postings(
     # Validate coverage/values before rendering even callers outside chat.prepare.
     count_facts(found)
     scope = (
-        "the Bay Area"
+        found.place_scope
         if found.place_total is not None
         else "your search area"
         if found.area
@@ -316,14 +316,13 @@ def render_postings(
     if found.place_total is not None:
         reach = "" if found.place_counts_complete else " among retrieved candidates"
         lines.append(
-            f"Place filter applied — in the Bay Area: {found.place_total}{reach}; "
+            f"Place filter applied — in {found.place_scope}: {found.place_total}{reach}; "
             f"{found.search_area_total} matching postings{reach} "
             "in your search area before this filter."
         )
         lines.append(
             f"{found.remote_or_unplaced_not_listed} remote or unplaced roles in your "
-            "search area are not listed because they do not establish a Bay Area "
-            f"office{reach}."
+            f"search area are not listed because they do not establish {found.place_office}{reach}."
         )
     if found.outside_area:
         lines.append(
