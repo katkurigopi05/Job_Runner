@@ -308,7 +308,12 @@ async def setup(
             say(f"Kernel {kernel.label} is running a cell; left alone.")
             continue
         facts[kernel.id] = await probe(session.connection(kernel.id))
-    ready = [k for k in kernels if facts.get(k.id, {}).get("helper")]
+    ready = []
+    for kernel in kernels:
+        if facts.get(kernel.id, {}).get("helper"):
+            health = await KaggleProvider(connection=session.connection(kernel.id)).health()
+            if health.state == "ready":
+                ready.append(kernel)
     loaded = [
         k
         for k in kernels

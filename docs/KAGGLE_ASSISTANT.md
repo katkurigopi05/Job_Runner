@@ -34,7 +34,8 @@ When a session has multiple notebooks, reconnect checks their readiness without
 generating answers. If exactly one notebook has a ready supported model, it
 selects that notebook automatically. Otherwise the picker shows labels such as
 “Notebook 2 — Qwen3.8 27B Q6_K” or “Notebook 1 — no model helper loaded” instead
-of opaque kernel IDs. Two ready notebooks still require an explicit choice.
+of opaque kernel IDs. Two ready notebooks still require an explicit choice unless this session already
+has a saved ready notebook, which is kept selected.
 The other notebook is not deleted or restarted.
 
 For a new Harness evaluation, opt into the currently ready model when freezing
@@ -70,6 +71,19 @@ After a complete session restart, stage and load 27B again before using auto;
 the existing fresh-kernel setup path still loads the attached 8B dataset.
 
 ## Quick start: one command per session
+
+The connection card shows only the saved, ready notebook, named for its loaded
+model (for example, **Current notebook — Qwen3.8 27B Q6_K**). Reconnecting the
+same session keeps that choice. For a new session with several kernels, a single
+ready supported model is selected automatically; otherwise the picker uses
+readable model labels. Empty kernels are hidden when a ready choice exists.
+Readiness checks do not generate answers or load weights.
+
+**Load Kaggle helper** stays visible when ready. It reuses a healthy helper and
+can install the matching helper over an already loaded, identity-verified
+Qwen3.8 27B UD-Q6_K engine. The fresh-model setup below still describes the
+attached 8B model; this button does not download or load 27B weights.
+
 
 1. Start the Kaggle notebook session with a GPU and the model dataset attached.
    Running cells is not needed.
@@ -126,8 +140,11 @@ The manual steps below do the same by hand.
 
    The panel distinguishes an unavailable session, a restarted kernel, a missing
    or outdated helper, and a model that is not ready. A reachable kernel alone
-   does not mean that the model is loaded. Run the current helper after updating
-   Jobrunner, then click **Check connection**. Wait for **Kaggle ready** before
+   does not mean that the model is loaded. Click **Load Kaggle helper** to reuse
+   a healthy helper or install the matching helper over the loaded model. Progress
+   appears in the panel; first-time 8B loading can take several minutes. Setup
+   continues if the panel closes, and reopening it resumes progress. Wait for
+   **Kaggle ready** before
    asking model questions. Factual answers that do not use a model still work.
 
    The CLI remains available from this checkout:

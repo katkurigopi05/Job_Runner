@@ -483,3 +483,24 @@ def test_a_pasted_link_on_another_host_is_refused(tmp_path, monkeypatch, capsys)
     assert fakes.command.main() == 1
     assert fakes.setup_calls == []
     assert "example.net" not in capsys.readouterr().out
+
+
+async def test_an_outdated_helper_is_reinstalled_without_reloading_model(saved_file, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    session = FakeSession({SAVED: {"model": True, "helper": True}})
+    serve(monkeypatch, session)
+    monkeypatch.setattr(
+        kaggle.KaggleProvider,
+        "health",
+        AsyncMock(
+            side_effect=[
+                kaggle.KaggleStatus(state="helper_outdated", detail="Update helper"),
+                kaggle.KaggleStatus(state="ready", detail="Ready"),
+            ]
+        ),
+    )
+    state, _ = await run(session, saved_file)
+    assert state == "ready"
+    assert session.started == []
+    assert [code for _, code in session.cells] == [kaggle_setup.helper_cell()]

@@ -212,7 +212,8 @@ async def test_reconnect_auto_selects_only_ready_notebook(tmp_path, monkeypatch)
     status = await manager.connect_session(SecretStr(SERVER))
     assert status.state == "ready" and status.model == kaggle.QWEN38_MODEL
     assert kaggle.read_connection(path).kernel_id == other
-    assert status.kernel_options[1].label == "Notebook 2 — Qwen3.8 27B Q6_K"
+    assert status.kernels == [other]
+    assert status.kernel_options[0].label == "Current notebook — Qwen3.8 27B Q6_K"
 
 
 async def test_two_ready_notebooks_show_models_without_guessing(tmp_path, monkeypatch):

@@ -231,3 +231,24 @@ def test_27b_helper_refuses_truncation_and_checks_context_before_generation():
     assert helper.jobrunner_health()["model"] == kaggle.QWEN38_MODEL
     with pytest.raises(ValueError):
         install(engine, tokenizer, {**identity, "model_sha256": "wrong"})
+
+
+def test_setup_probe_recognizes_loaded_qwen_without_running_it():
+    from packages.llm import kaggle_setup
+
+    def complete(*args):
+        pytest.fail("Setup readiness must never generate")
+
+    complete.jobrunner_health = lambda: health()
+    facts = json.loads(
+        eval(
+            kaggle_setup.PROBE,
+            {
+                "jobrunner_qwen38_complete": complete,
+                "jobrunner27_engine": object(),
+                "jobrunner27_tokenizer": object(),
+                "jobrunner27_identity": health(),
+            },
+        )
+    )
+    assert facts == {"model": False, "helper": True, "qwen38_model": True}
