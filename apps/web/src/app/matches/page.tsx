@@ -15,6 +15,7 @@ import { EligibilityNote } from "@/components/eligibility-note";
 import { RequirementsPanel } from "./requirements-panel";
 import { KeywordHits } from "./keyword-hits";
 import { Suspense } from "react";
+import { POSTING_LINK } from "@/lib/external";
 
 export const dynamic = "force-dynamic";
 
@@ -448,8 +449,7 @@ export default async function MatchesPage({
                   </Link>
                   <a
                     href={match.url}
-                    target="jobrunner-form"
-                    rel="noreferrer"
+                    {...POSTING_LINK}
                     className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline"
                   >
                     Open posting ↗

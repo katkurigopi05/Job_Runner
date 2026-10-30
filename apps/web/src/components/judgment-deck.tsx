@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type JudgmentCandidate } from "@/lib/api";
 import { recordJudgment } from "@/app/label/questions/actions";
+import { POSTING_LINK } from "@/lib/external";
 
 /**
  * Grade what the assistant's search returned, one posting against one question.
@@ -183,12 +184,9 @@ export function JudgmentDeck({
           <p className="mt-6 text-sm text-ink-faint">This posting has no description stored.</p>
         )}
 
-        {/* The URL is from a crawled third-party page: `noopener` keeps it
-            from reaching back through `window.opener` to the dashboard. */}
         <a
           href={current.url}
-          target="jobrunner-form"
-          rel="noopener noreferrer"
+          {...POSTING_LINK}
           className="mt-7 inline-block font-mono text-xs text-ink-soft underline decoration-rule underline-offset-4 hover:text-ink"
         >
           read the posting ↗

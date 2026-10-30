@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { SKIP_REASONS, type Decision, type Match } from "@/lib/api";
 import { recordDecision } from "@/app/swipe/actions";
 import { EligibilityNote } from "@/components/eligibility-note";
+import { POSTING_LINK } from "@/lib/external";
 
 /**
  * One posting at a time, kept or discarded.
@@ -157,7 +158,7 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
 
         <a
           href={current.url}
-          target="jobrunner-form"
+          {...POSTING_LINK}
           className="mt-7 inline-block text-xs text-ink-soft underline decoration-rule underline-offset-4 hover:text-ink"
         >
           read the posting ↗

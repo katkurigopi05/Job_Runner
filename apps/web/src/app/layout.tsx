@@ -4,6 +4,7 @@ import { ApiHealth } from "@/components/api-health";
 import { CrawlerSpider } from "@/components/crawler-spider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SideNotes } from "@/components/side-notes";
+import { ReleaseWindowName } from "@/components/release-window-name";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -31,6 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen">
+        <ReleaseWindowName />
         <header className="border-b border-rule">
           <div className="mx-auto flex max-w-5xl flex-wrap items-baseline gap-x-8 gap-y-2 px-6 py-5">
             <Link href="/" className="font-display text-xl tracking-tight">
