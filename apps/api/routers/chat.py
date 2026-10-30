@@ -1429,7 +1429,7 @@ async def selected_reply(ready: Ready) -> ChatReply:
         )
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
-    return selection_reply_for(ready, model, raw)
+    return selection_reply_for(ready, getattr(provider, "model", model), raw)
 
 
 def selection_reply_for(ready: Ready, model: str | None, raw: str) -> ChatReply:
@@ -1489,4 +1489,4 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
         validate_prose_answer(answer)
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
-    return reply_for(ready, model, answer)
+    return reply_for(ready, getattr(provider, "model", model), answer)

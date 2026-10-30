@@ -186,6 +186,7 @@ async def chat_stream(body: ChatRequest) -> StreamingResponse:
             )
         )
         first = await anext(pieces, "")
+        model = getattr(provider, "model", model)
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
     return StreamingResponse(

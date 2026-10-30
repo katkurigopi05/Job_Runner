@@ -44,6 +44,7 @@ from packages.llm.provider import LLMError
 
 SESSION_HOST = "kkb-production.jupyter-proxy.kaggle.net"
 HELPER_FILE = Path(__file__).resolve().parents[2] / "scripts" / "kaggle_helper.py"
+QWEN38_HELPER_FILE = HELPER_FILE.with_name("kaggle_qwen38_helper.py")
 
 INSTALL = (
     '%pip install -q -U "transformers>=4.51.0" accelerate bitsandbytes '
@@ -110,19 +111,28 @@ PROBE = (
     "__import__('json').dumps({"
     "'model': bool(getattr(globals().get('model'), 'is_loaded_in_4bit', False)) "
     "and getattr(getattr(globals().get('model'), 'device', None), 'type', None) == 'cuda', "
-    "'helper': callable(getattr(globals().get('jobrunner_complete'), 'jobrunner_health', None))"
+    "'helper': any(callable(getattr(globals().get(name), 'jobrunner_health', None)) "
+    f"for name in {tuple(kaggle.HELPERS.values())!r}), "
+    "'qwen38_model': all(name in globals() for name in "
+    "('jobrunner27_engine', 'jobrunner27_tokenizer', 'jobrunner27_identity'))"
     "})"
 )
 
 _IDS = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
-def helper_cell() -> str:
+def helper_cell(*, qwen38: bool = False) -> str:
     """The helper from this checkout, as a literal: nothing is downloaded."""
-    source = HELPER_FILE.read_text(encoding="utf-8")
+    source = (QWEN38_HELPER_FILE if qwen38 else HELPER_FILE).read_text(encoding="utf-8")
+    install = (
+        "jobrunner_qwen38_complete = install(jobrunner27_engine, jobrunner27_tokenizer, "
+        "jobrunner27_identity)\n"
+        if qwen38
+        else "jobrunner_complete = install(model, tokenizer)\n"
+    )
     return (
         f"exec(compile({source!r}, 'jobrunner_kaggle_helper', 'exec'))\n"
-        "jobrunner_complete = install(model, tokenizer)\n"
+        f"{install}"
         "print('Installed the Jobrunner helper.', flush=True)\n"
     )
 
@@ -257,7 +267,7 @@ async def probe(connection: Connection) -> dict[str, bool]:
     if item.get("status") != "ok":
         return {"model": False, "helper": False}
     facts = json.loads(ast.literal_eval(item["data"]["text/plain"]))
-    return {"model": bool(facts.get("model")), "helper": bool(facts.get("helper"))}
+    return {key: bool(facts.get(key)) for key in ("model", "helper", "qwen38_model")}
 
 
 Say = Callable[[str], None]
@@ -298,8 +308,17 @@ async def setup(
             say(f"Kernel {kernel.label} is running a cell; left alone.")
             continue
         facts[kernel.id] = await probe(session.connection(kernel.id))
-    ready = [k for k in kernels if facts.get(k.id, {}).get("helper")]
-    loaded = [k for k in kernels if facts.get(k.id, {}).get("model")]
+    ready = []
+    for kernel in kernels:
+        if facts.get(kernel.id, {}).get("helper"):
+            health = await KaggleProvider(connection=session.connection(kernel.id)).health()
+            if health.state == "ready":
+                ready.append(kernel)
+    loaded = [
+        k
+        for k in kernels
+        if facts.get(k.id, {}).get("model") or facts.get(k.id, {}).get("qwen38_model")
+    ]
     if ready:
         pick = next((k for k in ready if k.id == saved.kernel_id), ready[0])
         chosen = pick.id
@@ -308,7 +327,13 @@ async def setup(
         pick = next((k for k in loaded if k.id == saved.kernel_id), loaded[0])
         chosen = pick.id
         say(f"Kernel {pick.label} already has the model; installing the helper.")
-        await _step(session.connection(chosen), helper_cell(), "Installing the helper", 180, say)
+        await _step(
+            session.connection(chosen),
+            helper_cell(qwen38=facts[chosen].get("qwen38_model", False)),
+            "Installing the helper",
+            180,
+            say,
+        )
     else:
         chosen = session.start()
         say("Started a new kernel.")

@@ -16,7 +16,7 @@ import re
 import stat
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -27,6 +27,11 @@ from packages.llm.audit import record
 from packages.llm.provider import DEFAULT_TEMPERATURE, LLMError, PromptTooLong
 
 MODEL = "unsloth/Qwen3-8B-bnb-4bit"
+QWEN38_MODEL = "unsloth/Qwen3.8-27B-GGUF:UD-Q6_K"
+QWEN38_SHA256 = "c9c206812fbe4ac7b76a729e25928b63f2ae89d37f69da7a71c20aec763cd436"
+# Auto chooses the first ready supported model, then pins it for this request.
+HELPERS = {QWEN38_MODEL: "jobrunner_qwen38_complete", MODEL: "jobrunner_complete"}
+MODEL_LABELS = {QWEN38_MODEL: "Qwen3.8 27B Q6_K", MODEL: "Qwen3 8B 4-bit"}
 T = TypeVar("T", bound=BaseModel)
 
 # WebSocket debug logs include the credential-bearing request path. This
@@ -116,14 +121,23 @@ DETAILS: dict[str, str] = {
         "current Jobrunner helper cell again, or run `make kaggle-setup`."
     ),
     "model_not_ready": (
-        "Kaggle is connected, but the expected Qwen3 8B 4-bit GPU model is not ready. "
-        "Load it and run the helper in this kernel, or run `make kaggle-setup`."
+        "Kaggle is connected, but no supported loaded GPU model is ready for this request. "
+        "Run the helper for your loaded model, then check the connection."
     ),
-    "ready": ("Qwen3 8B is loaded on the GPU and the Jobrunner helper is ready."),
+    "ready": "A supported Kaggle GPU model and its Jobrunner helper are ready.",
     "select_kernel": (
         "Several kernels are active. Select the kernel where you loaded the model and helper."
     ),
 }
+
+
+class KaggleKernelOption(BaseModel):
+    """Human-readable readiness alongside the opaque kernel identifier."""
+
+    id: UUID
+    label: str
+    state: State
+    model: str | None = None
 
 
 class KaggleStatus(BaseModel):
@@ -133,6 +147,7 @@ class KaggleStatus(BaseModel):
     detail: str
     kernel_id: UUID | None = None
     kernels: list[UUID] = Field(default_factory=list)
+    kernel_options: list[KaggleKernelOption] = Field(default_factory=list)
     model: str | None = None
     context_tokens: int | None = None
 
@@ -157,12 +172,11 @@ def connection_path() -> Path:
 
 
 HEALTH_EXPRESSION = (
-    "__import__('json').dumps("
-    "jobrunner_complete.jobrunner_health() "
-    "if callable(globals().get('jobrunner_complete')) "
-    "and callable(getattr(jobrunner_complete, 'jobrunner_health', None)) "
-    "else {'state': 'helper_outdated' if callable(globals().get('jobrunner_complete')) "
-    "else 'helper_missing'})"
+    "__import__('json').dumps({'helpers': ["
+    "dict(globals()[name].jobrunner_health(), helper=name) "
+    "if callable(getattr(globals()[name], 'jobrunner_health', None)) "
+    "else {'state': 'helper_outdated', 'helper': name} "
+    f"for name in {tuple(HELPERS.values())!r} if callable(globals().get(name))]}})"
 )
 
 
@@ -170,7 +184,7 @@ class KaggleProvider:
     """Explicit remote provider; no prompt is sent until readiness is verified."""
 
     name = "kaggle"
-    model = MODEL
+    model: str | None = None
     REQUEST_TIMEOUT_S = 300.0
 
     def __init__(
@@ -178,6 +192,7 @@ class KaggleProvider:
     ) -> None:
         self.connection = connection or read_connection(connection_file or connection_path())
         self.connection.socket_url()
+        self._helper: str | None = None
 
     async def _exchange(self, expression: str, *, timeout: float) -> dict[str, Any]:
         message_id = uuid4().hex
@@ -247,28 +262,60 @@ class KaggleProvider:
             return KaggleStatus(state=exc.state, detail=DETAILS[exc.state])
         except LLMError:
             return KaggleStatus(state="helper_outdated", detail=DETAILS["helper_outdated"])
-        reported = result.get("state")
+        # Flat reports remain accepted for the original protocol-1 8B helper.
+        reports = result.get("helpers", [result])
+        if not isinstance(reports, list) or not all(isinstance(row, dict) for row in reports):
+            reports = [{"state": "helper_outdated"}]
+        ready = {}
+        for row in reports:
+            model = row.get("model")
+            if (
+                row.get("state") == "ready"
+                and isinstance(model, str)
+                and model in HELPERS
+                and row.get("helper", "jobrunner_complete") == HELPERS[model]
+                and type(row.get("protocol")) is int
+                and row["protocol"] == 1
+                and type(row.get("context_tokens")) is int
+                and row["context_tokens"] == 4096
+                and (
+                    model != QWEN38_MODEL
+                    or (
+                        type(row.get("gpu_count")) is int
+                        and row["gpu_count"] == 2
+                        and row.get("thinking") is False
+                        and row.get("model_sha256") == QWEN38_SHA256
+                    )
+                )
+            ):
+                ready[model] = row
+        chosen = (
+            self.model
+            if self.model is not None
+            else next((model for model in HELPERS if model in ready), None)
+        )
+        if chosen is not None and chosen in ready:
+            self.model = chosen
+            self._helper = HELPERS[chosen]
+            return KaggleStatus(
+                state="ready",
+                detail=f"Auto selected {MODEL_LABELS[chosen]} on Kaggle GPU. The helper is ready.",
+                kernel_id=self.connection.kernel_id,
+                model=chosen,
+                context_tokens=4096,
+            )
+        states = {row.get("state") for row in reports if isinstance(row.get("state"), str)}
         state: State = (
-            cast(State, reported)
-            if isinstance(reported, str)
-            and reported in {"helper_missing", "helper_outdated", "model_not_ready"}
+            "helper_missing"
+            if not reports or states == {"helper_missing"}
+            else "helper_outdated"
+            if states == {"helper_outdated"}
             else "model_not_ready"
         )
-        if (
-            reported == "ready"
-            and result.get("model") == MODEL
-            and type(result.get("protocol")) is int
-            and result["protocol"] == 1
-            and type(result.get("context_tokens")) is int
-            and result["context_tokens"] == 4096
-        ):
-            state = "ready"
         return KaggleStatus(
             state=state,
             detail=DETAILS[state],
             kernel_id=self.connection.kernel_id,
-            model=MODEL if state == "ready" else None,
-            context_tokens=4096 if state == "ready" else None,
         )
 
     async def complete(
@@ -284,6 +331,7 @@ class KaggleProvider:
         health = await self.health()
         if health.state != "ready":
             raise LLMError(health.detail) from None
+        assert self.model is not None and self._helper in HELPERS.values()
         payload = json.dumps(
             dict(
                 model=self.model,
@@ -295,10 +343,10 @@ class KaggleProvider:
         )
         record(self.name, system, user, model=self.model)
         result = await self._exchange(
-            f"jobrunner_complete({payload!r})", timeout=self.REQUEST_TIMEOUT_S
+            f"{self._helper}({payload!r})", timeout=self.REQUEST_TIMEOUT_S
         )
         if result.get("model") != self.model:
-            raise LLMError("The Kaggle notebook does not have the expected Qwen3 8B model.")
+            raise LLMError("The Kaggle model changed during this request. Check the connection.")
         if result.get("status") == "too_long":
             raise PromptTooLong("Kaggle's 4096-token context cannot fit the prompt and answer.")
         text = result.get("text")
