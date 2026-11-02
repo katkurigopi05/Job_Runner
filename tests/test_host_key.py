@@ -60,7 +60,8 @@ def test_the_shared_api_floor_survives_an_explicit_port() -> None:
 def test_a_company_host_still_gets_the_full_floor() -> None:
     """The normalisation must not accidentally widen membership of the 2s list."""
     assert floor_for(host_key("https://careers.acme.example/jobs")) == MIN_DELAY_SECONDS
-    assert floor_for(host_key("https://notboards-api.greenhouse.io.evil.example/x")) == MIN_DELAY_SECONDS
+    lookalike = host_key("https://notboards-api.greenhouse.io.evil.example/x")
+    assert floor_for(lookalike) == MIN_DELAY_SECONDS
 
 
 def test_two_hosts_are_still_two_keys() -> None:
