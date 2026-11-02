@@ -84,8 +84,8 @@ These are correctness requirements, not preferences. Violating any of them is a 
    may read job pages (never lists) of Workday, Rippling and Breezy boards at 5 s a host,
    for that command only. It steps to 10, 15 and 20 s when 30% of the last 60 pages are
    refused, never steps back, and stops the run if refused at 20 s. A `Crawl-delay` and
-   a `429` still win. The crawler's limiters still refuse anything under 60 s, and
-   without `pace=` the backfill uses them. `packages/crawler/backfill.py`, `Pace`.
+   a `429` still win. Since the range change above, the crawler's limiters refuse
+   anything under 5 s too, and without `pace=` the backfill uses them. `packages/crawler/backfill.py`, `Pace`.
 7. **Secrets never touch the database in plaintext and never appear in logs.** ATS account
    passwords go through `packages/core/vault.py` (Fernet, key from OS keychain or `.env`
    outside the repo). `.env` is gitignored and stays gitignored.

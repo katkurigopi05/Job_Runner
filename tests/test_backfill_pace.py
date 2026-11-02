@@ -71,8 +71,8 @@ async def test_a_sites_crawl_delay_and_a_429_still_win():
     assert await limiter.acquire(HOST) == pytest.approx(120.0)
 
 
-def test_the_crawlers_own_limiter_still_refuses_below_sixty():
-    from packages.crawler.ratelimit import HostRateLimiter
+def test_the_crawlers_own_limiter_still_refuses_below_its_floor():
+    from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter
 
     with pytest.raises(RateLimitTooLow):
-        HostRateLimiter(delay_seconds=5.0)
+        HostRateLimiter(delay_seconds=MIN_DELAY_SECONDS - 1)
