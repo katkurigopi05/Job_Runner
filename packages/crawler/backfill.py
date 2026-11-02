@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections import deque
 from collections.abc import Callable, Iterable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -41,6 +42,7 @@ from packages.crawler.crawl import _store
 from packages.crawler.details import ReadDetail
 from packages.crawler.extract import ExtractedPosting
 from packages.crawler.fetch import Blocked, PoliteFetcher
+from packages.crawler.ratelimit import HostRateLimiter, RateLimitTooLow
 
 log = structlog.get_logger(__name__)
 
@@ -71,6 +73,77 @@ REFUSALS_BEFORE_STOP_SERVING = 10
 
 Outcome = Literal["filled", "waiting", "skipped", "refused", "blocked"]
 
+#: §2.6, amended for one backfill at the owner's asking (2026-11-02): job
+#: pages at 5 s a host, stepping to 10, 15 and 20 if the sites push back. The
+#: crawler's own limiters still refuse anything under 60 s; this floor is the
+#: backfill's alone, and only with `--pace`.
+MIN_BACKFILL_DELAY_SECONDS = 5.0
+
+
+@dataclass
+class Pace:
+    """A delay that only ever slows down, read by every host of one run.
+
+    When `step_up_share` of the last `window` pages, across all hosts, were
+    refused, the next step is taken. Refused that much at the slowest step,
+    the run stops: the sites are saying no, and §2.5 leaves them alone.
+    Tonight's ordinary refusals were 6 to 8 percent; 30 is a pushback.
+    """
+
+    steps: tuple[float, ...]
+    window: int = 60
+    step_up_share: float = 0.3
+    stopped: bool = False
+    _index: int = 0
+    _recent: deque[bool] = field(default_factory=deque)
+
+    def __post_init__(self) -> None:
+        if not self.steps:
+            raise ValueError("a pace needs at least one step")
+        if min(self.steps) < MIN_BACKFILL_DELAY_SECONDS:
+            raise RateLimitTooLow(min(self.steps), MIN_BACKFILL_DELAY_SECONDS)
+        if list(self.steps) != sorted(self.steps):
+            raise ValueError("a pace's steps only get slower")
+        self._recent = deque(maxlen=self.window)
+
+    @property
+    def current(self) -> float:
+        return self.steps[self._index]
+
+    def record(self, *, refused: bool) -> None:
+        if self.stopped:
+            return
+        self._recent.append(refused)
+        if len(self._recent) < self.window:
+            return
+        share = sum(self._recent) / self.window
+        if share < self.step_up_share:
+            return
+        if self._index + 1 < len(self.steps):
+            self._index += 1
+            self._recent.clear()
+            log.warning("backfill_pace_slower", seconds=self.current, refused=round(share, 2))
+        else:
+            self.stopped = True
+            log.warning("backfill_pace_stopped", seconds=self.current, refused=round(share, 2))
+
+
+@dataclass
+class PacedRateLimiter(HostRateLimiter):
+    """The in-process limiter, spaced by a `Pace` instead of §2.6's 60 s.
+
+    Everything else is the crawler's: a 429 or Retry-After backs a host off
+    for as long as it asks, and a site's own Crawl-delay raises its delay.
+    Only the backfill builds one; it is the only process reading these hosts,
+    one task per host, so the counters need not be shared.
+    """
+
+    pace: Pace = field(default_factory=lambda: Pace(steps=(60.0,)))
+
+    def delay_for(self, host: str) -> float:
+        return max(self.pace.current, self.host_delays.get(host, 0.0))
+
+
 Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
@@ -96,6 +169,8 @@ class HostReport:
     blocked: bool = False
     #: The site refused `REFUSALS_BEFORE_STOP` pages in a row.
     refused: bool = False
+    #: The run's pace stopped: the sites were refusing at its slowest step.
+    paced_out: bool = False
 
 
 @dataclass
@@ -185,16 +260,22 @@ async def fill_host(
     *,
     on_progress: Callable[[HostReport], None] | None = None,
     on_left_waiting: Callable[[str], None] | None = None,
+    pace: Pace | None = None,
 ) -> HostReport:
     """Read each page in turn; the fetcher spaces them by the host's floor."""
     report = HostReport(host=host, pending=len(items))
     companies: dict[uuid.UUID, Company] = {}
     refusals = 0
     for item in items:
+        if pace is not None and pace.stopped:
+            report.paced_out = True
+            break
         outcome = await _fill_one(fetcher, session, item, companies)
         if outcome == "blocked":
             report.blocked = True
             break
+        if pace is not None:
+            pace.record(refused=outcome == "refused")
         if outcome == "filled":
             report.filled += 1
             refusals = 0
@@ -296,6 +377,7 @@ async def backfill(
     retry_tried: bool = True,
     on_progress: Callable[[HostReport], None] | None = None,
     on_left_waiting: Callable[[str], None] | None = None,
+    pace: Pace | None = None,
 ) -> BackfillReport:
     """Fill every missing description on the given boards, hosts side by side.
 
@@ -323,6 +405,7 @@ async def backfill(
                 queue[:limit] if limit else queue,
                 on_progress=on_progress,
                 on_left_waiting=on_left_waiting,
+                pace=pace,
             )
 
     ordered = sorted(pending.items(), key=lambda pair: -len(pair[1]))
