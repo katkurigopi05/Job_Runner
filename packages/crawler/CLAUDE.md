@@ -432,6 +432,17 @@ request, plus network time. Fetching 300 details in that cycle would mean
 
 - All list pages each crawl, up to 60; truncation or inconsistent/duplicate
   pagination closes nothing. A page failure abandons the read.
+- **Only the first page names the total.** Every later page says `total: 0`
+  (read live on 2026-11-01: 94, then 0). Until then a later page's 0 counted
+  as the board shifting mid-walk, so every board longer than one page came
+  back `suspect` on every crawl. Two costs: nothing it dropped was closed
+  (2 of 16,716 Workday postings had ever closed), and `suspect` is a failure
+  status, so the backoff spaced those boards to every 13 hours and 15,838
+  descriptions waited. 89 of 106 multi-page boards were affected; all 19
+  single-page boards were fine. A later page naming a different nonzero
+  count still marks the read, and the distinct-id count must still equal the
+  first page's total. The synthetic boards in the tests used to repeat the
+  total on every page, which is how a green suite missed it.
 - At most five details per crawl. New/missing or visibly changed listings
   get four slots when cached jobs exist; one rotates through cached jobs to
   detect description-only edits. Once caught up all five rotate. The nullable

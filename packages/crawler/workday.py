@@ -329,9 +329,15 @@ class WorkdayExtractor:
 
             # A skipped/malformed entry or shifting pagination is not proof
             # that an unseen requisition closed. Refuse closure on that read.
+            # Workday names the total on the first page only and sends 0 on
+            # every later one, so only a later page naming a different count
+            # is the board shifting. Reading the 0 as one flagged every board
+            # longer than a page; the distinct-id check below still holds the
+            # walk to the first page's count.
             payload = json.loads(response.text)
             entries = payload.get("jobPostings", [])
-            if len(postings) != len(entries) or (page_total is not None and page_total != total):
+            shifted = page > 0 and page_total not in (None, 0) and page_total != total
+            if len(postings) != len(entries) or shifted:
                 pages.truncated = True
 
             if not postings:
