@@ -608,7 +608,10 @@ page at once:
 - **Not a crawl.** It reads no list, so it opens and closes nothing. A page
   that fails (a 404 for a job closed since the list) leaves that posting
   waiting; the next read of the list decides whether it closed. robots.txt
-  refusing a job page stops that host.
+  refusing a job page stops that host, and so do three refusals in a row
+  (401, 403, 429): §2.5 leaves a site that says no alone. In a one-page-a-host
+  trial on 2026-11-02, 114 of 118 hosts gave their text; Zoetis, NiSource
+  and ConocoPhillips answered 403.
 - **Stored as a crawl stores it.** `_store` writes the version and drops the
   vector, so the matching pass that follows embeds and scores it, and the
   chunker makes it searchable. Each posting is committed as it lands; a

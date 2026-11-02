@@ -101,6 +101,8 @@ async def run(argv: list[str] | None = None) -> int:
     )
     if report.blocked_hosts:
         print(f"robots.txt refused job pages on: {', '.join(report.blocked_hosts)}")
+    if report.refused_hosts:
+        print(f"left alone after refusing pages: {', '.join(report.refused_hosts)}")
     if report.filled and not args.no_index:
         await index()
     return 0

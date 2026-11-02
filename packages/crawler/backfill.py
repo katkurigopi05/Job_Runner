@@ -28,6 +28,7 @@ from collections.abc import Callable, Iterable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import urlparse
 
 import structlog
@@ -56,6 +57,14 @@ READERS: dict[str, tuple[DetailUrlFor, ReadDetail]] = {
 #: bounds open sessions, not the request rate to any one host.
 MAX_HOSTS = 48
 
+#: Answers that mean the site does not want the request, not that one job is gone.
+REFUSALS = frozenset({401, 403, 429})
+#: A host that refuses this many pages in a row is left alone (§2.5): asking
+#: again a minute later for each of its postings would be pressing past a no.
+REFUSALS_BEFORE_STOP = 3
+
+Outcome = Literal["filled", "waiting", "refused", "blocked"]
+
 Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
@@ -75,7 +84,10 @@ class HostReport:
     pending: int
     filled: int = 0
     failed: int = 0
+    #: robots.txt refused a job page.
     blocked: bool = False
+    #: The site refused `REFUSALS_BEFORE_STOP` pages in a row.
+    refused: bool = False
 
 
 @dataclass
@@ -93,6 +105,10 @@ class BackfillReport:
     @property
     def blocked_hosts(self) -> list[str]:
         return [h.host for h in self.hosts if h.blocked]
+
+    @property
+    def refused_hosts(self) -> list[str]:
+        return [h.host for h in self.hosts if h.refused]
 
 
 async def find_pending(
@@ -160,23 +176,30 @@ async def fill_host(
     """Read each page in turn; the fetcher spaces them by the host's floor."""
     report = HostReport(host=host, pending=len(items))
     companies: dict[uuid.UUID, Company] = {}
+    refusals = 0
     for item in items:
-        filled = await _fill_one(fetcher, session, item, companies)
-        if filled is None:
+        outcome = await _fill_one(fetcher, session, item, companies)
+        if outcome == "blocked":
             report.blocked = True
             break
-        if filled:
+        if outcome == "filled":
             report.filled += 1
+            refusals = 0
         else:
             report.failed += 1
+            refusals = refusals + 1 if outcome == "refused" else 0
         if on_progress is not None:
             on_progress(report)
+        if refusals >= REFUSALS_BEFORE_STOP:
+            report.refused = True
+            break
     log.info(
         "backfill_host_done",
         host=host,
         filled=report.filled,
         failed=report.failed,
         blocked=report.blocked,
+        refused=report.refused,
     )
     return report
 
@@ -186,8 +209,8 @@ async def _fill_one(
     session: AsyncSession,
     item: Pending,
     companies: dict[uuid.UUID, Company],
-) -> bool | None:
-    """True when stored, False when this posting is left waiting, None when refused."""
+) -> Outcome:
+    """Read and store one page; anything short of stored leaves the posting waiting."""
     listing = item.listing
     _, read_detail = READERS[listing.ats_type or ""]
     try:
@@ -195,20 +218,20 @@ async def _fill_one(
     except Blocked:
         # robots.txt refusing a job page refuses the host: never routed round.
         log.info("backfill_blocked", host=urlparse(item.url).hostname)
-        return None
+        return "blocked"
     except Exception as exc:  # noqa: BLE001 - one page must not stop the host
         log.warning("backfill_fetch_failed", posting=listing.external_id, error=type(exc).__name__)
-        return False
+        return "waiting"
     if not response.ok:
         log.info("backfill_page_missing", posting=listing.external_id, status=response.status)
-        return False
+        return "refused" if response.status in REFUSALS else "waiting"
     try:
         hydrated = read_detail(response.text, listing)
     except Exception as exc:  # noqa: BLE001 - an unreadable page leaves it waiting
         log.warning("backfill_unreadable", posting=listing.external_id, error=type(exc).__name__)
-        return False
+        return "waiting"
     if hydrated is None or not hydrated.description_raw:
-        return False
+        return "waiting"
 
     listing.description_raw = hydrated.description_raw
     listing.published_at = hydrated.published_at or listing.published_at
@@ -216,7 +239,7 @@ async def _fill_one(
     try:
         company = companies.get(item.company_id) or await session.get(Company, item.company_id)
         if company is None:
-            return False
+            return "waiting"
         companies[item.company_id] = company
         await _store(session, company, [listing], now=datetime.now(UTC))
         await session.commit()
@@ -224,8 +247,8 @@ async def _fill_one(
         await session.rollback()
         companies.pop(item.company_id, None)
         log.warning("backfill_store_failed", posting=listing.external_id, error=type(exc).__name__)
-        return False
-    return True
+        return "waiting"
+    return "filled"
 
 
 async def backfill(
