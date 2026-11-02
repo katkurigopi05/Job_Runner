@@ -16,7 +16,7 @@ from packages.crawler.extract import CompanySeed, extractor_for
 from packages.crawler.fetch import PoliteFetcher
 from packages.crawler.find_boards import Resolved, board_root, resolve_site
 from packages.crawler.job_systems import other_job_system
-from packages.crawler.ratelimit import HostRateLimiter
+from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter
 from packages.crawler.validate import _api_is_board
 from tests.test_board_shape import _response
 from tests.test_workday import FakeClock
@@ -161,7 +161,7 @@ async def test_a_crawl_stores_every_page_and_reads_job_pages_within_budget(db_se
 
     assert result.new_postings == 3 and not result.error
     assert len(calls) == 2 + 3
-    assert all(b[1] - a[1] >= 60 for a, b in zip(calls, calls[1:], strict=False))
+    assert all(b[1] - a[1] >= MIN_DELAY_SECONDS for a, b in zip(calls, calls[1:], strict=False))
     rows = {row.external_id: row for row in (await db_session.scalars(select(Posting))).all()}
     assert rows[FIRST].description_raw and rows[FIRST].published_at is not None
     assert sum(row.description_raw is None for row in rows.values()) == 2

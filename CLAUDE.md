@@ -57,8 +57,16 @@ These are correctness requirements, not preferences. Violating any of them is a 
 5. **No captcha-solving services, no bot-detection evasion, no residential proxy rotation.**
    When a site blocks automation, the application fails as `manual_completion_required` and
    the owner finishes it by hand. This is a hard scope boundary.
-6. **Crawler respects robots.txt and rate limits.** Minimum 60s between requests to the same
-   host. Configurable up, never down.
+6. **Crawler respects robots.txt and rate limits.** Between 5s and 60s between requests to
+   the same host, 5s by default (`CRAWLER_MIN_DELAY_S`). Never below 5s. A site's own
+   `Crawl-delay` and a `429`/`Retry-After` may ask for more than 60s, and win.
+
+   **Amended 2026-11-02, owner approved:** this read "Minimum 60s, configurable up, never
+   down" until a description backfill read job pages at 5 s a host with no `429` and
+   refusals no higher than at 60 s. The owner set the range to 5–60 s.
+   `ratelimit.MIN_DELAY_SECONDS` and `MAX_CONFIGURED_DELAY_SECONDS` hold the two numbers,
+   the setting is refused outside them, and the migration `c4e6a8b0d2f4` lowered the hosts
+   the crawler had stored at 60 s, since a stored delay only ratchets up.
 
    **Amended:** a host that is *known* to be a multi-tenant ATS API — one endpoint
    serving thousands of companies' boards, listed explicitly in
@@ -68,7 +76,7 @@ These are correctness requirements, not preferences. Violating any of them is a 
    registry behind one counter, capping the crawler at 60 boards an hour regardless of
    how many are listed. What makes this a narrowing rather than a loophole: the host
    list is explicit so nothing is promoted by resembling it, the 2s floor is refused
-   below exactly like the 60s one, a site's own `Crawl-delay` still raises its host's
+   below exactly like the 5s one, a site's own `Crawl-delay` still raises its host's
    delay, and a `429`/`Retry-After` backs that host off for as long as it asks. Polling
    faster is only defensible while also listening.
 
@@ -76,8 +84,8 @@ These are correctness requirements, not preferences. Violating any of them is a 
    may read job pages (never lists) of Workday, Rippling and Breezy boards at 5 s a host,
    for that command only. It steps to 10, 15 and 20 s when 30% of the last 60 pages are
    refused, never steps back, and stops the run if refused at 20 s. A `Crawl-delay` and
-   a `429` still win. The crawler's limiters still refuse anything under 60 s, and
-   without `pace=` the backfill uses them. `packages/crawler/backfill.py`, `Pace`.
+   a `429` still win. Since the range change above, the crawler's limiters refuse
+   anything under 5 s too, and without `pace=` the backfill uses them. `packages/crawler/backfill.py`, `Pace`.
 7. **Secrets never touch the database in plaintext and never appear in logs.** ATS account
    passwords go through `packages/core/vault.py` (Fernet, key from OS keychain or `.env`
    outside the repo). `.env` is gitignored and stays gitignored.

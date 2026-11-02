@@ -17,7 +17,7 @@ from packages.crawler.extract import CompanySeed, extractor_for
 from packages.crawler.fetch import PoliteFetcher
 from packages.crawler.find_boards import Resolved, board_root, resolve_site
 from packages.crawler.job_systems import other_job_system
-from packages.crawler.ratelimit import HostRateLimiter
+from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter
 from packages.crawler.validate import _api_is_board
 from tests.test_board_shape import _response
 from tests.test_workday import FakeClock
@@ -136,7 +136,7 @@ async def test_a_crawl_stores_the_list_and_reads_job_pages_within_budget(db_sess
     assert result.new_postings == 3 and not result.error
     # One list, then a page for each of the three: within the five-page budget.
     assert [path for path, _ in calls][0] == "/json" and len(calls) == 4
-    assert all(b[1] - a[1] >= 60 for a, b in zip(calls, calls[1:], strict=False))
+    assert all(b[1] - a[1] >= MIN_DELAY_SECONDS for a, b in zip(calls, calls[1:], strict=False))
     rows = {row.external_id: row for row in (await db_session.scalars(select(Posting))).all()}
     assert rows[FIRST].description_raw and len(rows[FIRST].description_raw) > 500
     # A job page that failed leaves its posting stored, waiting for its text.

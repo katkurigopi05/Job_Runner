@@ -65,7 +65,7 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="seconds between job pages on one host, slowest last, e.g. 5,10,15,20: "
         "steps up when many pages are refused and stops past the last step. "
-        "§2.6 amended for this backfill only (2026-11-02); without it, 60 s",
+        "without it, the crawler's configured delay (5 to 60 s, §2.6)",
     )
     parser.add_argument(
         "--no-retry",
@@ -85,7 +85,7 @@ def _pace(text: str | None) -> Pace | None:
 
 
 def _paced_fetcher(pace: Pace) -> PoliteFetcher:
-    """The crawler's fetcher, spaced by the run's pace instead of 60 s."""
+    """The crawler's fetcher, spaced by the run's pace instead of the configured delay."""
     settings = get_settings()
     return PoliteFetcher(
         rate_limiter=PacedRateLimiter(pace=pace),

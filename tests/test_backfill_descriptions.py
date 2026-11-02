@@ -19,7 +19,7 @@ from packages.crawler.backfill import (
 from packages.crawler.crawl import crawl_company
 from packages.crawler.extract import CompanySeed
 from packages.crawler.fetch import PoliteFetcher
-from packages.crawler.ratelimit import HostRateLimiter
+from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter
 from tests.test_workday import HOST, SLUG, FakeClock, _job
 
 SEED = CompanySeed(name="Acme", slug=SLUG, ats="workday", poll_interval_s=0)
@@ -116,8 +116,8 @@ async def test_every_missing_description_is_read_without_reading_the_list(db_ses
     assert all(text == "Python systems" for text in (await _descriptions(db_session)).values())
     # Job pages only: the list is a crawl's to read, and so is closing.
     assert [method for method, _, _ in calls] == ["GET"] * 4
-    # §2.6: one host, one request a minute.
-    assert all(b[2] - a[2] >= 60 for a, b in zip(calls, calls[1:], strict=False))
+    # §2.6: one host, one request per floor.
+    assert all(b[2] - a[2] >= MIN_DELAY_SECONDS for a, b in zip(calls, calls[1:], strict=False))
 
 
 async def test_a_page_that_fails_leaves_that_posting_waiting_and_open(db_session):

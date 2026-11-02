@@ -88,7 +88,7 @@ before trusting either number.
   IDs. Synthetic `test_workday.py` boards still cover pagination, empty boards,
   failures, robots refusals and truncation without touching the network.
 
-  A tenant retains §2.6's 60s floor. The reader caps list pages at 60 and
+  A tenant retains §2.6's floor (60 s then; 5 to 60 s, default 5, since 2026-11-02). The reader caps list pages at 60 and
   details at five per crawl. Missing/changed descriptions take priority;
   cached descriptions rotate for revalidation. Tests establish progress on
   identical listings, description-only edits, versioning, age lower bounds,
@@ -99,6 +99,16 @@ before trusting either number.
 
   Workday forms remain unsupported. Both adapter lookup and the real apply
   worker are tested to refuse them with `unsupported_site`.
+
+**Verification, 2026-11-02:** the five-second-rule branch passed 553 crawler,
+reader, backfill, discovery, scheduling, rate-limit and migration tests. An
+independent scratch-database run upgraded through `c4e6a8b0d2f4`, repeated the
+upgrade, checked schema consistency, downgraded and upgraded again. Delays of
+0, 2, 5, 10, 59, 60, 60.5, 90, 300 and 600 seconds changed only at exactly 60
+on upgrade and exactly 5 on downgrade; row counts and both timestamps stayed
+unchanged. Full Ruff checks and types for `packages/crawler packages/matching`
+passed. Live budgets and the five-details-per-crawl limit were left alone;
+the owner still needs to merge, migrate and start workers.
 
 ### Closing the gate gaps §15 had only described
 

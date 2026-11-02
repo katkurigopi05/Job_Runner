@@ -496,8 +496,8 @@ chunk-postings:
 # dry=1 counts per host and stops; limit=N reads at most N pages a host;
 # hosts=N reads N hosts at once (48), each still one page a minute;
 # no_retry=1 leaves pages that failed before without text instead of asking again.
-# pace=5,10,15,20 reads job pages faster than 60 s a host, stepping slower when
-# sites refuse (§2.6 amended for this command only, 2026-11-02).
+# pace=5,10,15,20 reads job pages at 5 s a host, stepping slower when sites
+# refuse; without it the crawler's configured delay (5 to 60 s, §2.6) applies.
 backfill-descriptions:
 	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit)) $(if $(hosts),--max-hosts $(hosts)) $(if $(no_retry),--no-retry) $(if $(pace),--pace $(pace))
 

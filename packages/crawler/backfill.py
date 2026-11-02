@@ -75,8 +75,8 @@ Outcome = Literal["filled", "waiting", "skipped", "refused", "blocked"]
 
 #: §2.6, amended for one backfill at the owner's asking (2026-11-02): job
 #: pages at 5 s a host, stepping to 10, 15 and 20 if the sites push back. The
-#: crawler's own limiters still refuse anything under 60 s; this floor is the
-#: backfill's alone, and only with `--pace`.
+#: same day §2.6 became 5 to 60 s a host, so the crawler's limiters now refuse
+#: anything under 5 s too; `--pace` adds the stepping, not a lower floor.
 MIN_BACKFILL_DELAY_SECONDS = 5.0
 
 
@@ -130,7 +130,7 @@ class Pace:
 
 @dataclass
 class PacedRateLimiter(HostRateLimiter):
-    """The in-process limiter, spaced by a `Pace` instead of §2.6's 60 s.
+    """The in-process limiter, spaced by a `Pace` instead of the configured delay.
 
     Everything else is the crawler's: a 429 or Retry-After backs a host off
     for as long as it asks, and a site's own Crawl-delay raises its delay.
