@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 from urllib.parse import urlparse
 
@@ -49,6 +50,14 @@ def _slug(company_slug: str) -> str:
     if not SLUG_RE.fullmatch(slug):
         raise ValueError(f"not a Rippling board slug: {company_slug!r}")
     return slug
+
+
+def detail_url_for(company_slug: str, item: ExtractedPosting) -> str:
+    """The job's own page, refused unless it is under this company's board."""
+    parsed = urlparse(item.url)
+    if parsed.hostname != HOST or not parsed.path.startswith(f"/{_slug(company_slug)}/jobs/"):
+        raise RipplingBoardError("posting is not on this board")
+    return item.url
 
 
 def _next_data(body: str) -> dict[str, Any]:
@@ -246,20 +255,12 @@ class RipplingExtractor:
         *,
         max_age_days: int,
     ) -> tuple[str | None, str | None]:
-        prefix = f"/{_slug(company_slug)}/jobs/"
-
-        def detail_url(item: ExtractedPosting) -> str:
-            parsed = urlparse(item.url)
-            if parsed.hostname != HOST or not parsed.path.startswith(prefix):
-                raise RipplingBoardError("posting is not on this board")
-            return item.url
-
         return await hydrate(
             fetcher,
             pages,
             previous,
             cursor,
-            detail_url=detail_url,
+            detail_url=partial(detail_url_for, company_slug),
             read_detail=read_detail,
             max_age_days=max_age_days,
             pending_cursor=pending_cursor,

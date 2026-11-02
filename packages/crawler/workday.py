@@ -25,6 +25,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 from urllib.parse import urlparse
 
@@ -190,6 +191,13 @@ def read_detail(body: str, listing: ExtractedPosting) -> ExtractedPosting:
     return result
 
 
+def detail_url_for(company_slug: str, item: ExtractedPosting) -> str:
+    """The job's detail endpoint, on the board's own host."""
+    host, tenant, site = company_slug.split("|")
+    path = urlparse(item.url).path.removeprefix(f"/{site}")
+    return f"https://{host}/wday/cxs/{tenant}/{site}{path}"
+
+
 async def hydrate_details(
     fetcher: PoliteFetcher,
     company_slug: str,
@@ -206,18 +214,12 @@ async def hydrate_details(
     is strict: its detail endpoint is the board's own API, so one failure is
     the board failing.
     """
-    host, tenant, site = company_slug.split("|")
-
-    def detail_url(item: ExtractedPosting) -> str:
-        path = urlparse(item.url).path.removeprefix(f"/{site}")
-        return f"https://{host}/wday/cxs/{tenant}/{site}{path}"
-
     return await hydrate(
         fetcher,
         pages,
         previous,
         cursor,
-        detail_url=detail_url,
+        detail_url=partial(detail_url_for, company_slug),
         read_detail=read_detail,
         max_age_days=max_age_days,
         pending_cursor=pending_cursor,
