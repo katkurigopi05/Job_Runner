@@ -59,9 +59,15 @@ MAX_HOSTS = 48
 
 #: Answers that mean the site does not want the request, not that one job is gone.
 REFUSALS = frozenset({401, 403, 429})
-#: A host that refuses this many pages in a row is left alone (§2.5): asking
-#: again a minute later for each of its postings would be pressing past a no.
+#: A host that refuses this many pages in a row, having served none, is left
+#: alone (§2.5): asking again a minute later for each of its postings would be
+#: pressing past a no.
 REFUSALS_BEFORE_STOP = 3
+#: The same for a host that has served pages this run. Big Workday tenants
+#: refuse about one page in five and serve the rest (2026-11-02), so three in
+#: a row came by chance and stopped J.B. Hunt with 498 pages to go. Ten in a
+#: row from a host that was serving is the host changing its answer.
+REFUSALS_BEFORE_STOP_SERVING = 10
 
 Outcome = Literal["filled", "waiting", "skipped", "refused", "blocked"]
 
@@ -178,6 +184,7 @@ async def fill_host(
     items: list[Pending],
     *,
     on_progress: Callable[[HostReport], None] | None = None,
+    on_left_waiting: Callable[[str], None] | None = None,
 ) -> HostReport:
     """Read each page in turn; the fetcher spaces them by the host's floor."""
     report = HostReport(host=host, pending=len(items))
@@ -197,9 +204,11 @@ async def fill_host(
         else:
             report.failed += 1
             refusals = refusals + 1 if outcome == "refused" else 0
+            if on_left_waiting is not None:
+                on_left_waiting(item.listing.external_id)
         if on_progress is not None:
             on_progress(report)
-        if refusals >= REFUSALS_BEFORE_STOP:
+        if refusals >= (REFUSALS_BEFORE_STOP_SERVING if report.filled else REFUSALS_BEFORE_STOP):
             report.refused = True
             break
     log.info(
@@ -283,21 +292,31 @@ async def backfill(
     ats: Iterable[str] = tuple(READERS),
     limit: int | None = None,
     max_hosts: int = MAX_HOSTS,
+    tried_before: frozenset[str] = frozenset(),
     on_progress: Callable[[HostReport], None] | None = None,
+    on_left_waiting: Callable[[str], None] | None = None,
 ) -> BackfillReport:
     """Fill every missing description on the given boards, hosts side by side.
 
     The longest hosts start first: at one request a minute each, they decide
-    when the run ends.
+    when the run ends. Within a host, pages a previous run was refused or
+    could not read (`tried_before`, by external id) come after the rest: a
+    restart used to open every host with them, three refusals in a row.
     """
     async with sessions() as session:
         pending = await find_pending(session, ats=ats)
     semaphore = asyncio.Semaphore(max_hosts)
 
     async def one(host: str, items: list[Pending]) -> HostReport:
+        queue = sorted(items, key=lambda item: item.listing.external_id in tried_before)
         async with semaphore, sessions() as session:
             return await fill_host(
-                fetcher, session, host, items[:limit] if limit else items, on_progress=on_progress
+                fetcher,
+                session,
+                host,
+                queue[:limit] if limit else queue,
+                on_progress=on_progress,
+                on_left_waiting=on_left_waiting,
             )
 
     ordered = sorted(pending.items(), key=lambda pair: -len(pair[1]))

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import time
+from pathlib import Path
 
 from packages.core import db as core_db
 from packages.core.config import get_settings
@@ -42,6 +43,14 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
         help="hosts read at once (default: %(default)s). Each still waits its own "
         "minute between pages, so more hosts finish the small boards sooner; the "
         "largest board decides when the run ends.",
+    )
+    parser.add_argument(
+        "--left-waiting",
+        type=Path,
+        default=None,
+        help="pages earlier runs were refused or could not read, read after the rest "
+        "and added to as this run goes (default: <storage_root>/logs/"
+        "backfill_left_waiting.txt)",
     )
     parser.add_argument(
         "--no-index", action="store_true", help="skip embedding, scoring and chunking"
@@ -99,15 +108,30 @@ async def run(argv: list[str] | None = None) -> int:
             minutes = (time.monotonic() - started) / 60
             print(f"  {filled} filled, {failed} left waiting, {minutes:.0f} min", flush=True)
 
-    async with build_fetcher(shared=True) as fetcher:
-        report = await backfill(
-            fetcher,
-            core_db.get_sessionmaker(),
-            ats=ats,
-            limit=args.limit,
-            max_hosts=args.max_hosts,
-            on_progress=progress,
-        )
+    waiting_file = args.left_waiting or (
+        Path(get_settings().storage_root) / "logs" / "backfill_left_waiting.txt"
+    )
+    tried = frozenset(waiting_file.read_text().split()) if waiting_file.exists() else frozenset()
+    if tried:
+        print(f"{len(tried)} pages left waiting by earlier runs are read after the rest")
+    waiting_file.parent.mkdir(parents=True, exist_ok=True)
+    with waiting_file.open("a") as sink:
+
+        def left_waiting(external_id: str) -> None:
+            sink.write(external_id + "\n")
+            sink.flush()
+
+        async with build_fetcher(shared=True) as fetcher:
+            report = await backfill(
+                fetcher,
+                core_db.get_sessionmaker(),
+                ats=ats,
+                limit=args.limit,
+                max_hosts=args.max_hosts,
+                tried_before=tried,
+                on_progress=progress,
+                on_left_waiting=left_waiting,
+            )
     minutes = (time.monotonic() - started) / 60
     print(
         f"filled {report.filled}, left {report.failed} waiting, skipped {report.skipped} "

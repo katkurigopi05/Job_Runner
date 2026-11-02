@@ -10,7 +10,12 @@ import httpx
 from sqlalchemy import select, update
 
 from packages.core.models import Posting
-from packages.crawler.backfill import backfill, fill_host, find_pending
+from packages.crawler.backfill import (
+    REFUSALS_BEFORE_STOP_SERVING,
+    backfill,
+    fill_host,
+    find_pending,
+)
 from packages.crawler.crawl import crawl_company
 from packages.crawler.extract import CompanySeed
 from packages.crawler.fetch import PoliteFetcher
@@ -27,12 +32,15 @@ def _board(
     robots: str = ALLOW,
     gone: frozenset[int] = frozenset(),
     page_status: int = 200,
+    refused: frozenset[int] = frozenset(),
 ):
     """A Workday board whose list and job pages are replayed offline.
 
     `gone` are job numbers whose page answers 404, as a requisition closed
     between the list and the request does. `page_status` answers every job
     page, as a site that refuses them all does (403 on three tenants, live).
+    `refused` are job numbers that alone answer 403, as about one page in
+    five did on big tenants that served the rest (2026-11-02).
     """
     calls: list[tuple[str, str, float]] = []
     clock = FakeClock()
@@ -51,6 +59,8 @@ def _board(
             return httpx.Response(page_status)
         if int(request.url.path.rsplit("-", 1)[-1]) in gone:
             return httpx.Response(404)
+        if int(request.url.path.rsplit("-", 1)[-1]) in refused:
+            return httpx.Response(403)
         return httpx.Response(
             200,
             json={
@@ -234,3 +244,70 @@ async def test_each_filled_posting_gets_a_version_as_a_crawl_would_give_it(db_se
     after = (await db_session.scalars(versions)).all()
     assert len(after) > before
     assert set(after) == ids
+
+
+async def _waiting(db_session) -> list[str]:
+    """Newest first, as the backfill reads them."""
+    pending = await find_pending(db_session)
+    return [item.listing.external_id for item in pending[HOST]]
+
+
+def _number(external_id: str) -> int:
+    return int(external_id.rsplit("-", 1)[-1])
+
+
+async def test_a_host_that_serves_pages_is_not_stopped_by_a_few_refused_ones(db_session):
+    """Live, big tenants served four pages in five; three refusals in a row
+    happened by chance and stopped them, J.B. Hunt among them."""
+    await _crawled(db_session, total=20)  # five read, fifteen waiting
+    order = await _waiting(db_session)
+    # Served, then three refused in a row, then served again.
+    refused = frozenset(_number(eid) for eid in order[1:4])
+
+    fetcher, calls = _board(total=20, refused=refused)
+    report = await backfill(fetcher, _sessions(db_session))
+
+    assert report.refused_hosts == []
+    assert report.filled == 12
+    assert len(calls) == 15
+
+
+async def test_a_host_that_served_pages_and_then_refuses_ten_in_a_row_is_left_alone(db_session):
+    await _crawled(db_session, total=20)
+    order = await _waiting(db_session)
+    refused = frozenset(_number(eid) for eid in order[1:])
+
+    fetcher, calls = _board(total=20, refused=refused)
+    report = await backfill(fetcher, _sessions(db_session))
+
+    assert report.refused_hosts == [HOST]
+    assert report.filled == 1
+    assert len(calls) == 1 + REFUSALS_BEFORE_STOP_SERVING
+
+
+async def test_pages_left_waiting_last_time_are_read_after_the_rest(db_session):
+    """A restart used to open each host with the pages it had just refused,
+    three in a row, and stopped sixteen hosts that were serving pages."""
+    await _crawled(db_session, total=20)
+    order = await _waiting(db_session)
+    tried = frozenset(order[:3])
+
+    fetcher, calls = _board(total=20, refused=frozenset(_number(eid) for eid in tried))
+    report = await backfill(fetcher, _sessions(db_session), tried_before=tried)
+
+    assert report.refused_hosts == []
+    assert report.filled == 12
+    asked = [path.rsplit("/", 1)[-1] for _, path, _ in calls]
+    assert {_number(page) for page in asked[-3:]} == {_number(eid) for eid in tried}
+
+
+async def test_each_page_left_waiting_is_reported_so_a_rerun_can_put_it_last(db_session):
+    await _crawled(db_session, total=12)
+    order = await _waiting(db_session)
+    gone = frozenset({_number(order[0])})
+
+    left: list[str] = []
+    fetcher, _ = _board(total=12, gone=gone)
+    await backfill(fetcher, _sessions(db_session), on_left_waiting=left.append)
+
+    assert left == [order[0]]
