@@ -61,6 +61,8 @@ from apps.api.chat_facts import (
     asks_for_counts,
     count_facts,
     render_postings,
+    render_totals,
+    totals_lines,
 )
 from apps.api.chat_figures import (
     asks_for_application_rates,
@@ -688,6 +690,10 @@ def _postings_section(
     "no postings matched", which is a different answer.
     """
     if not found.attempted:
+        if found.totals is not None:
+            # "How many jobs are there?" names nothing, and the number is known.
+            lines = totals_lines(found)
+            return "OPEN POSTINGS: " + lines[0] + "".join(f"\n  {line}" for line in lines[1:])
         if found.unnamed:
             # Nothing was looked for, which is not the same as nothing being
             # there. The owner can be told what to add.
@@ -1086,6 +1092,8 @@ async def prepare(
             and asks_for_application_snapshot(question)
         ):
             factual_answer = owner_facts.answer()
+        elif found.totals is not None:
+            factual_answer = render_totals(found)
         elif found.attempted and (asks_for_counts(question) or found.required_skill is not None):
             factual_answer = render_postings(found, skill_lines(found, named_skills, requirements))
     selection_evidence = None

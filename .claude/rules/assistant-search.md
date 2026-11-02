@@ -624,7 +624,12 @@ Routing, each from one word (`tests/test_chat_intent_routing.py`,
   "queue".
 - **"target" is a framing word**, and **a question that names nothing is not
   searched** (`Retrieval.unnamed`). It used to be reported as "searched 0 of
-  11,147, 11,147 not searchable yet".
+  11,147, 11,147 not searchable yet". One that names nothing and asks *how
+  many* gets the totals (`Retrieval.totals`, 2026-11-02): all open postings,
+  their companies, and the search area's count, the percentage denominator's
+  own rule. "how many job posting are available" had been answered "I can't
+  give a total" by the Kaggle 27B, correctly, from a context that held none.
+  `tests/test_chat_open_posting_count.py`.
 - **A company's name is its words in order.** "AI-native" is not Native AI.
   A common word after "at" is a name only where a name would stand: "at
   fast-growing firms" is not Fast.

@@ -119,8 +119,61 @@ class OwnerFacts:
         return "\n".join(lines)
 
 
+def _plural(number: int, one: str, many: str) -> str:
+    return f"{number} {one if number == 1 else many}"
+
+
+def totals_lines(found: Retrieval) -> list[str]:
+    """The open-posting totals in words, for the reply and for a model's context."""
+    totals = found.totals
+    if totals is None:
+        return []
+    lines = [
+        f"{_plural(totals.open_total, 'open posting', 'open postings')} from "
+        f"{_plural(totals.companies, 'company', 'companies')}."
+    ]
+    if totals.in_area is not None:
+        area = f" ({one_line(found.area)})" if found.area else ""
+        lines.append(f"{totals.in_area} of them are in your search area{area}.")
+    return lines
+
+
+def render_totals(found: Retrieval) -> str:
+    """'How many jobs are there?': the counts, then what would narrow them."""
+    return "\n".join(
+        [*totals_lines(found), "Name a role, skill, company or place to see the postings."]
+    )
+
+
 def count_facts(found: Retrieval) -> tuple[ChatCountFact, ...]:
     """Project existing retrieval values, retaining every count's own meaning."""
+    if found.totals is not None:
+        totals = found.totals
+        corpus = [
+            ChatCountFact(
+                key="open_total",
+                value=totals.open_total,
+                predicate="open postings",
+                scope="all open postings",
+            ),
+            ChatCountFact(
+                key="open_companies",
+                value=totals.companies,
+                unit="companies",
+                predicate="companies with open postings",
+                scope="all open postings",
+            ),
+        ]
+        if totals.in_area is not None:
+            corpus.append(
+                ChatCountFact(
+                    key="in_area",
+                    value=totals.in_area,
+                    predicate="open postings",
+                    scope="your search area",
+                )
+            )
+        return tuple(corpus)
     if not found.attempted:
         return ()
     scope = (
