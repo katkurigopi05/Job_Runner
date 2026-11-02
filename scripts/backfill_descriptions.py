@@ -3,7 +3,8 @@
 The reading is `packages/crawler/backfill.py`: one request a minute per host,
 robots.txt honoured, each posting committed as it lands. Afterwards the
 matching pass embeds and scores what was filled and the chunker makes it
-searchable, unless `--no-index`.
+searchable, unless `--no-index`. That pass is the one a crawl runs, so with
+`POSTING_AUTO_PRUNE` on it also prunes, as every crawl does.
 
     make backfill-descriptions dry=1     # what is missing, per host, and how long
     make backfill-descriptions limit=3   # three pages a host, to see it work
@@ -96,8 +97,8 @@ async def run(argv: list[str] | None = None) -> int:
         )
     minutes = (time.monotonic() - started) / 60
     print(
-        f"filled {report.filled}, left {report.failed} waiting, on {len(report.hosts)} hosts "
-        f"in {minutes:.0f} min"
+        f"filled {report.filled}, left {report.failed} waiting, skipped {report.skipped} "
+        f"closed or filled meanwhile, on {len(report.hosts)} hosts in {minutes:.0f} min"
     )
     if report.blocked_hosts:
         print(f"robots.txt refused job pages on: {', '.join(report.blocked_hosts)}")

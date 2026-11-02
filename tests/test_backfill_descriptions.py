@@ -7,10 +7,10 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from packages.core.models import Posting
-from packages.crawler.backfill import backfill, find_pending
+from packages.crawler.backfill import backfill, fill_host, find_pending
 from packages.crawler.crawl import crawl_company
 from packages.crawler.extract import CompanySeed
 from packages.crawler.fetch import PoliteFetcher
@@ -162,6 +162,49 @@ async def test_one_missing_page_does_not_stop_the_host(db_session):
     assert report.refused_hosts == []
     assert len(calls) == 7
     assert report.filled == 3
+
+
+async def test_a_posting_closed_since_the_run_began_is_not_reopened(db_session):
+    """`_store` writes `closed_at = NULL`; a crawl's closure must outlast a stale list."""
+    await _crawled(db_session)
+    pending = await find_pending(db_session)
+    closed = pending[HOST][0].listing.external_id
+    await db_session.execute(
+        update(Posting).where(Posting.external_id == closed).values(closed_at=datetime.now(UTC))
+    )
+
+    fetcher, _ = _board()
+    report = await fill_host(fetcher, db_session, HOST, pending[HOST])
+
+    assert report.skipped == 1
+    assert report.filled == 3
+    row = await db_session.scalar(
+        select(Posting)
+        .where(Posting.external_id == closed)
+        .execution_options(populate_existing=True)
+    )
+    assert row.closed_at is not None
+    assert row.description_raw is None
+
+
+async def test_a_posting_a_crawl_filled_meanwhile_keeps_the_crawls_text(db_session):
+    await _crawled(db_session)
+    pending = await find_pending(db_session)
+    filled = pending[HOST][0].listing.external_id
+    await db_session.execute(
+        update(Posting).where(Posting.external_id == filled).values(description_raw="From a crawl")
+    )
+
+    fetcher, _ = _board()
+    report = await fill_host(fetcher, db_session, HOST, pending[HOST])
+
+    assert report.skipped == 1
+    row = await db_session.scalar(
+        select(Posting)
+        .where(Posting.external_id == filled)
+        .execution_options(populate_existing=True)
+    )
+    assert row.description_raw == "From a crawl"
 
 
 async def test_a_limit_caps_the_requests_per_host(db_session):

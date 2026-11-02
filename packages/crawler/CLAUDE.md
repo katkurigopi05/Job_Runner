@@ -616,6 +616,11 @@ page at once:
   vector, so the matching pass that follows embeds and scores it, and the
   chunker makes it searchable. Each posting is committed as it lands; a
   stopped run keeps what it read, and a rerun reads only what is missing.
+- **Looked at again before storing.** `_store` writes `closed_at = NULL`, and
+  the list of what was missing is hours old by the end. A posting a crawl
+  closed or filled since is skipped, never reopened or written over.
+- **The index step is the crawler's own pass**, so with
+  `POSTING_AUTO_PRUNE` on it prunes, as every crawl does.
 - The readers' detail URLs are module functions now (`detail_url_for`), so
   a crawl and the backfill build the same address.
 

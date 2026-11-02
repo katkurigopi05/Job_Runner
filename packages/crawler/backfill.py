@@ -63,7 +63,7 @@ REFUSALS = frozenset({401, 403, 429})
 #: again a minute later for each of its postings would be pressing past a no.
 REFUSALS_BEFORE_STOP = 3
 
-Outcome = Literal["filled", "waiting", "refused", "blocked"]
+Outcome = Literal["filled", "waiting", "skipped", "refused", "blocked"]
 
 Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
@@ -84,6 +84,8 @@ class HostReport:
     pending: int
     filled: int = 0
     failed: int = 0
+    #: Closed, filled or removed by something else since the run began.
+    skipped: int = 0
     #: robots.txt refused a job page.
     blocked: bool = False
     #: The site refused `REFUSALS_BEFORE_STOP` pages in a row.
@@ -101,6 +103,10 @@ class BackfillReport:
     @property
     def failed(self) -> int:
         return sum(h.failed for h in self.hosts)
+
+    @property
+    def skipped(self) -> int:
+        return sum(h.skipped for h in self.hosts)
 
     @property
     def blocked_hosts(self) -> list[str]:
@@ -185,6 +191,9 @@ async def fill_host(
         if outcome == "filled":
             report.filled += 1
             refusals = 0
+        elif outcome == "skipped":
+            report.skipped += 1
+            refusals = 0
         else:
             report.failed += 1
             refusals = refusals + 1 if outcome == "refused" else 0
@@ -237,15 +246,31 @@ async def _fill_one(
     listing.published_at = hydrated.published_at or listing.published_at
     listing.content_hash = hydrated.content_hash
     try:
+        # The run began hours ago. `_store` writes `closed_at = NULL`, so a
+        # posting a crawl has closed since would be reopened by storing it,
+        # and one a crawl has filled would be written over. Look again first.
+        now = (
+            await session.execute(
+                select(Posting.closed_at, Posting.description_raw).where(
+                    Posting.company_id == item.company_id,
+                    Posting.external_id == listing.external_id,
+                )
+            )
+        ).one_or_none()
+        if now is None or now.closed_at is not None or now.description_raw:
+            await session.commit()  # ends the read; commit keeps the cache usable
+            return "skipped"
         company = companies.get(item.company_id) or await session.get(Company, item.company_id)
         if company is None:
-            return "waiting"
+            await session.commit()
+            return "skipped"
         companies[item.company_id] = company
         await _store(session, company, [listing], now=datetime.now(UTC))
         await session.commit()
     except Exception as exc:  # noqa: BLE001 - one bad row must not stop the host
         await session.rollback()
-        companies.pop(item.company_id, None)
+        # A rollback expires every cached company, not only this one.
+        companies.clear()
         log.warning("backfill_store_failed", posting=listing.external_id, error=type(exc).__name__)
         return "waiting"
     return "filled"
