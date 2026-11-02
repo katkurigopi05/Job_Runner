@@ -1,6 +1,7 @@
 """Per-host rate limiting — CLAUDE.md §2.6.
 
-"Minimum 60s between requests to the same host. Configurable up, never down."
+Minimum 5s between requests to the same host, with our configured delay in
+the 5–60s range. A site's Crawl-delay and 429/Retry-After may require more.
 
 That is enforced structurally rather than by convention: `HostRateLimiter`
 raises on a delay below the floor instead of quietly clamping. A silent clamp
@@ -11,9 +12,8 @@ owner, not us.
 ## Two kinds of host
 
 §2.6 was written with one picture in mind: a company's own careers page,
-served by that company's own infrastructure, where 60 seconds is courteous and
-anything faster is not. That picture is still right, and it is still the
-default.
+served by that company's own infrastructure. Its original floor was 60s;
+the owner lowered it to 5s on 2026-11-02 after measuring the backfill.
 
 It is the wrong picture for a *multi-tenant ATS API*. Every Greenhouse board
 on earth answers from `boards-api.greenhouse.io`; Lever and Ashby are the
@@ -26,7 +26,7 @@ So a host that is *known* to be a shared ATS API gets its own floor,
 `MIN_SHARED_API_DELAY_SECONDS`. The rules that make this safe rather than a
 loophole:
 
-- The list is explicit. An unknown host is a company host and gets 60s. There
+- The list is explicit. An unknown host is a company host and gets 5s by default. There
   is no heuristic that could promote one by accident.
 - The shared floor is a floor too. It is refused below, never clamped, exactly
   like the main one.
@@ -85,7 +85,7 @@ _MAX_WAIT_ROUNDS = 100
 def host_key(url: str) -> str:
     """The one name §2.6 counts requests against, for any spelling of a URL.
 
-    "Minimum 60s between requests to the same host" is enforced by keying
+    "Minimum 5s between requests to the same host" is enforced by keying
     `_last_request` and `_blocked_until` on a string. If two spellings of one
     host produce two strings, they produce two counters, and the floor is
     whatever the floor is *times the number of spellings*.
@@ -211,7 +211,7 @@ class HostRateLimiter:
         """The delay actually applied to `host`.
 
         A shared ATS API uses its own floor unless overridden upward. A
-        company host uses `delay_seconds`, which can never be below 60s.
+        company host uses `delay_seconds`, which can never be below 5s.
         """
         if host in self.host_delays:
             return self.host_delays[host]
