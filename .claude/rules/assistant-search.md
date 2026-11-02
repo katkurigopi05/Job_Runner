@@ -102,6 +102,9 @@ Four things are load-bearing:
   description, plus the `content_hash` it was cut from. A chunk whose hash no
   longer matches its posting is ignored by search and replaced by the next
   pass, never read at the wrong place.
+  A posting with no text keeps no chunks at all (2026-11-02): one that loses
+  its description, or that the backfill leaves without one, has its chunks
+  deleted by the next pass, so the index holds only postings with text.
 - **Only bge-small chunks.** Lexical chunk vectors would repeat what the
   keyword scan reads, so with `EMBEDDING_BACKEND=lexical` the pass does
   nothing and search behaves exactly as before. Chunk queries carry bge's
