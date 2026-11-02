@@ -50,8 +50,10 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-#: The floor from §2.6. Not a default — a hard minimum.
-MIN_DELAY_SECONDS = 60.0
+#: The floor from §2.6. Not a default — a hard minimum. 60 s until the owner
+#: lowered it to 5 s on 2026-11-02, after a backfill read job pages at 5 s a
+#: host with no 429 and refusals no higher than at 60 s.
+MIN_DELAY_SECONDS = 5.0
 
 #: The floor for a shared ATS API. Lower than §2.6's, and still a floor.
 #: Two seconds is well inside what these APIs serve without complaint, and

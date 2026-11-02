@@ -20,7 +20,7 @@ from packages.crawler.extract import CompanySeed
 from packages.crawler.fetch import PoliteFetcher
 from packages.crawler.find_boards import Resolved, board_root, from_url, resolve_site
 from packages.crawler.job_systems import other_job_system
-from packages.crawler.ratelimit import HostRateLimiter
+from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter
 from tests.test_workday import HOST, SLUG, FakeClock, _job
 
 FIXTURES = Path(__file__).parent / "fixtures" / "workday"
@@ -199,7 +199,7 @@ async def test_bounded_details_make_progress_on_an_unchanged_listing(db_session)
     result = await crawl_company(db_session, seed, third, force=True)
     assert result.unchanged
     assert result.emitted == 0
-    assert all(b[2] - a[2] >= 60 for a, b in zip(calls, calls[1:], strict=False))
+    assert all(b[2] - a[2] >= MIN_DELAY_SECONDS for a, b in zip(calls, calls[1:], strict=False))
 
 
 async def test_a_board_longer_than_a_page_is_read_whole_and_closes(db_session):

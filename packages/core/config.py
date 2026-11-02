@@ -255,7 +255,7 @@ class Settings(BaseSettings):
     vault_root: str = "./.secrets"
 
     #: Floor, not a default — the crawler refuses to go below this.
-    crawler_min_delay_s: int = 60
+    crawler_min_delay_s: int = 5
 
     #: Connection pooling for the crawler's HTTP client.
     #:
