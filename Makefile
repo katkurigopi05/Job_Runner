@@ -493,9 +493,10 @@ chunk-postings:
 # Rippling and Breezy boards, whose lists carry none (a crawl reads five a
 # board). One request a minute per host, robots.txt honoured; hours on a big
 # backlog, and stopping keeps what it read. Then embeds, scores and chunks it.
-# dry=1 counts per host and stops; limit=N reads at most N pages a host.
+# dry=1 counts per host and stops; limit=N reads at most N pages a host;
+# hosts=N reads N hosts at once (48), each still one page a minute.
 backfill-descriptions:
-	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit))
+	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit)) $(if $(hosts),--max-hosts $(hosts))
 
 # make audit-locations — how the search area reads every open posting's
 # location, read-only. Lists the places no rule recognized and the strings most

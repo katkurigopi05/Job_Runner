@@ -19,7 +19,7 @@ import time
 
 from packages.core import db as core_db
 from packages.core.config import get_settings
-from packages.crawler.backfill import READERS, HostReport, backfill, find_pending
+from packages.crawler.backfill import MAX_HOSTS, READERS, HostReport, backfill, find_pending
 from packages.crawler.fetch import build_fetcher
 
 #: Matching passes before giving up on a backlog that will not shrink.
@@ -35,6 +35,14 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
         "--ats", default=",".join(READERS), help="boards to read (default: %(default)s)"
     )
     parser.add_argument("--limit", type=int, default=None, help="at most N pages per host")
+    parser.add_argument(
+        "--max-hosts",
+        type=int,
+        default=MAX_HOSTS,
+        help="hosts read at once (default: %(default)s). Each still waits its own "
+        "minute between pages, so more hosts finish the small boards sooner; the "
+        "largest board decides when the run ends.",
+    )
     parser.add_argument(
         "--no-index", action="store_true", help="skip embedding, scoring and chunking"
     )
@@ -93,7 +101,12 @@ async def run(argv: list[str] | None = None) -> int:
 
     async with build_fetcher(shared=True) as fetcher:
         report = await backfill(
-            fetcher, core_db.get_sessionmaker(), ats=ats, limit=args.limit, on_progress=progress
+            fetcher,
+            core_db.get_sessionmaker(),
+            ats=ats,
+            limit=args.limit,
+            max_hosts=args.max_hosts,
+            on_progress=progress,
         )
     minutes = (time.monotonic() - started) / 60
     print(
