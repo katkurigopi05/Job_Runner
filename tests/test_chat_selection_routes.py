@@ -71,7 +71,7 @@ async def test_both_routes_only_display_supplied_evidence(monkeypatch, route, ra
     assert "total matching count is unknown" in result.reply
     assert result.unsupported_citations == []
     provider.complete.assert_awaited_once()
-    assert provider.complete.call_args.args[0] == chat.SYSTEM
+    assert provider.complete.call_args.args[0] == chat.SELECTION_SYSTEM
 
 
 @pytest.mark.parametrize("route", ["/chat", "/chat/stream"])

@@ -73,6 +73,7 @@ from apps.api.chat_figures import (
 from apps.api.chat_selection import (
     EvidenceItem,
     SelectionResult,
+    is_bare_selection,
     parse_selection,
     render_selection,
 )
@@ -103,7 +104,7 @@ from packages.core.schemas import (
 from packages.crawler.discover import slug_from_ats_url
 from packages.llm import router as llm_router
 from packages.llm.audit import is_local
-from packages.llm.prompts import CHAT_SYSTEM
+from packages.llm.prompts import CHAT_SELECTION_SYSTEM, CHAT_SYSTEM
 from packages.llm.provider import (
     LLMError,
     ModelMissing,
@@ -152,6 +153,8 @@ ALLOWED_PROVIDERS = (
 
 #: Defined in packages/llm/prompts.py — see the note there on versioning.
 SYSTEM = CHAT_SYSTEM.text
+#: Sent only with an EVIDENCE_SELECTION message (`selected_reply`).
+SELECTION_SYSTEM = CHAT_SELECTION_SYSTEM.text
 
 
 def _one_line(text: object) -> str:
@@ -1240,6 +1243,20 @@ def _local_remedy(exc: LLMError) -> str:
     )
 
 
+def selection_instead_of_answer(selected: str, model: str | None) -> ApiError:
+    """A model that answered an ordinary question with `{"ids": [...]}`.
+
+    That is the evidence-selection shape, not an answer, and shown as one it
+    read as a broken reply (2026-11-02). It is refused rather than displayed,
+    and the dock keeps no turn for it, so it is not sent back as history.
+    """
+    return ApiError(
+        ErrorCode.INTERNAL_ERROR,
+        f"{model or selected} replied with an evidence selection instead of an answer. "
+        "Nothing fell back to another model. Ask again, or start a new conversation.",
+    )
+
+
 def did_not_answer(selected: str, exc: LLMError) -> ApiError:
     """What the owner is told when the model they asked for fails."""
     # Ollama is running and refused: the advice for a model that is down is wrong here.
@@ -1382,7 +1399,9 @@ async def selected_reply(ready: Ready) -> ChatReply:
     assert evidence is not None
     try:
         provider, model = provider_for(ready.selected)
-        raw = await provider.complete(SYSTEM, ready.prompt, max_tokens=180, temperature=0.0)
+        raw = await provider.complete(
+            SELECTION_SYSTEM, ready.prompt, max_tokens=180, temperature=0.0
+        )
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
     selection = parse_selection(raw, evidence)
@@ -1437,4 +1456,6 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
         )
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
+    if is_bare_selection(answer):
+        raise selection_instead_of_answer(ready.selected, model)
     return reply_for(ready, model, answer)
