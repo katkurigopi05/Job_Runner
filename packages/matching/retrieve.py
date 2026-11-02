@@ -165,10 +165,8 @@ EXCERPT_CHARS = 600
 #: query stays a lookup by id.
 KEYWORD_POOL = 30
 
-#: How many further matches a reply lists after the ones the model was shown.
-#: The owner asked for "the jobs", and five is what fits in a prompt, not what
-#: there is; the dashboard shows these ten at a time.
-MORE_LIMIT = 100
+#: Postings looked up at a time when a list goes past what the search ranked.
+LIST_BATCH = 1000
 
 #: Keyword matches read first when the owner's search area applies, before the
 #: area cuts them back to `KEYWORD_POOL`. On the owner's database 11 of 25
@@ -649,7 +647,9 @@ class Retrieval:
     #: How many open postings in the search area carry such a title, or None
     #: when no role was named. The passages are the closest few of these.
     role_total: int | None = None
-    #: The next matches after `passages`, in the same order, up to `MORE_LIMIT`.
+    #: Every further match after `passages`, in the same order. Five is what
+    #: fits in a prompt, not what there is: the owner asked for every posting
+    #: (2026-11-02), and the dashboard shows these ten at a time or all at once.
     more: tuple[Listed, ...] = ()
     #: The kinds of title that role is made of, each with how many open
     #: postings in the area carry it: the kind that was typed first, then by
@@ -1475,6 +1475,14 @@ def _metadata_area_exclusion(
     )
 
 
+class _Totals(NamedTuple):
+    total: int
+    companies: int
+    outside: int
+    #: The postings counted, so the reply can list every one.
+    kept: frozenset[uuid.UUID] = frozenset()
+
+
 @stage("metadata_totals")
 async def _matching_totals(
     session: AsyncSession,
@@ -1485,7 +1493,7 @@ async def _matching_totals(
     allow_unknown: bool,
     place_filter: _PlaceFilter | None = None,
     remote_only: bool = False,
-) -> tuple[int, int, int]:
+) -> _Totals:
     """Count the keyword scan's complete match IDs, beyond its ranked pool.
 
     No second regex scan: word boundaries were already applied. Classify
@@ -1495,9 +1503,9 @@ async def _matching_totals(
     None selects every open posting for a requested percentage's denominator.
     """
     if posting_ids is None and place_filter is None and level is None and not remote_only:
-        return await _open_area_total(session, area=area), 0, 0
+        return _Totals(await _open_area_total(session, area=area), 0, 0)
     if posting_ids == []:
-        return 0, 0, 0
+        return _Totals(0, 0, 0)
     query = select(
         Posting.id,
         Posting.title,
@@ -1508,6 +1516,7 @@ async def _matching_totals(
         query = query.where(Posting.id.in_(posting_ids))
     total, outside = 0, 0
     employers: set[uuid.UUID] = set()
+    kept: set[uuid.UUID] = set()
     remote_outside = get_settings().search_remote_outside_california
     eligibility: dict[tuple[str | None, str | None], tuple[str | None, bool]] = {}
     recheck: dict[uuid.UUID, tuple[str | None, str | None, uuid.UUID | None, bool]] = {}
@@ -1536,6 +1545,7 @@ async def _matching_totals(
                 remote_recheck[ident] = (title, location)
             return
         total += 1
+        kept.add(ident)
         if company_id is not None:
             employers.add(company_id)
 
@@ -1594,7 +1604,34 @@ async def _matching_totals(
         for ident, description in descriptions.all():
             title, location = remote_recheck[ident]
             place_filter.record(ident, title, location, description)
-    return total, len(employers), outside
+    return _Totals(total, len(employers), outside, frozenset(kept))
+
+
+async def _listed(session: AsyncSession, posting_ids: list[uuid.UUID]) -> tuple[Listed, ...]:
+    """Postings to list after the ranked ones, in the order given.
+
+    Title, company, place and link only: what the dashboard lists, and never a
+    description, so a list of a few thousand is a few lookups by id.
+    """
+    rows: dict[uuid.UUID, Any] = {}
+    for start in range(0, len(posting_ids), LIST_BATCH):
+        result = await session.execute(
+            select(Posting.id, Posting.title, Posting.location, Posting.url, Company.name)
+            .outerjoin(Company, Company.id == Posting.company_id)
+            .where(Posting.id.in_(posting_ids[start : start + LIST_BATCH]))
+        )
+        rows.update({row.id: row for row in result.all()})
+    return tuple(
+        Listed(
+            posting_id=ident,
+            title=rows[ident].title or "(untitled)",
+            company=rows[ident].name,
+            location=rows[ident].location,
+            url=rows[ident].url,
+        )
+        for ident in posting_ids
+        if ident in rows
+    )
 
 
 async def _open_totals(session: AsyncSession, *, area: bool) -> OpenTotals:
@@ -2352,7 +2389,7 @@ async def _stating_sponsorship(
                 location=hit.location,
                 url=hit.url,
             )
-            for hit in offering[limit : limit + MORE_LIMIT]
+            for hit in offering[limit:]
         ),
         sponsorship=SponsorshipCount(
             offered=len(offering),
@@ -2470,7 +2507,7 @@ async def _requiring_skill(
         ),
         more=tuple(
             Listed(hit.posting_id, hit.title or "(untitled)", hit.company, hit.location, hit.url)
-            for hit in required[limit : limit + MORE_LIMIT]
+            for hit in required[limit:]
         ),
         ranked=len(required),
         work_mode="remote" if remote_only else None,
@@ -3140,13 +3177,13 @@ async def retrieve(
             # answer must not cite a posting for a word it does not say.
             by_id = {hit.posting_id: hit for hit in everything}
             shown_ids, more_ids = tiers.split(
-                [hit.posting_id for hit in everything], tier_of, limit, MORE_LIMIT
+                [hit.posting_id for hit in everything], tier_of, limit
             )
             chosen = [by_id[posting_id] for posting_id in shown_ids]
             more_hits = [by_id[posting_id] for posting_id in more_ids]
         else:
             chosen = everything[:limit]
-            more_hits = everything[limit : limit + MORE_LIMIT]
+            more_hits = everything[limit:]
         ranked_total = len(everything)
         # What the second model read: the head of what it was handed, which
         # leaves out the postings held ahead of it, and for one that judges,
@@ -3213,7 +3250,7 @@ async def retrieve(
         in_area_rest = [
             hit for hit in ranked if hit.posting_id not in shown and in_area(hit) and in_place(hit)
         ]
-        more_hits = in_area_rest[:MORE_LIMIT]
+        more_hits = in_area_rest
         ranked_total = len(chosen) + len(in_area_rest)
         searched = await _reachable(session, list(chunk_vectors), list(vectors))
         unsearchable = max(0, open_total - searched)
@@ -3222,6 +3259,8 @@ async def retrieve(
 
     match_total = company_total = None
     matched_term = None
+    # What the count covers past the ranked list, listed in the search's order.
+    counted_rest: tuple[Listed, ...] = ()
     if count_simple or (
         place_filter is not None and role_pool is None and matching_ids is not None
     ):
@@ -3235,23 +3274,31 @@ async def retrieve(
             matching_ids = list(
                 (
                     await session.scalars(
-                        select(Posting.id).where(
-                            Posting.closed_at.is_(None), Posting.company_id.in_(companies)
-                        )
+                        select(Posting.id)
+                        .where(Posting.closed_at.is_(None), Posting.company_id.in_(companies))
+                        .order_by(Posting.first_seen_at.desc(), Posting.id)
                     )
                 ).all()
             )
-        match_total, company_total, outside = await _matching_totals(
+        counted_ids = list(dict.fromkeys([*(matching_ids or []), *place_ids]))
+        counted = await _matching_totals(
             session,
-            list(dict.fromkeys([*(matching_ids or []), *place_ids])),
+            counted_ids,
             area=bool(area),
             level=level,
             allow_unknown=allow_unknown,
             place_filter=place_filter,
             remote_only=remote_only,
         )
+        match_total, company_total, outside = counted.total, counted.companies, counted.outside
         if not count_simple:
             match_total = company_total = None
+        else:
+            already = {hit.posting_id for hit in (*chosen, *more_hits)}
+            counted_rest = await _listed(
+                session,
+                [i for i in counted_ids if i in counted.kept and i not in already],
+            )
     share = None
     if wants_share:
         # A role/title pool is complete; a keyword pool is not. The exact simple
@@ -3264,15 +3311,17 @@ async def retrieve(
             else None
         )
         if exact is not None:
-            denominator, _, _ = await _matching_totals(
-                session,
-                None,
-                area=bool(area),
-                level=None,
-                allow_unknown=True,
-                # Independent accounting: do not alter the query's omitted counts.
-                place_filter=_PlaceFilter() if place_filter is not None else None,
-            )
+            denominator = (
+                await _matching_totals(
+                    session,
+                    None,
+                    area=bool(area),
+                    level=None,
+                    allow_unknown=True,
+                    # Independent accounting: do not alter the query's omitted counts.
+                    place_filter=_PlaceFilter() if place_filter is not None else None,
+                )
+            ).total
             share = PostingShare(
                 matching=exact,
                 open_total=denominator,
@@ -3351,16 +3400,19 @@ async def retrieve(
             if beyond and terms
             else None
         ),
-        more=tuple(
-            Listed(
-                posting_id=hit.posting_id,
-                title=hit.title or "(untitled)",
-                company=hit.company,
-                location=hit.location,
-                url=hit.url,
-                kind=label_of.get(hit.posting_id),
-            )
-            for hit in more_hits
+        more=(
+            *(
+                Listed(
+                    posting_id=hit.posting_id,
+                    title=hit.title or "(untitled)",
+                    company=hit.company,
+                    location=hit.location,
+                    url=hit.url,
+                    kind=label_of.get(hit.posting_id),
+                )
+                for hit in more_hits
+            ),
+            *counted_rest,
         ),
         kinds=tuple(kinds),
         level=level_count,
@@ -3519,7 +3571,7 @@ def excerpt(
 __all__ = [
     "DEFAULT_LIMIT",
     "EXCERPT_CHARS",
-    "MORE_LIMIT",
+    "LIST_BATCH",
     "Listed",
     "Passage",
     "Retrieval",

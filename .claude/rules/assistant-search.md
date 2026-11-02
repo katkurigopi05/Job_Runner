@@ -468,9 +468,9 @@ area 61 postings were that role. Four causes, each with a test in
   listed first and the rest of the role after them, never dropped (below).
 - **Nothing said there were more.** `Retrieval.role_total` is how many open
   postings in the area carry the title. The context tells the model the
-  number; the reply carries the next matches as `more_sources` (up to
-  `MORE_LIMIT`, 100), and the dock lists them ten at a time, with a link to
-  `/matches?role=…` for whatever is past that.
+  number; the reply carries every further match as `more_sources`, and the
+  dock lists them ten at a time or all at once (the 100 cap that was here
+  went on 2026-11-02, below).
 - **The excerpt was the employer's pitch.** Found by title, a posting has no
   term to quote on, so `excerpt` took the first 600 characters. With nothing
   to quote it now starts at the requirements heading, when
@@ -804,8 +804,9 @@ matched is where a missed job hides. `matching/tiers.py` does it, and
   277 titles with AI and then 43 "Machine Learning Engineer"-like titles
   without it, under "related:". `postings_related_total` keeps them out of
   the count of titles with the word.
-- **The list is capped per tier**, at `MORE_LIMIT` each. One cap let the 277
-  fill it and the related were never listed.
+- **No tier is capped.** One cap of 100 for the whole list let the 277 fill
+  it and the related were never listed; a cap per tier followed, and since
+  2026-11-02 there is none (below).
 - **The mentions keep the keyword scan's order.** Fused in the role's
   newest-first order, "software engineer jobs in London" dropped from a
   relevant posting first to third in the owner's grades.
@@ -947,3 +948,27 @@ snapshot: all 207 benchmark and judged questions are unchanged.
   the owner's decision.
 
 `tests/test_chat_job_type_words.py`.
+
+## Every posting is listed (2026-11-02)
+
+The owner asked for software jobs and said the list "should show every
+single role". A reply listed the five the model read and at most 100 more:
+892 software titles stopped at 105, and a search by mention listed the 30 it
+ranked of the 1,619 it counted for "python jobs", with no way past either.
+
+- **Every list carries everything its count covers.** Title, role and tier
+  lists drop the cap. A simple search lists every posting `_matching_totals`
+  counted, after the ranked ones, in the keyword ranking's order; an
+  employer's in newest-first order. The head of each list, and what the model
+  is shown, are unchanged.
+- **The count and the list are one set.** `_Totals.kept` is what was
+  counted, so a listed posting is never one the area or the level left out.
+- **Only metadata is read for the rest** (`_listed`: title, company, place,
+  link, 1,000 ids a query). No description, no excerpt.
+- **The dock adds "show all"** beside "show next 10".
+
+Measured on the live database: "python jobs" lists 1,619 (390 KB), "which
+roles use Kafka" 156, "product manager jobs" 3,976 (about 1 MB, the largest
+seen), with search times unchanged. A compound search ("python jobs using
+Kafka") has no exact count and still lists what it ranked.
+`tests/test_chat_lists_every_match.py`.
