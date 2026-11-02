@@ -110,7 +110,8 @@ def _reader(
             return httpx.Response(
                 200,
                 json={
-                    "total": total,
+                    # Only the first page names the total; Workday sends 0 after.
+                    "total": total if offset == 0 else 0,
                     "jobPostings": [
                         _job(n) | ({"postedOn": "Posted 30+ Days Ago"} if n < old_before else {})
                         for n in range(offset, min(total, offset + 20))
@@ -199,6 +200,24 @@ async def test_bounded_details_make_progress_on_an_unchanged_listing(db_session)
     assert result.unchanged
     assert result.emitted == 0
     assert all(b[2] - a[2] >= 60 for a, b in zip(calls, calls[1:], strict=False))
+
+
+async def test_a_board_longer_than_a_page_is_read_whole_and_closes(db_session):
+    """The crawl-level cost of reading Workday's later-page total of 0 as a shift.
+
+    Every board longer than one page came back suspect: nothing it dropped was
+    closed, and the failure backoff spaced its crawls out to 13 hours.
+    """
+    seed = CompanySeed(name="Acme", slug=SLUG, ats="workday", poll_interval_s=0)
+    fetcher, _ = _reader(total=45)
+    first = await crawl_company(db_session, seed, fetcher, force=True)
+    assert first.new_postings == 45
+    assert first.status == "ok"
+
+    fetcher, _ = _reader(total=44)
+    second = await crawl_company(db_session, seed, fetcher, force=True)
+    assert second.status == "ok"
+    assert second.closed_postings == 1
 
 
 async def test_description_only_edit_is_versioned_on_identical_list(db_session):
