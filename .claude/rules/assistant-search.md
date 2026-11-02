@@ -913,3 +913,34 @@ company or level restriction; its scope is stated. This accounting uses a
 separate place filter so it cannot alter the query's omitted-role counts.
 Ordinary role queries do not pay for the denominator scan. No model performs
 division. `tests/test_chat_posting_share.py`.
+
+## "Software jobs" is a kind of job (2026-11-02)
+
+Asked "software job roles", the assistant searched for the word: 3,920
+postings that mention "software", a UX designer of scientific software in
+the first five and a software-asset-management lead in the list. Nearly every
+employer calls itself a software company, so the mentions are noise. When
+"software" (optionally with "engineering" or "development") before a job
+noun is all a question asks, it is read from titles, the way "any roles with
+AI" is (`retrieve._job_type_words`): 1,100 titles in the area, software
+engineer 808 first, then the role's titles without the word (member of
+technical staff and the like) under "related:". The qualifier is not required
+in the title, so "software development jobs" lists "Software Developer".
+
+What was measured and left alone, on the live corpus in one read-only
+snapshot: all 207 benchmark and judged questions are unchanged.
+
+- **The role table was tried first.** Mapping the word onto it made
+  "backend roles" 32 postings where the keyword search had 642, because
+  "Software Engineer, Backend" is not a backend-engineer title to the table.
+- **"backend" and "frontend" stay keyword searches.** Their titles already
+  came first, and a description saying "backend" is often a backend role
+  titled "Software Engineer".
+- **With anything else asked** ("software jobs using Kafka", "software jobs
+  at Stripe") the search is unchanged.
+- **One employer's repeats still take places among the five** (§26): Process
+  Street lists "Senior Software Engineer | Remote | AI SaaS Software Role" six
+  times, and the newest-first order shows four of them. Collapsing them is
+  the owner's decision.
+
+`tests/test_chat_job_type_words.py`.

@@ -405,6 +405,23 @@ _PERCENTAGE_REQUEST = re.compile(
 _FRAMING_PHRASES = re.compile(
     rf"\bright\s+now\b|\bhow\s+many\b|{_PERCENTAGE_REQUEST.pattern}", re.IGNORECASE
 )
+#: A word that says what kind of job, with a job noun after it: "software
+#: jobs", and the same with "engineering" or "development" between. Not
+#: "roles that mention software" or "software testing tools", where the
+#: word is a subject.
+#:
+#: Only "software", measured on the live corpus on 2026-11-02: nearly every
+#: employer calls itself a software company, so its 3,920 description
+#: mentions were noise, and its 1,100 titles are the answer. "backend" and
+#: "frontend" were measured too and left out: their keyword search already
+#: put their titles first, and a description saying "backend" is often a
+#: backend role titled "Software Engineer" (642 mentions against 93 titles).
+_JOB_TYPE_PHRASE = re.compile(
+    r"\b(software)"
+    r"(?:\s+(engineering|development))?\s+"
+    r"(?:jobs?|roles?|positions?|openings?|opportunit(?:y|ies)|vacanc(?:y|ies))\b",
+    re.IGNORECASE,
+)
 #: Asking for a number of postings rather than for postings.
 _HOW_MANY = re.compile(
     r"\bhow\s+many\b|\btotal\s+(?:number|jobs|postings|roles)\b|"
@@ -846,6 +863,22 @@ def _located_at(hit: _Hit, terms: list[str]) -> bool:
     return any(
         re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", location) for term in terms
     )
+
+
+def _job_type_words(question: str) -> tuple[frozenset[str], frozenset[str]]:
+    """The words of each job-type phrase, and the qualifiers said with them.
+
+    As `tokenize` writes them, so they compare with the search terms: "back
+    end" is `back` and `end`, "software engineering" is `software` with the
+    qualifier `engineering`.
+    """
+    words: set[str] = set()
+    qualifiers: set[str] = set()
+    for match in _JOB_TYPE_PHRASE.finditer(question):
+        words.update(tokenize(match.group(1)))
+        if match.group(2):
+            qualifiers.update(tokenize(match.group(2)))
+    return frozenset(words), frozenset(qualifiers)
 
 
 def _search_terms(
@@ -2657,6 +2690,18 @@ async def retrieve(
     else:
         beyond_the_name = terms
 
+    # A kind of job that is all the question asks ("software jobs", "backend
+    # roles") is read from titles below, as a word too common to search
+    # descriptions for is. Searched in descriptions, "software job roles" was
+    # 3,776 postings that mention the word, a UX designer among the first
+    # five (2026-11-02). With anything else asked, the search is unchanged.
+    job_type, job_qualifiers = _job_type_words(question)
+    reads_titles = (
+        bool(job_type) and not companies and set(beyond_the_name) <= job_type | job_qualifiers
+    )
+    if reads_titles:
+        beyond_the_name = []
+
     # A kind of job, named: "AI engineer", "SRE". Its postings are found by
     # title through the role table, so the words that named it are not also
     # searched for. "AI" is in 81% of the owner's postings and "engineer" in
@@ -2708,7 +2753,11 @@ async def retrieve(
         asked_words = [
             word
             for word in dict.fromkeys(tokenize(question))
-            if word not in _FRAMING_WORDS and word not in company_words and word not in aside
+            if word not in _FRAMING_WORDS
+            and word not in company_words
+            and word not in aside
+            # "software development jobs" includes "Software Developer".
+            and not (reads_titles and word in job_qualifiers)
         ]
         stems = {_stem(word) for word in asked_words}
         if stems:

@@ -623,9 +623,16 @@ page at once:
   that fails (a 404 for a job closed since the list) leaves that posting
   waiting; the next read of the list decides whether it closed. robots.txt
   refusing a job page stops that host, and so do three refusals in a row
-  (401, 403, 429): §2.5 leaves a site that says no alone. In a one-page-a-host
-  trial on 2026-11-02, 114 of 118 hosts gave their text; Zoetis, NiSource
-  and ConocoPhillips answered 403.
+  (401, 403, 429) from a host that has served nothing this run: §2.5 leaves a
+  site that says no alone. In a one-page-a-host trial on 2026-11-02, 114 of
+  118 hosts gave their text; Zoetis, NiSource and ConocoPhillips answered 403.
+- **A host that serves pages needs ten refusals in a row to stop.** Big
+  tenants refuse about one page in five (jobs no longer public, it seems)
+  and serve the rest, so three in a row came by chance: the live run left 21
+  hosts alone that had each served 12 to 58 pages, J.B. Hunt with 498 to go.
+  Pages a run is refused or cannot read are written to
+  `storage/logs/backfill_left_waiting.txt` and a rerun reads them after the
+  rest; a restart used to open every host with them.
 - **Stored as a crawl stores it.** `_store` writes the version and drops the
   vector, so the matching pass that follows embeds and scores it, and the
   chunker makes it searchable. Each posting is committed as it lands; a

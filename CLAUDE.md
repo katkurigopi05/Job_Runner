@@ -79,6 +79,13 @@ These are correctness requirements, not preferences. Violating any of them is a 
    below exactly like the 5s one, a site's own `Crawl-delay` still raises its host's
    delay, and a `429`/`Retry-After` backs that host off for as long as it asks. Polling
    faster is only defensible while also listening.
+
+   **Amended 2026-11-02, owner approved:** `make backfill-descriptions pace=5,10,15,20`
+   may read job pages (never lists) of Workday, Rippling and Breezy boards at 5 s a host,
+   for that command only. It steps to 10, 15 and 20 s when 30% of the last 60 pages are
+   refused, never steps back, and stops the run if refused at 20 s. A `Crawl-delay` and
+   a `429` still win. The crawler's limiters still refuse anything under 60 s, and
+   without `pace=` the backfill uses them. `packages/crawler/backfill.py`, `Pace`.
 7. **Secrets never touch the database in plaintext and never appear in logs.** ATS account
    passwords go through `packages/core/vault.py` (Fernet, key from OS keychain or `.env`
    outside the repo). `.env` is gitignored and stays gitignored.
