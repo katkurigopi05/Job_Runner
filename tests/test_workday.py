@@ -50,8 +50,19 @@ def _job(n: int) -> dict:
     }
 
 
-def _fetcher(total: int, *, fail_page: int | None = None, robots: str = "User-agent: *\nDisallow:"):
-    """A board of `total` postings, served `PAGE_SIZE` at a time."""
+def _fetcher(
+    total: int,
+    *,
+    fail_page: int | None = None,
+    robots: str = "User-agent: *\nDisallow:",
+    later_total: int = 0,
+):
+    """A board of `total` postings, served `PAGE_SIZE` at a time.
+
+    Like a real tenant, only the first page carries the board's total: later
+    pages report `later_total`, which Workday sends as 0 (read live on
+    2026-11-01, 94 on the first page and 0 on the second).
+    """
     calls: list[int] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -68,7 +79,8 @@ def _fetcher(total: int, *, fail_page: int | None = None, robots: str = "User-ag
         if fail_page is not None and page == fail_page:
             return httpx.Response(500, text="boom")
         jobs = [_job(n) for n in range(offset, min(offset + PAGE_SIZE, total))]
-        return httpx.Response(200, text=json.dumps({"total": total, "jobPostings": jobs}))
+        reported = total if offset == 0 else later_total
+        return httpx.Response(200, text=json.dumps({"total": reported, "jobPostings": jobs}))
 
     clock = FakeClock()
     fetcher = PoliteFetcher(
@@ -151,6 +163,31 @@ async def test_every_page_is_walked() -> None:
     assert len(pages.postings) == 95
     assert calls == [0, 20, 40, 60, 80]
     assert len({p.external_id for p in pages.postings}) == 95
+
+
+async def test_later_pages_reporting_a_total_of_zero_is_a_whole_read() -> None:
+    """Workday names the board's total on the first page only.
+
+    Every later page says 0. Reading that 0 as the board shifting mid-walk
+    marked every board longer than one page as truncated: it closed nothing,
+    and each crawl counted as a failure, so the backoff read those boards
+    every 13 hours instead of hourly and their descriptions waited.
+    """
+    fetcher, _ = _fetcher(total=95)
+
+    pages = await WorkdayExtractor().collect(fetcher, SLUG)
+
+    assert len(pages.postings) == 95
+    assert pages.truncated is False
+
+
+async def test_a_later_page_naming_a_different_count_is_still_a_shifted_read() -> None:
+    """The check the 0 tripped is kept for what it was for: a count that moved."""
+    fetcher, _ = _fetcher(total=45, later_total=46)
+
+    pages = await WorkdayExtractor().collect(fetcher, SLUG)
+
+    assert pages.truncated is True
 
 
 async def test_a_board_that_is_an_exact_multiple_of_the_page_stops() -> None:
