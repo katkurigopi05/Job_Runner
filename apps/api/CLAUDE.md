@@ -613,7 +613,16 @@ including freshly reread earlier postings. It excludes mailbox, application,
 resume and prior model-written prose. Context packing budgets this exact
 prompt; removed excerpts disappear from both the allowed catalogue and quote
 fallback. The response's citation metadata comes from validated source labels,
-not citation-like text inside source quotes. Assistant system prompt is v9.
+not citation-like text inside source quotes.
+
+**The selection protocol is its own prompt** (2026-11-02): `assistant.selection` v1,
+sent only by `selected_reply`; `assistant.system` is v10 without it. In v9 the
+protocol was a paragraph of the one prompt every question was sent with, and said
+it took precedence over the answer format: the Kaggle Qwen models answered "Have I
+had any replies?" and a skills-gap question with `{"ids": []}`, and the dock sent
+those back as history. An ordinary answer that is only `{"ids": [...]}` is now
+refused on both routes (`selection_instead_of_answer`), and an earlier one is not
+remembered. `tests/test_chat_selection_prompt_split.py`.
 
 Application, recruiter-mail, rate and skill-gap conversations retain their
 existing paths. The selection protocol does not establish semantic accuracy;

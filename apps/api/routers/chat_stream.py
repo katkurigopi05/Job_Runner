@@ -30,6 +30,7 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
+from apps.api.chat_selection import is_bare_selection
 from apps.api.routers.chat import (
     ANSWER_TEMPERATURE,
     ANSWER_TOKENS,
@@ -41,6 +42,7 @@ from apps.api.routers.chat import (
     provider_for,
     reply_for,
     selected_reply,
+    selection_instead_of_answer,
 )
 from packages.core import db as core_db
 from packages.core.schemas import ChatReply, ChatRequest
@@ -109,7 +111,12 @@ async def _written(
     finally:
         # A reader who leaves must also stop the model writing.
         await pieces.aclose()  # type: ignore[attr-defined]
-    reply = reply_for(ready, model, "".join(written))
+    answer = "".join(written)
+    if is_bare_selection(answer):
+        # The same refusal `/chat` raises, as the stream's error frame.
+        yield _frame("error", message=selection_instead_of_answer(ready.selected, model).message)
+        return
+    reply = reply_for(ready, model, answer)
     yield _frame("done", reply=reply.model_dump(mode="json", by_alias=True))
 
 
