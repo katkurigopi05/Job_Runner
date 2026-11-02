@@ -124,6 +124,28 @@ async def test_an_edited_posting_is_chunked_again(db_session) -> None:
     assert [(c.start, c.length, c.content_hash) for c in chunks] == [(0, 31, "h2")]
 
 
+async def test_a_posting_that_loses_its_text_loses_its_chunks(db_session) -> None:
+    """No description, nothing to search by meaning, and no chunks to say otherwise.
+
+    Two Workday postings on the owner's database (2026-11-02) had chunks from
+    text a listing edit had since cleared: search ignored them by hash, but a
+    posting the backfill leaves without text must not sit in the index at all.
+    """
+    company = await _company(db_session)
+    lost = await _posting(db_session, company, "ML Scientist", FILLER)
+    kept = await _posting(db_session, company, "Data Engineer", FILLER, hash_="h9")
+    await chunk_postings(db_session, embedder=LEXICAL)
+    assert await _chunks(db_session, lost)
+
+    lost.description_raw = None
+    lost.content_hash = "h2"
+    await db_session.flush()
+    assert await chunk_postings(db_session, embedder=LEXICAL) == 0
+
+    assert await _chunks(db_session, lost) == []
+    assert await _chunks(db_session, kept), "a posting with text keeps its chunks"
+
+
 async def test_without_a_semantic_model_nothing_is_chunked(db_session) -> None:
     """The suite runs EMBEDDING_BACKEND=lexical, where chunk vectors would add nothing."""
     company = await _company(db_session)
