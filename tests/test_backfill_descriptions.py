@@ -311,3 +311,19 @@ async def test_each_page_left_waiting_is_reported_so_a_rerun_can_put_it_last(db_
     await backfill(fetcher, _sessions(db_session), on_left_waiting=left.append)
 
     assert left == [order[0]]
+
+
+async def test_pages_that_failed_before_can_be_left_as_not_available(db_session):
+    """The owner's call on 2026-11-02: a page that failed is left without text,
+    not asked for again. Nothing is written in its place: an unknown stays NULL."""
+    await _crawled(db_session, total=12)
+    order = await _waiting(db_session)
+    failed = frozenset(order[:2])
+
+    fetcher, calls = _board(total=12)
+    report = await backfill(fetcher, _sessions(db_session), tried_before=failed, retry_tried=False)
+
+    assert report.filled == 5
+    assert len(calls) == 5
+    texts = await _descriptions(db_session)
+    assert all(texts[eid] is None for eid in failed)

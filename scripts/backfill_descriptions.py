@@ -53,6 +53,11 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
         "backfill_left_waiting.txt)",
     )
     parser.add_argument(
+        "--no-retry",
+        action="store_true",
+        help="leave the pages in the left-waiting file unread: they stay without text",
+    )
+    parser.add_argument(
         "--no-index", action="store_true", help="skip embedding, scoring and chunking"
     )
     return parser.parse_args(argv)
@@ -113,7 +118,8 @@ async def run(argv: list[str] | None = None) -> int:
     )
     tried = frozenset(waiting_file.read_text().split()) if waiting_file.exists() else frozenset()
     if tried:
-        print(f"{len(tried)} pages left waiting by earlier runs are read after the rest")
+        what = "left without text" if args.no_retry else "read after the rest"
+        print(f"{len(tried)} pages left waiting by earlier runs are {what}")
     waiting_file.parent.mkdir(parents=True, exist_ok=True)
     with waiting_file.open("a") as sink:
 
@@ -129,6 +135,7 @@ async def run(argv: list[str] | None = None) -> int:
                 limit=args.limit,
                 max_hosts=args.max_hosts,
                 tried_before=tried,
+                retry_tried=not args.no_retry,
                 on_progress=progress,
                 on_left_waiting=left_waiting,
             )

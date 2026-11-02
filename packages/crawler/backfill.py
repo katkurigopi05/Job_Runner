@@ -293,6 +293,7 @@ async def backfill(
     limit: int | None = None,
     max_hosts: int = MAX_HOSTS,
     tried_before: frozenset[str] = frozenset(),
+    retry_tried: bool = True,
     on_progress: Callable[[HostReport], None] | None = None,
     on_left_waiting: Callable[[str], None] | None = None,
 ) -> BackfillReport:
@@ -302,13 +303,18 @@ async def backfill(
     when the run ends. Within a host, pages a previous run was refused or
     could not read (`tried_before`, by external id) come after the rest: a
     restart used to open every host with them, three refusals in a row.
+    With `retry_tried` off they are not read at all and stay without text:
+    nothing is written in their place, since an unknown stays NULL.
     """
     async with sessions() as session:
         pending = await find_pending(session, ats=ats)
     semaphore = asyncio.Semaphore(max_hosts)
 
     async def one(host: str, items: list[Pending]) -> HostReport:
-        queue = sorted(items, key=lambda item: item.listing.external_id in tried_before)
+        if retry_tried:
+            queue = sorted(items, key=lambda item: item.listing.external_id in tried_before)
+        else:
+            queue = [item for item in items if item.listing.external_id not in tried_before]
         async with semaphore, sessions() as session:
             return await fill_host(
                 fetcher,

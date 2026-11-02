@@ -494,9 +494,10 @@ chunk-postings:
 # board). One request a minute per host, robots.txt honoured; hours on a big
 # backlog, and stopping keeps what it read. Then embeds, scores and chunks it.
 # dry=1 counts per host and stops; limit=N reads at most N pages a host;
-# hosts=N reads N hosts at once (48), each still one page a minute.
+# hosts=N reads N hosts at once (48), each still one page a minute;
+# no_retry=1 leaves pages that failed before without text instead of asking again.
 backfill-descriptions:
-	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit)) $(if $(hosts),--max-hosts $(hosts))
+	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit)) $(if $(hosts),--max-hosts $(hosts)) $(if $(no_retry),--no-retry)
 
 # make audit-locations — how the search area reads every open posting's
 # location, read-only. Lists the places no rule recognized and the strings most
