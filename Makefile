@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -488,6 +488,14 @@ fetch-board-directories:
 # The matching pass after each crawl does new postings; this clears a backlog.
 chunk-postings:
 	$(PY)/python -m scripts.chunk_postings
+
+# make backfill-descriptions — read every missing job description on Workday,
+# Rippling and Breezy boards, whose lists carry none (a crawl reads five a
+# board). One request a minute per host, robots.txt honoured; hours on a big
+# backlog, and stopping keeps what it read. Then embeds, scores and chunks it.
+# dry=1 counts per host and stops; limit=N reads at most N pages a host.
+backfill-descriptions:
+	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit))
 
 # make audit-locations — how the search area reads every open posting's
 # location, read-only. Lists the places no rule recognized and the strings most

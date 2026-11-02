@@ -115,7 +115,10 @@ remote eligibility or required skills. Regional omission notices remain part
 of the answer. Incomplete regional accounting is labelled as candidate coverage.
 These replies use provider `facts`, no model, and no mail-sharing provenance.
 Selected review details, conversation follow-ups, skill gaps and application
-rates keep their existing paths. No system prompt changed.
+rates keep their existing paths. No system prompt changed. "How many jobs are
+there?", which names nothing to search, gets the open-posting totals the same
+way (`chat_facts.render_totals`); in a follow-up the model is handed them as
+`OPEN POSTINGS` rather than "not searched".
 
 **A posting percentage has an explicit denominator.** A question asking what
 percentage a role or other completely counted search represents gets its share

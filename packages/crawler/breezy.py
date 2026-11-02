@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 from urllib.parse import urlparse
 
@@ -179,25 +180,25 @@ class BreezyExtractor:
         *,
         max_age_days: int,
     ) -> tuple[str | None, str | None]:
-        host = board_host(company_slug)
-
-        def detail_url(item: ExtractedPosting) -> str:
-            if urlparse(item.url).hostname != host:
-                raise BreezyBoardError("posting is not on this board")
-            return item.url
-
         return await hydrate(
             fetcher,
             pages,
             previous,
             cursor,
-            detail_url=detail_url,
+            detail_url=partial(detail_url_for, company_slug),
             read_detail=read_detail,
             max_age_days=max_age_days,
             pending_cursor=pending_cursor,
             strict=False,
             board_error=BreezyBoardError,
         )
+
+
+def detail_url_for(company_slug: str, item: ExtractedPosting) -> str:
+    """The job's own page, refused unless it is on this company's board."""
+    if urlparse(item.url).hostname != board_host(company_slug):
+        raise BreezyBoardError("posting is not on this board")
+    return item.url
 
 
 def slug_for(url: str) -> str | None:

@@ -422,6 +422,12 @@ _JOB_TYPE_PHRASE = re.compile(
     r"(?:jobs?|roles?|positions?|openings?|opportunit(?:y|ies)|vacanc(?:y|ies))\b",
     re.IGNORECASE,
 )
+#: Asking for a number of postings rather than for postings.
+_HOW_MANY = re.compile(
+    r"\bhow\s+many\b|\btotal\s+(?:number|jobs|postings|roles)\b|"
+    r"\bcount\s+(?:the\s+)?(?:jobs|postings|roles)\b",
+    re.IGNORECASE,
+)
 
 
 #: Characters read either side of a work-mode word. Every repeat in
@@ -569,6 +575,17 @@ class PostingShare:
 
 
 @dataclass(frozen=True)
+class OpenTotals:
+    """Every open posting, for "how many jobs are there?", which names nothing else."""
+
+    open_total: int
+    companies: int
+    #: Under the search area's rule, as a percentage's denominator is counted.
+    #: None when the area is off.
+    in_area: int | None
+
+
+@dataclass(frozen=True)
 class Retrieval:
     #: False when nothing was searched: the question was not about postings,
     #: or (`unnamed`) it was and named nothing to look for.
@@ -666,6 +683,10 @@ class Retrieval:
     #: yet": a corpus that could not be read, where the question was what
     #: had nothing in it.
     unnamed: bool = False
+    #: An unnamed question that asked how many: the totals, counted in code.
+    #: "how many job posting are available" was answered "I can't give a
+    #: total" (2026-11-02): nothing was searched, so nothing was counted.
+    totals: OpenTotals | None = None
     #: Set when the question asked which postings sponsor: what the postings it
     #: was about state, counted. The passages are then only the ones that state
     #: they do (`_stating_sponsorship`).
@@ -1576,6 +1597,22 @@ async def _matching_totals(
     return total, len(employers), outside
 
 
+async def _open_totals(session: AsyncSession, *, area: bool) -> OpenTotals:
+    """Open postings, the companies they come from, and how many the area keeps."""
+    open_total, companies = (
+        await session.execute(
+            select(func.count(), func.count(Posting.company_id.distinct())).where(
+                Posting.closed_at.is_(None)
+            )
+        )
+    ).one()
+    return OpenTotals(
+        open_total=int(open_total),
+        companies=int(companies),
+        in_area=await _open_area_total(session, area=True) if area else None,
+    )
+
+
 async def _open_area_total(session: AsyncSession, *, area: bool) -> int:
     """The denominator needs a count, without IDs or employers for every row.
 
@@ -2454,6 +2491,7 @@ async def retrieve(
 ) -> Retrieval:
     """The open postings `question` is about, and how much of the corpus was read."""
     wants_share = bool(_PERCENTAGE_REQUEST.search(question))
+    asks_how_many = bool(_HOW_MANY.search(question))
     for spelled_out, as_titles_say_it in _SPELLED_OUT:
         question = spelled_out.sub(as_titles_say_it, question)
     # Trailing dots off, as `tokenize` does: "Show me remote jobs." ends in
@@ -2555,6 +2593,11 @@ async def retrieve(
     only_constraints = only_place or only_mode
     # A level alone names something: "internships" is every intern posting.
     if not (subject_terms or companies or titled or level is not None or only_constraints):
+        if asks_how_many and not about_my_applications:
+            # Nothing to search for, and a number to give: the totals the
+            # percentage answer divides by, under the same area rule.
+            totals = await _open_totals(session, area=bool(area))
+            return Retrieval(attempted=False, unnamed=True, area=area, totals=totals)
         return Retrieval(attempted=False, unnamed=True)
 
     open_total = (

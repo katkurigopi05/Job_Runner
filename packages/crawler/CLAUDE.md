@@ -602,6 +602,41 @@ largest systems among them. Both are read now.
 public payloads and their provenance in `tests/fixtures/breezy` and
 `tests/fixtures/rippling`.
 
+## Reading a description backlog at once (2026-11-02)
+
+Five job pages a crawl keeps one crawl short, and leaves a large or new
+board without text for weeks. On 2026-11-01, 16,102 of 26,263 open postings
+had none (15,838 Workday, 265 Rippling), so the assistant's search could not
+see them. `make backfill-descriptions` (`backfill.py`) reads every missing
+page at once:
+
+- **The floor holds because it is per host.** Each host waits its own minute
+  between pages through the same PoliteFetcher and the shared limiter, so a
+  crawl running beside it waits its turn too. Hosts run side by side, the
+  longest first; the largest board decides the run's length (552 pages, a
+  little over nine hours). Every Rippling company shares `ats.rippling.com`,
+  so those 265 are one queue.
+- **Not a crawl.** It reads no list, so it opens and closes nothing. A page
+  that fails (a 404 for a job closed since the list) leaves that posting
+  waiting; the next read of the list decides whether it closed. robots.txt
+  refusing a job page stops that host, and so do three refusals in a row
+  (401, 403, 429): §2.5 leaves a site that says no alone. In a one-page-a-host
+  trial on 2026-11-02, 114 of 118 hosts gave their text; Zoetis, NiSource
+  and ConocoPhillips answered 403.
+- **Stored as a crawl stores it.** `_store` writes the version and drops the
+  vector, so the matching pass that follows embeds and scores it, and the
+  chunker makes it searchable. Each posting is committed as it lands; a
+  stopped run keeps what it read, and a rerun reads only what is missing.
+- **Looked at again before storing.** `_store` writes `closed_at = NULL`, and
+  the list of what was missing is hours old by the end. A posting a crawl
+  closed or filled since is skipped, never reopened or written over.
+- **The index step is the crawler's own pass**, so with
+  `POSTING_AUTO_PRUNE` on it prunes, as every crawl does.
+- The readers' detail URLs are module functions now (`detail_url_for`), so
+  a crawl and the backfill build the same address.
+
+`tests/test_backfill_descriptions.py`.
+
 ## New postings wholly abroad are not stored (2026-10-28)
 
 The crawler stored every posting a board listed and left the search area to
