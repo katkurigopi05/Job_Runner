@@ -55,6 +55,10 @@ log = structlog.get_logger(__name__)
 #: host with no 429 and refusals no higher than at 60 s.
 MIN_DELAY_SECONDS = 5.0
 
+#: The top of the range the owner set for our own delay (5 to 60 s a host).
+#: A site's Crawl-delay or a 429 may still ask for more, and wins.
+MAX_CONFIGURED_DELAY_SECONDS = 60.0
+
 #: The floor for a shared ATS API. Lower than §2.6's, and still a floor.
 #: Two seconds is well inside what these APIs serve without complaint, and
 #: `penalize()` is what handles the case where one disagrees.
