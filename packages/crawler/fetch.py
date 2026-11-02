@@ -401,8 +401,8 @@ def build_fetcher(
     settings = get_settings()
     if configured > MAX_CONFIGURED_DELAY_SECONDS:
         raise ValueError(
-            f"{configured}s is above the {MAX_CONFIGURED_DELAY_SECONDS:g}s top of the owner's range "
-            "(CLAUDE.md §2.6); a site that wants more says so with Crawl-delay"
+            f"{configured}s is above the {MAX_CONFIGURED_DELAY_SECONDS:g}s top of the "
+            "owner's range (CLAUDE.md §2.6); a site that wants more says so with Crawl-delay"
         )
 
     # Both implementations raise rather than clamp, which is the point.

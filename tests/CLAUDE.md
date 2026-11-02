@@ -88,7 +88,7 @@ before trusting either number.
   IDs. Synthetic `test_workday.py` boards still cover pagination, empty boards,
   failures, robots refusals and truncation without touching the network.
 
-  A tenant retains §2.6's 60s floor. The reader caps list pages at 60 and
+  A tenant retains §2.6's floor (60 s then; 5 to 60 s, default 5, since 2026-11-02). The reader caps list pages at 60 and
   details at five per crawl. Missing/changed descriptions take priority;
   cached descriptions rotate for revalidation. Tests establish progress on
   identical listings, description-only edits, versioning, age lower bounds,

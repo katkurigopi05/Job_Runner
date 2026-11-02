@@ -426,6 +426,9 @@ a refusal or HTTP 403 is a failure, never an invitation to evade it.
 
 The existing POST path already uses the same robots and host-rate gates as
 GET. Tenant hosts remain outside `SHARED_API_HOSTS`: **60 seconds**, unchanged.
+(Since 2026-11-02 §2.6 is 5 to 60 s a host, 5 by default, so the timings below
+are the 60 s worst case. `details.DETAIL_REQUESTS_PER_CRAWL` = 5 was sized for 60 s
+and could now be raised; that is the owner's decision.)
 At 300 jobs, 15 list pages span at least 14 minutes between first and last
 request, plus network time. Fetching 300 details in that cycle would mean
 315 requests, at least 314 minutes (5h14m). Instead:
