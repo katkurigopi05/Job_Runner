@@ -941,6 +941,11 @@ snapshot: all 207 benchmark and judged questions are unchanged.
   titled "Software Engineer".
 - **With anything else asked** ("software jobs using Kafka", "software jobs
   at Stripe") the search is unchanged.
+- **Said after the job noun it is the same question** (2026-11-02): "any jobs
+  on software engineering" had found the phrase in descriptions and opened
+  with "Manager, Software Engineering" and a lead data scientist. "on", "in",
+  "for" and "about" are read; "jobs in software testing" still searches,
+  because "testing" is asked too. None of the 195 saved questions use it.
 - **One employer's repeats still take places among the five** (§26): Process
   Street lists "Senior Software Engineer | Remote | AI SaaS Software Role" six
   times, and the newest-first order shows four of them. Collapsing them is

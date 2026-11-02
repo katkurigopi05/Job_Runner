@@ -46,6 +46,21 @@ def test_a_job_type_word_before_a_job_noun_is_found(question, words, qualifiers)
 
 
 @pytest.mark.parametrize(
+    ("question", "words", "qualifiers"),
+    [
+        # Asked on 2026-11-02 and answered with "Manager, Software Engineering"
+        # and a lead data scientist, the phrase found anywhere in a description.
+        ("any jobs on software engineering", {"software"}, {"engineering"}),
+        ("roles in software development", {"software"}, {"development"}),
+        ("Openings for software engineering?", {"software"}, {"engineering"}),
+        ("positions about software", {"software"}, set()),
+    ],
+)
+def test_a_job_type_word_after_a_job_noun_is_found(question, words, qualifiers):
+    assert R._job_type_words(question) == (frozenset(words), frozenset(qualifiers))
+
+
+@pytest.mark.parametrize(
     "question",
     [
         "roles that mention software",
@@ -57,6 +72,8 @@ def test_a_job_type_word_before_a_job_noun_is_found(question, words, qualifiers)
         "backend roles",
         "front-end jobs",
         "full stack openings",
+        "roles at software companies",
+        "jobs with software",
     ],
 )
 def test_the_word_as_a_subject_or_a_named_role_is_not(question):
@@ -147,3 +164,23 @@ async def test_a_job_type_with_another_subject_is_searched_as_before(db_session)
     assert found.title_words == ()
     # A description search: the one posting that says Postgres is found.
     assert "Data Engineer" in {passage.title for passage in found.passages}
+
+
+async def test_the_same_kind_of_job_said_after_the_noun_is_read_from_titles(db_session):
+    await the_owners_mix(db_session)
+
+    found = await R.retrieve(db_session, "any jobs on software engineering")
+
+    assert found.title_words == ("software",)
+    assert found.title_total == 5
+    titles = [passage.title for passage in found.passages]
+    assert "Product Manager" not in titles, "a mention in the description is not the job"
+
+
+async def test_another_subject_after_the_word_is_still_a_word_search(db_session):
+    """ "Software" is said, but "testing" is asked for too, so nothing changes."""
+    await the_owners_mix(db_session)
+
+    found = await R.retrieve(db_session, "jobs in software testing")
+
+    assert found.title_words == ()
