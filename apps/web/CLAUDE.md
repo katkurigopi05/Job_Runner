@@ -6,6 +6,21 @@ the root file, which keeps every heading and says where each section went.
 
 - The review screen's document panels are in `packages/tailor/CLAUDE.md`.
 
+## Keep the assistant open while reading a posting (2026-11-02)
+
+The assistant's `PostingLink` navigated to `/postings/{id}` in the chat tab.
+That unmounted `Assistant`, whose conversation and provider choice live in
+React state; returning mounted an empty conversation. Source links now use
+the existing `POSTING_LINK` policy, so the original assistant stays mounted.
+Cited sources and the expanded match lists share this component.
+
+The dashboard link-policy check failed for the assistant before the change;
+afterwards all 24 link-policy and dashboard-effects checks passed, along with
+Ruff and the dashboard production build (including lint and types). Chat
+storage, intentional navigation away and its stream-abort rule were left
+alone. The same small component patch was applied to the frontend worktree
+serving port 3001, preserving its notes toggle and provider controls.
+
 ## Notes behind a header icon (2026-11-02)
 
 The owner asked for a notes symbol that opens the editor on click. `SideNotes`

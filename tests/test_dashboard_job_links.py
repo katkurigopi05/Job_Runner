@@ -36,6 +36,7 @@ SOURCES = {
 }
 
 POSTING_LINKS = [
+    "components/assistant.tsx",
     "components/swipe-deck.tsx",
     "components/judgment-deck.tsx",
     "components/label-deck.tsx",
