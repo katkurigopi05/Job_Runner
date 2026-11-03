@@ -24,12 +24,13 @@ import uuid
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import structlog
-from sqlalchemy import select
+from sqlalchemy import and_, exists, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -229,11 +230,129 @@ async def import_vectors(
     return ImportReport(postings=len(exported), **totals)
 
 
+@dataclass(frozen=True)
+class PendingReport:
+    #: Exported: open, with text, chunked from today's text, a chunk without a vector.
+    postings: int = 0
+    chunks: int = 0
+    #: Open postings whose every current chunk has a vector already.
+    covered: int = 0
+    #: Open postings with text whose chunks are missing or cut from an older
+    #: text. The matching pass (or `make chunk-postings`) chunks them first.
+    not_chunked: int = 0
+
+
+def _with_text() -> Any:
+    return and_(
+        Posting.closed_at.is_(None),
+        Posting.description_raw.is_not(None),
+        func.btrim(Posting.description_raw) != "",
+    )
+
+
+def _chunked() -> Any:
+    """Chunk rows exist, and every one was cut from the text the posting holds now."""
+    current = exists().where(
+        PostingChunk.posting_id == Posting.id,
+        PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
+    )
+    stale = exists().where(
+        PostingChunk.posting_id == Posting.id,
+        PostingChunk.content_hash.is_distinct_from(Posting.content_hash),
+    )
+    return and_(current, ~stale)
+
+
+def _missing_vector(model: str) -> Any:
+    """At least one current chunk has no vector from `model`."""
+    vector = and_(
+        PostingChunkVector.chunk_id == PostingChunk.id, PostingChunkVector.embedding_model == model
+    )
+    return exists(
+        select(1)
+        .select_from(PostingChunk)
+        .outerjoin(PostingChunkVector, vector)
+        .where(PostingChunk.posting_id == Posting.id, PostingChunkVector.chunk_id.is_(None))
+        .correlate(Posting)
+    )
+
+
+async def pending(
+    session: AsyncSession, *, model: str = QWEN_4B
+) -> tuple[tuple[Exported, ...], PendingReport]:
+    """Every open posting whose current chunks are missing a vector, as the importer reads them.
+
+    A posting is exported whole, so its rows in the vectors file line up with
+    its chunks; chunks that already have a vector are skipped on import. A
+    posting not chunked from today's text is counted and left for the
+    matching pass, which chunks it with bge-small first.
+    """
+    rows = (
+        await session.execute(
+            select(Posting.id, Posting.description_raw)
+            .where(_with_text(), _chunked(), _missing_vector(model))
+            .order_by(Posting.first_seen_at, Posting.id)
+        )
+    ).all()
+    spans: dict[uuid.UUID, list[tuple[int, int, int]]] = defaultdict(list)
+    ids = [row.id for row in rows]
+    for first in range(0, len(ids), 1000):
+        for chunk in (
+            await session.execute(
+                select(
+                    PostingChunk.posting_id,
+                    PostingChunk.ordinal,
+                    PostingChunk.start,
+                    PostingChunk.length,
+                ).where(PostingChunk.posting_id.in_(ids[first : first + 1000]))
+            )
+        ).all():
+            spans[chunk.posting_id].append((chunk.ordinal, chunk.start, chunk.length))
+    exported = []
+    for posting_id, description in rows:
+        body = normalize(description or "")
+        ordered = sorted(spans[posting_id])
+        exported.append(
+            Exported(
+                id=str(posting_id),
+                chunks=tuple(body[start : start + length] for _, start, length in ordered),
+            )
+        )
+    covered = await session.scalar(
+        select(func.count()).where(_with_text(), _chunked(), ~_missing_vector(model))
+    )
+    not_chunked = await session.scalar(select(func.count()).where(_with_text(), ~_chunked()))
+    report = PendingReport(
+        postings=len(exported),
+        chunks=sum(len(posting.chunks) for posting in exported),
+        covered=int(covered or 0),
+        not_chunked=int(not_chunked or 0),
+    )
+    return tuple(exported), report
+
+
+def write_export(path: Path, exported: Sequence[Exported]) -> None:
+    """The file the Colab notebook embeds and `import_vectors` checks against."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "made": datetime.now(UTC).isoformat(timespec="seconds"),
+        "about": "Chunks of open postings without a Qwen vector, cut 500/25 as the app "
+        "cuts them. Public posting text only.",
+        "postings": [{"id": posting.id, "chunks": list(posting.chunks)} for posting in exported],
+        "questions": [],
+    }
+    with gzip.open(path, "wt", encoding="utf-8", compresslevel=9) as handle:
+        json.dump(data, handle, ensure_ascii=False)
+
+
 __all__ = [
     "BATCH_POSTINGS",
     "QWEN_4B",
     "Exported",
     "ImportReport",
+    "PendingReport",
     "import_vectors",
     "load_export",
+    "pending",
+    "write_export",
 ]
