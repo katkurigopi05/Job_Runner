@@ -416,10 +416,17 @@ _FRAMING_PHRASES = re.compile(
 #: "frontend" were measured too and left out: their keyword search already
 #: put their titles first, and a description saying "backend" is often a
 #: backend role titled "Software Engineer" (642 mentions against 93 titles).
+_JOB_NOUN = r"(?:jobs?|roles?|positions?|openings?|opportunit(?:y|ies)|vacanc(?:y|ies))"
 _JOB_TYPE_PHRASE = re.compile(
-    r"\b(software)"
-    r"(?:\s+(engineering|development))?\s+"
-    r"(?:jobs?|roles?|positions?|openings?|opportunit(?:y|ies)|vacanc(?:y|ies))\b",
+    rf"\b(software)(?:\s+(engineering|development))?\s+{_JOB_NOUN}\b", re.IGNORECASE
+)
+#: The same said after the job noun: "any jobs on software engineering",
+#: "roles in software development". Asked on 2026-11-02, the first found the
+#: phrase in descriptions and opened with "Manager, Software Engineering" and a
+#: lead data scientist. "jobs in software testing" is matched here too, and
+#: stays a word search because "testing" is asked for as well (`retrieve`).
+_JOB_TYPE_AFTER_NOUN = re.compile(
+    rf"\b{_JOB_NOUN}\s+(?:on|in|for|about)\s+(software)(?:\s+(engineering|development))?\b",
     re.IGNORECASE,
 )
 #: Asking for a number of postings rather than for postings.
@@ -866,7 +873,7 @@ def _located_at(hit: _Hit, terms: list[str]) -> bool:
 
 
 def _job_type_words(question: str) -> tuple[frozenset[str], frozenset[str]]:
-    """The words of each job-type phrase, and the qualifiers said with them.
+    """The words of each job-type phrase, either side of the job noun, and its qualifiers.
 
     As `tokenize` writes them, so they compare with the search terms: "back
     end" is `back` and `end`, "software engineering" is `software` with the
@@ -874,7 +881,8 @@ def _job_type_words(question: str) -> tuple[frozenset[str], frozenset[str]]:
     """
     words: set[str] = set()
     qualifiers: set[str] = set()
-    for match in _JOB_TYPE_PHRASE.finditer(question):
+    phrases = (_JOB_TYPE_PHRASE, _JOB_TYPE_AFTER_NOUN)
+    for match in (m for phrase in phrases for m in phrase.finditer(question)):
         words.update(tokenize(match.group(1)))
         if match.group(2):
             qualifiers.update(tokenize(match.group(2)))
