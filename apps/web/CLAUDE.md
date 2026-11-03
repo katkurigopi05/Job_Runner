@@ -16,8 +16,10 @@ Cited sources and the expanded match lists share this component.
 
 The dashboard link-policy check failed for the assistant before the change;
 afterwards all 24 link-policy and dashboard-effects checks passed, along with
-Ruff and the dashboard production build (including lint and types). Chat
-storage, intentional navigation away and its stream-abort rule were left
+Ruff and the dashboard production build (including lint and types). CI then
+caught the 800-line source limit at 801; removing the redundant link comment
+restored 800, and the size guard plus the nearby assistant checks passed.
+Chat storage, intentional navigation away and its stream-abort rule were left
 alone. The same small component patch was applied to the frontend worktree
 serving port 3001, preserving its notes toggle and provider controls.
 

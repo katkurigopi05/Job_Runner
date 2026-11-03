@@ -104,7 +104,6 @@ interface Turn {
   chart?: Chart | null;
 }
 
-/** Open a retrieved posting separately so the conversation stays mounted. */
 function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
   return (
     <li>
