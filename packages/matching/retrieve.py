@@ -93,7 +93,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.config import get_settings
 from packages.core.models import Application, Company, Posting
 from packages.core.models_chunks import PostingChunk
-from packages.matching import idf, tiers
+from packages.matching import chunk_search, idf, tiers
+from packages.matching.chunk_search import Space
 from packages.matching.eligibility import Sponsorship
 from packages.matching.embed import (
     Embedder,
@@ -701,6 +702,11 @@ class Retrieval:
     #: Set when the question named a level ("senior", "entry level"): how the
     #: postings found stand against it by their titles (`matching/level.py`).
     level: LevelCount | None = None
+    #: Qwen vector coverage; None when Qwen was not used.
+    qwen_searched: int | None = None
+    bge_fallback_searched: int = 0
+    #: Why the opt-in Qwen query failed; surfaced in context and the reply.
+    embedding_fallback: str | None = None
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -1802,6 +1808,7 @@ async def _nearest(
     *,
     counts: Callable[[_Hit], bool] | None = None,
     want: int = 0,
+    without_qwen: bool = False,
 ) -> list[_Hit]:
     """The nearest open postings in one space, sharing at least something.
 
@@ -1826,6 +1833,8 @@ async def _nearest(
             .order_by(distance, Posting.id)
             .limit(window)
         )
+        if without_qwen:
+            query = query.where(~chunk_search.has_qwen())
         if companies:
             query = query.where(Posting.company_id.in_(companies))
         hits = [_Hit(*row) for row in (await session.execute(query)).all()]
@@ -1856,19 +1865,14 @@ async def _order_in_space(
     return list(rows.all())
 
 
-def _chunk_filter(model: str) -> list[ColumnElement[bool]]:
-    """Chunks of open postings, from one model, cut from the text the posting holds now."""
-    return [
-        Posting.closed_at.is_(None),
-        PostingChunk.embedding_model == model,
-        PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
-    ]
+_chunk_filter = chunk_search.chunk_filter
+_chunk_ranking = stage("chunks")(chunk_search.chunk_ranking)
 
 
 @stage("chunks")
 async def _best_chunks(
     session: AsyncSession,
-    model: str,
+    model: Space,
     vector: list[float],
     *,
     among: list[uuid.UUID] | None = None,
@@ -1887,44 +1891,6 @@ async def _best_chunks(
     return best
 
 
-@stage("chunks")
-async def _chunk_ranking(
-    session: AsyncSession,
-    model: str,
-    vector: list[float],
-    *,
-    among: list[uuid.UUID] | None,
-    companies: list[uuid.UUID] | None,
-    limit: int,
-) -> tuple[list[tuple[uuid.UUID, int, int]], bool]:
-    """`_best_chunks`, and whether every chunk it could have read was read."""
-    distance = PostingChunk.embedding.cosine_distance(vector)
-    query = (
-        select(PostingChunk.posting_id, PostingChunk.start, PostingChunk.length, distance)
-        .join(Posting, Posting.id == PostingChunk.posting_id)
-        .where(*_chunk_filter(model))
-    )
-    if among is not None:
-        query = query.where(PostingChunk.posting_id.in_(among))
-    else:
-        # A total order, so a wider window starts with the narrower one.
-        query = (
-            query.where(distance < _NO_OVERLAP)
-            .order_by(distance, PostingChunk.posting_id, PostingChunk.ordinal)
-            .limit(limit)
-        )
-    if companies:
-        query = query.where(Posting.company_id.in_(companies))
-    rows = (await session.execute(query)).all()
-    best: dict[uuid.UUID, tuple[float, int, int]] = {}
-    for posting_id, start, length, dist in rows:
-        if posting_id not in best or dist < best[posting_id][0]:
-            best[posting_id] = (dist, start, length)
-    ranked = sorted(best.items(), key=lambda item: (item[1][0], str(item[0])))
-    every = among is not None or len(rows) < limit
-    return [(posting_id, start, length) for posting_id, (_, start, length) in ranked], every
-
-
 #: How much wider each look at the nearest chunks is than the one before.
 _WIDEN_BY = 4
 
@@ -1932,7 +1898,7 @@ _WIDEN_BY = 4
 @stage("chunks")
 async def _nearest_kept(
     session: AsyncSession,
-    model: str,
+    model: Space,
     vector: list[float],
     *,
     companies: list[uuid.UUID] | None,
@@ -2046,7 +2012,7 @@ def _rerank_text(hit: _Hit, span: tuple[int, int] | None, *, named: bool = False
 @stage("semantic")
 async def _nearest_unfound(
     session: AsyncSession,
-    chunk_vectors: dict[str, list[float]],
+    chunk_vectors: dict[Space, list[float]],
     companies: list[uuid.UUID] | None,
     *,
     in_area: bool,
@@ -2070,6 +2036,7 @@ async def _nearest_unfound(
 
     spans: dict[uuid.UUID, tuple[int, int]] = {}
     hits: dict[uuid.UUID, _Hit] = {}
+    per_space: list[list[_Hit]] = []
     for model, vector in chunk_vectors.items():
         # Read until `want` are in the area, not the first 200 and then the
         # area: those can all be abroad.
@@ -2083,10 +2050,15 @@ async def _nearest_unfound(
             skip=found,
             window=_WIDEN_CHUNKS,
         )
+        per_space.append([hit for hit in read if counts(hit)])
         for hit in read:
             spans.setdefault(hit.posting_id, nearest[hit.posting_id])
             hits.setdefault(hit.posting_id, hit)
-    kept = [hits[posting_id] for posting_id in spans if counts(hits[posting_id])][:want]
+    kept = (
+        chunk_search.interleave(per_space, key=lambda hit: hit.posting_id)
+        if any(isinstance(space, chunk_search.ChunkSpace) for space in chunk_vectors)
+        else [hits[posting_id] for posting_id in spans if counts(hits[posting_id])]
+    )[:want]
     return kept, {hit.posting_id: spans[hit.posting_id] for hit in kept}
 
 
@@ -2166,7 +2138,7 @@ def _fuse(keyword: list[uuid.UUID], by_space: list[list[uuid.UUID]]) -> dict[uui
 @stage("semantic")
 async def _semantic_candidates(
     session: AsyncSession,
-    chunk_vectors: dict[str, list[float]],
+    chunk_vectors: dict[Space, list[float]],
     companies: list[uuid.UUID],
     area: str | None,
     in_place: Callable[[_Hit], bool] | None = None,
@@ -2176,24 +2148,34 @@ async def _semantic_candidates(
     `_best_chunks` also excludes closed postings and stale chunks. Lexical
     hashes cannot recover semantic paraphrases and are deliberately excluded.
     """
-    model = SentenceTransformerEmbedder.name
-    vector = chunk_vectors.get(model)
-    if vector is None:
-        return [], {}, set()
-    # Each posting's verdict, asked once while reading and reused below.
+    spaces = [
+        space
+        for space in chunk_vectors
+        if space == SentenceTransformerEmbedder.name
+        or isinstance(space, chunk_search.ChunkSpace)
+        and space.model in {SentenceTransformerEmbedder.name, chunk_search.QWEN_4B}
+    ]
     away: dict[uuid.UUID, bool] = {}
 
     def counts(hit: _Hit) -> bool:
         away[hit.posting_id] = bool(area) and _outside_area(hit)
         return not away[hit.posting_id] and (in_place is None or in_place(hit))
 
-    # The area is asked while reading, so two hundred chunks abroad do not
-    # leave nothing to keep.
-    read, nearest = await _nearest_kept(
-        session, model, vector, companies=companies, want=KEYWORD_POOL, counts=counts
-    )
-    kept = [hit for hit in read if counts(hit)][:KEYWORD_POOL]
-    outside = {hit.posting_id for hit in read if away[hit.posting_id]}
+    per_space: list[list[_Hit]] = []
+    nearest: dict[uuid.UUID, tuple[int, int]] = {}
+    for space in spaces:
+        read, spans = await _nearest_kept(
+            session,
+            space,
+            chunk_vectors[space],
+            companies=companies,
+            want=KEYWORD_POOL,
+            counts=counts,
+        )
+        nearest.update(spans)
+        per_space.append([hit for hit in read if counts(hit)])
+    kept = chunk_search.interleave(per_space, key=lambda hit: hit.posting_id)[:KEYWORD_POOL]
+    outside = {pid for pid, excluded in away.items() if excluded}
     return kept, {hit.posting_id: nearest[hit.posting_id] for hit in kept}, outside
 
 
@@ -2532,7 +2514,7 @@ async def _requiring_skill(
 
 @traced
 async def retrieve(
-    session: AsyncSession, question: str, *, limit: int = DEFAULT_LIMIT
+    session: AsyncSession, question: str, *, limit: int = DEFAULT_LIMIT, free_embedder: bool = False
 ) -> Retrieval:
     """The open postings `question` is about, and how much of the corpus was read."""
     wants_share = bool(_PERCENTAGE_REQUEST.search(question))
@@ -2721,7 +2703,13 @@ async def retrieve(
     chunk_encoders = await asyncio.to_thread(
         _encoders, [(str(model), None) for model in chunk_models], frequencies, active_revision
     )
-    chunk_vectors = await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, subject)
+    chunk_queries = await chunk_search.queries(
+        await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, subject),
+        subject,
+        enabled=get_settings().chat_qwen_search,
+        free_embedder=free_embedder,
+    )
+    chunk_vectors = chunk_queries.vectors
     chunk_spans: dict[uuid.UUID, tuple[int, int]] = {}
 
     terms = _search_terms(question, frequencies, exclude=aside)
@@ -3035,14 +3023,35 @@ async def retrieve(
             get_settings().chat_semantic_candidates
             and role_pool is None
             and not only_names_a_company
+            and (bool(keyword) or not get_settings().chat_qwen_search)
         ):
             # Unlike the lexical subject, sentence meaning includes the
             # relationships between words. Preserve those for discovery.
-            semantic_vectors = await asyncio.to_thread(
-                _encode_chunk_queries, chunk_encoders, question
+            semantic_queries = await chunk_search.queries(
+                await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, question),
+                question,
+                enabled=chunk_queries.qwen,
+                free_embedder=free_embedder,
             )
+            if semantic_queries.fallback_reason:
+                # Both stages must agree on the fallback and report its reason.
+                chunk_queries = chunk_search.ChunkQueries(
+                    {
+                        model: vector
+                        for model, vector in (
+                            await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, subject)
+                        ).items()
+                    },
+                    fallback_reason=semantic_queries.fallback_reason,
+                )
+                chunk_vectors = chunk_queries.vectors
+            semantic_vectors = semantic_queries.vectors
             semantic, semantic_spans, excluded = await _semantic_candidates(
-                session, semantic_vectors, companies, area, in_place=in_place
+                session,
+                semantic_vectors,
+                companies,
+                area,
+                in_place=passes if chunk_queries.qwen else in_place,
             )
             left_out |= excluded
             known = set(keyword_ids)
@@ -3148,7 +3157,7 @@ async def retrieve(
                 companies,
                 in_area=bool(area),
                 found=set(keyword_ids),
-                in_place=in_place,
+                in_place=passes if chunk_queries.qwen else in_place,
             )
             among_spans.update(added_spans)
             # Quoted where it matched: it has none of the question's keywords,
@@ -3221,18 +3230,22 @@ async def retrieve(
             chunk_spans.update(spans)
             per_space.append(read)
         per_space += [
-            await _nearest(session, space, vector, width, companies, counts=passes, want=limit)
+            await _nearest(
+                session,
+                space,
+                vector,
+                width,
+                companies,
+                counts=passes,
+                want=limit,
+                without_qwen=chunk_queries.qwen,
+            )
             for space, vector in vectors.items()
         ]
         # Rank 1 of every space before rank 2 of any: distances from different
         # models share no scale, and ranks are all they have in common. A
         # posting in both a chunk space and a posting space is taken once.
-        ranked, taken = [], set()
-        for rank in range(max((len(hits) for hits in per_space), default=0)):
-            for hits in per_space:
-                if rank < len(hits) and hits[rank].posting_id not in taken:
-                    taken.add(hits[rank].posting_id)
-                    ranked.append(hits[rank])
+        ranked = chunk_search.interleave(per_space, key=lambda hit: hit.posting_id)
         ranked, level_count = _at_level(prefer_place(ranked), level)
         reranked_total = 0
         if reranker is None:
@@ -3368,9 +3381,17 @@ async def retrieve(
         )
         for index, hit in enumerate(chosen, start=1)
     )
+    qwen_searched, bge_fallback = (
+        await chunk_search.coverage(session, chunk_vectors, list(vectors))
+        if chunk_queries.qwen
+        else (None, 0)
+    )
     return Retrieval(
         attempted=True,
         passages=passages,
+        qwen_searched=qwen_searched,
+        bge_fallback_searched=bge_fallback,
+        embedding_fallback=chunk_queries.fallback_reason,
         searched=searched,
         unsearchable=unsearchable,
         companies=tuple(sorted(company_names)),
@@ -3436,18 +3457,11 @@ async def retrieve(
 
 
 async def _reachable(
-    session: AsyncSession, chunk_models: list[str], spaces: list[tuple[str, int | None]]
+    session: AsyncSession, chunk_models: list[Space], spaces: list[tuple[str, int | None]]
 ) -> int:
     """Open postings a vector search could reach: chunked, or in a usable space."""
     reach: list[ColumnElement[bool]] = []
-    if chunk_models:
-        reach.append(
-            exists().where(
-                PostingChunk.posting_id == Posting.id,
-                PostingChunk.embedding_model.in_(chunk_models),
-                PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
-            )
-        )
+    reach.extend(chunk_search.reachable(space) for space in chunk_models)
     reach += [and_(*_space_filter(model, revision)) for model, revision in spaces]
     if not reach:
         return 0

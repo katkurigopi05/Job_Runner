@@ -112,6 +112,7 @@ from packages.llm.provider import (
     ModelUnreachable,
     PromptTooLong,
 )
+from packages.matching import chunk_search, query_vectors
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
 from packages.matching.level import LevelCount
 from packages.matching.retrieve import Passage, Retrieval, asks_about_own_applications, retrieve
@@ -709,6 +710,13 @@ def _postings_section(
     lines = [f"POSTINGS: searched {found.searched} of {total} open postings"]
     if found.unsearchable:
         lines[0] += f" ({found.unsearchable} are not searchable yet)"
+    if found.qwen_searched is not None:
+        lines.append(
+            f"  vector coverage — Qwen3-Embedding-4B: {found.qwen_searched} open postings; "
+            f"bge-small: {found.bge_fallback_searched} without Qwen vectors"
+        )
+    if fallback := chunk_search.notice(found.embedding_fallback):
+        lines.append("  " + fallback + ". Repeat this search limitation in the answer.")
     if found.share is not None:
         share = found.share
         percent = (
@@ -1032,7 +1040,11 @@ async def prepare(
 
     owner_facts = await _read_context(session, body.application_id, include_mail=include_mail)
     context = owner_facts.context
-    found = await retrieve(session, question)
+    found = (
+        await retrieve(session, question, free_embedder=selected == LOCAL_PROVIDER)
+        if get_settings().chat_qwen_search
+        else await retrieve(session, question)
+    )
     # A rate of the owner's applications is computed here and handed over. If
     # retrieval also took "what percentage" as a posting share it could not
     # count, its "percentage unavailable" line would contradict the rates.
@@ -1170,6 +1182,16 @@ async def prepare(
             )
             if not selection_evidence:
                 factual_answer = selection_summary
+    if (
+        get_settings().chat_qwen_search
+        and factual_answer is None
+        and selected == LOCAL_PROVIDER
+        and found.qwen_searched is None
+    ):
+        try:
+            await query_vectors.unload_embedder()
+        except query_vectors.QueryEmbeddingError as exc:
+            raise ApiError(ErrorCode.INTERNAL_ERROR, str(exc)) from exc
     return Ready(
         selected=selected,
         include_mail=include_mail,
@@ -1292,6 +1314,8 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
     """The finished answer and everything the dock lists under it."""
     selected, include_mail, found = ready.selected, ready.include_mail, ready.found
     cited = cited_labels(answer)
+    if fallback := chunk_search.notice(found.embedding_fallback):
+        answer = fallback + "\n\n" + answer
     return ChatReply(
         reply=answer,
         count_facts=list(count_facts(found)),

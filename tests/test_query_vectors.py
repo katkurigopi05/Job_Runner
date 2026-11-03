@@ -126,3 +126,29 @@ async def test_an_empty_question_is_refused_before_anything_is_sent():
         await QV.embed_question("   ", client=_client(handler))
 
     assert handler.seen == []
+
+
+async def test_unload_releases_only_a_loaded_query_model():
+    calls = []
+    model = get_settings().query_embed_model
+
+    def respond(request):
+        calls.append(request)
+        if request.url.path == "/api/ps":
+            return httpx.Response(200, json={"models": [{"name": model}]})
+        return httpx.Response(200, json={})
+
+    await QV.unload_embedder(client=_client(respond))
+    assert [r.url.path for r in calls] == ["/api/ps", "/api/embed"]
+    assert json.loads(calls[-1].content) == {"model": model, "input": [], "keep_alive": "0"}
+
+
+async def test_unload_does_not_load_an_absent_model():
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200, json={"models": [{"name": "a-chat-model"}]})
+
+    await QV.unload_embedder(client=_client(respond))
+    assert [r.url.path for r in calls] == ["/api/ps"]

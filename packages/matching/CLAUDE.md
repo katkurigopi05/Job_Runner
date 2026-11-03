@@ -677,3 +677,30 @@ Requirement and sponsorship paths retain the same mode constraint. The shared
 locality reader rejects technical and negative remote mentions; negative
 metadata overrides weaker company prose. Counts describe work-mode evidence,
 not an independent verification of applicant eligibility.
+
+## Opt-in Qwen search (2026-11-02)
+
+`CHAT_QWEN_SEARCH` defaults to false. `chunk_search.py` owns the two chunk
+spaces and their shared ranking query. Qwen compares only its stamped vectors;
+postings without a current Qwen row retain their original bge-small chunks
+and posting vectors. Ranks, never distances, merge the spaces. Closed postings,
+stale offsets and the existing company/area/place/level predicates still apply.
+
+A failed local question embedding returns the original bge-small search with
+its reason on `Retrieval.embedding_fallback`. The chat context carries that
+reason, and reply construction repeats it in code, including fixed and evidence
+selection replies. Coverage reports Qwen and bge-small fallback separately.
+The optional semantic-candidate experiment uses the selected spaces; Qwen mode
+never fills an empty keyword result. The original setting-off behavior stays
+unchanged, including the existing semantic experiment.
+
+Tests use synthetic 384- and 2,560-wide vectors and patch the query embedder.
+The session fixture keeps a developer's opt-in from loading a model in the
+ordinary suite. The feed, matching scores, ingestion and workers are unchanged.
+
+The real-search measurement and recommendation are in
+`.claude/rules/assistant-search.md`, dated 2026-11-02. Reranking only: natural
+44/56 → 43/56, paraphrased 4/56 → 5/56 in the five shown. Qwen plus semantic
+candidates: 45/56 and 15/56, with warm medians 6.58/6.83 s versus 1.59/1.94 s.
+Both switches stay off by default; new semantic finds need grades before
+promotion. Question-by-question results are in `docs/evaluations/qwen-*.csv`.

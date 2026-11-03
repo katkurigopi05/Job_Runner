@@ -638,3 +638,24 @@ remembered. `tests/test_chat_selection_prompt_split.py`.
 Application, recruiter-mail, rate and skill-gap conversations retain their
 existing paths. The selection protocol does not establish semantic accuracy;
 manual source review and useful-answer coverage remain evaluation requirements.
+
+### Qwen query model lifetime and search notices (2026-11-02)
+
+With `CHAT_QWEN_SEARCH` on, `prepare` asks retrieval to release its question
+embedder (`keep_alive="0"`) before an Ollama chat answer needs the memory.
+Kaggle and other explicitly selected remote answer providers leave the local
+query embedder warm. The query itself stays local regardless of answer provider.
+With the setting off the original retrieve call is retained.
+
+A query embedding failure is a search limitation, never an answer-provider
+fallback. The context names the bge-small search and its reason; `reply_for`
+also prefixes the finished reply with that notice so fixed, selection and
+streamed answers cannot silently lose it. Qwen and uncovered bge-small coverage
+are separate counts in the postings context. Provider privacy, recruiter-mail
+consent and citation/evidence selection rules remain unchanged.
+
+Switching from a remote search to a local **non-search** question also releases
+any warm query model: `query_vectors.unload_embedder` inspects Ollama first and
+releases only the configured query model, never loading an absent one. This
+runs only when a local model answer is needed; computed answers still work
+with Ollama down. Its regression failed before the lifetime check was added.

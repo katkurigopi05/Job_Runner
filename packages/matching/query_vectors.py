@@ -20,7 +20,8 @@ Three things this holds:
   width, all zeros, or not finite. What the search does without one is the
   caller's decision, and it should say so.
 
-Nothing calls this yet; the search change that does is measured first.
+The assistant calls this only with CHAT_QWEN_SEARCH enabled. Its default
+search remains bge-small; chunk_search.py records any query embedding failure.
 """
 
 from __future__ import annotations
@@ -157,4 +158,49 @@ async def embed_question(
     return QueryVector(space=QWEN_4B, build=model, values=values, seconds=seconds)
 
 
-__all__ = ["QUERY_PREFIX", "QueryEmbeddingError", "QueryVector", "embed_question"]
+async def unload_embedder(*, client: httpx.AsyncClient | None = None) -> None:
+    """Release a warm query model for local chat, without loading an absent one.
+
+    A remote answer can leave Qwen warm; a subsequent non-search question never
+    calls embed_question. That transition still needs memory for local chat.
+    """
+    settings = get_settings()
+    base_url, model = settings.ollama_base_url, settings.query_embed_model
+    try:
+        _refuse_remote(base_url, model)
+    except QueryEmbeddingError:
+        # This configuration cannot have loaded a local query model.
+        return
+    if client is None:
+        async with httpx.AsyncClient(timeout=TIMEOUT_S) as own:
+            await unload_embedder(client=own)
+        return
+    try:
+        response = await client.get(base_url.rstrip("/") + "/api/ps", timeout=TIMEOUT_S)
+        response.raise_for_status()
+        models = response.json()["models"]
+        if not isinstance(models, list):
+            raise ValueError("invalid loaded-model list")
+        if not any(str(entry.get("name", "")).casefold() == model.casefold() for entry in models):
+            return
+        response = await _post(
+            client,
+            base_url.rstrip("/") + "/api/embed",
+            {"model": model, "input": [], "keep_alive": "0"},
+        )
+        if response.status_code != 404:
+            response.raise_for_status()
+    except (httpx.HTTPError, ValueError, KeyError, AttributeError) as exc:
+        raise QueryEmbeddingError(
+            "Could not release Qwen3-Embedding-4B for local chat. "
+            "Stop the query model in Ollama and try again."
+        ) from exc
+
+
+__all__ = [
+    "QUERY_PREFIX",
+    "QueryEmbeddingError",
+    "QueryVector",
+    "embed_question",
+    "unload_embedder",
+]
