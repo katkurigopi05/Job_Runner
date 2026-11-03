@@ -27,6 +27,7 @@ import hashlib
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import structlog
 
@@ -59,6 +60,21 @@ LOCAL_PROVIDERS = frozenset({"stub", "ollama"})
 #: worse than none: it answers the one question it exists for, incorrectly.
 CLOUD_MODEL_MARKERS = ("cloud",)
 
+#: Addresses that are this machine. An Ollama at any other address is another
+#: computer, whatever model it runs.
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def is_loopback(url: str) -> bool:
+    """Whether `url` points at this machine."""
+    return urlsplit(url).hostname in LOOPBACK_HOSTS
+
+
+def is_cloud_model(model: str) -> bool:
+    """Whether Ollama runs `model` on its own servers (`CLOUD_MODEL_MARKERS`)."""
+    return any(marker in model.lower() for marker in CLOUD_MODEL_MARKERS)
+
+
 #: The task of a call whose system prompt is not a registered one. Every
 #: call site in the app sends a registered prompt, so this is a script, an
 #: experiment, or a prompt someone forgot to register.
@@ -89,7 +105,7 @@ def is_local(provider: str, model: str | None = None) -> bool:
     """
     if provider not in LOCAL_PROVIDERS:
         return False
-    return not (model and any(m in model.lower() for m in CLOUD_MODEL_MARKERS))
+    return not (model and is_cloud_model(model))
 
 
 @dataclass(frozen=True)

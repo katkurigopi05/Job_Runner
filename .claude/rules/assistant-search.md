@@ -7,6 +7,7 @@ paths:
   - "packages/matching/evidence.py"
   - "packages/matching/chunks.py"
   - "packages/matching/chunk_vectors.py"
+  - "packages/matching/query_vectors.py"
   - "apps/api/routers/chat*.py"
   - "tests/test_chat*.py"
   - "tests/test_retriev*.py"
@@ -1004,3 +1005,18 @@ The run and its numbers: `storage/embed_rank_bench/whole_index_2026-11-02/`.
 - The vectors file stays out of git and iCloud (`vectors.nosync/`).
 
 `tests/test_chunk_vectors_import.py`, `tests/test_migration_posting_chunk_vectors.py`.
+
+**A question's Qwen vector is made on the Mac** (`query_vectors.embed_question`),
+through the Ollama daemon the local chat model uses, with the 4-bit build
+`QUERY_EMBED_MODEL`. Live on 2026-11-02: 2.3 s for the first question (loading),
+0.11 s after, `make query-embedder-check`. What holds:
+
+- **The question never leaves the machine.** An `OLLAMA_BASE_URL` that is not
+  loopback, or a `:cloud` model, is refused before anything is sent
+  (`audit.is_loopback`, `audit.is_cloud_model`, shared with `privacy.py`).
+  So it stays local when Kaggle answers too, and does not depend on Kaggle.
+- **Worded as measured**: `QUERY_PREFIX` in front of the question.
+- **No guessing**: another width, a zero vector or a non-finite value is a
+  `QueryEmbeddingError` naming the fix (`ollama serve`, `ollama pull …`).
+- **`keep_alive` per call.** Five minutes by default (about 2.5 GB held);
+  "0" unloads at once, for when the local chat model needs the memory.
