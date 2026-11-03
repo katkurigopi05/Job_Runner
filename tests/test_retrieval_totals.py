@@ -66,8 +66,9 @@ async def test_total_is_not_capped_by_the_ranked_pool(db_session, monkeypatch, a
     assert found.match_total == 160
     assert found.company_total == 1
     assert len(found.passages) == 5
-    # Counting the full set does not expand the existing ranked list.
-    assert len(found.more) == 25
+    # Every counted posting is listed, once, after the ranked ones (2026-11-02).
+    assert len(found.more) == 155
+    assert len({p.posting_id for p in (*found.passages, *found.more)}) == 160
 
 
 async def test_totals_read_bodies_only_for_on_site_out_of_state_matches(db_session, monkeypatch):

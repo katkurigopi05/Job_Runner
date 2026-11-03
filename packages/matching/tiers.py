@@ -111,14 +111,18 @@ def roles_holding(stems: frozenset[str], stem_of: Callable[[str], str]) -> set[s
 
 
 def split(
-    ordered: list[uuid.UUID], tier_of: Mapping[uuid.UUID, int], limit: int, more: int
+    ordered: list[uuid.UUID],
+    tier_of: Mapping[uuid.UUID, int],
+    limit: int,
+    more: int | None = None,
 ) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
     """What the model is handed, and what is listed after it.
 
     Ordered by tier first. The model gets the first tiers' postings only, when
-    there are any; the list carries the rest of them and every tier after, up
-    to `more` of each. One cap for the whole list let 277 titles saying "AI"
-    fill it, and the 43 related ones after them were never listed.
+    there are any; the list carries the rest of them and every tier after,
+    all of each unless `more` caps them. One cap for the whole list let 277
+    titles saying "AI" fill it, and the 43 related ones after them were never
+    listed; the reply now passes no cap at all (2026-11-02).
     """
     by_tier = sorted(ordered, key=lambda posting_id: tier_of.get(posting_id, REST))
     first = matched(tier_of)
@@ -127,7 +131,7 @@ def split(
     per_tier: dict[int, int] = {}
     for posting_id in by_tier[shown:]:
         tier = tier_of.get(posting_id, REST)
-        if per_tier.get(tier, 0) < more:
+        if more is None or per_tier.get(tier, 0) < more:
             listed.append(posting_id)
             per_tier[tier] = per_tier.get(tier, 0) + 1
     return by_tier[:shown], listed
