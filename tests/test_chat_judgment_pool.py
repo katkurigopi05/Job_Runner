@@ -76,7 +76,13 @@ def test_the_frozen_set_loads_and_holds_some_questions_out() -> None:
     questions = judged.load()
 
     assert questions.version == "chat-v1"
-    assert {mode.name for mode in questions.modes} == {"shipped", "semantic", "cross_encoder"}
+    assert {mode.name for mode in questions.modes} == {
+        "shipped",
+        "semantic",
+        "cross_encoder",
+        "qwen",
+        "qwen_semantic",
+    }
     held = [q for q in questions.questions if q.held_out]
     assert 0 < len(held) < len(questions.questions)
     assert {q.expect for q in questions.questions} == {"answer", "none", "not_searched"}
