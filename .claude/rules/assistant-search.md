@@ -12,6 +12,7 @@ paths:
   - "apps/api/routers/chat*.py"
   - "tests/test_chat*.py"
   - "tests/test_retriev*.py"
+  - "tests/test_qwen_search.py"
 ---
 # Notes on the assistant's search
 
@@ -1021,7 +1022,7 @@ through the Ollama daemon the local chat model uses, with the 4-bit build
   `QueryEmbeddingError` naming the fix (`ollama serve`, `ollama pull …`).
 - **`keep_alive` per call.** Five minutes by default (about 2.5 GB held);
   "0" unloads at once, for when the local chat model needs the memory.
-## The real search with Qwen chunks, measured (2026-11-02)
+## Original Qwen implementation at 2f87d89 (2026-11-02)
 
 `CHAT_QWEN_SEARCH=false` remains the default. The opt-in search uses the local
 Qwen question vector and `posting_chunk_vectors`; bge-small handles postings
@@ -1051,6 +1052,9 @@ shared Mac. Local chat answers would additionally reload the query model when
 | Qwen, reranking only | 43/56 / 54/56 | 5/56 / 10/56 | 2.08 / 2.39 |
 | Qwen + semantic candidates | 45/56 / 54/56 | 15/56 / 31/56 | 6.58 / 6.83 |
 
+Semantic finds beyond each question's one known target are **ungraded**;
+15/56 in five and 31/56 listed do not grade the other retrieved postings.
+
 Against bge-small, per-question target rank (higher / lower / unchanged):
 
 - **Qwen only:** natural 7 / 9 / 40; paraphrased 7 / 1 / 48.
@@ -1076,11 +1080,11 @@ A `QueryEmbeddingError` returns the original search and records its reason on
 fallback. This is never an answer-provider fallback. Ollama answers request
 `keep_alive="0"`; explicitly remote answers leave the local embedder warm.
 
-Activation remains the owner's decision after reading these results: update
-the root checkout while preserving its edits, run `make migrate`,
-`make import-chunk-vectors dry=1` then `make import-chunk-vectors`, choose the
-two settings in `.env`, and restart `make api`. This PR does none of those
-production actions. The new-posting export/Colab/import pipeline is PR 4.
+Activation remains the owner's decision after reading these results. The owner
+already ran the migration and imported 223,576 vectors on the live database on
+2026-11-02. Activation now means choosing the two settings in `.env` and
+restarting `make api`; neither migration nor import needs repeating. This PR
+does no production writes. The new-posting export/Colab/import pipeline is PR 4.
 
 **Recommendation:** leave both `CHAT_QWEN_SEARCH` and
 `CHAT_SEMANTIC_CANDIDATES` off for now. Reranking alone does not establish an
@@ -1111,3 +1115,120 @@ results, not grades for the new Qwen candidates; the sparse coverage cannot
 justify promoting them. Both the manual Qwen-only and semantic samples retained
 fraud/payments and employer constraints; semantic PyTorch results also included
 a pricing role on founder boilerplate. New finds need pooled judgments.
+
+
+## Qwen discovery after owner review (2026-11-02)
+
+This supersedes the original implementation and recommendation details above.
+Both flags still default to false. `CHAT_QWEN_SEARCH` now selects Qwen for
+**discovery only**: semantic candidates, the vector-only path, and the optional
+judge's additional candidates. Keyword matches retain the shipped bge-small
+ordering and spans. An empty rare-term keyword result still cannot be filled.
+
+Each question owns an `ExactRanking`. One materialized sequential scan computes
+Qwen chunk distances; one grouped result keeps every open/current posting's
+best span. The same compact in-memory ranking serves every discovery stage and
+widening; it never survives the question. The materialization matters: the
+current-hash join was estimated at about 12 rows and otherwise chose a vector
+primary-key lookup for nearly every chunk. The final copy plan uses a vector
+sequential scan and hash joins. Synthetic tests compare complete original/exact
+rankings and spans; a real-copy check also matched the original exhaustive scan.
+
+Embedding is lazy: a keyword-only question never loads Qwen. The scope keeps
+local embeddings warm (`5m`) until its last embedding, then releases once for
+local chat. Semantic discovery now needs only the full question's Qwen vector.
+A release failure logs a warning and continues to the provider's own error;
+a down daemon retains the `ollama serve` remedy. Remote answers retain the
+configured keep-alive. Question-embedding failures still state the bge-small
+fallback in context and reply.
+
+Measured the real `retrieve()` on a fresh read-only copy of the same corpus,
+restoring the same 55 public targets, with no live writes. All 56 targets were
+present; 16,306 postings had 224,361 Qwen chunks. Restored locations remain
+unknown and insertion timestamps default, as in the original controlled copy.
+All 307 baseline ordered heads (112 pool plus 195 saved questions) matched the
+previous copy. The optional second-stage reranker was off.
+
+| Mode | Natural in 5 / listed | Paraphrased in 5 / listed | Warm median s, natural / paraphrased |
+|---|---:|---:|---:|
+| Shipped bge-small | 44/56 / 54/56 | 4/56 / 10/56 | 3.41 / 4.22 |
+| Qwen discovery, semantics off | 44/56 / 54/56 | 4/56 / 10/56 | 3.53 / 4.30 |
+| Qwen + semantic candidates | 46/56 / 54/56 | 12/56 / 31/56 | 7.02 / 7.40 |
+
+**Semantic finds beyond each question's one known target are ungraded.**
+12/56 in five and 31/56 listed do not establish relevance of the other finds.
+Against this run's shipped baseline, target-rank wins / losses / unchanged:
+Qwen alone 0 / 0 / 56 for each form; discovery with semantics natural
+3 / 1 / 52 and paraphrased 26 / 4 / 26. The earlier semantic implementation
+had 45/56 natural and 15/56 paraphrased in five; preserving bge-small keyword
+order trades three previous paraphrased top-five hits for broader stability.
+The adult-primary-care target returns to rank 1 (previous semantic 11), and
+weekend Support Engineer to rank 2 (previous semantic 5).
+
+Ordered heads changed on **0/195** saved questions with Qwen alone (previously
+178/195), and **125/195** with semantics (previously 179/195). Changes are not
+relevance grades. Per-question ranks, explicit wins/losses, timings and scan
+counts: `docs/evaluations/qwen-discovery-review-2026-11-02.csv`; ordered saved
+heads: `docs/evaluations/qwen-discovery-saved-2026-11-02.csv`. No embedding failed
+in the 921 measured retrievals, and each timed question performed at most one
+Qwen distance scan.
+
+The 112 questions per mode were timed serially with warm applicable models.
+The 195 saved questions were rank checks only: three SQL workers, one warmed
+and serialized native encoder. Their concurrent times are not reported.
+Intermediate unused-model-preload and nested-loop timing runs were discarded.
+The fresh shipped baseline was slower than the original 1.59/1.94 s on this
+shared Mac (heavy Chrome/VM activity and about 9 GB swap observed). Absolute
+before/after wall times are not a controlled speedup comparison. The current
+same-run semantic overhead is **+3.61/+3.18 s**, still above the +1.5 s goal.
+
+**Recommendation for this exact implementation: keep both flags off.**
+Qwen-only changes nothing for these keyword questions; enabling discovery means
+using the two flags together. The latency goal is unmet and the non-target
+semantic finds remain ungraded. The conditional HNSW experiment below measures
+an alternative; it is not shipped or used by application retrieval.
+
+The owner already migrated and imported 223,576 live vectors. Once this code is
+available, activation is only setting `CHAT_QWEN_SEARCH=true` and
+`CHAT_SEMANTIC_CANDIDATES=true` in `.env`, then restarting `make api`. Do not
+repeat migration/import as activation steps. Workers and the crawl sweep remain
+off; the new-posting export/Colab/import pipeline remains PR 4.
+
+### Conditional HNSW measurement (2026-11-02, copy only)
+
+Because the exact implementation missed the latency goal, built a temporary
+`halfvec(2560)` cosine HNSW index on the marked evaluation copy only: pgvector
+0.8.6, `m=16`, `ef_construction=64`; build 346.1 s,
+1,530,789,888 bytes. Model unloaded before the build; serial maintenance
+with 2 GB work memory avoided Docker's 64 MB shared-memory limit and graph
+spilling. No schema migration or approximate application search is shipped.
+
+Compared 112 public question vectors against full exact posting rankings.
+The exact grouped ranking and spans matched the original exhaustive query for
+all 16,306 postings. Each ANN query shortlisted up to 10,000 chunks,
+then filtered current/open text, deduplicated postings and retained distance
+order. Strict iterative scan used `max_scan_tuples=20000`.
+
+| ef_search | Median ANN DB seconds | Mean posting recall@5 | @20 | @200 |
+|---|---:|---:|---:|---:|
+| 100 | 1.338 | 98.75% | 97.19% | 92.26% |
+| 400 | 1.476 | 99.64% | 99.60% | 97.46% |
+| 1000 | 1.445 | 100.00% | 99.91% | 99.38% |
+
+The same probe's full exact grouped DB median was
+1.016 s: this conservative 10,000-chunk ANN probe was slower than exact.
+These are database-ranking timings only,
+excluding embedding, keyword retrieval, hydration and chat. They are not an
+end-to-end latency promise, and global posting recall does not establish recall
+under company/area/level filters or semantic relevance. Per-question data:
+`docs/evaluations/qwen-hnsw-review-2026-11-02.csv`.
+
+The default planner did not choose HNSW. The experiment verified an HNSW index
+scan with transaction-local custom plans and sequential/bitmap scans and sorts
+disabled. Those diagnostic settings are not deployed; adding the index alone
+would not give these results. The index belongs only to the disposable copy.
+
+The owner's later PR comment reports a promising 1-bit shortlist with exact
+re-scoring. That is separate evidence, not this experiment or shipped behavior.
+The recommendation remains both flags off until latency and ungraded semantic
+finds are addressed.

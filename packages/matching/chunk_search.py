@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+import structlog
 from sqlalchemy import ColumnElement, and_, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -21,11 +22,76 @@ from packages.matching import query_vectors
 from packages.matching.chunk_vectors import QWEN_4B as QWEN_4B
 from packages.matching.embed import SentenceTransformerEmbedder
 
+log = structlog.get_logger(__name__)
+
+
+class ExactRanking:
+    """One exact Qwen scan, owned by one question, reused by all its stages.
+
+    DISTINCT ON selects the best span per posting in SQL. No embedding leaves
+    Postgres; only the compact ranking is kept, never a cross-question cache.
+    """
+
+    def __init__(self, vector: list[float]) -> None:
+        self.vector = vector
+        self.rows: list[tuple[uuid.UUID, int, int, float, uuid.UUID | None]] | None = None
+
+    async def read(
+        self,
+        session: AsyncSession,
+        *,
+        among: list[uuid.UUID] | None,
+        companies: list[uuid.UUID] | None,
+    ) -> list[tuple[uuid.UUID, int, int]]:
+        if self.rows is None:
+            # Current-hash equality is correlated with the posting join. The
+            # planner estimates almost no matches and otherwise chooses a
+            # random vector-table lookup per chunk. Materialize distances first
+            # so the large vectors are read once in physical scan order.
+            distances = (
+                select(
+                    PostingChunkVector.chunk_id,
+                    PostingChunkVector.embedding.cosine_distance(self.vector).label("distance"),
+                )
+                .where(PostingChunkVector.embedding_model == QWEN_4B)
+                .cte("qwen_distances")
+                .prefix_with("MATERIALIZED")
+            )
+            query = (
+                select(
+                    PostingChunk.posting_id,
+                    PostingChunk.start,
+                    PostingChunk.length,
+                    distances.c.distance,
+                    Posting.company_id,
+                )
+                .select_from(distances)
+                .join(PostingChunk, PostingChunk.id == distances.c.chunk_id)
+                .join(Posting, Posting.id == PostingChunk.posting_id)
+                .where(*_current_chunks())
+                .distinct(PostingChunk.posting_id)
+                .order_by(PostingChunk.posting_id, distances.c.distance, PostingChunk.ordinal)
+            )
+            self.rows = [
+                (pid, start, length, dist, company)
+                for pid, start, length, dist, company in (await session.execute(query)).all()
+            ]
+            self.rows.sort(key=lambda row: (row[3], str(row[0])))
+        selected = set(among) if among is not None else None
+        employers = set(companies) if companies else None
+        return [
+            (pid, start, length)
+            for pid, start, length, dist, company in self.rows
+            if (pid in selected if selected is not None else dist < 1.0)
+            and (employers is None or company in employers)
+        ]
+
 
 @dataclass(frozen=True)
 class ChunkSpace:
     model: str
     without_qwen: bool = False
+    ranking: ExactRanking | None = field(default=None, compare=False, repr=False)
 
 
 type Space = str | ChunkSpace
@@ -54,14 +120,17 @@ def is_qwen(space: Space) -> bool:
     return isinstance(space, ChunkSpace) and space.model == QWEN_4B
 
 
+def _current_chunks() -> list[ColumnElement[bool]]:
+    return [
+        Posting.closed_at.is_(None),
+        PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
+    ]
+
+
 def chunk_filter(space: Space) -> list[ColumnElement[bool]]:
     model = space.model if isinstance(space, ChunkSpace) else space
     stamp = PostingChunkVector.embedding_model if is_qwen(space) else PostingChunk.embedding_model
-    filters = [
-        Posting.closed_at.is_(None),
-        stamp == model,
-        PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
-    ]
+    filters = [*_current_chunks(), stamp == model]
     if isinstance(space, ChunkSpace) and space.without_qwen:
         filters.append(~has_qwen())
     return filters
@@ -86,6 +155,10 @@ async def chunk_ranking(
     limit: int,
 ) -> tuple[list[tuple[uuid.UUID, int, int]], bool]:
     """Postings by their best current chunk; whether the read exhausted its pool."""
+    if isinstance(model, ChunkSpace) and is_qwen(model) and model.ranking is not None:
+        # Already exhaustive: widening changes only how many postings are
+        # hydrated, never re-reads the vector table or truncates a posting's spans.
+        return await model.ranking.read(session, among=among, companies=companies), True
     column = PostingChunkVector.embedding if is_qwen(model) else PostingChunk.embedding
     distance = column.cosine_distance(vector)
     query = select(PostingChunk.posting_id, PostingChunk.start, PostingChunk.length, distance).join(
@@ -138,25 +211,57 @@ async def queries(
     subject: str,
     *,
     enabled: bool,
-    free_embedder: bool,
+    keep_alive: str | None = None,
 ) -> ChunkQueries:
     if not enabled or not subject:
         return ChunkQueries({model: vector for model, vector in vectors.items()})
     try:
-        query = await query_vectors.embed_question(
-            subject, keep_alive="0" if free_embedder else None
-        )
+        query = await query_vectors.embed_question(subject, keep_alive=keep_alive)
     except query_vectors.QueryEmbeddingError as exc:
         return ChunkQueries(
             {model: vector for model, vector in vectors.items()}, fallback_reason=str(exc)
         )
     return ChunkQueries(
         {
-            ChunkSpace(QWEN_4B): list(query.values),
+            ChunkSpace(QWEN_4B, ranking=ExactRanking(list(query.values))): list(query.values),
             **{ChunkSpace(model, without_qwen=True): vector for model, vector in vectors.items()},
         },
         qwen=True,
     )
+
+
+async def release_embedder() -> None:
+    """Memory courtesy; a down daemon must reach the provider's own remedy."""
+    try:
+        await query_vectors.unload_embedder()
+    except query_vectors.QueryEmbeddingError as exc:
+        log.warning("query_embedder_release_failed", reason=str(exc))
+
+
+class Question:
+    """Keep embeddings warm within a question; release once after its last use."""
+
+    def __init__(self, *, free_embedder: bool) -> None:
+        self.free_embedder = free_embedder
+        self.attempted = False
+
+    async def __aenter__(self) -> Question:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        if self.free_embedder and self.attempted:
+            await release_embedder()
+
+    async def queries(
+        self, vectors: dict[str, list[float]], subject: str, *, enabled: bool
+    ) -> ChunkQueries:
+        self.attempted |= enabled and bool(subject)
+        return await queries(
+            vectors,
+            subject,
+            enabled=enabled,
+            keep_alive="5m" if self.free_embedder else None,
+        )
 
 
 async def coverage(

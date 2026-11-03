@@ -2517,6 +2517,13 @@ async def retrieve(
     session: AsyncSession, question: str, *, limit: int = DEFAULT_LIMIT, free_embedder: bool = False
 ) -> Retrieval:
     """The open postings `question` is about, and how much of the corpus was read."""
+    async with chunk_search.Question(free_embedder=free_embedder) as search:
+        return await _retrieve(session, question, limit=limit, search=search)
+
+
+async def _retrieve(
+    session: AsyncSession, question: str, *, limit: int, search: chunk_search.Question
+) -> Retrieval:
     wants_share = bool(_PERCENTAGE_REQUEST.search(question))
     asks_how_many = bool(_HOW_MANY.search(question))
     for spelled_out, as_titles_say_it in _SPELLED_OUT:
@@ -2703,13 +2710,22 @@ async def retrieve(
     chunk_encoders = await asyncio.to_thread(
         _encoders, [(str(model), None) for model in chunk_models], frequencies, active_revision
     )
-    chunk_queries = await chunk_search.queries(
-        await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, subject),
-        subject,
-        enabled=get_settings().chat_qwen_search,
-        free_embedder=free_embedder,
-    )
-    chunk_vectors = chunk_queries.vectors
+    keyword_vectors = await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, subject)
+    chunk_vectors: dict[Space, list[float]] = {model: v for model, v in keyword_vectors.items()}
+    chunk_queries = chunk_search.ChunkQueries(chunk_vectors)
+    discovery_queries: chunk_search.ChunkQueries | None = None
+
+    async def discovery() -> chunk_search.ChunkQueries:
+        nonlocal discovery_queries, chunk_queries
+        if discovery_queries is None:
+            discovery_queries = await search.queries(
+                await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, question),
+                question,
+                enabled=get_settings().chat_qwen_search,
+            )
+            chunk_queries = discovery_queries
+        return discovery_queries
+
     chunk_spans: dict[uuid.UUID, tuple[int, int]] = {}
 
     terms = _search_terms(question, frequencies, exclude=aside)
@@ -3027,24 +3043,7 @@ async def retrieve(
         ):
             # Unlike the lexical subject, sentence meaning includes the
             # relationships between words. Preserve those for discovery.
-            semantic_queries = await chunk_search.queries(
-                await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, question),
-                question,
-                enabled=chunk_queries.qwen,
-                free_embedder=free_embedder,
-            )
-            if semantic_queries.fallback_reason:
-                # Both stages must agree on the fallback and report its reason.
-                chunk_queries = chunk_search.ChunkQueries(
-                    {
-                        model: vector
-                        for model, vector in (
-                            await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, subject)
-                        ).items()
-                    },
-                    fallback_reason=semantic_queries.fallback_reason,
-                )
-                chunk_vectors = chunk_queries.vectors
+            semantic_queries = await discovery()
             semantic_vectors = semantic_queries.vectors
             semantic, semantic_spans, excluded = await _semantic_candidates(
                 session,
@@ -3151,9 +3150,10 @@ async def retrieve(
         # postings, counted and listed by kind.
         added: list[_Hit] = []
         if reranker is not None and reranker.judges and role_pool is None and keyword:
+            unfound = await discovery() if get_settings().chat_qwen_search else chunk_queries
             added, added_spans = await _nearest_unfound(
                 session,
-                chunk_vectors,
+                unfound.vectors,
                 companies,
                 in_area=bool(area),
                 found=set(keyword_ids),
@@ -3217,6 +3217,10 @@ async def retrieve(
         # `width` from each space, as before, and on until the answer's
         # `limit` are ones the area and the level keep: forty postings abroad
         # are otherwise an answer of none.
+        chunk_queries = await search.queries(
+            keyword_vectors, subject, enabled=get_settings().chat_qwen_search
+        )
+        chunk_vectors = chunk_queries.vectors
         for model, vector in chunk_vectors.items():
             read, spans = await _nearest_kept(
                 session,
@@ -3382,7 +3386,7 @@ async def retrieve(
         for index, hit in enumerate(chosen, start=1)
     )
     qwen_searched, bge_fallback = (
-        await chunk_search.coverage(session, chunk_vectors, list(vectors))
+        await chunk_search.coverage(session, chunk_queries.vectors, list(vectors))
         if chunk_queries.qwen
         else (None, 0)
     )
