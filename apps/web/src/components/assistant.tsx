@@ -12,6 +12,7 @@ import { KaggleConnection } from "@/components/kaggle-connection";
 import { ReplyText } from "@/components/reply-text";
 import { historyFrom } from "@/lib/chat-history";
 import { readFrames } from "@/lib/chat-stream";
+import { POSTING_LINK } from "@/lib/external";
 
 /* Styling cues borrowed from the photo-editor: an emoji-prefixed toolbar row,
    a grey working canvas the content sits on, and a left-aligned status line
@@ -103,7 +104,6 @@ interface Turn {
   chart?: Chart | null;
 }
 
-/** One retrieved posting, linked to its page. */
 function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
   return (
     <li>
@@ -114,6 +114,7 @@ function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
       ) : null}
       <Link
         href={`/postings/${source.posting_id}`}
+        {...POSTING_LINK}
         className={`${muted ? "text-ink-soft" : "text-ink"} underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn`}
       >
         {source.title}

@@ -260,6 +260,17 @@ Not done:
 
 ## §17: live status updates, and the process boundary they had to cross
 
+**Startup ordering, 2026-11-02.** CI intermittently timed out waiting for a
+new application's `created` event. The ready frame could precede the watcher's
+history query; an application committed in that gap could be marked as
+already seen and never published. `StatusStream.wait_ready()` now gates the
+initial counts read on completed history classification. The subscriber is
+registered first, so later events are still queued normally. A regression
+yields during priming and observes the counts-read ordering: it failed before
+the barrier and passed afterwards, with all 57 focused status-stream and
+assistant checks. Timeouts, the overlap window, cooperative shutdown and
+post-commit publication were left alone.
+
 `GET /events/applications` (`apps/api/routers/events.py`) streams application
 status changes to the dashboard, which was `force-dynamic` and therefore only
 as current as the last reload. The mechanics are in

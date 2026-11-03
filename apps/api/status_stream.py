@@ -181,6 +181,7 @@ class StatusStream:
         self._subscribers: set[asyncio.Queue[StatusChange]] = set()
         self._watcher: asyncio.Task[None] | None = None
         self._wake = asyncio.Event()
+        self._ready = asyncio.Event()
         self._stopping = False
 
     @property
@@ -196,8 +197,13 @@ class StatusStream:
         self._subscribers.add(queue)
         if self._watcher is None or self._watcher.done():
             self._stopping = False
+            self._ready.clear()
             self._watcher = asyncio.create_task(self._watch())
         return queue
+
+    async def wait_ready(self) -> None:
+        """Wait until startup has classified the existing events as history."""
+        await self._ready.wait()
 
     def unsubscribe(self, queue: asyncio.Queue[StatusChange]) -> None:
         """Drop one client, and ask the watcher to stop if it was the last.
@@ -256,6 +262,7 @@ class StatusStream:
         # dashboard opened on a database with a year of applications would
         # replay all of them on connect.
         seen.update(await self._ids_before(since))
+        self._ready.set()
 
         while not self._stopping:
             try:
