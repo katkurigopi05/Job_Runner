@@ -1022,6 +1022,18 @@ through the Ollama daemon the local chat model uses, with the 4-bit build
   `QueryEmbeddingError` naming the fix (`ollama serve`, `ollama pull …`).
 - **`keep_alive` per call.** Five minutes by default (about 2.5 GB held);
   "0" unloads at once, for when the local chat model needs the memory.
+**New postings get Qwen vectors in batches** (`make export-chunk-vectors-pending`).
+Every crawl adds postings after the whole-index run; until they have Qwen vectors
+the search ranks them with bge-small. The export writes exactly the open postings
+whose current chunks are missing one, whole, so the vectors file lines up with
+their chunks; a posting not yet chunked from today's text is counted and left
+for the matching pass. `scripts/colab/qwen_embed_batch.ipynb` embeds the file on
+a Colab TPU with the whole-index run's settings (bfloat16, left padding,
+last-token pooling, unit length), which `tests/test_qwen_batch_notebook.py`
+holds, and `make import-chunk-vectors export=… vectors=…` attaches them with
+the same text check. On the live database on 2026-11-03: 16,251 covered,
+nothing pending (4 s to count). `tests/test_chunk_vectors_export.py`.
+
 ## Original Qwen implementation at 2f87d89 (2026-11-02)
 
 `CHAT_QWEN_SEARCH=false` remains the default. The opt-in search uses the local

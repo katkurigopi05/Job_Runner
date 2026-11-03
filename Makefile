@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings import-chunk-vectors query-embedder-check backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings export-chunk-vectors-pending import-chunk-vectors query-embedder-check backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -488,6 +488,13 @@ fetch-board-directories:
 # The matching pass after each crawl does new postings; this clears a backlog.
 chunk-postings:
 	$(PY)/python -m scripts.chunk_postings
+
+# make export-chunk-vectors-pending — write out the open postings whose chunks
+# have no Qwen vector yet (new since the last import), for the Colab notebook
+# scripts/colab/qwen_embed_batch.ipynb. Prints the next two steps. dry=1 counts
+# only; out= picks the folder (default storage/qwen_batches.nosync/<date>).
+export-chunk-vectors-pending:
+	$(PY)/python -m scripts.export_pending_chunks $(if $(dry),--dry-run) $(if $(out),--out $(out))
 
 # make import-chunk-vectors — attach Qwen3-Embedding-4B vectors made on a Colab
 # TPU to the chunks they were made from. Each posting is checked against today's
