@@ -6,6 +6,31 @@ the root file, which keeps every heading and says where each section went.
 
 - The review screen's document panels are in `packages/tailor/CLAUDE.md`.
 
+## TypeScript parser minimatch security pin (2026-11-03)
+
+Dependabot #52 identified minimatch 10.2.6 under TypeScript's ESLint parser
+for CVE-2026-118764 (GHSA-g3hv-75wg-m249). The upstream advisory describes
+globparts amplification in `firstPhasePreProcess` with `optimizationLevel >= 2`
+and gives 11.0.1 as the fixed version. A scoped npm override now pins that
+parser dependency to 11.0.1; no direct dashboard package was upgraded.
+
+The lock-resolution regression failed on 10.2.6 before the fix. Afterwards,
+69 dependency/dashboard checks passed, and a clean npm install, ESLint,
+TypeScript and the production build passed. Both CommonJS and named-import
+consumers retain their expected API. This is development tooling, not an
+application request dependency.
+
+The legacy minimatch 3.1.5 copy remains: ESLint plugins call its function
+export, which a global override to 11 would break. Its source has neither
+`firstPhasePreProcess` nor `optimizationLevel`. Nevertheless npm's published
+`<11.0.1` advisory range still flags it. The post-fix audit retains that
+legacy warning; this change does not claim a clean full audit or dismiss any
+alert. An upstream range correction or compatible legacy remediation remains
+separate work. Never use `npm audit fix --force` to downgrade lint tooling.
+The full audit decreased from 14 to 13 moderate entries, all for the same
+advisory propagated through the dependency graph. `npm audit --omit=dev`
+reported zero vulnerabilities.
+
 ## Keep the assistant open while reading a posting (2026-11-02)
 
 The assistant's `PostingLink` navigated to `/postings/{id}` in the chat tab.

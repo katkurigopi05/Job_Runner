@@ -1,5 +1,15 @@
 # Notes on what the gates prove, and the test database
 
+## Dashboard parser security floor (2026-11-03)
+
+`test_dashboard_security_dependencies.py` resolves the parser's nested or
+hoisted minimatch from the lockfile and rejects versions below 11.0.1 for
+CVE-2026-118764. It failed on 10.2.6 before the scoped override, then passed
+with the existing dependency-lock and dashboard-effects tests: 69 passed.
+It reads files only, with no model, network or database fixtures. It does
+not assert an override's spelling or pretend legacy minimatch's separate
+published-range warning is resolved.
+
 Moved here from the root `CLAUDE.md` on 2026-10-11, word for word, so they
 load only when work touches this directory. "§N" below is a section of
 the root file, which keeps every heading and says where each section went.
