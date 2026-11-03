@@ -1,4 +1,4 @@
-"""The TypeScript parser must not regain the globparts amplification bug."""
+"""No installed minimatch engine may regain the globparts amplification bug."""
 
 import json
 from pathlib import Path
@@ -8,15 +8,17 @@ from packaging.version import Version
 WEB = Path(__file__).resolve().parents[1] / "apps/web"
 
 
-def test_typescript_parser_resolves_patched_minimatch() -> None:
-    """Resolve nested or hoisted npm dependencies, not a particular override."""
+def test_every_minimatch_engine_is_patched() -> None:
+    """Check nested, hoisted and aliased packages; local links are not engines."""
     packages = json.loads((WEB / "package-lock.json").read_text())["packages"]
-    locations = (
-        "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch",
-        "node_modules/@typescript-eslint/node_modules/minimatch",
-        "node_modules/minimatch",
-    )
-    resolved = next(packages[location] for location in locations if location in packages)
-    assert Version(resolved["version"]) >= Version("11.0.1"), (
-        "The TypeScript parser resolves minimatch affected by CVE-2026-118764"
-    )
+    engines = {
+        location: package["version"]
+        for location, package in packages.items()
+        if not package.get("link")
+        and package.get("name", location.rsplit("node_modules/", 1)[-1]) == "minimatch"
+    }
+    assert engines, "The lockfile no longer identifies the minimatch engines"
+    vulnerable = {
+        path: version for path, version in engines.items() if Version(version) < Version("11.0.1")
+    }
+    assert not vulnerable, f"CVE-2026-118764: {vulnerable}"
