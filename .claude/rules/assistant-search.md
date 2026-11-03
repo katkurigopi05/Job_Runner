@@ -1244,3 +1244,27 @@ The owner's later PR comment reports a promising 1-bit shortlist with exact
 re-scoring. That is separate evidence, not this experiment or shipped behavior.
 The recommendation remains both flags off until latency and ungraded semantic
 finds are addressed.
+
+## Qwen through a 1-bit shortlist (2026-11-03)
+
+Graded, Qwen + semantic candidates was 2.9 s slower a question than the shipped search, against the
+owner's limit of +1.0 s. Profiled: 1.28 s was the exact scan of all 1.3 GB of Qwen vectors, 0.6 s the
+keyword stage slowed by that scan evicting the cache, and about 0.7 s bge-small "without Qwen" scans that
+found nothing because every posting had Qwen vectors.
+
+- **`posting_chunk_vectors.embedding_bits`** is `binary_quantize(embedding)::bit(2560)`, a stored generated
+  column (85 MB for the table), so it cannot disagree with the vector. Migration `e1a3c5e7f9b2`: 6 s on a
+  copy of the owner's database.
+- **`chunk_search.ShortlistRanking`** replaces the exact scan: Hamming distance on the bits picks at least
+  `SHORTLIST_CHUNKS` (2,000) chunks, only those get exact cosine, best chunk per posting. Widening asks for
+  four times the caller's window. Named postings and companies are scored exactly, without a shortlist.
+  One shortlist per question, shared by its stages. Measured 2026-11-02: shortlists of 500, 2,000 and 8,000
+  gave the exact top five on all 112 benchmark questions.
+- **Coverage is counted once per question, first**, and when no open posting lacks Qwen vectors the
+  bge-small fallback spaces are left out; with one uncovered posting they run as before.
+
+On a copy of the live database, graded set (582 grades): `qwen_semantic` keeps its quality (dev nDCG@8
+0.786 vs 0.788 before, P@5 0.880 both) and its median went from 3.79 s to **1.20 s** against shipped's
+0.62 s (+0.58 s; held out +0.41 s). Against the 2026-10-19 thresholds, five of six now pass; "better" still
+misses on the held-out half (+0.040 [−0.006, +0.103], 13 questions). `tests/test_qwen_bit_shortlist.py`,
+`tests/test_migration_qwen_vector_bits.py`, and the full-coverage test in `tests/test_qwen_search.py`.

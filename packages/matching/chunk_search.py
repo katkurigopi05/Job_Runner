@@ -25,16 +25,94 @@ from packages.matching.embed import SentenceTransformerEmbedder
 log = structlog.get_logger(__name__)
 
 
-class ExactRanking:
-    """One exact Qwen scan, owned by one question, reused by all its stages.
+#: Chunks the 1-bit shortlist takes before exact re-ranking, at least. On
+#: 2026-11-02 a shortlist of 500 gave the exact top five on all 112 benchmark
+#: questions; 2,000 leaves room for the filters (area, place, level) that drop
+#: shortlisted postings before enough are kept.
+SHORTLIST_CHUNKS = 2000
+#: How much wider the shortlist is than the window a caller asks for.
+SHORTLIST_FACTOR = 4
 
-    DISTINCT ON selects the best span per posting in SQL. No embedding leaves
-    Postgres; only the compact ranking is kept, never a cross-question cache.
+#: A posting's nearest chunk: posting, span start, span length, distance, company.
+Row = tuple[uuid.UUID, int, int, float, uuid.UUID | None]
+
+
+def sign_bits(vector: Sequence[float]) -> str:
+    """What `binary_quantize` stores: 1 where a value is above zero."""
+    return "".join("1" if value > 0 else "0" for value in vector)
+
+
+class ShortlistRanking:
+    """Qwen chunks by exact distance, found through their sign bits; one per question.
+
+    The sign bits (`embedding_bits`, 85 MB for the whole table) pick the
+    nearest chunks by Hamming distance, and only those are scored with the full
+    vectors, so the 1.3 GB of vectors is never scanned whole. Measured
+    2026-11-03: the exact scan this replaces was 1.28 s of the 2.9 s Qwen added
+    to a question. Named postings and companies are few, and are scored exactly
+    without a shortlist. The shortlist is kept for the question, shared by its
+    stages, and widened when a caller needs more; nothing outlives the question.
     """
 
     def __init__(self, vector: list[float]) -> None:
         self.vector = vector
-        self.rows: list[tuple[uuid.UUID, int, int, float, uuid.UUID | None]] | None = None
+        self.bits = sign_bits(vector)
+        self._size = 0
+        self._complete = False
+        self._rows: list[Row] = []
+
+    async def _best(
+        self,
+        session: AsyncSession,
+        *,
+        chunk_ids: list[uuid.UUID] | None = None,
+        posting_ids: list[uuid.UUID] | None = None,
+        companies: list[uuid.UUID] | None = None,
+    ) -> list[Row]:
+        """Each posting's nearest current chunk among those named, nearest first."""
+        distance = PostingChunkVector.embedding.cosine_distance(self.vector)
+        query = (
+            select(
+                PostingChunk.posting_id,
+                PostingChunk.start,
+                PostingChunk.length,
+                distance,
+                Posting.company_id,
+            )
+            .select_from(PostingChunkVector)
+            .join(PostingChunk, PostingChunk.id == PostingChunkVector.chunk_id)
+            .join(Posting, Posting.id == PostingChunk.posting_id)
+            .where(PostingChunkVector.embedding_model == QWEN_4B, *_current_chunks())
+        )
+        if chunk_ids is not None:
+            query = query.where(PostingChunkVector.chunk_id.in_(chunk_ids))
+        if posting_ids is not None:
+            query = query.where(PostingChunk.posting_id.in_(posting_ids))
+        if companies:
+            query = query.where(Posting.company_id.in_(companies))
+        query = query.distinct(PostingChunk.posting_id).order_by(
+            PostingChunk.posting_id, distance, PostingChunk.ordinal
+        )
+        rows: list[Row] = [
+            (pid, start, length, float(dist), company)
+            for pid, start, length, dist, company in (await session.execute(query)).all()
+        ]
+        return sorted(rows, key=lambda row: (row[3], str(row[0])))
+
+    async def _shortlist(self, session: AsyncSession, size: int) -> None:
+        hamming = PostingChunkVector.embedding_bits.hamming_distance(self.bits)
+        ids = list(
+            (
+                await session.scalars(
+                    select(PostingChunkVector.chunk_id)
+                    .where(PostingChunkVector.embedding_model == QWEN_4B)
+                    .order_by(hamming, PostingChunkVector.chunk_id)
+                    .limit(size)
+                )
+            ).all()
+        )
+        self._size, self._complete = size, len(ids) < size
+        self._rows = await self._best(session, chunk_ids=ids) if ids else []
 
     async def read(
         self,
@@ -42,56 +120,27 @@ class ExactRanking:
         *,
         among: list[uuid.UUID] | None,
         companies: list[uuid.UUID] | None,
-    ) -> list[tuple[uuid.UUID, int, int]]:
-        if self.rows is None:
-            # Current-hash equality is correlated with the posting join. The
-            # planner estimates almost no matches and otherwise chooses a
-            # random vector-table lookup per chunk. Materialize distances first
-            # so the large vectors are read once in physical scan order.
-            distances = (
-                select(
-                    PostingChunkVector.chunk_id,
-                    PostingChunkVector.embedding.cosine_distance(self.vector).label("distance"),
-                )
-                .where(PostingChunkVector.embedding_model == QWEN_4B)
-                .cte("qwen_distances")
-                .prefix_with("MATERIALIZED")
-            )
-            query = (
-                select(
-                    PostingChunk.posting_id,
-                    PostingChunk.start,
-                    PostingChunk.length,
-                    distances.c.distance,
-                    Posting.company_id,
-                )
-                .select_from(distances)
-                .join(PostingChunk, PostingChunk.id == distances.c.chunk_id)
-                .join(Posting, Posting.id == PostingChunk.posting_id)
-                .where(*_current_chunks())
-                .distinct(PostingChunk.posting_id)
-                .order_by(PostingChunk.posting_id, distances.c.distance, PostingChunk.ordinal)
-            )
-            self.rows = [
-                (pid, start, length, dist, company)
-                for pid, start, length, dist, company in (await session.execute(query)).all()
-            ]
-            self.rows.sort(key=lambda row: (row[3], str(row[0])))
-        selected = set(among) if among is not None else None
-        employers = set(companies) if companies else None
-        return [
-            (pid, start, length)
-            for pid, start, length, dist, company in self.rows
-            if (pid in selected if selected is not None else dist < 1.0)
-            and (employers is None or company in employers)
-        ]
+        limit: int,
+    ) -> tuple[list[tuple[uuid.UUID, int, int]], bool]:
+        """Postings by their nearest chunk, and whether nothing was left unread."""
+        if among is not None:
+            rows = await self._best(session, posting_ids=among, companies=companies)
+            return [(pid, start, length) for pid, start, length, _, _ in rows], True
+        if companies:
+            rows = await self._best(session, companies=companies)
+            return [(p, s, n) for p, s, n, dist, _ in rows if dist < 1.0], True
+        size = max(SHORTLIST_CHUNKS, limit * SHORTLIST_FACTOR)
+        if size > self._size and not self._complete:
+            await self._shortlist(session, size)
+        kept = [(p, s, n) for p, s, n, dist, _ in self._rows if dist < 1.0]
+        return kept, self._complete
 
 
 @dataclass(frozen=True)
 class ChunkSpace:
     model: str
     without_qwen: bool = False
-    ranking: ExactRanking | None = field(default=None, compare=False, repr=False)
+    ranking: ShortlistRanking | None = field(default=None, compare=False, repr=False)
 
 
 type Space = str | ChunkSpace
@@ -156,9 +205,8 @@ async def chunk_ranking(
 ) -> tuple[list[tuple[uuid.UUID, int, int]], bool]:
     """Postings by their best current chunk; whether the read exhausted its pool."""
     if isinstance(model, ChunkSpace) and is_qwen(model) and model.ranking is not None:
-        # Already exhaustive: widening changes only how many postings are
-        # hydrated, never re-reads the vector table or truncates a posting's spans.
-        return await model.ranking.read(session, among=among, companies=companies), True
+        # The question's shortlist, shared by its stages and widened on demand.
+        return await model.ranking.read(session, among=among, companies=companies, limit=limit)
     column = PostingChunkVector.embedding if is_qwen(model) else PostingChunk.embedding
     distance = column.cosine_distance(vector)
     query = select(PostingChunk.posting_id, PostingChunk.start, PostingChunk.length, distance).join(
@@ -204,6 +252,14 @@ class ChunkQueries:
     vectors: dict[Space, list[float]]
     qwen: bool = False
     fallback_reason: str | None = None
+    #: (open postings the Qwen space covers, open postings only bge-small
+    #: reaches), counted once per question; None when not counted.
+    covered: tuple[int, int] | None = None
+
+    @property
+    def bge_needed(self) -> bool:
+        """Whether any open posting lacks Qwen vectors, so bge-small must still search."""
+        return self.covered is None or self.covered[1] > 0
 
 
 async def queries(
@@ -223,7 +279,7 @@ async def queries(
         )
     return ChunkQueries(
         {
-            ChunkSpace(QWEN_4B, ranking=ExactRanking(list(query.values))): list(query.values),
+            ChunkSpace(QWEN_4B, ranking=ShortlistRanking(list(query.values))): list(query.values),
             **{ChunkSpace(model, without_qwen=True): vector for model, vector in vectors.items()},
         },
         qwen=True,
@@ -244,6 +300,7 @@ class Question:
     def __init__(self, *, free_embedder: bool) -> None:
         self.free_embedder = free_embedder
         self.attempted = False
+        self.covered: tuple[int, int] | None = None
 
     async def __aenter__(self) -> Question:
         return self
@@ -253,15 +310,35 @@ class Question:
             await release_embedder()
 
     async def queries(
-        self, vectors: dict[str, list[float]], subject: str, *, enabled: bool
+        self,
+        vectors: dict[str, list[float]],
+        subject: str,
+        *,
+        enabled: bool,
+        session: AsyncSession | None = None,
+        posting_spaces: Sequence[tuple[str, int | None]] = (),
     ) -> ChunkQueries:
+        """The question's spaces, with bge-small left out when Qwen covers every posting.
+
+        Coverage is counted once per question. With nothing uncovered, the
+        bge-small spaces for "postings without Qwen vectors" can only find
+        nothing, and each of their scans cost about 0.2 s (2026-11-03).
+        """
         self.attempted |= enabled and bool(subject)
-        return await queries(
+        result = await queries(
             vectors,
             subject,
             enabled=enabled,
             keep_alive="5m" if self.free_embedder else None,
         )
+        if not result.qwen or session is None:
+            return result
+        if self.covered is None:
+            self.covered = await coverage(session, result.vectors, posting_spaces)
+        if self.covered[1] == 0:
+            only_qwen = {space: v for space, v in result.vectors.items() if is_qwen(space)}
+            return ChunkQueries(only_qwen, qwen=True, covered=self.covered)
+        return ChunkQueries(result.vectors, qwen=True, covered=self.covered)
 
 
 async def coverage(

@@ -124,6 +124,35 @@ async def test_qwen_nearest_wins_when_bge_disagrees(db_session, fake_embeddings)
     assert found.qwen_searched == 3 and found.bge_fallback_searched == 0
 
 
+async def test_full_coverage_skips_the_empty_bge_fallback_scans(db_session, fake_embeddings):
+    """With Qwen covering every posting, bge-small's "without Qwen" scans can find nothing.
+
+    Each cost about 0.2 s a question on the owner's database (2026-11-03), and
+    every posting had Qwen vectors. Coverage is counted once and reused.
+    """
+    from sqlalchemy import event
+
+    near, _ = await posting(db_session, "Platform Builder")
+    db_session.add(CorpusStats(revision=1, total_documents=100, counts_json={"streaming": 90}))
+    await db_session.flush()
+    statements: list[str] = []
+    engine = db_session.bind.sync_engine
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        found = await R.retrieve(db_session, "streaming jobs")
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    assert ids(found) == [near.id]
+    assert found.qwen_searched == 1 and found.bge_fallback_searched == 0
+    assert not any("posting_chunks.embedding <=>" in s for s in statements), "no bge-small scan"
+    assert sum("qwen_coverage" in s for s in statements) == 1, "coverage counted once"
+
+
 async def test_uncovered_posting_survives_and_coverage_counts_it(db_session):
     near, _ = await posting(db_session, "Platform Builder")
     newer, _ = await posting(db_session, "Platform Builder", qwen=False)
@@ -333,7 +362,7 @@ async def test_keyword_order_is_bge_even_when_qwen_disagrees(db_session, fake_em
     assert found == old
 
 
-async def test_exact_ranking_is_shared_across_stages_and_widenings(db_session):
+async def test_the_shortlist_is_shared_across_stages_and_widenings(db_session):
     from sqlalchemy import event
 
     from packages.matching import chunk_search as CS
@@ -361,7 +390,7 @@ async def test_exact_ranking_is_shared_across_stages_and_widenings(db_session):
     negative, _ = await posting(db_session, "Platform Builder", large=(-1.0, 0.0))
     await db_session.flush()
     plain = CS.ChunkSpace(QWEN_4B)
-    cached = CS.ChunkSpace(QWEN_4B, ranking=CS.ExactRanking(vector(2560)))
+    cached = CS.ChunkSpace(QWEN_4B, ranking=CS.ShortlistRanking(vector(2560)))
     original, _ = await CS.chunk_ranking(
         db_session, plain, vector(2560), among=None, companies=None, limit=10000
     )
@@ -381,9 +410,13 @@ async def test_exact_ranking_is_shared_across_stages_and_widenings(db_session):
     reads = []
     engine = db_session.bind.sync_engine
 
+    shortlists = []
+
     def count(conn, cursor, statement, parameters, context, executemany):
         if "posting_chunk_vectors.embedding <=>" in statement:
             reads.append(statement)
+        if "<~>" in statement:
+            shortlists.append(statement)
 
     event.listen(engine, "before_cursor_execute", count)
     try:
@@ -414,7 +447,11 @@ async def test_exact_ranking_is_shared_across_stages_and_widenings(db_session):
             limit=1,
         )
         assert [row[0] for row in filtered] == [entries[-1][0].id]
-        assert len(reads) == 1, "one vector scan across all stages and widenings"
+        # The 1-bit shortlist replaced the exact scan of every vector
+        # (2026-11-03): one shortlist for the question, shared by its stages,
+        # and exact distances only for shortlisted, named or company chunks.
+        assert len(shortlists) == 1, "one shortlist across all stages and widenings"
+        assert reads and all(" IN " in statement for statement in reads)
     finally:
         event.remove(engine, "before_cursor_execute", count)
 

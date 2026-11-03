@@ -2722,6 +2722,8 @@ async def _retrieve(
                 await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, question),
                 question,
                 enabled=get_settings().chat_qwen_search,
+                session=session,
+                posting_spaces=list(vectors),
             )
             chunk_queries = discovery_queries
         return discovery_queries
@@ -3218,7 +3220,11 @@ async def _retrieve(
         # `limit` are ones the area and the level keep: forty postings abroad
         # are otherwise an answer of none.
         chunk_queries = await search.queries(
-            keyword_vectors, subject, enabled=get_settings().chat_qwen_search
+            keyword_vectors,
+            subject,
+            enabled=get_settings().chat_qwen_search,
+            session=session,
+            posting_spaces=list(vectors),
         )
         chunk_vectors = chunk_queries.vectors
         for model, vector in chunk_vectors.items():
@@ -3245,6 +3251,8 @@ async def _retrieve(
                 without_qwen=chunk_queries.qwen,
             )
             for space, vector in vectors.items()
+            # With Qwen covering every posting, these could only find nothing.
+            if chunk_queries.bge_needed
         ]
         # Rank 1 of every space before rank 2 of any: distances from different
         # models share no scale, and ranks are all they have in common. A
@@ -3386,7 +3394,9 @@ async def _retrieve(
         for index, hit in enumerate(chosen, start=1)
     )
     qwen_searched, bge_fallback = (
-        await chunk_search.coverage(session, chunk_queries.vectors, list(vectors))
+        chunk_queries.covered
+        if chunk_queries.covered is not None
+        else await chunk_search.coverage(session, chunk_queries.vectors, list(vectors))
         if chunk_queries.qwen
         else (None, 0)
     )
