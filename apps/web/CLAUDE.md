@@ -6,6 +6,20 @@ the root file, which keeps every heading and says where each section went.
 
 - The review screen's document panels are in `packages/tailor/CLAUDE.md`.
 
+## Notes behind a header icon (2026-11-02)
+
+The owner asked for a notes symbol that opens the editor on click. `SideNotes`
+now lives in the header and starts closed, so the old side column is released.
+The icon toggles the panel; opening focuses the editor and Escape closes it
+and returns focus to the icon. Hiding keeps the editor mounted and its draft
+intact. The browser-only storage key and explicit Save button stay the same.
+
+Measured before editing: the served page had no notes toggle. Afterwards its
+single labelled button controlled a hidden panel, and clicking it in Chrome
+opened the editor with keyboard focus. ESLint, TypeScript and the production
+build passed. Changes were made in a worktree; the owner's running checkout
+and stored notes were left alone.
+
 ## The crawler indicator does not guess through a disconnect
 
 `crawler-spider.tsx` polls the queue status rather than inferring activity from
