@@ -6,6 +6,7 @@ paths:
   - "packages/matching/gaps.py"
   - "packages/matching/evidence.py"
   - "packages/matching/chunks.py"
+  - "packages/matching/chunk_vectors.py"
   - "apps/api/routers/chat*.py"
   - "tests/test_chat*.py"
   - "tests/test_retriev*.py"
@@ -977,3 +978,29 @@ roles use Kafka" 156, "product manager jobs" 3,976 (about 1 MB, the largest
 seen), with search times unchanged. A compound search ("python jobs using
 Kafka") has no exact count and still lists what it ranked.
 `tests/test_chat_lists_every_match.py`.
+
+## Qwen chunk vectors, stored beside bge-small's (2026-11-02)
+
+The owner embedded the whole index with Qwen3-Embedding-4B on a Colab TPU v5e-1
+(224,361 chunks, 27 minutes). Over all 16,306 postings it put the posting a
+question was written from in its top five for 35 of 56 natural questions and 10
+of 56 paraphrased ones, where bge-small found 21 and 2; question by question it
+ranked the target higher on 32 and 45. The same questions embedded on the Mac
+with the 4-bit build through Ollama found 34 and 11, at 0.1-0.2 s a question.
+The run and its numbers: `storage/embed_rank_bench/whole_index_2026-11-02/`.
+
+`posting_chunk_vectors` holds them, one row per chunk and model, 2,560 wide.
+**Nothing searches them yet**; that is a later change, measured first.
+
+- **A vector goes only onto the text it was made from.** `make
+  import-chunk-vectors` writes a posting's vectors only when its chunk rows
+  are current and cut exactly the exported text; anything else is skipped and
+  counted. Dry-run on the live database: all 16,251 open postings matched.
+- **A chunk's vectors go with it** (`ON DELETE CASCADE`), so re-chunking or
+  pruning a posting cannot leave a vector behind.
+- **Default storage, measured.** `STORAGE PLAIN` kept each vector inline: a
+  full scan about 40% faster warm, but one vector per 8 KB page, 1.75 GB
+  against 1.3 GB. Revisit when search speed is measured on the real table.
+- The vectors file stays out of git and iCloud (`vectors.nosync/`).
+
+`tests/test_chunk_vectors_import.py`, `tests/test_migration_posting_chunk_vectors.py`.
