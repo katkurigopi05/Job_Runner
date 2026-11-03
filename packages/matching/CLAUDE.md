@@ -704,3 +704,24 @@ The real-search measurement and recommendation are in
 candidates: 45/56 and 15/56, with warm medians 6.58/6.83 s versus 1.59/1.94 s.
 Both switches stay off by default; new semantic finds need grades before
 promotion. Question-by-question results are in `docs/evaluations/qwen-*.csv`.
+
+
+### Owner review: exact Qwen discovery only (2026-11-02)
+
+The earlier Qwen keyword reordering is superseded. Keywords retain bge-small;
+Qwen is lazy discovery, with one materialized distance scan and a grouped best
+span per open/current posting reused within that question. The materialized
+scan avoids the current-hash join's bad row estimate and vector PK lookups.
+No cross-question cache or ANN query/index is shipped. Model lifetime belongs
+to the question scope; local release happens once and failure warns rather
+than replacing the provider error.
+
+Final affected tests: 916 passed; lint, formatting and mypy passed. Controlled
+copy evaluation: natural top-five 44 → 46 and paraphrased 4 → 12 with semantics;
+listed paraphrased 10 → 31. Other semantic finds are ungraded. Qwen alone
+changes 0/195 saved heads, semantics 125/195. Warm semantic medians 7.02/7.40 s
+versus the fresh 3.41/4.22 s baseline still miss the added-1.5-second goal.
+Keep both flags off for now; if enabling discovery, enable both together.
+The owner already imported live vectors: activation is settings plus API
+restart. Full method, old/new numbers and the copy-only HNSW probe are in
+`.claude/rules/assistant-search.md`; old CSVs remain historical evidence.

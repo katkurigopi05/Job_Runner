@@ -442,7 +442,7 @@ class Settings(BaseSettings):
     #: that.
     chat_semantic_candidates: bool = False
 
-    #: Opt-in Qwen3-Embedding-4B chunks; uncovered postings retain bge-small.
+    #: Opt-in Qwen discovery; keyword ordering and uncovered postings retain bge-small.
     chat_qwen_search: bool = False
 
     #: What the assistant does with a title that names no level when a

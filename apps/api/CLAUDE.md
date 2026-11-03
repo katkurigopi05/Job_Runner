@@ -659,3 +659,16 @@ any warm query model: `query_vectors.unload_embedder` inspects Ollama first and
 releases only the configured query model, never loading an absent one. This
 runs only when a local model answer is needed; computed answers still work
 with Ollama down. Its regression failed before the lifetime check was added.
+
+
+### Review correction: one release, no release error replacing an answer (2026-11-02)
+
+Retrieval keeps the query embedder warm across a question's embeddings and
+releases it once afterward for local chat. Discovery now needs just one Qwen
+embedding; the subject used to order keyword matches stays bge-small. If a
+local non-search answer follows a remote search, `prepare` still releases the
+warm query model. Both paths use `chunk_search.release_embedder`: failure logs
+`query_embedder_release_failed` and continues. An unavailable daemon reaches
+the provider's established `ollama serve` remedy, not a release ApiError.
+Remote answers retain the configured keep-alive. Tests use fake embeddings,
+a fake down provider and a fake release; no Ollama or network is contacted.

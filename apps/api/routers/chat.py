@@ -112,7 +112,7 @@ from packages.llm.provider import (
     ModelUnreachable,
     PromptTooLong,
 )
-from packages.matching import chunk_search, query_vectors
+from packages.matching import chunk_search
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
 from packages.matching.level import LevelCount
 from packages.matching.retrieve import Passage, Retrieval, asks_about_own_applications, retrieve
@@ -1187,11 +1187,9 @@ async def prepare(
         and factual_answer is None
         and selected == LOCAL_PROVIDER
         and found.qwen_searched is None
+        and found.embedding_fallback is None
     ):
-        try:
-            await query_vectors.unload_embedder()
-        except query_vectors.QueryEmbeddingError as exc:
-            raise ApiError(ErrorCode.INTERNAL_ERROR, str(exc)) from exc
+        await chunk_search.release_embedder()
     return Ready(
         selected=selected,
         include_mail=include_mail,

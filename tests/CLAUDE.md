@@ -396,3 +396,18 @@ test and the new flag-default test both passed with an empty env-file override.
 Ruff, formatting and mypy passed; no test called a real model or the network.
 The real embedding measurements ran separately on the evaluation copy. A manual
 warm-to-empty Ollama transition confirmed the query model was released afterward.
+
+
+### Qwen review regression proof (2026-11-02)
+
+The review regressions failed first: keyword ordering followed Qwen, no exact
+ranking snapshot existed, two embeddings unloaded independently, and a failed
+release raised an ApiError. The revised focused suites pass **916 tests**.
+Synthetic SQL fixtures compare the original exact scan's complete ranking and
+best spans against the grouped snapshot, including company subsets, repeated
+chunks, non-positive similarity and widening. SQL event counts prove one Qwen
+scan across repeated stages; semantic discovery and the fake judge share that
+same scan, and a second question gets a fresh one. Local embeddings explicitly
+stay warm within the scope and release exactly once; release failure logs a
+warning and the fake down provider retains its `ollama serve` error. Keyword
+search with Qwen enabled and semantics disabled equals the shipped Retrieval.

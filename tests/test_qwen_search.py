@@ -116,9 +116,11 @@ async def test_off_is_identical_and_never_embeds(db_session, fake_embeddings):
 
 async def test_qwen_nearest_wins_when_bge_disagrees(db_session, fake_embeddings):
     _, near = await disagreement(db_session)
-    found = await R.retrieve(db_session, "kafka jobs")
+    db_session.add(CorpusStats(revision=1, total_documents=100, counts_json={"streaming": 90}))
+    await db_session.flush()
+    found = await R.retrieve(db_session, "streaming jobs")
     assert found.passages[0].posting_id == near.id
-    assert fake_embeddings[1] == [("kafka", None)]
+    assert fake_embeddings[1] == [("streaming", None)]
     assert found.qwen_searched == 3 and found.bge_fallback_searched == 0
 
 
@@ -145,6 +147,8 @@ async def test_embedding_error_is_explicit_in_context_and_reply(db_session, monk
         )
 
     monkeypatch.setattr(query_vectors, "embed_question", unavailable)
+    fake_embeddings = R.get_settings()
+    fake_embeddings.chat_semantic_candidates = True
     found = await R.retrieve(db_session, "kafka jobs")
     assert ids(found) == [p.id]
     assert "ollama pull" in found.embedding_fallback
@@ -154,11 +158,21 @@ async def test_embedding_error_is_explicit_in_context_and_reply(db_session, monk
     assert "searched with bge-small:" in reply.reply and "ollama pull" in reply.reply
 
 
-@pytest.mark.parametrize("provider, expected", [("ollama", "0"), ("kaggle", None)])
-async def test_provider_decides_embedder_unload(db_session, fake_embeddings, provider, expected):
+@pytest.mark.parametrize("provider, releases_expected", [("ollama", 1), ("kaggle", 0)])
+async def test_provider_decides_embedder_unload(
+    db_session, fake_embeddings, monkeypatch, provider, releases_expected
+):
+    fake_embeddings[0].chat_semantic_candidates = True
+    releases = []
+
+    async def release():
+        releases.append(True)
+
+    monkeypatch.setattr(query_vectors, "unload_embedder", release)
     await posting(db_session, "Platform Builder")
     await chat.prepare(ChatRequest(message="kafka jobs", provider=provider), db_session)
-    assert fake_embeddings[1] and all(call[1] == expected for call in fake_embeddings[1])
+    assert fake_embeddings[1] == [("kafka jobs", "5m" if provider == "ollama" else None)]
+    assert len(releases) == releases_expected
 
 
 async def test_semantics_never_fills_a_missing_rare_word(db_session, fake_embeddings):
@@ -179,10 +193,11 @@ async def test_semantic_candidates_use_qwen_and_keep_level(db_session, fake_embe
     await db_session.flush()
     found = await R.retrieve(db_session, "junior kafka jobs")
     assert set(ids(found)) == {said.id, unsaid.id}
-    assert [c[0] for c in calls] == ["kafka", "junior kafka jobs"]
+    assert [c[0] for c in calls] == ["junior kafka jobs"]
 
 
-async def test_stale_closed_and_other_model_rows_never_rank(db_session):
+async def test_stale_closed_and_other_model_rows_never_rank(db_session, fake_embeddings):
+    fake_embeddings[0].chat_semantic_candidates = True
     kept, _ = await posting(db_session, "Platform Builder")
     stale, c = await posting(db_session, "Platform Builder")
     stale.content_hash = "edited"
@@ -304,4 +319,179 @@ async def test_computed_answer_does_not_need_an_ollama_memory_check(db_session, 
         ChatRequest(message="how many kafka jobs", provider="ollama"), db_session
     )
     assert isinstance(ready, chat.Ready) and ready.factual_answer is not None
-    assert "searched with bge-small:" in chat.fixed_reply(ready).reply
+    assert ready.found.embedding_fallback is None, "keyword facts never ask Qwen"
+
+
+async def test_keyword_order_is_bge_even_when_qwen_disagrees(db_session, fake_embeddings):
+    settings, calls = fake_embeddings
+    bge, _ = await disagreement(db_session)
+    found = await R.retrieve(db_session, "kafka jobs")
+    assert found.passages[0].posting_id == bge.id
+    assert calls == [], "keyword-only ordering must not load Qwen"
+    settings.chat_qwen_search = False
+    old = await R.retrieve(db_session, "kafka jobs")
+    assert found == old
+
+
+async def test_exact_ranking_is_shared_across_stages_and_widenings(db_session):
+    from sqlalchemy import event
+
+    from packages.matching import chunk_search as CS
+
+    entries = []
+    for i in range(6):
+        p, c = await posting(db_session, "Platform Builder", large=(1.0, i / 10))
+        entries.append((p, c))
+    # Repeated chunks and a non-positive match exercise grouping and the cutoff.
+    p, _ = entries[0]
+    c = PostingChunk(
+        posting_id=p.id,
+        ordinal=1,
+        start=8,
+        length=10,
+        content_hash="current",
+        embedding_model=BGE,
+        embedding=vector(384),
+    )
+    db_session.add(c)
+    await db_session.flush()
+    db_session.add(
+        PostingChunkVector(chunk_id=c.id, embedding_model=QWEN_4B, embedding=vector(2560))
+    )
+    negative, _ = await posting(db_session, "Platform Builder", large=(-1.0, 0.0))
+    await db_session.flush()
+    plain = CS.ChunkSpace(QWEN_4B)
+    cached = CS.ChunkSpace(QWEN_4B, ranking=CS.ExactRanking(vector(2560)))
+    original, _ = await CS.chunk_ranking(
+        db_session, plain, vector(2560), among=None, companies=None, limit=10000
+    )
+    original_among, _ = await CS.chunk_ranking(
+        db_session, plain, vector(2560), among=[negative.id, p.id], companies=None, limit=10000
+    )
+    keep = {entries[-1][0].id, entries[-2][0].id}
+    old_hits, old_spans = await R._nearest_kept(
+        db_session,
+        plain,
+        vector(2560),
+        companies=None,
+        want=2,
+        counts=lambda h: h.posting_id in keep,
+        window=1,
+    )
+    reads = []
+    engine = db_session.bind.sync_engine
+
+    def count(conn, cursor, statement, parameters, context, executemany):
+        if "posting_chunk_vectors.embedding <=>" in statement:
+            reads.append(statement)
+
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        ranked, every = await CS.chunk_ranking(
+            db_session, cached, vector(2560), among=None, companies=None, limit=1
+        )
+        assert ranked == original and every
+        among, _ = await CS.chunk_ranking(
+            db_session, cached, vector(2560), among=[negative.id, p.id], companies=None, limit=1
+        )
+        assert among == original_among
+        hits, spans = await R._nearest_kept(
+            db_session,
+            cached,
+            vector(2560),
+            companies=None,
+            want=2,
+            counts=lambda h: h.posting_id in keep,
+            window=1,
+        )
+        assert hits == old_hits and spans == old_spans
+        filtered, _ = await CS.chunk_ranking(
+            db_session,
+            cached,
+            vector(2560),
+            among=None,
+            companies=[entries[-1][0].company_id],
+            limit=1,
+        )
+        assert [row[0] for row in filtered] == [entries[-1][0].id]
+        assert len(reads) == 1, "one vector scan across all stages and widenings"
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
+
+
+async def test_two_question_embeddings_release_exactly_once(fake_embeddings, monkeypatch):
+    from packages.matching import chunk_search as CS
+
+    releases = []
+
+    async def release():
+        releases.append(True)
+
+    monkeypatch.setattr(query_vectors, "unload_embedder", release)
+    async with CS.Question(free_embedder=True) as question:
+        await question.queries({BGE: vector(384)}, "kafka", enabled=True)
+        await question.queries({BGE: vector(384)}, "kafka jobs", enabled=True)
+        assert releases == []
+    assert fake_embeddings[1] == [("kafka", "5m"), ("kafka jobs", "5m")]
+    assert releases == [True]
+
+
+async def test_release_failure_warns_and_keeps_provider_error(db_session, monkeypatch, capsys):
+    from packages.llm.provider import ModelUnreachable
+
+    async def unavailable():
+        raise query_vectors.QueryEmbeddingError("Could not release Qwen3-Embedding-4B")
+
+    monkeypatch.setattr(query_vectors, "unload_embedder", unavailable)
+    ready = await chat.prepare(ChatRequest(message="hello", provider="ollama"), db_session)
+    assert isinstance(ready, chat.Ready)
+    assert "query_embedder_release_failed" in capsys.readouterr().out
+
+    class DownProvider:
+        async def complete(self, *args, **kwargs):
+            raise ModelUnreachable("daemon down")
+
+    monkeypatch.setattr(chat, "provider_for", lambda selected: (DownProvider(), "fake-local"))
+    from apps.api.errors import ApiError
+
+    with pytest.raises(ApiError, match="ollama serve") as error:
+        await chat.chat(ChatRequest(message="hello", provider="ollama"), db_session)
+    assert "Could not release" not in str(error.value)
+
+
+async def test_semantics_and_judge_share_one_question_scan(
+    db_session, fake_embeddings, monkeypatch
+):
+    from sqlalchemy import event
+
+    fake_embeddings[0].chat_semantic_candidates = True
+    await posting(db_session, "Platform Builder")
+    unsaid, _ = await posting(db_session, "Systems Builder")
+    unsaid.description_raw = "Event streaming without the literal search term."
+    await db_session.flush()
+
+    class Judge:
+        name = "fake-judge"
+        judges = True
+
+        def scores(self, question, passages):
+            return [1.0 for _ in passages]
+
+    monkeypatch.setattr(R, "get_reranker", lambda: Judge())
+    scans = []
+    engine = db_session.bind.sync_engine
+
+    def count(conn, cursor, statement, parameters, context, executemany):
+        if "posting_chunk_vectors.embedding <=>" in statement:
+            scans.append(statement)
+
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        found = await R.retrieve(db_session, "kafka jobs")
+        assert unsaid.id in ids(found)
+        assert len(scans) == 1
+        assert fake_embeddings[1] == [("kafka jobs", None)]
+        await R.retrieve(db_session, "kafka jobs")
+        assert len(scans) == 2, "rankings cannot leak across questions"
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
