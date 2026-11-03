@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings import-chunk-vectors backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings import-chunk-vectors query-embedder-check backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -495,6 +495,12 @@ chunk-postings:
 # only. export= and vectors= name another run (default: the 2026-11-02 run).
 import-chunk-vectors:
 	$(PY)/python -m scripts.import_chunk_vectors $(if $(dry),--dry-run) $(if $(export),--export $(export)) $(if $(vectors),--vectors $(vectors))
+
+# make query-embedder-check — embed a fixed question with Qwen3-Embedding-4B
+# through the local Ollama, print how long it took, and unload the model. Needs
+# `ollama pull hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q4_K_M` once (2.5 GB).
+query-embedder-check:
+	$(PY)/python -m scripts.check_query_embedder
 
 # make backfill-descriptions — read every missing job description on Workday,
 # Rippling and Breezy boards, whose lists carry none (a crawl reads five a
