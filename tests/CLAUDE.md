@@ -1,5 +1,18 @@
 # Notes on what the gates prove, and the test database
 
+## Dashboard dependency security floor (2026-11-03)
+
+`test_dashboard_security_dependencies.py` checks every minimatch engine in
+the lockfile, including aliases and nested copies, against the 11.0.1 fix
+for CVE-2026-118764. The expanded test failed on legacy 3.1.5 before its
+replacement; it no longer checks only the parser's copy. The focused offline
+dependency/dashboard/CI suites pass **93 tests**, without model, network or
+database fixtures. Seven Node compatibility tests exercise the adapter's
+actual ESLint consumers and glob options via `npm run test:dependencies`;
+the dashboard CI job runs them before lint. Full npm audit now reports zero
+vulnerabilities, superseding the initial parser-only patch's 13 remaining
+moderate entries. No advisory is dismissed or filtered out.
+
 Moved here from the root `CLAUDE.md` on 2026-10-11, word for word, so they
 load only when work touches this directory. "§N" below is a section of
 the root file, which keeps every heading and says where each section went.

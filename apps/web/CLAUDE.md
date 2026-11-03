@@ -6,6 +6,38 @@ the root file, which keeps every heading and says where each section went.
 
 - The review screen's document panels are in `packages/tailor/CLAUDE.md`.
 
+## All minimatch engines patched (2026-11-03)
+
+Dependabot #52 identified CVE-2026-118764 (GHSA-g3hv-75wg-m249), fixed in
+minimatch 11.0.1. The initial parser-only pin left legacy 3.1.5 installed
+and reduced the full audit from 14 to 13 moderate entries. The owner asked
+for complete remediation; no vulnerable engine remains in the lockfile.
+
+The parser still gets 11.0.1 directly. Scoped overrides route the six legacy
+ESLint consumers through the private `tooling/minimatch-compat` adapter.
+It preserves their callable CommonJS export while delegating all matching
+to upstream 11.0.1, installed as `minimatch-engine`. The alias keeps npm from
+recursively applying a legacy override to the adapter's own engine. Both
+npm 10.9.4 (CI toolchain) and npm 12.0.1 clean installations passed without
+relaxing npm's remote-fetch policy. Existing platform metadata is preserved.
+
+This is a compatibility layer for the APIs those consumers use, not a full
+replacement for every minimatch 3 API. In particular, import/no-internal-modules
+only uses `makeRe(pattern).test(path)`: the adapter supplies `.test()` through
+v11's nonrecursive matcher, not a RegExp or the removed regex engine. Seven
+Node tests cover the callable export, defaults/options, constructors, ESM
+interop and real React, accessibility and import lint rules. CI runs them.
+
+Measured: full `npm audit` **zero vulnerabilities**, including development
+dependencies (previously 14 moderate); production audit also zero. The offline
+security floor failed first on 3.1.5, then the focused Python checks passed
+**93 tests**. Clean install, ESLint, TypeScript and production build passed.
+No direct runtime package, application behavior, live database or running
+checkout changed. Reverting the patch restores the former dependency tree
+and its advisory; remove the adapter only when upstream consumers support
+the patched API. Never use `npm audit fix --force` to downgrade lint tooling.
+GitHub closes the alert after the owner merges and the default branch rescans.
+
 ## Keep the assistant open while reading a posting (2026-11-02)
 
 The assistant's `PostingLink` navigated to `/postings/{id}` in the chat tab.
