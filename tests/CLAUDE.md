@@ -370,3 +370,29 @@ Not cleaned up: the live table holds eleven rows for made-up hosts
 (`h0.example`, `acme.example`, `careers.slowsite.test` and others) dated
 2026-09-14, from an earlier version of the suite with the same leak. They
 are no host the crawler asks, and they are the owner's table to tidy.
+
+### Qwen search regression proof (2026-11-02)
+
+`test_qwen_search.py` uses hand-built 384- and 2,560-wide unit directions, never
+a real model or network: Qwen can outrank a disagreeing bge-small result; chunks
+and posting vectors without Qwen remain reachable; spaces interleave by rank;
+closed/stale/other-model rows do not count as Qwen coverage. Company, area,
+place and level rules apply to semantic additions, and a nonexistent rare term
+still returns nothing. Embedding failure is visible in both context and reply.
+Ollama answers release the query model while Kaggle answers leave it warm.
+The ordinary suite forces the new flag off regardless of the owner's `.env`.
+
+The first run failed before implementation. With the feature wired, 907
+assistant/retrieval/import/query-embedding tests passed on a disposable marked
+database. Production database measurements use a separate restored copy;
+pytest never receives the live database or that evaluation copy.
+
+Final affected suites: 911 passed (including non-search local-model release
+and computed answers without Ollama). The full local suite before those final
+focused additions had 5,783 passed, two skipped, and one unrelated failure:
+`test_build_provider_defaults_to_stub` inherits the owner's absolute
+`JOBRUNNER_ENV_FILE` instead of the test's temporary directory. That existing
+test and the new flag-default test both passed with an empty env-file override.
+Ruff, formatting and mypy passed; no test called a real model or the network.
+The real embedding measurements ran separately on the evaluation copy. A manual
+warm-to-empty Ollama transition confirmed the query model was released afterward.

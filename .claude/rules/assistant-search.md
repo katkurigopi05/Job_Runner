@@ -8,6 +8,7 @@ paths:
   - "packages/matching/chunks.py"
   - "packages/matching/chunk_vectors.py"
   - "packages/matching/query_vectors.py"
+  - "packages/matching/chunk_search.py"
   - "apps/api/routers/chat*.py"
   - "tests/test_chat*.py"
   - "tests/test_retriev*.py"
@@ -1020,3 +1021,93 @@ through the Ollama daemon the local chat model uses, with the 4-bit build
   `QueryEmbeddingError` naming the fix (`ollama serve`, `ollama pull …`).
 - **`keep_alive` per call.** Five minutes by default (about 2.5 GB held);
   "0" unloads at once, for when the local chat model needs the memory.
+## The real search with Qwen chunks, measured (2026-11-02)
+
+`CHAT_QWEN_SEARCH=false` remains the default. The opt-in search uses the local
+Qwen question vector and `posting_chunk_vectors`; bge-small handles postings
+without current Qwen rows. `chunk_search.py` owns the shared query, model/text
+predicates, disjoint coverage and rank merging. The keyword, title, company,
+area, place, level, sponsorship and required-skill rules remain in force.
+
+Measured the real `retrieve()`, never a pure vector simulation, on a restored
+copy of the live database. No production writes, migrations or imports were
+performed. The copy held 19,300 open postings: 16,306 with searchable text and
+224,361 imported Qwen chunks, including the 55 closed benchmark targets restored
+from the public export. Their unavailable locations were left unknown and
+inserts use default timestamps: this compares modes on one controlled copy,
+not current live-corpus hit rates. All three modes read the same copy; the search area
+was applied and the optional second-stage reranker was off.
+
+One target per question: 56 natural and 56 paraphrased questions from
+`storage/embed_rank_bench/embed_rank/pool.json`. Five other appropriate jobs
+still count as a target miss; these are known-item ranks, not relevance grades.
+Times include real local embedding, warmed before each mode, on the owner's
+shared Mac. Local chat answers would additionally reload the query model when
+`keep_alive="0"` is required; that cold cost is not represented here.
+
+| Mode | Natural in 5 / listed | Paraphrased in 5 / listed | Median s, natural / paraphrased |
+|---|---:|---:|---:|
+| bge-small, shipped | 44/56 / 54/56 | 4/56 / 10/56 | 1.59 / 1.94 |
+| Qwen, reranking only | 43/56 / 54/56 | 5/56 / 10/56 | 2.08 / 2.39 |
+| Qwen + semantic candidates | 45/56 / 54/56 | 15/56 / 31/56 | 6.58 / 6.83 |
+
+Against bge-small, per-question target rank (higher / lower / unchanged):
+
+- **Qwen only:** natural 7 / 9 / 40; paraphrased 7 / 1 / 48.
+- **Qwen + semantic candidates:** natural 8 / 10 / 38; paraphrased 27 / 3 / 26.
+
+Regression: all 195 distinct saved questions from
+`seeds/chat_judgment_questions.json` and `seeds/retrieval_questions.json` were
+asked in each mode. The ordered five shown changed on
+178/195 with Qwen only and
+179/195 with Qwen + semantic candidates.
+Changed does not mean better. A sample of public titles and excerpts was read:
+Qwen-only promoted Fireworks pricing roles for “jobs using PyTorch” on founder
+boilerplate and moved the known weekend Support Engineer from rank 2 to 7 behind
+other shift work. “Kafka”, fraud/payments, Astranis, junior Python, remote
+backend and grounding questions were also inspected. Semantic additions need
+fresh relevance grades; the original pool does not grade all their new finds.
+
+No query embedding failed in this measurement. Synthetic tests separately
+prove the missing-Qwen bge-small path (chunks and posting vectors), current-text
+and model stamps, coverage, interleaving, constraints and the rare-term guard.
+A `QueryEmbeddingError` returns the original search and records its reason on
+`Retrieval`; both prompt context and the finished reply state the bge-small
+fallback. This is never an answer-provider fallback. Ollama answers request
+`keep_alive="0"`; explicitly remote answers leave the local embedder warm.
+
+Activation remains the owner's decision after reading these results: update
+the root checkout while preserving its edits, run `make migrate`,
+`make import-chunk-vectors dry=1` then `make import-chunk-vectors`, choose the
+two settings in `.env`, and restart `make api`. This PR does none of those
+production actions. The new-posting export/Colab/import pipeline is PR 4.
+
+**Recommendation:** leave both `CHAT_QWEN_SEARCH` and
+`CHAT_SEMANTIC_CANDIDATES` off for now. Reranking alone does not establish an
+improvement (one fewer natural hit, one more paraphrased hit). Semantic discovery
+recovers eleven additional paraphrased targets, but costs about five seconds per
+question and its new finds need relevance grades. It exceeds the promotion allowance of one extra second in
+`score_judgments.THRESHOLDS`. The implementation is available for an explicit
+experiment; these numbers do not promote it as the default.
+
+Per-question ranks and warm timings are committed in
+`docs/evaluations/qwen-search-2026-11-02.csv`; the 195 ordered-head comparisons
+are in `docs/evaluations/qwen-saved-questions-2026-11-02.csv`. Blank rank cells
+mean the target was not listed, not a closed target (all 56 were restored).
+
+The canonical `make eval-retrieval` was also run in all three modes. Of 80
+cases, 17 are open/in-area, 62 gone and one outside the area. Dev has just one
+target: natural in five 1/1 in every mode; paraphrased 0/1, 0/1, 1/1. Held-out
+natural in five: 12/16, 12/16, 11/16; paraphrased: 5/16, 4/16, 6/16. Listed
+held-out natural: 14/16 throughout; paraphrased: 6/16, 6/16, 10/16. No rules or
+thresholds were tuned from those held-out results.
+
+`make score-judgments` also completed on the copy with Qwen off, using the
+harness's existing shipped / semantic / cross-encoder modes. Of 330 saved grades,
+33 were by the owner and 297 by Claude. Dev P@5 was .187 / .240 / .227;
+MRR .288 / .379 / .336; median seconds .63 / .64 / .99. Only 22% / 29% / 29%
+of retrieved results were judged in that old pool. These are baseline harness
+results, not grades for the new Qwen candidates; the sparse coverage cannot
+justify promoting them. Both the manual Qwen-only and semantic samples retained
+fraud/payments and employer constraints; semantic PyTorch results also included
+a pricing role on founder boilerplate. New finds need pooled judgments.
