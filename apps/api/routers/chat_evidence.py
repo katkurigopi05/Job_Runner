@@ -13,11 +13,13 @@ prose for its meaning.
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from packages.matching.evidence import skill_evidence
+from apps.api.chat_selection import EvidenceItem, SelectionResult
+from packages.matching.evidence import Strength, skill_evidence
 from packages.matching.retrieve import Retrieval
 from packages.matching.skill_vocab import Skill, find_skills
 
@@ -55,6 +57,56 @@ def skill_lines(
     return lines
 
 
+def compound_required_evidence(
+    question: str,
+    found: Retrieval,
+    requirements: Mapping[uuid.UUID, Mapping[str, Any] | None],
+) -> SelectionResult | None:
+    """Resolve a two-skill AND/OR demand from recorded classifications only."""
+    skills = find_skills(question)
+    if len(skills) != 2 or not re.search(
+        r"\b(?:require[ds]?|requiring|must[- ]have)\b", question, re.I
+    ):
+        return None
+    if re.search(r"\b(?:not|never|without)\b", question, re.I):
+        return None
+    spans = sorted(match.span() for skill in skills for match in skill.pattern.finditer(question))
+    if len(spans) != 2:
+        return None
+    prefix = question[: spans[0][0]].strip()
+    operator = question[spans[0][1] : spans[1][0]].strip().casefold()
+    suffix = question[spans[1][1] :].strip(" ?.!\t\r\n")
+    if (
+        suffix
+        or operator not in {"and", "or"}
+        or not re.fullmatch(
+            r"(?:(?:which|what|show(?: me)?|find|list)\s+)?(?:open\s+)?"
+            r"(?:jobs|roles|postings)\s+(?:that\s+)?"
+            r"(?:require[ds]?|requiring|must[- ]have)",
+            prefix,
+            re.I,
+        )
+    ):
+        return None
+    conjunction = operator == "and"
+    items = []
+    for passage in found.passages:
+        evidence = [
+            skill_evidence(requirements.get(passage.posting_id), skill.key) for skill in skills
+        ]
+        direct = [e for e in evidence if e and e.strength is Strength.REQUIRED and not e.option]
+        if not direct or (conjunction and len(direct) != 2):
+            continue
+        items.append(
+            EvidenceItem(
+                id=passage.label,
+                source_label=passage.label,
+                text=passage.title + "\n" + "\n".join(e.in_words() for e in direct),
+            )
+        )
+    return SelectionResult(items=tuple(items[:8]))
+
+
 def unsupported_citations(cited: Iterable[str], supplied: Iterable[str]) -> list[str]:
     """Labels an answer cites that were not among the postings it was handed.
 
@@ -68,4 +120,10 @@ def unsupported_citations(cited: Iterable[str], supplied: Iterable[str]) -> list
     return sorted(invented, key=lambda label: int(label[1:]))
 
 
-__all__ = ["SKILLS_EXPLAINED", "skill_lines", "skills_asked_about", "unsupported_citations"]
+__all__ = [
+    "SKILLS_EXPLAINED",
+    "compound_required_evidence",
+    "skill_lines",
+    "skills_asked_about",
+    "unsupported_citations",
+]

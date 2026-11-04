@@ -10,12 +10,16 @@ the root file, which keeps every heading and says where each section went.
 ## §14: the assistant
 
 **Kaggle GPU is an explicit remote choice.** `provider="kaggle"` uses the
-loaded Qwen3 8B model in the owner's running Kaggle notebook through its
+ready supported model in the owner's running Kaggle notebook through its
 authenticated Jupyter connection. The default stays Ollama. The existing
 mail/history gate and protected-topic refusal apply unchanged. Session URLs
 contain credentials in their path and stay in an owner-private file under
 `storage/`, never in API errors or transport logs. Setup and session lifetime:
 `docs/KAGGLE_ASSISTANT.md`. No prompt change is needed for this transport.
+The auto option prefers the loaded Qwen3.8 27B Q6_K helper, otherwise the
+original 8B helper. It resolves and pins model identity before reply metadata
+is constructed; readiness never loads weights, and a request never switches
+to another model after resolution. Local remains the default provider.
 
 It was built after §9's phases and is not one of them. Three properties are
 load-bearing and easy to undo by accident.

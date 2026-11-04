@@ -114,10 +114,12 @@ from packages.matching.level import (
 from packages.matching.locality import (
     Locality,
     area_exclusion,
+    bay_area_city_names,
     bay_area_place_spans,
     has_unplaced_location,
     locality_of,
     names_bay_area_office,
+    names_city_office,
     reads_as_remote,
 )
 from packages.matching.required_skills import (
@@ -420,6 +422,14 @@ _SENTENCE_START = re.compile(r"(?<=[.!?;])\s+")
 _PERCENTAGE_REQUEST = re.compile(
     r"\bwhat(?:['’]s|s)?\s+(?:is\s+)?(?:the\s+)?percent(?:age)?\b", re.IGNORECASE
 )
+# An explicit population changes the denominator: "of data engineer roles
+# are remote" asks about those roles, while "of jobs are remote data engineer
+# roles" and a trailing "what's the percentage" retain the corpus population.
+_REMOTE_ROLE_SHARE = re.compile(
+    r"\bpercent(?:age)?\s{1,8}of\s{1,8}(?P<population>[^\n?!]{1,200}?)"
+    r"\s{1,8}(?:are|is)\s{1,8}(?P<mode>(?:fully\s{1,8})?(?:remote(?:[ -]only)?|wfh))\b",
+    re.IGNORECASE,
+)
 _FRAMING_PHRASES = re.compile(
     rf"\bright\s+now\b|\bhow\s+many\b|{_PERCENTAGE_REQUEST.pattern}", re.IGNORECASE
 )
@@ -650,6 +660,7 @@ class Retrieval:
     #: different answers.
     outside_area: int = 0
     #: An explicit Bay Area question narrows the standing search area.
+    place_name: str = "Bay Area"
     place_total: int | None = None
     place_counts_complete: bool = False
     search_area_total: int | None = None
@@ -726,6 +737,18 @@ class Retrieval:
     bge_fallback_searched: int = 0
     #: Why the opt-in Qwen query failed; surfaced in context and the reply.
     embedding_fallback: str | None = None
+
+    @property
+    def place_scope(self) -> str:
+        return "the Bay Area" if self.place_name == "Bay Area" else self.place_name
+
+    @property
+    def place_office(self) -> str:
+        return (
+            "a Bay Area office"
+            if self.place_name == "Bay Area"
+            else f"an office in {self.place_name}"
+        )
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -848,18 +871,34 @@ class _PlaceFilter:
     separately. Descriptions can establish remote work, never a Bay Area office.
     """
 
+    cities: tuple[str, ...] = ()
     inside: set[uuid.UUID] = field(default_factory=set)
     bay: set[uuid.UUID] = field(default_factory=set)
     omitted: set[uuid.UUID] = field(default_factory=set)
 
+    @property
+    def name(self) -> str:
+        return " or ".join(city.title() for city in self.cities) if self.cities else "Bay Area"
+
+    @property
+    def scope(self) -> str:
+        return self.name if self.cities else "the Bay Area"
+
+    def _matches(self, location: str | None, title: str | None) -> bool:
+        return (
+            names_city_office(location, title=title, cities=self.cities)
+            if self.cities
+            else names_bay_area_office(location, title=title)
+        )
+
     def keeps(self, hit: _Hit) -> bool:
-        return names_bay_area_office(hit.location, title=hit.title)
+        return self._matches(hit.location, hit.title)
 
     def record(
         self, ident: uuid.UUID, title: str | None, location: str | None, description: str | None
     ) -> bool:
         self.inside.add(ident)
-        here = names_bay_area_office(location, title=title)
+        here = self._matches(location, title)
         if here:
             self.bay.add(ident)
         elif has_unplaced_location(location) or reads_as_remote(
@@ -2516,6 +2555,7 @@ async def _stating_sponsorship(
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,
         work_mode="remote" if remote_only else None,
+        place_name=place_filter.name if place_filter is not None else "Bay Area",
         place_total=len(place_filter.bay) if place_filter is not None else None,
         place_counts_complete=True,
         search_area_total=len(place_filter.inside) if place_filter is not None else None,
@@ -2654,6 +2694,7 @@ async def _requiring_skill(
         area=area,
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,
+        place_name=place_filter.name if place_filter is not None else "Bay Area",
         place_total=len(place_filter.bay) if place_filter is not None else None,
         search_area_total=len(place_filter.inside) if place_filter is not None else None,
         remote_or_unplaced_not_listed=len(place_filter.omitted) if place_filter is not None else 0,
@@ -2678,6 +2719,8 @@ async def _retrieve(
     asks_how_many = bool(_HOW_MANY.search(question))
     for spelled_out, as_titles_say_it in _SPELLED_OUT:
         question = spelled_out.sub(as_titles_say_it, question)
+    population = _REMOTE_ROLE_SHARE.search(question) if wants_share else None
+    remote_share_roles = set(named_in(population.group("population"))) if population else set()
     # Trailing dots off, as `tokenize` does: "Show me remote jobs." ends in
     # "jobs.", and "I applied to Stripe." in "stripe.".
     words = {word.rstrip(".") for word in _RAW_WORD.findall(question.lower())}
@@ -2704,13 +2747,21 @@ async def _retrieve(
         session, words, frequencies, question
     )
     mode_spans = _remote_work_spans(question)
+    if population is not None and remote_share_roles:
+        # The explicit predicate remains a work mode when a city or level
+        # separates the role noun from "are remote" in the original question.
+        mode = population.span("mode")
+        if not any(start <= mode[0] and mode[1] <= end for start, end in mode_spans):
+            mode_spans = tuple(sorted((*mode_spans, mode)))
     remote_only = bool(mode_spans)
     for start, end in reversed(mode_spans):
         question = question[:start] + " " + question[end:]
     # Read the question's place once. State/country questions retain their
-    # existing behavior; a named Bay Area city narrows to its whole region.
+    # existing behavior; a named city constrains offices to that city.
     place = locality_of(question)
-    place_filter = _PlaceFilter() if place is Locality.BAY_AREA else None
+    place_filter = (
+        _PlaceFilter(cities=bay_area_city_names(question)) if place is Locality.BAY_AREA else None
+    )
     place_surfaces: list[str] = []
     if place_filter is not None:
         # A place constrains the region, rather than becoming an additional
@@ -2919,6 +2970,7 @@ async def _retrieve(
     # title) and is still one posting the area left out.
     left_out: set[uuid.UUID] = set()
     role_pool: list[_Hit] | None = None
+    role_population_ids: list[uuid.UUID] | None = None
     kinds: list[tuple[str, int]] = []
     label_of: dict[uuid.UUID, str] = {}
     title_words: tuple[str, ...] = ()
@@ -2929,6 +2981,10 @@ async def _retrieve(
     related_total = 0
     if asked_roles:
         of_the_role = await _role_hits(session, set(asked_roles), companies)
+        if remote_only and remote_share_roles and remote_share_roles == set(asked_roles):
+            # Save the complete role population before the requested work mode.
+            # The independent count below reapplies its area/place/level scope.
+            role_population_ids = [hit.posting_id for hit in of_the_role]
         role_pool = [hit for hit in of_the_role if not (area and _outside_area(hit))]
         left_out |= {hit.posting_id for hit in of_the_role} - {hit.posting_id for hit in role_pool}
         role_pool = [hit for hit in role_pool if in_work_mode(hit)]
@@ -3497,24 +3553,32 @@ async def _retrieve(
             denominator = (
                 await _matching_totals(
                     session,
-                    None,
+                    role_population_ids,
                     area=bool(area),
-                    level=None,
-                    allow_unknown=True,
+                    level=level if role_population_ids is not None else None,
+                    allow_unknown=allow_unknown if role_population_ids is not None else True,
                     # Independent accounting: do not alter the query's omitted counts.
-                    place_filter=_PlaceFilter() if place_filter is not None else None,
+                    place_filter=_PlaceFilter(cities=place_filter.cities)
+                    if place_filter is not None
+                    else None,
                 )
             ).total
+            scope = (
+                place_filter.scope
+                if place_filter is not None
+                else "your search area"
+                if area
+                else "the full open-posting corpus"
+            )
+            if role_population_ids is not None:
+                role = " or ".join(display_name(key) for key in sorted(asked_roles))
+                if level is not None:
+                    role = f"{level.spoken} {role}"
+                scope = f"the {role} role population in {scope}"
             share = PostingShare(
                 matching=exact,
                 open_total=denominator,
-                scope=(
-                    "the Bay Area"
-                    if place_filter is not None
-                    else "your search area"
-                    if area
-                    else "the full open-posting corpus"
-                ),
+                scope=scope,
             )
     statuses = await _application_statuses(session, [hit.posting_id for hit in chosen])
     passages = tuple(
@@ -3569,6 +3633,7 @@ async def _retrieve(
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,
         work_mode="remote" if remote_only else None,
+        place_name=place_filter.name if place_filter is not None else "Bay Area",
         place_total=len(place_filter.bay) if place_filter is not None else None,
         place_counts_complete=role_pool is not None or matching_ids is not None,
         search_area_total=len(place_filter.inside) if place_filter is not None else None,

@@ -33,9 +33,7 @@ class FakeProvider:
         if self.fail:
             raise RuntimeError("PRIVATE_PROMPT_CREDENTIAL_MUST_NOT_ESCAPE")
         if max_tokens == 256:
-            return (
-                '{"guidance":"Use only relevant catalogue IDs and preserve exact source evidence."}'
-            )
+            return '{"guidance":"all_constraints"}'
         if user == "PROSE_WITH_MAIL_EXCLUDED":
             return "Recruiter mail was excluded."
         return '{"ids":["P1"]}'
@@ -63,7 +61,7 @@ def frozen_cases():
         {
             "id": f"selection-{index}",
             "mode": "selection",
-            "system": chat.SYSTEM,
+            "system": chat.SELECTION_SYSTEM,
             "question": f"Question {index}?",
             "prompt": 'EVIDENCE_SELECTION\n{"id":"P1","text":"Source requires Python."}'
             f"\nQuestion {index}?",
@@ -122,7 +120,7 @@ def prepared(storage):
 
 def fake_live(monkeypatch, provider):
     @asynccontextmanager
-    async def live():
+    async def live(expected_model=cli.MODEL):
         yield provider
 
     monkeypatch.setattr(cli, "live_provider", live)
@@ -301,7 +299,7 @@ async def test_candidate_reviews_freeze_exact_sent_prompt_and_pending_owner_revi
     actual_selection_prompts = [user for _, user, tokens, _ in provider.calls[37:] if tokens == 180]
     assert len(actual_selection_prompts) == len(reviews)
     assert [record["prompt"] for record in reviews] == actual_selection_prompts
-    assert all(record["system"] == chat.SYSTEM for record in reviews)
+    assert all(record["system"] == chat.SELECTION_SYSTEM for record in reviews)
     assert all(AnswerReview.model_validate(record) for record in reviews)
     assert all(
         line["verdict"] == "pending" and line["reviewer"] is None
@@ -371,9 +369,12 @@ async def test_ready_provider_scopes_readonly_privacy_database_and_restores_fact
     monkeypatch.setattr(
         cli.kaggle_connection,
         "saved_status",
-        AsyncMock(return_value=KaggleStatus(state="ready", detail="Ready.")),
+        AsyncMock(return_value=KaggleStatus(state="ready", detail="Ready.", model=cli.MODEL)),
     )
     monkeypatch.setattr(cli.chat, "provider_for", lambda name: (provider, cli.MODEL))
+    provider.health = AsyncMock(
+        return_value=KaggleStatus(state="ready", detail="Ready.", model=cli.MODEL)
+    )
     configuration = {}
     engine = SimpleNamespace(dispose=AsyncMock())
 
@@ -418,6 +419,86 @@ def test_runtime_change_refuses_old_plan(storage, monkeypatch):
     monkeypatch.setattr(cli, "runtime_identity", lambda: "changed-runtime")
     with pytest.raises(ValueError, match="identity"):
         cli.load_plan(run)
+
+
+async def test_selected_auto_model_is_frozen_and_used_in_response_labels(storage, monkeypatch):
+    from packages.llm.kaggle import QWEN38_MODEL
+
+    source = storage / "source.json"
+    cli.write_private(source, frozen_cases())
+    run = storage / "auto-model"
+    plan = cli.prepare(source, run, model=QWEN38_MODEL)
+    assert cli.load_plan(run)[1]["model"] == QWEN38_MODEL
+    assert plan["model"] == QWEN38_MODEL
+    fake_live(monkeypatch, FakeProvider())
+    state = await cli.run_phase(run, "baseline")
+    assert state["status"] == "captured_ungraded"
+    assert {
+        row["reply"]["model"] for row in state["responses"] if row["reply"]["provider"] != "facts"
+    } == {QWEN38_MODEL}
+
+
+async def test_full_phase_quota_is_required_before_any_provider_call(storage, monkeypatch):
+    run, _ = prepared(storage)
+    monkeypatch.setattr(cli, "remaining", lambda _: 1)
+    forbidden = AsyncMock(side_effect=AssertionError("No provider may be constructed"))
+    monkeypatch.setattr(cli, "live_provider", forbidden)
+    state = await cli.run_phase(run, "baseline")
+    assert state["status"] == "blocked_quota" and state["model_calls"] == 0
+    forbidden.assert_not_called()
+    monkeypatch.setattr(cli, "remaining", lambda _: 200)
+    fake_live(monkeypatch, FakeProvider())
+    assert (await cli.run_phase(run, "baseline"))["status"] == "captured_ungraded"
+
+
+async def test_model_change_refuses_frozen_run_before_constructing_provider(storage, monkeypatch):
+    from packages.llm.kaggle import QWEN38_MODEL
+
+    run, _ = prepared(storage)
+    monkeypatch.setattr(
+        cli.kaggle_connection,
+        "saved_status",
+        AsyncMock(
+            return_value=KaggleStatus(
+                state="ready",
+                detail="Ready",
+                model=QWEN38_MODEL,
+            )
+        ),
+    )
+    forbidden = AsyncMock(side_effect=AssertionError("No provider may be constructed"))
+    monkeypatch.setattr(cli.chat, "provider_for", forbidden)
+    state = await cli.run_phase(run, "baseline")
+    assert state["status"] == "blocked_provider" and state["model_calls"] == 0
+    assert state["readiness"] == "model_not_ready"
+    forbidden.assert_not_called()
+
+
+def test_prepare_auto_model_option_resolves_before_freezing(storage, monkeypatch, capsys):
+    import sys
+
+    from packages.llm.kaggle import QWEN38_MODEL
+
+    source, run = storage / "source.json", storage / "auto-option"
+    cli.write_private(source, frozen_cases())
+    monkeypatch.setattr(cli, "settings_env_file", lambda: storage / "settings.env")
+    monkeypatch.setattr(
+        cli.kaggle_connection,
+        "saved_status",
+        AsyncMock(
+            return_value=KaggleStatus(
+                state="ready",
+                detail="Ready",
+                model=QWEN38_MODEL,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["run_answer_harness", "prepare", str(source), str(run), "--auto-model"]
+    )
+    assert cli.main() == 0
+    assert cli.read_private(run / "plan.json")["model"] == QWEN38_MODEL
+    assert json.loads(capsys.readouterr().out)["model"] == QWEN38_MODEL
 
 
 def test_nonowner_private_file_refused(storage, monkeypatch):

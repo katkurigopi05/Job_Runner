@@ -55,11 +55,17 @@ set requires at most 91 requests (30 semantic cases × three, plus one prose
 case). Inference uses only the existing privacy-protected Kaggle provider with
 its readiness, audit, quota and 4096-token context checks. There is no fallback.
 
-`pilot` requires the complete matching baseline. It proposes two bounded
-instruction variants, probes each on development cases, composes a third and
+`pilot` requires the complete matching baseline. It chooses two policies from a fixed
+local allowlist, probes each on development cases, chooses a composed policy and
 probes that variant on development and heldout cases. Every semantic probe runs
 three times. Improvement and reflection receive development evidence only;
-heldout outputs never become improvement feedback. All source material stays
+heldout outputs never become improvement feedback. Improvement/reflection JSON must
+be exactly `{"guidance":"policy-key"}`, where the key is `all_constraints`,
+`direct_evidence`, or `conservative`. The runner expands keys into immutable,
+query-neutral instructions locally. Arbitrary generated instruction text is rejected
+before any probe; examples cannot add a Kafka or other topic constraint to unrelated
+questions. Composition selects one approved policy rather than writing new text.
+All source material stays
 intact; an oversized request fails rather than silently truncating evidence.
 
 The pilot permits at most 76 requests: 54 development probes, 18 heldout probes,
@@ -101,6 +107,23 @@ including one with better protocol-validity counts. Compare semantic support,
 useful coverage, abstention, latency and total inference work before considering
 a separately reviewed change.
 
+New plans use schema version 2 and freeze separate prose and selection system hashes, plus the prompt registry source. Existing version-1 artifacts remain unchanged and require their original pinned checkout; do not rewrite them to bypass identity checks. New selection snapshots must carry the dedicated selection system, and prose snapshots must carry the prose system. Prose captures reject selection-protocol JSON rather than presenting it as an answer.
+
+
+Live selection and pilot captures apply the same narrow audience constraint:
+explicit customer/client support questions require a customer/client mention in
+each selected excerpt. This is a necessary scope check, not proof that every
+remaining excerpt entails the full question. Invalid selections remain invalid.
+
+The live preparation path answers pure role listings from structured retrieval,
+including title-only postings. Recognized two-skill AND/OR requirement questions
+use recorded direct-required classifications and exclude alternatives, preferences
+and stack mentions. Questions with extra task qualifiers, personal-application
+questions and selected-application context retain their existing answer paths.
+These local answers describe the supplied sample, not an exhaustive semantic
+search result. A focused frozen-retrieval replay can verify these routes without
+establishing general answer accuracy or replacing independent source review.
+
 ## Integration verification, 2026-11-04
 
 Updated the pilot against current `main`, retaining Qwen discovery, query-embedder
@@ -109,3 +132,12 @@ pilot/CLI and selection-route suites pass 75 tests against the marked test
 database. No inference, live database writes, prompt promotion or worker start
 was performed. Historical frozen plans keep their recorded code identities;
 this integration does not make them replayable under changed code.
+
+The answer-mode fixes were then integrated with current search: one registered
+`assistant.selection` version 2 retains the stricter duty/qualification rules,
+and prose streams reject selection JSON before exposing any delta. Existing
+prompt/stream regressions failed before this reconciliation. The combined
+chat, retrieval, requirements, Qwen and pilot suites pass 1,128 offline tests;
+required packages and the two pilot modules type-check across 187 files. Exact
+city percentage denominators use the current `_Totals.total` result. Frozen
+historical reviews and rejected experimental instructions remain unchanged.
