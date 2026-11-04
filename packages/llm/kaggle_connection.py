@@ -15,8 +15,10 @@ from pydantic import BaseModel, SecretStr, TypeAdapter
 
 from packages.llm.kaggle import (
     DETAILS,
+    MODEL_LABELS,
     Connection,
     ConnectionFailure,
+    KaggleKernelOption,
     KaggleProvider,
     KaggleStatus,
     connection_path,
@@ -82,6 +84,24 @@ def failure_status(error: LLMError) -> KaggleStatus:
     return KaggleStatus(state=state, detail=DETAILS[state])
 
 
+def current_notebook(health: KaggleStatus, kernel_id: UUID) -> KaggleStatus:
+    """A verified saved choice needs one named notebook, not a kernel picker."""
+    name = MODEL_LABELS.get(health.model or "", "Kaggle GPU")
+    return health.model_copy(
+        update={
+            "kernels": [kernel_id],
+            "kernel_options": [
+                KaggleKernelOption(
+                    id=kernel_id,
+                    label=f"Current notebook — {name}",
+                    state=health.state,
+                    model=health.model,
+                )
+            ],
+        }
+    )
+
+
 async def saved_status() -> KaggleStatus:
     try:
         connection = read_connection(connection_path())
@@ -96,6 +116,8 @@ async def saved_status() -> KaggleStatus:
             state="kernel_missing", detail=DETAILS["kernel_missing"], kernels=kernels
         )
     health = await KaggleProvider(connection=connection).health()
+    if health.state == "ready":
+        return current_notebook(health, connection.kernel_id)
     return health.model_copy(update={"kernels": kernels})
 
 
@@ -105,12 +127,55 @@ async def connect_session(server_url: SecretStr, kernel_id: UUID | None = None) 
         kernels = await asyncio.to_thread(discover_kernels, server_url)
     except LLMError as exc:
         return failure_status(exc)
+    options: list[KaggleKernelOption] = []
     if kernel_id is None:
+        try:
+            saved = read_connection(connection_path())
+        except LLMError:
+            saved = None
+        if (
+            saved is not None
+            and saved.server_url.get_secret_value() == server_url.get_secret_value()
+            and saved.kernel_id in kernels
+        ):
+            health = await KaggleProvider(connection=saved).health()
+            if health.state == "ready":
+                return current_notebook(health, saved.kernel_id)
         if len(kernels) != 1:
-            return KaggleStatus(
-                state="select_kernel", detail=DETAILS["select_kernel"], kernels=kernels
+            statuses = await asyncio.gather(
+                *(
+                    KaggleProvider(
+                        connection=Connection(server_url=server_url, kernel_id=kid)
+                    ).health()
+                    for kid in kernels
+                )
             )
-        kernel_id = kernels[0]
+            for index, (kid, status) in enumerate(zip(kernels, statuses, strict=True), 1):
+                name = MODEL_LABELS.get(status.model or "", "model not ready")
+                if status.state == "helper_missing":
+                    name = "no model helper loaded"
+                elif status.state != "ready":
+                    name = "model or helper unavailable"
+                options.append(
+                    KaggleKernelOption(
+                        id=kid,
+                        label=f"Notebook {index} — {name}",
+                        state=status.state,
+                        model=status.model,
+                    )
+                )
+            ready = [option for option in options if option.state == "ready"]
+            if len(ready) != 1:
+                visible = ready or options
+                return KaggleStatus(
+                    state="select_kernel",
+                    detail=DETAILS["select_kernel"],
+                    kernels=[option.id for option in visible],
+                    kernel_options=visible,
+                )
+            kernel_id = ready[0].id
+        else:
+            kernel_id = kernels[0]
     if kernel_id not in kernels:
         return KaggleStatus(
             state="kernel_missing", detail=DETAILS["kernel_missing"], kernels=kernels
@@ -125,4 +190,6 @@ async def connect_session(server_url: SecretStr, kernel_id: UUID | None = None) 
                 "Kaggle connection could not be saved privately; existing connection preserved."
             ) from None
         health = health.model_copy(update={"detail": "Connection saved. " + health.detail})
-    return health.model_copy(update={"kernels": kernels})
+    if health.state == "ready":
+        return current_notebook(health, kernel_id)
+    return health.model_copy(update={"kernels": kernels, "kernel_options": options})

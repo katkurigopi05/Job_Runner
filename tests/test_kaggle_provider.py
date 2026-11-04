@@ -176,7 +176,7 @@ def test_factory_uses_explicit_configuration(connection: Path, monkeypatch) -> N
     get_settings.cache_clear()
     try:
         provider = build_provider("kaggle")
-        assert provider.name == "kaggle" and provider.model == MODEL
+        assert provider.name == "kaggle" and provider.model is None  # resolved by live readiness
         assert str(provider.connection.kernel_id) == KERNEL
     finally:
         get_settings.cache_clear()

@@ -33,7 +33,7 @@ from packages.core import db
 from packages.core.config import get_settings, settings_env_file
 from packages.core.schemas import ChatReply
 from packages.llm import answer_harness as pilot_method
-from packages.llm import kaggle_connection, prompts
+from packages.llm import kaggle, kaggle_connection, prompts
 from packages.llm.answer_harness import (
     BudgetedCaller,
     FrozenSelectionCase,
@@ -46,8 +46,9 @@ from packages.llm.answer_harness import (
     selection_prompt,
     validate_baseline,
 )
-from packages.llm.kaggle import MODEL
+from packages.llm.kaggle import HELPERS, MODEL
 from packages.llm.provider import LLMProvider
+from packages.llm.quota import remaining
 from packages.matching.retrieve import Retrieval
 
 UPSTREAM = "1cfe254e8d25b15f37048c3730134686abe60335"
@@ -64,6 +65,7 @@ def runtime_identity() -> dict[str, str]:
         "chat_renderer": chat.__file__,
         "answer_review": answer_support.__file__,
         "prompt_registry": prompts.__file__,
+        "kaggle_transport": kaggle.__file__,
     }
     return {name: digest(Path(path).read_text()) for name, path in files.items()}
 
@@ -141,7 +143,9 @@ def selection_cases(cases: list[dict[str, Any]]) -> list[FrozenSelectionCase]:
     return selected
 
 
-def prepare(source: Path, output: Path) -> dict[str, Any]:
+def prepare(source: Path, output: Path, *, model: str = MODEL) -> dict[str, Any]:
+    if model not in HELPERS:
+        raise ValueError("Unsupported experiment model")
     cases = read_private(source)
     selected = selection_cases(cases)
     split = make_split(selected)
@@ -166,7 +170,7 @@ def prepare(source: Path, output: Path) -> dict[str, Any]:
         "pilot_max_calls": pilot_calls,
         "phase_max_seconds": PHASE_SECONDS,
         "provider": "kaggle",
-        "model": MODEL,
+        "model": model,
         "share_mail": False,
         "chosen": "baseline",
         "promotion": "requires_owner_review",
@@ -208,7 +212,7 @@ def load_plan(run: Path) -> tuple[list[dict[str, Any]], dict[str, Any], PilotSpl
         or plan["split"] != expected_split
         or plan["repeats"] != REPEATS
         or plan["provider"] != "kaggle"
-        or plan["model"] != MODEL
+        or plan["model"] not in HELPERS
         or plan["share_mail"] is not False
     ):
         raise ValueError("Frozen experiment identity changed")
@@ -237,12 +241,17 @@ class NotReady(RuntimeError):
 
 
 @asynccontextmanager
-async def live_provider() -> AsyncIterator[LLMProvider]:
+async def live_provider(expected_model: str = MODEL) -> AsyncIterator[LLMProvider]:
     status = await kaggle_connection.saved_status()
     if status.state != "ready":
         raise NotReady(status.state)
-    provider, model = chat.provider_for("kaggle")
-    if provider.name != "kaggle" or model != MODEL:
+    if status.model != expected_model:
+        raise NotReady("model_not_ready")
+    provider, _ = chat.provider_for("kaggle")
+    bound = await provider.health()
+    if bound.state != "ready" or bound.model != expected_model:
+        raise NotReady("model_not_ready")
+    if provider.name != "kaggle":
         raise ValueError("Pilot requires the existing Kaggle provider")
     engine = create_async_engine(
         get_settings().async_database_url,
@@ -330,12 +339,16 @@ async def run_phase(run: Path, phase: str) -> dict[str, Any]:
                 raise ValueError("Existing phase belongs to another plan")
             if old["status"] == "captured_ungraded":
                 return old
-            if old["status"] != "blocked_provider" or old.get("model_calls", 0) != 0:
+            if (
+                old["status"] not in {"blocked_provider", "blocked_quota"}
+                or old.get("model_calls", 0) != 0
+            ):
                 raise ValueError("Partial inference exists; preserve it and prepare a new run")
             write_private(run / f"{phase}.previous.{uuid4().hex}.json", old)
         state: dict[str, Any] = {
             "status": "running",
             "phase": phase,
+            "model": plan["model"],
             "plan_sha256": plan["plan_sha256"],
             "started_at": datetime.now(UTC).isoformat(),
             "model_calls": 0,
@@ -346,6 +359,10 @@ async def run_phase(run: Path, phase: str) -> dict[str, Any]:
         }
         try:
             write_private(destination, state)
+            available = remaining("kaggle")
+            if available is not None and available < plan[f"{phase}_max_calls"]:
+                state.update(status="blocked_quota", remaining_shared_calls=available)
+                return state
 
             def checkpoint(event: dict[str, Any]) -> None:
                 emit(event)
@@ -355,7 +372,7 @@ async def run_phase(run: Path, phase: str) -> dict[str, Any]:
                     state["model_calls"] = event["attempt"]
                     write_private(destination, state)
 
-            async with live_provider() as provider:
+            async with live_provider(plan["model"]) as provider:
                 caller = BudgetedCaller(
                     provider,
                     max_calls=plan[f"{phase}_max_calls"],
@@ -376,7 +393,7 @@ async def run_phase(run: Path, phase: str) -> dict[str, Any]:
                         if digest(prompt) != row["prompt_sha256"]:
                             raise ValueError("Candidate review prompt differs from execution")
                         ready = replace(_ready(case), prompt=prompt)
-                        reply = chat.selection_reply_for(ready, MODEL, row["raw"])
+                        reply = chat.selection_reply_for(ready, plan["model"], row["raw"])
                         key = f"{case['id']}:{row['stage']}:{row['repeat']}"
                         reviews.append(_review(case, reply, key, prompt))
                     write_private(run / "candidate_reviews.json", reviews)
@@ -393,7 +410,9 @@ async def run_phase(run: Path, phase: str) -> dict[str, Any]:
                                     catalog[case["id"]], caller, repeat=repeat
                                 )
                                 state["selection_runs"].append(asdict(captured))
-                                reply = chat.selection_reply_for(_ready(case), MODEL, captured.raw)
+                                reply = chat.selection_reply_for(
+                                    _ready(case), plan["model"], captured.raw
+                                )
                             else:
                                 raw = await caller.complete(
                                     case["system"],
@@ -402,7 +421,7 @@ async def run_phase(run: Path, phase: str) -> dict[str, Any]:
                                     max_tokens=chat.ANSWER_TOKENS,
                                     temperature=chat.ANSWER_TEMPERATURE,
                                 )
-                                reply = chat.prose_reply_for(_ready(case), MODEL, raw)
+                                reply = chat.prose_reply_for(_ready(case), plan["model"], raw)
                             key = f"{case['id']}:baseline:{repeat}"
                             state["responses"].append(
                                 {
@@ -432,7 +451,17 @@ async def run_phase(run: Path, phase: str) -> dict[str, Any]:
 
 def summary(payload: dict[str, Any]) -> dict[str, Any]:
     """Only operational metadata goes to stdout; never prompts or model prose."""
-    keys = ("status", "phase", "model_calls", "readiness", "error_type", "chosen", "promotion")
+    keys = (
+        "status",
+        "phase",
+        "model",
+        "model_calls",
+        "readiness",
+        "error_type",
+        "chosen",
+        "promotion",
+        "remaining_shared_calls",
+    )
     return {key: payload[key] for key in keys if key in payload}
 
 
@@ -442,6 +471,11 @@ def main() -> int:
     initial = commands.add_parser("prepare")
     initial.add_argument("cases", type=lambda v: Path(v).expanduser().absolute())
     initial.add_argument("output", type=lambda v: Path(v).expanduser().absolute())
+    initial.add_argument(
+        "--auto-model",
+        action="store_true",
+        help="Resolve the ready Kaggle model now and pin it in this plan.",
+    )
     for command in ("baseline", "pilot", "status"):
         commands.add_parser(command).add_argument(
             "run", type=lambda v: Path(v).expanduser().absolute()
@@ -453,10 +487,22 @@ def main() -> int:
         # including its shared daily quota. Do not create a separate worktree quota.
         os.chdir(settings_env_file().parent)
         if args.command == "prepare":
-            plan = prepare(args.cases, args.output)
+            model = MODEL
+            if args.auto_model:
+                status = asyncio.run(kaggle_connection.saved_status())
+                if status.state != "ready" or status.model not in HELPERS:
+                    raise NotReady(status.state)
+                model = status.model
+            plan = prepare(args.cases, args.output, model=model)
             result = {
                 key: plan[key]
-                for key in ("cases", "selection_cases", "baseline_max_calls", "pilot_max_calls")
+                for key in (
+                    "cases",
+                    "selection_cases",
+                    "baseline_max_calls",
+                    "pilot_max_calls",
+                    "model",
+                )
             }
             result["split_counts"] = {
                 key: len(plan["split"][key]) for key in ("development", "holdout", "reserved")
