@@ -100,3 +100,12 @@ and `promotion=requires_owner_review`. No candidate is automatically promoted,
 including one with better protocol-validity counts. Compare semantic support,
 useful coverage, abstention, latency and total inference work before considering
 a separately reviewed change.
+
+## Integration verification, 2026-11-04
+
+Updated the pilot against current `main`, retaining Qwen discovery, query-embedder
+release handling and the shared live selection renderer. The focused offline
+pilot/CLI and selection-route suites pass 75 tests against the marked test
+database. No inference, live database writes, prompt promotion or worker start
+was performed. Historical frozen plans keep their recorded code identities;
+this integration does not make them replayable under changed code.

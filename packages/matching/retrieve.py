@@ -93,7 +93,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.config import get_settings
 from packages.core.models import Application, Company, Posting
 from packages.core.models_chunks import PostingChunk
-from packages.matching import idf, tiers
+from packages.matching import chunk_search, idf, tiers
+from packages.matching.chunk_search import Space
 from packages.matching.eligibility import Sponsorship
 from packages.matching.embed import (
     Embedder,
@@ -165,10 +166,8 @@ EXCERPT_CHARS = 600
 #: query stays a lookup by id.
 KEYWORD_POOL = 30
 
-#: How many further matches a reply lists after the ones the model was shown.
-#: The owner asked for "the jobs", and five is what fits in a prompt, not what
-#: there is; the dashboard shows these ten at a time.
-MORE_LIMIT = 100
+#: Postings looked up at a time when a list goes past what the search ranked.
+LIST_BATCH = 1000
 
 #: Keyword matches read first when the owner's search area applies, before the
 #: area cuts them back to `KEYWORD_POOL`. On the owner's database 11 of 25
@@ -405,6 +404,36 @@ _PERCENTAGE_REQUEST = re.compile(
 _FRAMING_PHRASES = re.compile(
     rf"\bright\s+now\b|\bhow\s+many\b|{_PERCENTAGE_REQUEST.pattern}", re.IGNORECASE
 )
+#: A word that says what kind of job, with a job noun after it: "software
+#: jobs", and the same with "engineering" or "development" between. Not
+#: "roles that mention software" or "software testing tools", where the
+#: word is a subject.
+#:
+#: Only "software", measured on the live corpus on 2026-11-02: nearly every
+#: employer calls itself a software company, so its 3,920 description
+#: mentions were noise, and its 1,100 titles are the answer. "backend" and
+#: "frontend" were measured too and left out: their keyword search already
+#: put their titles first, and a description saying "backend" is often a
+#: backend role titled "Software Engineer" (642 mentions against 93 titles).
+_JOB_NOUN = r"(?:jobs?|roles?|positions?|openings?|opportunit(?:y|ies)|vacanc(?:y|ies))"
+_JOB_TYPE_PHRASE = re.compile(
+    rf"\b(software)(?:\s+(engineering|development))?\s+{_JOB_NOUN}\b", re.IGNORECASE
+)
+#: The same said after the job noun: "any jobs on software engineering",
+#: "roles in software development". Asked on 2026-11-02, the first found the
+#: phrase in descriptions and opened with "Manager, Software Engineering" and a
+#: lead data scientist. "jobs in software testing" is matched here too, and
+#: stays a word search because "testing" is asked for as well (`retrieve`).
+_JOB_TYPE_AFTER_NOUN = re.compile(
+    rf"\b{_JOB_NOUN}\s+(?:on|in|for|about)\s+(software)(?:\s+(engineering|development))?\b",
+    re.IGNORECASE,
+)
+#: Asking for a number of postings rather than for postings.
+_HOW_MANY = re.compile(
+    r"\bhow\s+many\b|\btotal\s+(?:number|jobs|postings|roles)\b|"
+    r"\bcount\s+(?:the\s+)?(?:jobs|postings|roles)\b",
+    re.IGNORECASE,
+)
 
 
 #: Characters read either side of a work-mode word. Every repeat in
@@ -552,6 +581,17 @@ class PostingShare:
 
 
 @dataclass(frozen=True)
+class OpenTotals:
+    """Every open posting, for "how many jobs are there?", which names nothing else."""
+
+    open_total: int
+    companies: int
+    #: Under the search area's rule, as a percentage's denominator is counted.
+    #: None when the area is off.
+    in_area: int | None
+
+
+@dataclass(frozen=True)
 class Retrieval:
     #: False when nothing was searched: the question was not about postings,
     #: or (`unnamed`) it was and named nothing to look for.
@@ -615,7 +655,9 @@ class Retrieval:
     #: How many open postings in the search area carry such a title, or None
     #: when no role was named. The passages are the closest few of these.
     role_total: int | None = None
-    #: The next matches after `passages`, in the same order, up to `MORE_LIMIT`.
+    #: Every further match after `passages`, in the same order. Five is what
+    #: fits in a prompt, not what there is: the owner asked for every posting
+    #: (2026-11-02), and the dashboard shows these ten at a time or all at once.
     more: tuple[Listed, ...] = ()
     #: The kinds of title that role is made of, each with how many open
     #: postings in the area carry it: the kind that was typed first, then by
@@ -649,6 +691,10 @@ class Retrieval:
     #: yet": a corpus that could not be read, where the question was what
     #: had nothing in it.
     unnamed: bool = False
+    #: An unnamed question that asked how many: the totals, counted in code.
+    #: "how many job posting are available" was answered "I can't give a
+    #: total" (2026-11-02): nothing was searched, so nothing was counted.
+    totals: OpenTotals | None = None
     #: Set when the question asked which postings sponsor: what the postings it
     #: was about state, counted. The passages are then only the ones that state
     #: they do (`_stating_sponsorship`).
@@ -656,6 +702,11 @@ class Retrieval:
     #: Set when the question named a level ("senior", "entry level"): how the
     #: postings found stand against it by their titles (`matching/level.py`).
     level: LevelCount | None = None
+    #: Qwen vector coverage; None when Qwen was not used.
+    qwen_searched: int | None = None
+    bge_fallback_searched: int = 0
+    #: Why the opt-in Qwen query failed; surfaced in context and the reply.
+    embedding_fallback: str | None = None
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -825,6 +876,23 @@ def _located_at(hit: _Hit, terms: list[str]) -> bool:
     return any(
         re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", location) for term in terms
     )
+
+
+def _job_type_words(question: str) -> tuple[frozenset[str], frozenset[str]]:
+    """The words of each job-type phrase, either side of the job noun, and its qualifiers.
+
+    As `tokenize` writes them, so they compare with the search terms: "back
+    end" is `back` and `end`, "software engineering" is `software` with the
+    qualifier `engineering`.
+    """
+    words: set[str] = set()
+    qualifiers: set[str] = set()
+    phrases = (_JOB_TYPE_PHRASE, _JOB_TYPE_AFTER_NOUN)
+    for match in (m for phrase in phrases for m in phrase.finditer(question)):
+        words.update(tokenize(match.group(1)))
+        if match.group(2):
+            qualifiers.update(tokenize(match.group(2)))
+    return frozenset(words), frozenset(qualifiers)
 
 
 def _search_terms(
@@ -1421,6 +1489,14 @@ def _metadata_area_exclusion(
     )
 
 
+class _Totals(NamedTuple):
+    total: int
+    companies: int
+    outside: int
+    #: The postings counted, so the reply can list every one.
+    kept: frozenset[uuid.UUID] = frozenset()
+
+
 @stage("metadata_totals")
 async def _matching_totals(
     session: AsyncSession,
@@ -1431,7 +1507,7 @@ async def _matching_totals(
     allow_unknown: bool,
     place_filter: _PlaceFilter | None = None,
     remote_only: bool = False,
-) -> tuple[int, int, int]:
+) -> _Totals:
     """Count the keyword scan's complete match IDs, beyond its ranked pool.
 
     No second regex scan: word boundaries were already applied. Classify
@@ -1441,9 +1517,9 @@ async def _matching_totals(
     None selects every open posting for a requested percentage's denominator.
     """
     if posting_ids is None and place_filter is None and level is None and not remote_only:
-        return await _open_area_total(session, area=area), 0, 0
+        return _Totals(await _open_area_total(session, area=area), 0, 0)
     if posting_ids == []:
-        return 0, 0, 0
+        return _Totals(0, 0, 0)
     query = select(
         Posting.id,
         Posting.title,
@@ -1454,6 +1530,7 @@ async def _matching_totals(
         query = query.where(Posting.id.in_(posting_ids))
     total, outside = 0, 0
     employers: set[uuid.UUID] = set()
+    kept: set[uuid.UUID] = set()
     remote_outside = get_settings().search_remote_outside_california
     eligibility: dict[tuple[str | None, str | None], tuple[str | None, bool]] = {}
     recheck: dict[uuid.UUID, tuple[str | None, str | None, uuid.UUID | None, bool]] = {}
@@ -1482,6 +1559,7 @@ async def _matching_totals(
                 remote_recheck[ident] = (title, location)
             return
         total += 1
+        kept.add(ident)
         if company_id is not None:
             employers.add(company_id)
 
@@ -1540,7 +1618,50 @@ async def _matching_totals(
         for ident, description in descriptions.all():
             title, location = remote_recheck[ident]
             place_filter.record(ident, title, location, description)
-    return total, len(employers), outside
+    return _Totals(total, len(employers), outside, frozenset(kept))
+
+
+async def _listed(session: AsyncSession, posting_ids: list[uuid.UUID]) -> tuple[Listed, ...]:
+    """Postings to list after the ranked ones, in the order given.
+
+    Title, company, place and link only: what the dashboard lists, and never a
+    description, so a list of a few thousand is a few lookups by id.
+    """
+    rows: dict[uuid.UUID, Any] = {}
+    for start in range(0, len(posting_ids), LIST_BATCH):
+        result = await session.execute(
+            select(Posting.id, Posting.title, Posting.location, Posting.url, Company.name)
+            .outerjoin(Company, Company.id == Posting.company_id)
+            .where(Posting.id.in_(posting_ids[start : start + LIST_BATCH]))
+        )
+        rows.update({row.id: row for row in result.all()})
+    return tuple(
+        Listed(
+            posting_id=ident,
+            title=rows[ident].title or "(untitled)",
+            company=rows[ident].name,
+            location=rows[ident].location,
+            url=rows[ident].url,
+        )
+        for ident in posting_ids
+        if ident in rows
+    )
+
+
+async def _open_totals(session: AsyncSession, *, area: bool) -> OpenTotals:
+    """Open postings, the companies they come from, and how many the area keeps."""
+    open_total, companies = (
+        await session.execute(
+            select(func.count(), func.count(Posting.company_id.distinct())).where(
+                Posting.closed_at.is_(None)
+            )
+        )
+    ).one()
+    return OpenTotals(
+        open_total=int(open_total),
+        companies=int(companies),
+        in_area=await _open_area_total(session, area=True) if area else None,
+    )
 
 
 async def _open_area_total(session: AsyncSession, *, area: bool) -> int:
@@ -1687,6 +1808,7 @@ async def _nearest(
     *,
     counts: Callable[[_Hit], bool] | None = None,
     want: int = 0,
+    without_qwen: bool = False,
 ) -> list[_Hit]:
     """The nearest open postings in one space, sharing at least something.
 
@@ -1711,6 +1833,8 @@ async def _nearest(
             .order_by(distance, Posting.id)
             .limit(window)
         )
+        if without_qwen:
+            query = query.where(~chunk_search.has_qwen())
         if companies:
             query = query.where(Posting.company_id.in_(companies))
         hits = [_Hit(*row) for row in (await session.execute(query)).all()]
@@ -1741,19 +1865,14 @@ async def _order_in_space(
     return list(rows.all())
 
 
-def _chunk_filter(model: str) -> list[ColumnElement[bool]]:
-    """Chunks of open postings, from one model, cut from the text the posting holds now."""
-    return [
-        Posting.closed_at.is_(None),
-        PostingChunk.embedding_model == model,
-        PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
-    ]
+_chunk_filter = chunk_search.chunk_filter
+_chunk_ranking = stage("chunks")(chunk_search.chunk_ranking)
 
 
 @stage("chunks")
 async def _best_chunks(
     session: AsyncSession,
-    model: str,
+    model: Space,
     vector: list[float],
     *,
     among: list[uuid.UUID] | None = None,
@@ -1772,44 +1891,6 @@ async def _best_chunks(
     return best
 
 
-@stage("chunks")
-async def _chunk_ranking(
-    session: AsyncSession,
-    model: str,
-    vector: list[float],
-    *,
-    among: list[uuid.UUID] | None,
-    companies: list[uuid.UUID] | None,
-    limit: int,
-) -> tuple[list[tuple[uuid.UUID, int, int]], bool]:
-    """`_best_chunks`, and whether every chunk it could have read was read."""
-    distance = PostingChunk.embedding.cosine_distance(vector)
-    query = (
-        select(PostingChunk.posting_id, PostingChunk.start, PostingChunk.length, distance)
-        .join(Posting, Posting.id == PostingChunk.posting_id)
-        .where(*_chunk_filter(model))
-    )
-    if among is not None:
-        query = query.where(PostingChunk.posting_id.in_(among))
-    else:
-        # A total order, so a wider window starts with the narrower one.
-        query = (
-            query.where(distance < _NO_OVERLAP)
-            .order_by(distance, PostingChunk.posting_id, PostingChunk.ordinal)
-            .limit(limit)
-        )
-    if companies:
-        query = query.where(Posting.company_id.in_(companies))
-    rows = (await session.execute(query)).all()
-    best: dict[uuid.UUID, tuple[float, int, int]] = {}
-    for posting_id, start, length, dist in rows:
-        if posting_id not in best or dist < best[posting_id][0]:
-            best[posting_id] = (dist, start, length)
-    ranked = sorted(best.items(), key=lambda item: (item[1][0], str(item[0])))
-    every = among is not None or len(rows) < limit
-    return [(posting_id, start, length) for posting_id, (_, start, length) in ranked], every
-
-
 #: How much wider each look at the nearest chunks is than the one before.
 _WIDEN_BY = 4
 
@@ -1817,7 +1898,7 @@ _WIDEN_BY = 4
 @stage("chunks")
 async def _nearest_kept(
     session: AsyncSession,
-    model: str,
+    model: Space,
     vector: list[float],
     *,
     companies: list[uuid.UUID] | None,
@@ -1931,7 +2012,7 @@ def _rerank_text(hit: _Hit, span: tuple[int, int] | None, *, named: bool = False
 @stage("semantic")
 async def _nearest_unfound(
     session: AsyncSession,
-    chunk_vectors: dict[str, list[float]],
+    chunk_vectors: dict[Space, list[float]],
     companies: list[uuid.UUID] | None,
     *,
     in_area: bool,
@@ -1955,6 +2036,7 @@ async def _nearest_unfound(
 
     spans: dict[uuid.UUID, tuple[int, int]] = {}
     hits: dict[uuid.UUID, _Hit] = {}
+    per_space: list[list[_Hit]] = []
     for model, vector in chunk_vectors.items():
         # Read until `want` are in the area, not the first 200 and then the
         # area: those can all be abroad.
@@ -1968,10 +2050,15 @@ async def _nearest_unfound(
             skip=found,
             window=_WIDEN_CHUNKS,
         )
+        per_space.append([hit for hit in read if counts(hit)])
         for hit in read:
             spans.setdefault(hit.posting_id, nearest[hit.posting_id])
             hits.setdefault(hit.posting_id, hit)
-    kept = [hits[posting_id] for posting_id in spans if counts(hits[posting_id])][:want]
+    kept = (
+        chunk_search.interleave(per_space, key=lambda hit: hit.posting_id)
+        if any(isinstance(space, chunk_search.ChunkSpace) for space in chunk_vectors)
+        else [hits[posting_id] for posting_id in spans if counts(hits[posting_id])]
+    )[:want]
     return kept, {hit.posting_id: spans[hit.posting_id] for hit in kept}
 
 
@@ -2051,7 +2138,7 @@ def _fuse(keyword: list[uuid.UUID], by_space: list[list[uuid.UUID]]) -> dict[uui
 @stage("semantic")
 async def _semantic_candidates(
     session: AsyncSession,
-    chunk_vectors: dict[str, list[float]],
+    chunk_vectors: dict[Space, list[float]],
     companies: list[uuid.UUID],
     area: str | None,
     in_place: Callable[[_Hit], bool] | None = None,
@@ -2061,24 +2148,34 @@ async def _semantic_candidates(
     `_best_chunks` also excludes closed postings and stale chunks. Lexical
     hashes cannot recover semantic paraphrases and are deliberately excluded.
     """
-    model = SentenceTransformerEmbedder.name
-    vector = chunk_vectors.get(model)
-    if vector is None:
-        return [], {}, set()
-    # Each posting's verdict, asked once while reading and reused below.
+    spaces = [
+        space
+        for space in chunk_vectors
+        if space == SentenceTransformerEmbedder.name
+        or isinstance(space, chunk_search.ChunkSpace)
+        and space.model in {SentenceTransformerEmbedder.name, chunk_search.QWEN_4B}
+    ]
     away: dict[uuid.UUID, bool] = {}
 
     def counts(hit: _Hit) -> bool:
         away[hit.posting_id] = bool(area) and _outside_area(hit)
         return not away[hit.posting_id] and (in_place is None or in_place(hit))
 
-    # The area is asked while reading, so two hundred chunks abroad do not
-    # leave nothing to keep.
-    read, nearest = await _nearest_kept(
-        session, model, vector, companies=companies, want=KEYWORD_POOL, counts=counts
-    )
-    kept = [hit for hit in read if counts(hit)][:KEYWORD_POOL]
-    outside = {hit.posting_id for hit in read if away[hit.posting_id]}
+    per_space: list[list[_Hit]] = []
+    nearest: dict[uuid.UUID, tuple[int, int]] = {}
+    for space in spaces:
+        read, spans = await _nearest_kept(
+            session,
+            space,
+            chunk_vectors[space],
+            companies=companies,
+            want=KEYWORD_POOL,
+            counts=counts,
+        )
+        nearest.update(spans)
+        per_space.append([hit for hit in read if counts(hit)])
+    kept = chunk_search.interleave(per_space, key=lambda hit: hit.posting_id)[:KEYWORD_POOL]
+    outside = {pid for pid, excluded in away.items() if excluded}
     return kept, {hit.posting_id: nearest[hit.posting_id] for hit in kept}, outside
 
 
@@ -2282,7 +2379,7 @@ async def _stating_sponsorship(
                 location=hit.location,
                 url=hit.url,
             )
-            for hit in offering[limit : limit + MORE_LIMIT]
+            for hit in offering[limit:]
         ),
         sponsorship=SponsorshipCount(
             offered=len(offering),
@@ -2400,7 +2497,7 @@ async def _requiring_skill(
         ),
         more=tuple(
             Listed(hit.posting_id, hit.title or "(untitled)", hit.company, hit.location, hit.url)
-            for hit in required[limit : limit + MORE_LIMIT]
+            for hit in required[limit:]
         ),
         ranked=len(required),
         work_mode="remote" if remote_only else None,
@@ -2417,10 +2514,18 @@ async def _requiring_skill(
 
 @traced
 async def retrieve(
-    session: AsyncSession, question: str, *, limit: int = DEFAULT_LIMIT
+    session: AsyncSession, question: str, *, limit: int = DEFAULT_LIMIT, free_embedder: bool = False
 ) -> Retrieval:
     """The open postings `question` is about, and how much of the corpus was read."""
+    async with chunk_search.Question(free_embedder=free_embedder) as search:
+        return await _retrieve(session, question, limit=limit, search=search)
+
+
+async def _retrieve(
+    session: AsyncSession, question: str, *, limit: int, search: chunk_search.Question
+) -> Retrieval:
     wants_share = bool(_PERCENTAGE_REQUEST.search(question))
+    asks_how_many = bool(_HOW_MANY.search(question))
     for spelled_out, as_titles_say_it in _SPELLED_OUT:
         question = spelled_out.sub(as_titles_say_it, question)
     # Trailing dots off, as `tokenize` does: "Show me remote jobs." ends in
@@ -2522,6 +2627,11 @@ async def retrieve(
     only_constraints = only_place or only_mode
     # A level alone names something: "internships" is every intern posting.
     if not (subject_terms or companies or titled or level is not None or only_constraints):
+        if asks_how_many and not about_my_applications:
+            # Nothing to search for, and a number to give: the totals the
+            # percentage answer divides by, under the same area rule.
+            totals = await _open_totals(session, area=bool(area))
+            return Retrieval(attempted=False, unnamed=True, area=area, totals=totals)
         return Retrieval(attempted=False, unnamed=True)
 
     open_total = (
@@ -2600,7 +2710,24 @@ async def retrieve(
     chunk_encoders = await asyncio.to_thread(
         _encoders, [(str(model), None) for model in chunk_models], frequencies, active_revision
     )
-    chunk_vectors = await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, subject)
+    keyword_vectors = await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, subject)
+    chunk_vectors: dict[Space, list[float]] = {model: v for model, v in keyword_vectors.items()}
+    chunk_queries = chunk_search.ChunkQueries(chunk_vectors)
+    discovery_queries: chunk_search.ChunkQueries | None = None
+
+    async def discovery() -> chunk_search.ChunkQueries:
+        nonlocal discovery_queries, chunk_queries
+        if discovery_queries is None:
+            discovery_queries = await search.queries(
+                await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, question),
+                question,
+                enabled=get_settings().chat_qwen_search,
+                session=session,
+                posting_spaces=list(vectors),
+            )
+            chunk_queries = discovery_queries
+        return discovery_queries
+
     chunk_spans: dict[uuid.UUID, tuple[int, int]] = {}
 
     terms = _search_terms(question, frequencies, exclude=aside)
@@ -2613,6 +2740,18 @@ async def retrieve(
         terms = beyond_the_name or terms
     else:
         beyond_the_name = terms
+
+    # A kind of job that is all the question asks ("software jobs", "backend
+    # roles") is read from titles below, as a word too common to search
+    # descriptions for is. Searched in descriptions, "software job roles" was
+    # 3,776 postings that mention the word, a UX designer among the first
+    # five (2026-11-02). With anything else asked, the search is unchanged.
+    job_type, job_qualifiers = _job_type_words(question)
+    reads_titles = (
+        bool(job_type) and not companies and set(beyond_the_name) <= job_type | job_qualifiers
+    )
+    if reads_titles:
+        beyond_the_name = []
 
     # A kind of job, named: "AI engineer", "SRE". Its postings are found by
     # title through the role table, so the words that named it are not also
@@ -2665,7 +2804,11 @@ async def retrieve(
         asked_words = [
             word
             for word in dict.fromkeys(tokenize(question))
-            if word not in _FRAMING_WORDS and word not in company_words and word not in aside
+            if word not in _FRAMING_WORDS
+            and word not in company_words
+            and word not in aside
+            # "software development jobs" includes "Software Developer".
+            and not (reads_titles and word in job_qualifiers)
         ]
         stems = {_stem(word) for word in asked_words}
         if stems:
@@ -2898,14 +3041,18 @@ async def retrieve(
             get_settings().chat_semantic_candidates
             and role_pool is None
             and not only_names_a_company
+            and (bool(keyword) or not get_settings().chat_qwen_search)
         ):
             # Unlike the lexical subject, sentence meaning includes the
             # relationships between words. Preserve those for discovery.
-            semantic_vectors = await asyncio.to_thread(
-                _encode_chunk_queries, chunk_encoders, question
-            )
+            semantic_queries = await discovery()
+            semantic_vectors = semantic_queries.vectors
             semantic, semantic_spans, excluded = await _semantic_candidates(
-                session, semantic_vectors, companies, area, in_place=in_place
+                session,
+                semantic_vectors,
+                companies,
+                area,
+                in_place=passes if chunk_queries.qwen else in_place,
             )
             left_out |= excluded
             known = set(keyword_ids)
@@ -3005,13 +3152,14 @@ async def retrieve(
         # postings, counted and listed by kind.
         added: list[_Hit] = []
         if reranker is not None and reranker.judges and role_pool is None and keyword:
+            unfound = await discovery() if get_settings().chat_qwen_search else chunk_queries
             added, added_spans = await _nearest_unfound(
                 session,
-                chunk_vectors,
+                unfound.vectors,
                 companies,
                 in_area=bool(area),
                 found=set(keyword_ids),
-                in_place=in_place,
+                in_place=passes if chunk_queries.qwen else in_place,
             )
             among_spans.update(added_spans)
             # Quoted where it matched: it has none of the question's keywords,
@@ -3048,13 +3196,13 @@ async def retrieve(
             # answer must not cite a posting for a word it does not say.
             by_id = {hit.posting_id: hit for hit in everything}
             shown_ids, more_ids = tiers.split(
-                [hit.posting_id for hit in everything], tier_of, limit, MORE_LIMIT
+                [hit.posting_id for hit in everything], tier_of, limit
             )
             chosen = [by_id[posting_id] for posting_id in shown_ids]
             more_hits = [by_id[posting_id] for posting_id in more_ids]
         else:
             chosen = everything[:limit]
-            more_hits = everything[limit : limit + MORE_LIMIT]
+            more_hits = everything[limit:]
         ranked_total = len(everything)
         # What the second model read: the head of what it was handed, which
         # leaves out the postings held ahead of it, and for one that judges,
@@ -3071,6 +3219,14 @@ async def retrieve(
         # `width` from each space, as before, and on until the answer's
         # `limit` are ones the area and the level keep: forty postings abroad
         # are otherwise an answer of none.
+        chunk_queries = await search.queries(
+            keyword_vectors,
+            subject,
+            enabled=get_settings().chat_qwen_search,
+            session=session,
+            posting_spaces=list(vectors),
+        )
+        chunk_vectors = chunk_queries.vectors
         for model, vector in chunk_vectors.items():
             read, spans = await _nearest_kept(
                 session,
@@ -3084,18 +3240,24 @@ async def retrieve(
             chunk_spans.update(spans)
             per_space.append(read)
         per_space += [
-            await _nearest(session, space, vector, width, companies, counts=passes, want=limit)
+            await _nearest(
+                session,
+                space,
+                vector,
+                width,
+                companies,
+                counts=passes,
+                want=limit,
+                without_qwen=chunk_queries.qwen,
+            )
             for space, vector in vectors.items()
+            # With Qwen covering every posting, these could only find nothing.
+            if chunk_queries.bge_needed
         ]
         # Rank 1 of every space before rank 2 of any: distances from different
         # models share no scale, and ranks are all they have in common. A
         # posting in both a chunk space and a posting space is taken once.
-        ranked, taken = [], set()
-        for rank in range(max((len(hits) for hits in per_space), default=0)):
-            for hits in per_space:
-                if rank < len(hits) and hits[rank].posting_id not in taken:
-                    taken.add(hits[rank].posting_id)
-                    ranked.append(hits[rank])
+        ranked = chunk_search.interleave(per_space, key=lambda hit: hit.posting_id)
         ranked, level_count = _at_level(prefer_place(ranked), level)
         reranked_total = 0
         if reranker is None:
@@ -3121,7 +3283,7 @@ async def retrieve(
         in_area_rest = [
             hit for hit in ranked if hit.posting_id not in shown and in_area(hit) and in_place(hit)
         ]
-        more_hits = in_area_rest[:MORE_LIMIT]
+        more_hits = in_area_rest
         ranked_total = len(chosen) + len(in_area_rest)
         searched = await _reachable(session, list(chunk_vectors), list(vectors))
         unsearchable = max(0, open_total - searched)
@@ -3130,6 +3292,8 @@ async def retrieve(
 
     match_total = company_total = None
     matched_term = None
+    # What the count covers past the ranked list, listed in the search's order.
+    counted_rest: tuple[Listed, ...] = ()
     if count_simple or (
         place_filter is not None and role_pool is None and matching_ids is not None
     ):
@@ -3143,23 +3307,31 @@ async def retrieve(
             matching_ids = list(
                 (
                     await session.scalars(
-                        select(Posting.id).where(
-                            Posting.closed_at.is_(None), Posting.company_id.in_(companies)
-                        )
+                        select(Posting.id)
+                        .where(Posting.closed_at.is_(None), Posting.company_id.in_(companies))
+                        .order_by(Posting.first_seen_at.desc(), Posting.id)
                     )
                 ).all()
             )
-        match_total, company_total, outside = await _matching_totals(
+        counted_ids = list(dict.fromkeys([*(matching_ids or []), *place_ids]))
+        counted = await _matching_totals(
             session,
-            list(dict.fromkeys([*(matching_ids or []), *place_ids])),
+            counted_ids,
             area=bool(area),
             level=level,
             allow_unknown=allow_unknown,
             place_filter=place_filter,
             remote_only=remote_only,
         )
+        match_total, company_total, outside = counted.total, counted.companies, counted.outside
         if not count_simple:
             match_total = company_total = None
+        else:
+            already = {hit.posting_id for hit in (*chosen, *more_hits)}
+            counted_rest = await _listed(
+                session,
+                [i for i in counted_ids if i in counted.kept and i not in already],
+            )
     share = None
     if wants_share:
         # A role/title pool is complete; a keyword pool is not. The exact simple
@@ -3172,15 +3344,17 @@ async def retrieve(
             else None
         )
         if exact is not None:
-            denominator, _, _ = await _matching_totals(
-                session,
-                None,
-                area=bool(area),
-                level=None,
-                allow_unknown=True,
-                # Independent accounting: do not alter the query's omitted counts.
-                place_filter=_PlaceFilter() if place_filter is not None else None,
-            )
+            denominator = (
+                await _matching_totals(
+                    session,
+                    None,
+                    area=bool(area),
+                    level=None,
+                    allow_unknown=True,
+                    # Independent accounting: do not alter the query's omitted counts.
+                    place_filter=_PlaceFilter() if place_filter is not None else None,
+                )
+            ).total
             share = PostingShare(
                 matching=exact,
                 open_total=denominator,
@@ -3219,9 +3393,19 @@ async def retrieve(
         )
         for index, hit in enumerate(chosen, start=1)
     )
+    qwen_searched, bge_fallback = (
+        chunk_queries.covered
+        if chunk_queries.covered is not None
+        else await chunk_search.coverage(session, chunk_queries.vectors, list(vectors))
+        if chunk_queries.qwen
+        else (None, 0)
+    )
     return Retrieval(
         attempted=True,
         passages=passages,
+        qwen_searched=qwen_searched,
+        bge_fallback_searched=bge_fallback,
+        embedding_fallback=chunk_queries.fallback_reason,
         searched=searched,
         unsearchable=unsearchable,
         companies=tuple(sorted(company_names)),
@@ -3259,16 +3443,19 @@ async def retrieve(
             if beyond and terms
             else None
         ),
-        more=tuple(
-            Listed(
-                posting_id=hit.posting_id,
-                title=hit.title or "(untitled)",
-                company=hit.company,
-                location=hit.location,
-                url=hit.url,
-                kind=label_of.get(hit.posting_id),
-            )
-            for hit in more_hits
+        more=(
+            *(
+                Listed(
+                    posting_id=hit.posting_id,
+                    title=hit.title or "(untitled)",
+                    company=hit.company,
+                    location=hit.location,
+                    url=hit.url,
+                    kind=label_of.get(hit.posting_id),
+                )
+                for hit in more_hits
+            ),
+            *counted_rest,
         ),
         kinds=tuple(kinds),
         level=level_count,
@@ -3284,18 +3471,11 @@ async def retrieve(
 
 
 async def _reachable(
-    session: AsyncSession, chunk_models: list[str], spaces: list[tuple[str, int | None]]
+    session: AsyncSession, chunk_models: list[Space], spaces: list[tuple[str, int | None]]
 ) -> int:
     """Open postings a vector search could reach: chunked, or in a usable space."""
     reach: list[ColumnElement[bool]] = []
-    if chunk_models:
-        reach.append(
-            exists().where(
-                PostingChunk.posting_id == Posting.id,
-                PostingChunk.embedding_model.in_(chunk_models),
-                PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
-            )
-        )
+    reach.extend(chunk_search.reachable(space) for space in chunk_models)
     reach += [and_(*_space_filter(model, revision)) for model, revision in spaces]
     if not reach:
         return 0
@@ -3427,7 +3607,7 @@ def excerpt(
 __all__ = [
     "DEFAULT_LIMIT",
     "EXCERPT_CHARS",
-    "MORE_LIMIT",
+    "LIST_BATCH",
     "Listed",
     "Passage",
     "Retrieval",

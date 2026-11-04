@@ -74,11 +74,11 @@ def limiter(clock: FakeClock | None = None, **kwargs) -> HostRateLimiter:
 def test_delay_below_the_floor_is_refused() -> None:
     """§2.6 — configurable up, never down. Refused, not clamped."""
     with pytest.raises(RateLimitTooLow, match="configurable upward only"):
-        HostRateLimiter(delay_seconds=5.0)
+        HostRateLimiter(delay_seconds=MIN_DELAY_SECONDS - 1)
 
 
 def test_delay_at_or_above_the_floor_is_accepted() -> None:
-    assert HostRateLimiter(delay_seconds=MIN_DELAY_SECONDS).delay_seconds == 60.0
+    assert HostRateLimiter(delay_seconds=MIN_DELAY_SECONDS).delay_seconds == MIN_DELAY_SECONDS
     assert HostRateLimiter(delay_seconds=300.0).delay_seconds == 300.0
 
 
@@ -93,9 +93,9 @@ async def test_second_request_must_wait_the_full_delay() -> None:
     lim = limiter(clock)
 
     await lim.record("example.com")
-    assert lim.time_until_ready("example.com") == 60.0
+    assert lim.time_until_ready("example.com") == MIN_DELAY_SECONDS
 
-    clock.now += 59.0
+    clock.now += MIN_DELAY_SECONDS - 1
     assert lim.time_until_ready("example.com") == pytest.approx(1.0)
 
     clock.now += 1.0
@@ -123,8 +123,8 @@ async def test_acquire_waits_then_records() -> None:
     await lim.acquire("example.com")
     waited = await lim.acquire("example.com")
 
-    assert waited == pytest.approx(60.0)
-    assert clock.slept == [60.0]
+    assert waited == pytest.approx(MIN_DELAY_SECONDS)
+    assert clock.slept == [MIN_DELAY_SECONDS]
 
 
 async def test_acquire_fails_loudly_on_a_stopped_clock() -> None:
@@ -934,9 +934,9 @@ def test_a_shared_host_override_below_its_floor_is_refused() -> None:
         HostRateLimiter(host_delays={"api.lever.co": 0.1})
 
 
-def test_a_company_host_override_below_60s_is_refused() -> None:
+def test_a_company_host_override_below_the_floor_is_refused() -> None:
     with pytest.raises(RateLimitTooLow):
-        HostRateLimiter(host_delays={"careers.acme.com": 5.0})
+        HostRateLimiter(host_delays={"careers.acme.com": MIN_DELAY_SECONDS - 1})
 
 
 async def test_a_429_backs_the_host_off() -> None:

@@ -38,6 +38,7 @@ def test_every_registered_prompt_names_its_task() -> None:
         (prompts.COVER_LETTER_SYSTEM, "write_cover_letter"),
         (prompts.CLASSIFY_SYSTEM, "classify_inbound_email"),
         (prompts.CHAT_SYSTEM, "assistant"),
+        (prompts.CHAT_SELECTION_SYSTEM, "assistant"),
     ],
 )
 def test_a_call_is_recorded_under_its_prompts_task(prompt, task: str) -> None:

@@ -89,6 +89,9 @@ async def _frames(request: Request) -> AsyncIterator[str]:
     """
     queue = stream.subscribe()
     try:
+        # A ready client may commit a new event immediately. Prime history
+        # first so that event cannot be mistaken for pre-existing history.
+        await stream.wait_ready()
         try:
             # Shielded, and this is not caution for its own sake.
             #

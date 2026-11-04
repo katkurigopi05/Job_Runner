@@ -30,6 +30,8 @@ BOARDS = {
     "lever": "Lever",
     "workable": "Workable",
     "workday": "Workday",
+    "breezy": "Breezy",
+    "rippling": "Rippling",
 }
 MISSING_SHEET = "Not on a job board we read"
 

@@ -1,0 +1,27 @@
+{
+  "strict_greater_hit5_natural": 34,
+  "strict_greater_hit5_paraphrased": 11,
+  "uuid_tiebreak_hit5_natural": 33,
+  "boundary_tie_questions": [
+    4
+  ],
+  "independent_float64_max_error": 1.0752580772432907e-06,
+  "independent_check_postings": 5,
+  "tolerance": 2e-06,
+  "dev_paired_target_mean_mrr_delta_vs_equal": {
+    "delta": 0.0023123066219070095,
+    "ci95": [
+      -0.04462975785881869,
+      0.04814349859615391
+    ],
+    "targets": 37
+  },
+  "validation_paired_target_mean_mrr_delta_vs_equal": {
+    "delta": 0.005162756482063235,
+    "ci95": [
+      -0.006755602412548922,
+      0.01925953139511045
+    ],
+    "targets": 19
+  }
+}

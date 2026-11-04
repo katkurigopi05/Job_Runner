@@ -510,19 +510,6 @@ EXTRACTORS: dict[str, PostingExtractor] = {
 }
 
 
-def _register_workday() -> None:
-    """Added separately because `workday` imports this module for
-    `ExtractedPosting` and `posting_hash`; at module scope the two would
-    import each other.
-
-    It also carries a `collect` the other four do not — a Workday board takes
-    several requests to read — which `crawl_company` looks for by name.
-    """
-    from packages.crawler.workday import WorkdayExtractor
-
-    EXTRACTORS.setdefault(WorkdayExtractor.ats, WorkdayExtractor())
-
-
 #: A bespoke careers page read through its schema.org data. Deliberately kept
 #: out of `EXTRACTORS`: it takes a page URL where the four take a slug, so a
 #: caller that iterates the board APIs and builds a URL from a slug would ask
@@ -536,9 +523,39 @@ JSONLD_ATS = "jsonld"
 _jsonld_extractor: PostingExtractor | None = None
 
 
+#: Boards read with a list plus job pages (`crawler.details`), created on
+#: first use: each module imports this one. Kept out of `EXTRACTORS`, whose
+#: callers iterate slug-to-JSON board APIs.
+#:
+#: Workday is one of them. It used to be added to `EXTRACTORS` on first use,
+#: so what that dict held depended on what had run before: a test that read a
+#: Workday board earlier in the run made `test_board_shape` demand a board
+#: shape Workday's POST endpoint does not have (CI, 2026-11-02).
+_DETAIL_BOARDS: dict[str, PostingExtractor] = {}
+
+
+def _detail_board(ats: str) -> PostingExtractor | None:
+    if ats not in _DETAIL_BOARDS:
+        if ats == "workday":
+            from packages.crawler.workday import WorkdayExtractor
+
+            _DETAIL_BOARDS[ats] = WorkdayExtractor()
+        elif ats == "breezy":
+            from packages.crawler.breezy import BreezyExtractor
+
+            _DETAIL_BOARDS[ats] = BreezyExtractor()
+        elif ats == "rippling":
+            from packages.crawler.rippling import RipplingExtractor
+
+            _DETAIL_BOARDS[ats] = RipplingExtractor()
+        else:
+            return None
+    return _DETAIL_BOARDS[ats]
+
+
 def extractor_for(ats: str) -> PostingExtractor | None:
-    if ats == "workday" and "workday" not in EXTRACTORS:
-        _register_workday()
+    if ats in {"workday", "breezy", "rippling"}:
+        return _detail_board(ats)
     global _jsonld_extractor
     if ats == JSONLD_ATS:
         if _jsonld_extractor is None:

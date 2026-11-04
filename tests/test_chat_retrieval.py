@@ -636,7 +636,11 @@ async def test_the_model_is_handed_the_retrieved_postings(
     assert answered.status_code == 200
     assert "[P1] Senior Data Engineer — Streamco" in seen["user"]
     assert "Kafka and Flink" in seen["user"], "the excerpt is what the model can quote"
-    assert "cite" in seen["system"].lower()
+    # A postings question is a selection call: its prompt asks for evidence IDs,
+    # and the citation rules stay in the answer prompt (split 2026-11-02).
+    assert seen["system"] == chat_module.SELECTION_SYSTEM
+    assert "evidence ids" in seen["system"].lower()
+    assert "cite" in chat_module.SYSTEM.lower()
 
     body = answered.json()
     assert body["postings_searched"] == 2

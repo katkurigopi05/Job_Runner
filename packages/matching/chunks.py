@@ -30,7 +30,7 @@ import asyncio
 import time
 
 import structlog
-from sqlalchemy import delete, exists, insert, select
+from sqlalchemy import delete, exists, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Posting
@@ -85,6 +85,21 @@ async def chunk_postings(
     first, so a backlog reaches the jobs the owner is most likely to ask about
     before the old ones.
     """
+    # A posting with no text has nothing to be searched by meaning. Chunks it
+    # still holds were cut from text it has since lost (a listing edit clears
+    # it until the job page is read again, and a page that failed is left
+    # without), so they go now rather than wait for text that may not come.
+    await session.execute(
+        delete(PostingChunk).where(
+            PostingChunk.posting_id.in_(
+                select(Posting.id).where(
+                    or_(
+                        Posting.description_raw.is_(None), func.btrim(Posting.description_raw) == ""
+                    )
+                )
+            )
+        )
+    )
     active = embedder or chunk_embedder()
     if active is None:
         return 0

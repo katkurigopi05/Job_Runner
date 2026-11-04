@@ -1,7 +1,9 @@
 """Job systems a careers page can be built on that discovery cannot read yet.
 
-Discovery verifies Greenhouse, Lever, Ashby, Workable and linked Workday
-boards. `find_boards.VENDORS` is only the vendors probed by name guesses.
+Discovery verifies Greenhouse, Lever, Ashby, Workable, and linked Workday,
+Breezy and Rippling boards. A Rippling careers page that only loads its embed
+script names no board, so the script's host still reads as Rippling here.
+`find_boards.VENDORS` is only the vendors probed by name guesses.
 A careers page on anything else was recorded as
 "names no supported board", which is true and says nothing about what to do.
 Naming the system is what turns a failure into a list of readers worth
@@ -29,7 +31,6 @@ _SYSTEMS: tuple[tuple[str, str], ...] = (
     ("icims.com", "iCIMS"),
     ("jobvite.com", "Jobvite"),
     ("bamboohr.com", "BambooHR"),
-    ("ats.rippling.com", "Rippling"),
     # Its job-board embed script (`/ats/embeds/...`), seen on a careers page.
     ("static-assets.ripplingcdn.com", "Rippling"),
     ("jobs.gem.com", "Gem"),
@@ -40,7 +41,6 @@ _SYSTEMS: tuple[tuple[str, str], ...] = (
     ("teamtailor-cdn.com", "Teamtailor"),
     ("jobs.personio.de", "Personio"),
     ("jobs.personio.com", "Personio"),
-    ("breezy.hr", "Breezy"),
     ("pinpointhq.com", "Pinpoint"),
     ("app.dover.com", "Dover"),
     ("recruiting.paylocity.com", "Paylocity"),

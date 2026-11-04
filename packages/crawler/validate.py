@@ -86,6 +86,8 @@ _BOARD_PAYLOAD: dict[str, type] = {
     "ashby": dict,
     "workable": dict,
     "lever": list,
+    # A bare array, like Lever.
+    "breezy": list,
 }
 
 
@@ -111,6 +113,11 @@ def _api_is_board(response: FetchResult, ats: str) -> bool:
     """
     if not response.ok:
         return False
+    if ats == "rippling":
+        # A page with the board's list embedded, not a JSON API.
+        from packages.crawler.rippling import is_board_page
+
+        return is_board_page(response.text)
     try:
         payload = json.loads(response.text)
     except json.JSONDecodeError:

@@ -180,6 +180,10 @@ class StoreResult:
     #: Listed postings not stored because they are older than
     #: `Settings.posting_max_age_days` and were not already held.
     too_old: int = 0
+    #: Listed postings not stored because every office they list is abroad
+    #: (`locality.wholly_abroad`) while `Settings.search_us_only` is on, and
+    #: they were not already held.
+    abroad: int = 0
 
     @property
     def changed(self) -> list[uuid.UUID]:
@@ -232,6 +236,7 @@ async def _store(
     *,
     now: datetime | None = None,
     max_age_days: int | None = None,
+    us_only: bool | None = None,
 ) -> StoreResult:
     """Upsert a board's postings in one statement, returning what changed.
 
@@ -310,6 +315,29 @@ async def _store(
                 max_age_days=max_age_days,
             )
         extracted = kept
+        if not extracted:
+            return result
+
+    # Wholly abroad, unless already held (`Settings.search_us_only`). The
+    # search area hides these from the feed anyway; storing them cost an
+    # embedding each and, on a worldwide board, most of the table. The same
+    # exception as the age rule: a held posting is still stamped as seen.
+    if us_only is None:
+        from packages.core.config import get_settings
+
+        us_only = get_settings().search_us_only
+    if us_only:
+        from packages.matching.locality import wholly_abroad
+
+        domestic = [
+            item
+            for item in extracted
+            if item.external_id in existing or not wholly_abroad(item.location)
+        ]
+        result.abroad = len(extracted) - len(domestic)
+        if result.abroad:
+            log.info("abroad_postings_not_stored", company=company.name, skipped=result.abroad)
+        extracted = domestic
         if not extracted:
             return result
 
@@ -612,7 +640,8 @@ async def _poll_company(
 
     collect = getattr(extractor, "collect", None)
     if collect is not None:
-        return await _poll_paged(session, seed, fetcher, company, result, collect)
+        hydrate = getattr(extractor, "hydrate", None)
+        return await _poll_paged(session, seed, fetcher, company, result, collect, hydrate)
 
     try:
         response = await fetcher.fetch(url)
@@ -680,8 +709,9 @@ async def _poll_paged(
     company: Company,
     result: CompanyResult,
     collect: Any,
+    hydrate: Any = None,
 ) -> CompanyResult:
-    """A board that takes several requests to read — see `crawler.workday`.
+    """A board that takes several requests to read — see `crawler.details`.
 
     Kept apart from the single-request path rather than folded into it. The
     two differ in what a failure *means*: one failed request is one failed
@@ -691,10 +721,9 @@ async def _poll_paged(
     """
     try:
         pages = await collect(fetcher, seed.slug)
-        if seed.ats == "workday":
+        if hydrate is not None:
             from packages.core.config import get_settings
             from packages.core.models import CompanyCrawlState
-            from packages.crawler.workday import hydrate_details
 
             # The listing itself has no description revision. Read our
             # current text once, reuse it, then spend a bounded detail budget.
@@ -718,7 +747,7 @@ async def _poll_paged(
                     location=row.location,
                     description_raw=row.description_raw,
                     published_at=row.published_at,
-                    ats_type="workday",
+                    ats_type=seed.ats,
                 )
                 for row in rows
                 if row.external_id is not None
@@ -726,14 +755,16 @@ async def _poll_paged(
             state = await session.scalar(
                 select(CompanyCrawlState).where(CompanyCrawlState.company_id == company.id)
             )
-            cursor, pending_cursor = await hydrate_details(
+            # The cursor columns are named for Workday, the first board that
+            # needed them; a company has one board, so any board uses them.
+            cursor, pending_cursor = await hydrate(
                 fetcher,
                 seed.slug,
                 pages,
                 previous,
                 state.workday_detail_cursor if state else None,
+                state.workday_pending_cursor if state else None,
                 max_age_days=get_settings().posting_max_age_days,
-                pending_cursor=state.workday_pending_cursor if state else None,
             )
             if state is None:
                 state = CompanyCrawlState(company_id=company.id)

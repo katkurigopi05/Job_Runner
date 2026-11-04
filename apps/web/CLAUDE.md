@@ -6,6 +6,69 @@ the root file, which keeps every heading and says where each section went.
 
 - The review screen's document panels are in `packages/tailor/CLAUDE.md`.
 
+## All minimatch engines patched (2026-11-03)
+
+Dependabot #52 identified CVE-2026-118764 (GHSA-g3hv-75wg-m249), fixed in
+minimatch 11.0.1. The initial parser-only pin left legacy 3.1.5 installed
+and reduced the full audit from 14 to 13 moderate entries. The owner asked
+for complete remediation; no vulnerable engine remains in the lockfile.
+
+The parser still gets 11.0.1 directly. Scoped overrides route the six legacy
+ESLint consumers through the private `tooling/minimatch-compat` adapter.
+It preserves their callable CommonJS export while delegating all matching
+to upstream 11.0.1, installed as `minimatch-engine`. The alias keeps npm from
+recursively applying a legacy override to the adapter's own engine. Both
+npm 10.9.4 (CI toolchain) and npm 12.0.1 clean installations passed without
+relaxing npm's remote-fetch policy. Existing platform metadata is preserved.
+
+This is a compatibility layer for the APIs those consumers use, not a full
+replacement for every minimatch 3 API. In particular, import/no-internal-modules
+only uses `makeRe(pattern).test(path)`: the adapter supplies `.test()` through
+v11's nonrecursive matcher, not a RegExp or the removed regex engine. Seven
+Node tests cover the callable export, defaults/options, constructors, ESM
+interop and real React, accessibility and import lint rules. CI runs them.
+
+Measured: full `npm audit` **zero vulnerabilities**, including development
+dependencies (previously 14 moderate); production audit also zero. The offline
+security floor failed first on 3.1.5, then the focused Python checks passed
+**93 tests**. Clean install, ESLint, TypeScript and production build passed.
+No direct runtime package, application behavior, live database or running
+checkout changed. Reverting the patch restores the former dependency tree
+and its advisory; remove the adapter only when upstream consumers support
+the patched API. Never use `npm audit fix --force` to downgrade lint tooling.
+GitHub closes the alert after the owner merges and the default branch rescans.
+
+## Keep the assistant open while reading a posting (2026-11-02)
+
+The assistant's `PostingLink` navigated to `/postings/{id}` in the chat tab.
+That unmounted `Assistant`, whose conversation and provider choice live in
+React state; returning mounted an empty conversation. Source links now use
+the existing `POSTING_LINK` policy, so the original assistant stays mounted.
+Cited sources and the expanded match lists share this component.
+
+The dashboard link-policy check failed for the assistant before the change;
+afterwards all 24 link-policy and dashboard-effects checks passed, along with
+Ruff and the dashboard production build (including lint and types). CI then
+caught the 800-line source limit at 801; removing the redundant link comment
+restored 800, and the size guard plus the nearby assistant checks passed.
+Chat storage, intentional navigation away and its stream-abort rule were left
+alone. The same small component patch was applied to the frontend worktree
+serving port 3001, preserving its notes toggle and provider controls.
+
+## Notes behind a header icon (2026-11-02)
+
+The owner asked for a notes symbol that opens the editor on click. `SideNotes`
+now lives in the header and starts closed, so the old side column is released.
+The icon toggles the panel; opening focuses the editor and Escape closes it
+and returns focus to the icon. Hiding keeps the editor mounted and its draft
+intact. The browser-only storage key and explicit Save button stay the same.
+
+Measured before editing: the served page had no notes toggle. Afterwards its
+single labelled button controlled a hidden panel, and clicking it in Chrome
+opened the editor with keyboard focus. ESLint, TypeScript and the production
+build passed. Changes were made in a worktree; the owner's running checkout
+and stored notes were left alone.
+
 ## The crawler indicator does not guess through a disconnect
 
 `crawler-spider.tsx` polls the queue status rather than inferring activity from
