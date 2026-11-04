@@ -16,7 +16,7 @@ from packages.crawler.extract import CompanySeed, extractor_for
 from packages.crawler.fetch import PoliteFetcher
 from packages.crawler.find_boards import Resolved, board_root, resolve_site
 from packages.crawler.job_systems import other_job_system
-from packages.crawler.ratelimit import HostRateLimiter
+from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter
 from packages.crawler.validate import _api_is_board
 from tests.test_board_shape import _response
 from tests.test_workday import FakeClock
@@ -148,14 +148,20 @@ async def test_discovery_counts_the_whole_board_from_its_first_page():
     assert len(calls) == 1
 
 
-async def test_a_crawl_stores_every_page_and_reads_job_pages_within_budget(db_session):
+async def test_a_crawl_stores_every_page_and_reads_job_pages_within_budget(db_session, monkeypatch):
+    from packages.core.config import get_settings
+
+    # One of Branch's jobs is abroad, which a US-only search does not store
+    # (tests/test_crawl_skips_abroad.py). This test is about paging and the
+    # job-page budget, so it reads the whole board.
+    monkeypatch.setattr(get_settings(), "search_us_only", False)
     seed = CompanySeed(name="Branch", slug="branch", ats="rippling", poll_interval_s=0)
     fetcher, calls = _board()
     result = await crawl_company(db_session, seed, fetcher, force=True)
 
     assert result.new_postings == 3 and not result.error
     assert len(calls) == 2 + 3
-    assert all(b[1] - a[1] >= 60 for a, b in zip(calls, calls[1:], strict=False))
+    assert all(b[1] - a[1] >= MIN_DELAY_SECONDS for a, b in zip(calls, calls[1:], strict=False))
     rows = {row.external_id: row for row in (await db_session.scalars(select(Posting))).all()}
     assert rows[FIRST].description_raw and rows[FIRST].published_at is not None
     assert sum(row.description_raw is None for row in rows.values()) == 2

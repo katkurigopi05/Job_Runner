@@ -41,6 +41,10 @@ dependencies = [
     "mcp>=1.2",
     # packages/crawler/extract.py reads the company seed list.
     "pyyaml>=6",
+    # packages/matching/chunk_vectors.py reads the vectors a Colab TPU run
+    # writes as .npy (`make import-chunk-vectors`). Already installed wherever
+    # real embeddings are, through sentence-transformers.
+    "numpy>=2",
     # The owner's company workbook (`make company-sheet`): every company from
     # their sheet, and the ones not on the four job boards with the careers
     # pages discovery and the deep dive found. MIT, pure Python.

@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval eval-paraphrased judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings export-chunk-vectors-pending import-chunk-vectors query-embedder-check backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -365,6 +365,14 @@ bench-matching:
 eval-retrieval:
 	$(PY)/python -m scripts.eval_retrieval $(if $(set),--set $(set),) $(if $(out),--json $(out),)
 
+# make eval-paraphrased — the 500 paraphrased questions in
+# docs/evaluations/paraphrased_questions_500.md through the real search: where
+# each question's own posting lands, overall, by family and for the 15 trap
+# wordings. Read-only. `mode=qwen_semantic` (or any mode of the graded set);
+# `limit=20` for a quick run; `out=file.json` keeps every outcome.
+eval-paraphrased:
+	$(PY)/python -m scripts.eval_paraphrased --mode $(or $(mode),shipped) $(if $(limit),--limit $(limit),) $(if $(out),--json $(out),)
+
 # make judge-pool — the postings to grade for the assistant's search
 # (Phase 5 part 2). Asks every question in seeds/chat_judgment_questions.json
 # in every search mode and prints what would be pooled; writes nothing.
@@ -488,6 +496,38 @@ fetch-board-directories:
 # The matching pass after each crawl does new postings; this clears a backlog.
 chunk-postings:
 	$(PY)/python -m scripts.chunk_postings
+
+# make export-chunk-vectors-pending — write out the open postings whose chunks
+# have no Qwen vector yet (new since the last import), for the Colab notebook
+# scripts/colab/qwen_embed_batch.ipynb. Prints the next two steps. dry=1 counts
+# only; out= picks the folder (default storage/qwen_batches.nosync/<date>).
+export-chunk-vectors-pending:
+	$(PY)/python -m scripts.export_pending_chunks $(if $(dry),--dry-run) $(if $(out),--out $(out))
+
+# make import-chunk-vectors — attach Qwen3-Embedding-4B vectors made on a Colab
+# TPU to the chunks they were made from. Each posting is checked against today's
+# text first; one that changed is skipped and counted. dry=1 checks and counts
+# only. export= and vectors= name another run (default: the 2026-11-02 run).
+import-chunk-vectors:
+	$(PY)/python -m scripts.import_chunk_vectors $(if $(dry),--dry-run) $(if $(export),--export $(export)) $(if $(vectors),--vectors $(vectors))
+
+# make query-embedder-check — embed a fixed question with Qwen3-Embedding-4B
+# through the local Ollama, print how long it took, and unload the model. Needs
+# `ollama pull hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q4_K_M` once (2.5 GB).
+query-embedder-check:
+	$(PY)/python -m scripts.check_query_embedder
+
+# make backfill-descriptions — read every missing job description on Workday,
+# Rippling and Breezy boards, whose lists carry none (a crawl reads five a
+# board). One request a minute per host, robots.txt honoured; hours on a big
+# backlog, and stopping keeps what it read. Then embeds, scores and chunks it.
+# dry=1 counts per host and stops; limit=N reads at most N pages a host;
+# hosts=N reads N hosts at once (48), each still one page a minute;
+# no_retry=1 leaves pages that failed before without text instead of asking again.
+# pace=5,10,15,20 reads job pages at 5 s a host, stepping slower when sites
+# refuse; without it the crawler's configured delay (5 to 60 s, §2.6) applies.
+backfill-descriptions:
+	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit)) $(if $(hosts),--max-hosts $(hosts)) $(if $(no_retry),--no-retry) $(if $(pace),--pace $(pace))
 
 # make audit-locations — how the search area reads every open posting's
 # location, read-only. Lists the places no rule recognized and the strings most

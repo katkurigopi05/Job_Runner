@@ -31,7 +31,7 @@ workers arriving together get two slots a floor apart, because the second
 statement cannot run until the first has committed its row.
 
 The waiting then happens outside any transaction. Holding a row lock for the
-60 seconds a company host is owed would idle a database connection per host
+configured delay a company host is owed would idle a database connection per host
 and deadlock the pool long before it broke politeness.
 """
 
@@ -167,10 +167,10 @@ class SharedHostRateLimiter:
         Deliberately identical to `HostRateLimiter.delay_for`, including the
         part that looks like a mistake: a shared ATS host gets
         `MIN_SHARED_API_DELAY_SECONDS`, *not* the larger of that and the
-        configured delay. `delay_seconds` is the company-host floor of 60s, so
-        taking the maximum would hand every shared ATS API 60 seconds and undo
-        the whole §2.6 amendment — the crawler would be back to 60 boards an
-        hour no matter how many companies are listed.
+        configured delay. `delay_seconds` is the company-host delay (5–60s), so
+        taking the maximum would hand every shared ATS API that larger delay
+        and undo the §2.6 amendment. At the old 60s default this capped the
+        crawler at 60 boards an hour no matter how many companies were listed.
 
         Used to decide whether a `Crawl-delay` is worth writing down. The
         enforced value is whatever the table holds, which may be larger.

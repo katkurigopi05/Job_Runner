@@ -32,6 +32,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api import protected_questions as protected
+from apps.api.chat_selection import is_bare_selection
 from packages.core.models import Company, Posting
 from packages.core.schemas import ChatTurn
 from packages.matching.retrieve import Passage
@@ -86,6 +87,10 @@ def remember(history: Sequence[ChatTurn], *, question: str, mail_may_go: bool) -
     held_for_mail = held_for_topic = 0
     cited: list[uuid.UUID] = []
     for turn in recent:
+        # `{"ids": []}` is not an answer. Handed back as one, it taught the next
+        # model to reply the same way (2026-11-02).
+        if is_bare_selection(turn.answer):
+            continue
         # A question the rule refuses was never answered by a model. One that
         # arrives here anyway is not handed on with an answer beside it.
         if protected.is_refused(turn.question):

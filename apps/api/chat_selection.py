@@ -144,6 +144,28 @@ def parse_selection(
     return SelectionResult(items=tuple(catalog[item_id] for item_id in selected.ids))
 
 
+def is_bare_selection(text: str) -> bool:
+    """Whether a model's whole reply is an evidence selection rather than an answer.
+
+    `{"ids": []}`, fenced or not, and nothing else. An answer that mentions the
+    shape in a sentence, or carries any other key, is not one.
+    """
+    body = text.strip()
+    if body.startswith("```"):
+        body = body.strip("`").strip()
+        if body.lower().startswith("json"):
+            body = body[4:].strip()
+    if not body.startswith("{"):
+        return False
+    try:
+        payload = json.loads(body)
+    except (ValueError, RecursionError):
+        return False
+    return (
+        isinstance(payload, dict) and set(payload) == {"ids"} and isinstance(payload["ids"], list)
+    )
+
+
 def render_selection(result: SelectionResult) -> str:
     """Copy selected exact texts as clearly marked source material.
 

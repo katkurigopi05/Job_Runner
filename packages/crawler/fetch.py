@@ -20,6 +20,7 @@ import structlog
 from packages.crawler.budget import reserve
 from packages.crawler.meter import record_request
 from packages.crawler.ratelimit import (
+    MAX_CONFIGURED_DELAY_SECONDS,
     MIN_DELAY_SECONDS,
     HostRateLimiter,
     RateLimiter,
@@ -398,6 +399,11 @@ def build_fetcher(
         configured = float(get_settings().crawler_min_delay_s)
 
     settings = get_settings()
+    if configured > MAX_CONFIGURED_DELAY_SECONDS:
+        raise ValueError(
+            f"{configured}s is above the {MAX_CONFIGURED_DELAY_SECONDS:g}s top of the "
+            "owner's range (CLAUDE.md §2.6); a site that wants more says so with Crawl-delay"
+        )
 
     # Both implementations raise rather than clamp, which is the point.
     use_shared = settings.crawler_shared_rate_limiter if shared is None else shared

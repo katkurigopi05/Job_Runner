@@ -138,6 +138,22 @@ class Settings(BaseSettings):
     #: error, so raise it before pointing a longer task at the local model.
     ollama_num_ctx: int = 4096
 
+    #: The model that turns a question into a Qwen3-Embedding-4B vector, on
+    #: this machine through Ollama (`packages/matching/query_vectors.py`). The
+    #: 4-bit build: measured 2026-11-02 against the TPU's chunk vectors, it
+    #: found 34 and 11 of 56 targets in the top five where the TPU's own
+    #: question vectors found 35 and 10, at 0.1-0.2 s a question, holding about
+    #: 2.5 GB while loaded. Pulled with
+    #: `ollama pull hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q4_K_M`.
+    query_embed_model: str = "hf.co/Qwen/Qwen3-Embedding-4B-GGUF:Q4_K_M"
+    #: A question is at most 4,000 characters; 1,024 tokens holds it and keeps
+    #: what the loaded model holds small.
+    query_embed_num_ctx: int = Field(default=1024, ge=256, le=8192)
+    #: How long Ollama keeps it loaded after a question: the next one in that
+    #: time skips the 3 s load. A caller can ask for "0" to free the memory at
+    #: once, which the local chat model may need.
+    query_embed_keep_alive: str = "5m"
+
     #: Which model the `ollama_cloud` provider asks for — one Ollama hosts on
     #: its own servers rather than this machine.
     #:
@@ -255,7 +271,9 @@ class Settings(BaseSettings):
     vault_root: str = "./.secrets"
 
     #: Floor, not a default — the crawler refuses to go below this.
-    crawler_min_delay_s: int = 60
+    #: 5 to 60 s, owner's range (2026-11-02); `ratelimit.MIN_DELAY_SECONDS` and
+    #: `MAX_CONFIGURED_DELAY_SECONDS` hold the same two numbers.
+    crawler_min_delay_s: int = Field(default=5, ge=5, le=60)
 
     #: Connection pooling for the crawler's HTTP client.
     #:
@@ -423,6 +441,9 @@ class Settings(BaseSettings):
     #: grades behind it, and `docs/ML_EVALUATION.md` says what would change
     #: that.
     chat_semantic_candidates: bool = False
+
+    #: Opt-in Qwen discovery; keyword ordering and uncovered postings retain bge-small.
+    chat_qwen_search: bool = False
 
     #: What the assistant does with a title that names no level when a
     #: question names one ("senior data engineer jobs").

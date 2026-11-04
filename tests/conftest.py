@@ -559,6 +559,22 @@ def _no_reranker():
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _no_qwen_search():
+    """A developer's opt-in must never load the real query model in tests."""
+    from packages.core.config import get_settings
+
+    previous = os.environ.get("CHAT_QWEN_SEARCH")
+    os.environ["CHAT_QWEN_SEARCH"] = "false"
+    get_settings.cache_clear()
+    yield
+    if previous is None:
+        os.environ.pop("CHAT_QWEN_SEARCH", None)
+    else:
+        os.environ["CHAT_QWEN_SEARCH"] = previous
+    get_settings.cache_clear()
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _postings_of_any_age():
     """Store postings of any age unless a test asks for a limit.
 
