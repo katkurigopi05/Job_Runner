@@ -11,6 +11,8 @@ benchmark questions, at 0.02 s against 1.7 s.
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import event, select
 
 from packages.core.models_chunks import PostingChunkVector
@@ -127,3 +129,19 @@ async def test_exact_distances_are_only_computed_for_listed_chunks(db_session):
     exact = [s for s in statements if "posting_chunk_vectors.embedding <=>" in s]
     assert exact and all("= ANY" in s or " IN " in s for s in exact), "never a full exact scan"
     assert sum("<~>" in s for s in statements) == 1, "one shortlist per question"
+
+
+async def test_more_ids_than_postgres_takes_parameters_are_one_array(db_session):
+    """asyncpg allows 32,767 parameters a statement, and an IN list spends one an id.
+
+    On 2026-11-03 a paraphrased question widened the shortlist past that while
+    its filters kept few candidates, and the search raised instead of answering.
+    """
+    await _spread(db_session, n=2)
+    many = [uuid.uuid4() for _ in range(40_000)]  # none of them exist
+    ranking = CS.ShortlistRanking(vector(2560))
+
+    assert await ranking._best(db_session, chunk_ids=many) == []
+    assert await ranking._best(db_session, posting_ids=many) == []
+    exact, _ = await _exact(db_session, among=many)
+    assert exact == []

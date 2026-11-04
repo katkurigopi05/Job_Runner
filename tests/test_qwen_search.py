@@ -451,7 +451,7 @@ async def test_the_shortlist_is_shared_across_stages_and_widenings(db_session):
         # (2026-11-03): one shortlist for the question, shared by its stages,
         # and exact distances only for shortlisted, named or company chunks.
         assert len(shortlists) == 1, "one shortlist across all stages and widenings"
-        assert reads and all(" IN " in statement for statement in reads)
+        assert reads and all(" IN " in s or "= ANY" in s for s in reads), "only listed chunks"
     finally:
         event.remove(engine, "before_cursor_execute", count)
 
