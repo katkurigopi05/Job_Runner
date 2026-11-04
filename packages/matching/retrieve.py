@@ -347,6 +347,25 @@ _EMPLOYER_FRAMES = (
     r"\b{w}\s+(?:jobs?|roles?|openings?|positions?|postings?|careers?|opportunities)\b",
 )
 
+#: A name other employers write in lower case in at least this share of the
+#: postings that say it, and in at least `_ORDINARY_MIN_POSTINGS` of them, is an
+#: ordinary word to them. Measured on the owner's open postings, 2026-11-03:
+#: "ramp" 77%, "front" 94%, "current" 85%, "later" 99%, "pilot" 80%,
+#: "outreach" 89%, "humanoid" 95%, "scale" 94%, "global payments" 99%; OpenAI,
+#: Anthropic, Stripe, Notion, Snowflake, Databricks, Figma, Plaid 0-1%.
+_ORDINARY_SHARE = 0.5
+_ORDINARY_MIN_POSTINGS = 20
+
+#: The frames of `_EMPLOYER_FRAMES` that ask about an employer whatever case its
+#: name is typed in. "X jobs" is not one for a name that is also a word:
+#: "current jobs" are jobs open now. "at X" has its own test (`_after_at_as_a_name`).
+_UNMISTAKABLE_FRAMES = _EMPLOYER_FRAMES[1:5]
+
+#: `_written_as_a_word`, by (name, company): the corpus moves slowly, and a
+#: question should not pay for the same count twice in one process.
+_WORD_USAGE: dict[tuple[tuple[str, ...], uuid.UUID], bool] = {}
+_WORD_USAGE_MAX = 4096
+
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _HIRING_MANAGER = re.compile(r"\bhiring managers?\b")
 #: "My job applications" is about applications. "job" there says what kind,
@@ -1063,6 +1082,28 @@ def _says(alias: tuple[str, ...], words: set[str], said: list[str]) -> bool:
     return any(tuple(said[at : at + width]) == alias for at in range(len(said) - width + 1))
 
 
+def _said_as_written(name: str, alias: tuple[str, ...], question: str) -> bool:
+    """A name of several words said with no other word between its words.
+
+    `_says` compares the question and the name after `tokenize`, which drops
+    small words from both, so "Bank of America" meets itself. It also made
+    "models at scale for an AI company" say `scale ai` (2026-11-03). The words
+    of one of the name's parts, with or without its corporate suffix, must
+    run together in the question as they are written: the run `alias` was made
+    from, so "Scale AI" is not let through by its shortened "scale".
+    """
+    asked = re.findall(r"[a-z0-9]+", question.lower())
+    for part in _name_parts(name):
+        raw = re.findall(r"[a-z0-9]+", part.lower())
+        for run in (raw, [word for word in raw if word not in _COMPANY_SUFFIXES]):
+            width = len(run)
+            if not width or tuple(dict.fromkeys(tokenize(" ".join(run)))) != alias:
+                continue
+            if any(asked[at : at + width] == run for at in range(len(asked) - width + 1)):
+                return True
+    return False
+
+
 async def _named_companies(
     session: AsyncSession,
     words: set[str],
@@ -1097,7 +1138,11 @@ async def _named_companies(
     framed: list[tuple[uuid.UUID, str]] = []
     for company_id, raw_name in rows:
         name = raw_name or ""
-        hits = [a for a in _company_aliases(name, frequencies) if _says(a, words, said)]
+        hits = [
+            a
+            for a in _company_aliases(name, frequencies)
+            if _says(a, words, said) and (len(a) == 1 or _said_as_written(name, a, question))
+        ]
         if hits:
             matched.append((company_id, name, hits))
         elif any(pattern.search(question) for pattern in _written_names(name)):
@@ -1132,14 +1177,41 @@ async def _named_companies(
             if any(_only_others_say_it(a[0], open_here, frequencies) for a in hits):
                 not_hiring.append(name)
             continue
+        if frequencies.usable and not await _said_as_its_name(session, hits, company_id, question):
+            continue
         named.append(company_id)
         naming |= set(tokenize(name or ""))
         names.append(name)
-    for company_id, name in [*written, *((cid, n) for cid, n in framed if own.get(cid, 0))]:
+    for company_id, name in written:
+        named.append(company_id)
+        naming |= set(tokenize(name))
+        names.append(name)
+    for company_id, name in framed:
+        if not own.get(company_id, 0):
+            continue
+        word = _framed_alias(name, words, frequencies)
+        if word and not await _said_as_its_name(session, [(word,)], company_id, question):
+            continue
         named.append(company_id)
         naming |= set(tokenize(name))
         names.append(name)
     return named, naming, names, not_hiring
+
+
+async def _said_as_its_name(
+    session: AsyncSession, hits: list[tuple[str, ...]], company_id: uuid.UUID, question: str
+) -> bool:
+    """A name others write as an ordinary word names its company only written as a name.
+
+    "the ramp program", "front desk support", "models served at scale" and
+    "a global payments company" each named an employer and filtered the
+    search to it (2026-11-03). Every alias the question says must be one other
+    employers write as a word for the question to need `_names_it_as_a_word`.
+    """
+    for alias in hits:
+        if not await _written_as_a_word(session, alias, company_id):
+            return True
+    return any(_names_it_as_a_word(" ".join(alias), question) for alias in hits)
 
 
 #: What ends a sentence, for `_nothing_follows`.
@@ -1161,6 +1233,91 @@ def _nothing_follows(question: str, index: int) -> bool:
     while index < len(question) and question[index].isspace():
         index += 1
     return index == len(question) or question[index] in _SENTENCE_END
+
+
+def _after_at_as_a_name(name: str, question: str) -> bool:
+    """`name` after "at", where a name would stand: typed with a capital, or ending what is said.
+
+    Every place it follows "at", not the first: "at fast growing startups, or at
+    Fast" says the word once as a word and once as the name.
+    """
+    words = r"[\W_]+".join(re.escape(word) for word in name.split())
+    return any(
+        after_at.group(1)[:1].isupper() or _nothing_follows(question, after_at.end())
+        for after_at in re.finditer(
+            rf"(?:\bat|@)\s+({words})(?![\w\u2010-\u2015-])", question, re.IGNORECASE
+        )
+    )
+
+
+def _names_it_as_a_word(name: str, question: str) -> bool:
+    """Whether a question uses a name that is also an ordinary word as the name.
+
+    After "at" where a name would stand (`_after_at_as_a_name`); "Ramp's",
+    "does Ramp have", "is Ramp hiring" in any case; and "Ramp jobs" only typed
+    with a capital and not opening the question, since "current jobs" and a
+    sentence's first word are not names.
+    """
+    if _after_at_as_a_name(name, question):
+        return True
+    words = r"[\W_]+".join(re.escape(word) for word in name.split())
+    if any(
+        re.search(frame.format(w=words), question, re.IGNORECASE) for frame in _UNMISTAKABLE_FRAMES
+    ):
+        return True
+    for framed in re.finditer(
+        rf"\b({words})\s+(?:jobs?|roles?|openings?|positions?|postings?|careers?)\b",
+        question,
+        re.IGNORECASE,
+    ):
+        before = question[: framed.start()].rstrip()
+        if framed.group(1)[:1].isupper() and before and before[-1] not in _SENTENCE_END:
+            return True
+    return False
+
+
+async def _written_as_a_word(
+    session: AsyncSession, name: tuple[str, ...], company_id: uuid.UUID
+) -> bool:
+    """Whether other employers' postings write a company's name as an ordinary word.
+
+    Counted over open postings of every other company: those saying the name
+    in lower case against those saying it with capitals. Its own postings write
+    it as a name and are left out ("Global Payments" 140 times). A web address
+    or e-mail ("stripe.com", "@ramp") is neither. About 0.4 s on the owner's
+    19,000 postings, once per name and process.
+    """
+    key = (name, company_id)
+    if key in _WORD_USAGE:
+        return _WORD_USAGE[key]
+    lower = " ".join(name)
+    capital = " ".join(word[:1].upper() + word[1:] for word in name)
+
+    def written(phrase: str) -> str:
+        words = r"[[:space:]-]+".join(re.escape(word) for word in phrase.split())
+        return rf"(^|[^[:alnum:]./@_-]){words}([^[:alnum:]_]|$)"
+
+    lowered, capitalised = (
+        await session.execute(
+            select(
+                func.count().filter(
+                    func.strpos(Posting.description_raw, name[0]) > 0,
+                    Posting.description_raw.regexp_match(written(lower)),
+                ),
+                func.count().filter(
+                    func.strpos(Posting.description_raw, capital.split()[0]) > 0,
+                    Posting.description_raw.regexp_match(written(capital)),
+                ),
+            ).where(Posting.closed_at.is_(None), Posting.company_id != company_id)
+        )
+    ).one()
+    ordinary = bool(
+        lowered >= _ORDINARY_MIN_POSTINGS and lowered >= _ORDINARY_SHARE * (lowered + capitalised)
+    )
+    if len(_WORD_USAGE) >= _WORD_USAGE_MAX:
+        _WORD_USAGE.clear()
+    _WORD_USAGE[key] = ordinary
+    return ordinary
 
 
 def _only_others_say_it(word: str, own_postings: int, frequencies: idf.DocumentFrequencies) -> bool:
@@ -1210,14 +1367,7 @@ def _one_word_names_it(
         return True
     if elsewhere <= _MENTIONED_NAME_MAX_SHARE and own_postings > 0:
         return True
-    # Every place it follows "at", not the first: "at fast growing startups,
-    # or at Fast" says the word once as a word and once as the name.
-    return any(
-        after_at.group(1)[:1].isupper() or _nothing_follows(question, after_at.end())
-        for after_at in re.finditer(
-            rf"(?:\bat|@)\s+({re.escape(word)})(?![\w\u2010-\u2015-])", question, re.IGNORECASE
-        )
-    )
+    return _after_at_as_a_name(word, question)
 
 
 async def _names_a_title(session: AsyncSession, subject: list[str]) -> bool:

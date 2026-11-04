@@ -284,10 +284,10 @@ def test_on_site_marker_avoids_scanning_irrelevant_body(monkeypatch) -> None:
     from packages.matching import locality
 
     class UnreadBody:
-        def search(self, _text):
+        def finditer(self, _text):
             pytest.fail("an on-site title already rules out remote prose")
 
-    monkeypatch.setattr(locality, "_REMOTE_PROSE_RE", UnreadBody())
+    monkeypatch.setattr(locality, "_REMOTE_DECLARED_RE", UnreadBody())
     assert not reads_as_remote(
         title="Backend Engineer (Hybrid)",
         location="Austin, TX",
@@ -300,15 +300,15 @@ def test_unchanged_remote_prose_is_scanned_once_but_edits_are_rechecked(monkeypa
 
     from packages.matching import locality
 
-    pattern = locality._REMOTE_PROSE_RE
+    pattern = locality._REMOTE_DECLARED_RE
     scanned = []
 
     class CountScans:
-        def search(self, text):
+        def finditer(self, text):
             scanned.append(text)
-            return pattern.search(text)
+            return pattern.finditer(text)
 
-    monkeypatch.setattr(locality, "_REMOTE_PROSE_RE", CountScans())
+    monkeypatch.setattr(locality, "_REMOTE_DECLARED_RE", CountScans())
     monkeypatch.setattr(locality, "_REMOTE_PROSE_CACHE", OrderedDict(), raising=False)
     description = "This position offers remote work."
     for location in ("Austin, TX", "Chicago, IL", "Seattle, WA"):
