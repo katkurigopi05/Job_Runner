@@ -139,17 +139,82 @@ _REMOTE_DENIAL_RE = re.compile(
 #:
 #: A location field is a declaration about the job. Prose is not, so it only
 #: counts where it says so unambiguously.
-_REMOTE_PROSE_RE = re.compile(
-    rf"\b(?:{_REMOTE_WORD}|work(?:ing)? remotely|work from home|wfh|telecommute|home[- ]?based)\b"
-    r"|\b(?:fully|geographically)? ?distributed "
-    r"(?:team|workforce|company|organisation|organization)\b"
-    r"|\bwork from anywhere\b",
+#: What prose has to say for a posting to offer remote work: that *this role*
+#: is remote (2026-11-04). This replaced `_REMOTE_PROSE_RE`, for which any
+#: mention was enough (after "distributed systems" had already been taken out
+#: of it, above), and on the owner's 16,251
+#: open postings 1,020 on-site roles in other states were kept in the search
+#: area that way. The words were a hybrid schedule ("onsite Tuesdays through
+#: Fridays, with the flexibility to work remotely on Mondays"), a perk ("Remote
+#: workspace stipend"), pay fine print ("Maryland, Colorado, Washington and
+#: remote workers"), boilerplate, a scam warning about "remote interviews", an
+#: FAA "Remote Pilot Certificate" and LinkedIn's `#LI-Remote` tag. A location
+#: or title still declares a working mode with `_REMOTE_RE` alone.
+_REMOTE_DECLARED_RE = re.compile(
+    # "This full-time position is remote": up to two words before the noun.
+    r"\b(?:this|the)\s+(?:[\w-]+\s+){0,2}(?:role|position|job|opportunity)\s+"
+    r"(?:is|can\s+be|will\s+be)\s+(?:a\s+)?"
+    r"(?:fully\s+|100%\s+|completely\s+|entirely\s+)?remote\b"
+    r"|\b(?:this|it)\s+is\s+a\s+(?:fully\s+|100%\s+|completely\s+)?remote\s+"
+    r"(?:role|position|job|opportunity)\b"
+    r"|\b(?:work\s+)?location\s*(?:type)?\s*[:\-–]\s*(?:fully\s+|100%\s+)?remote\b"
+    r"|\blocation\b[^.\n]{0,60}\(remote\)"
+    r"|\bremote\s*:\s*(?:available|yes|eligible|open)\b"
+    r"|\b(?:fully|100%|completely|entirely)\s+remote\s+(?:role|position|job|opportunity)\b"
+    r"|\bwork\s+(?:remotely\s+)?from\s+anywhere\s+in\s+the\s+(?:us\b|u\.s\.|united\s+states|country)"
+    r"|\b(?:can|may|will)\s+be\s+(?:performed|done|worked|based)\s+(?:fully\s+)?remotely\b"
+    r"|\bperformed\s+from\s+a\s+remote\s+location\b"
+    r"|\b(?:can|may)\s+(?:have|be)\s+(?:a\s+)?(?:hybrid\s+or\s+)?remote\s+(?:work\s+)?"
+    r"(?:arrangement|role|position|option)\b"
+    r"|\bremote(?:ly)?\s+(?:from\s+)?(?:anywhere\s+)?(?:with)?in\s+the\s+"
+    r"(?:us\b|u\.s\.|united\s+states|continental)"
+    r"|\b(?:a|an|our)\s+(?:remote[- ]first|fully[- ]remote|fully\s+distributed)\s+"
+    r"(?:company|team|organization|organisation)\b"
+    r"|\b(?:all\s+)?other\s+locations\s+(?:are|will\s+be)\s+remote\b"
+    r"|\b(?:this|the)\s+(?:[\w-]+\s+){0,2}(?:role|position|job)\s+"
+    r"(?:offers|allows|includes|supports)\s+(?:fully\s+)?"
+    r"(?:remote\s+work|work(?:ing)?\s+(?:from\s+home|remotely)|wfh)\s*[.!]"
+    r"|\bhome[- ]based\s+(?:role|position|job|opportunity)\b"
+    # An offer that ends its sentence: "You can work remotely.", "WFH is
+    # available." Not "work remotely on Mondays" or "Work From Anywhere 4
+    # weeks per year", where the sentence goes on to narrow it.
+    r"|(?:^|[.!?]\s+|\byou\s+(?:can|may|will|could)\s+)work\s+(?:fully\s+)?"
+    r"(?:remotely|from\s+home|from\s+anywhere)\s*[.!]"
+    r"|\b(?:wfh|work\s+from\s+home|remote\s+work)\s+(?:is|are)\s+"
+    r"(?:available|possible|an\s+option|supported|offered)\s*[.!]",
     re.I,
 )
+
+#: "If this role is remote, we have listed the top to the bottom of the range":
+#: a pay table, not an offer.
+_REMOTE_CONDITIONAL_RE = re.compile(
+    r"\bif\s+(?:this|the)\s+(?:role|position|job)\s+is\s+(?:a\s+)?remote\b[^.]*", re.I
+)
+
+#: A declaration narrowed to one place, read in the words after it: "remote for
+#: candidates within approximately 50 miles of Washington, DC", "This role is
+#: remote, based in Dallas". The owner cannot take those from California.
+#: "Based in the United States" is not a narrowing.
+_REMOTE_REGIONAL_RE = re.compile(
+    r"\bwithin\s+(?:approximately\s+|about\s+|roughly\s+)?\d+\s*(?:miles|mi|km)\b"
+    r"|\bcommut(?:able|ing)\s+distance\b"
+    r"|\bbased\s+(?:in|out\s+of)\s+(?!the\b|us\b|u\.s\.|united\b|any\b)",
+    re.I,
+)
+_REMOTE_REGIONAL_WINDOW = 160
 
 # Only digests and verdicts survive a call: descriptions can be large, and
 # a changed body must be classified again even if its posting id is the same.
 _REMOTE_PROSE_CACHE: OrderedDict[bytes, bool] = OrderedDict()
+
+
+def _declares_remote(description: str) -> bool:
+    """Whether a description says this role is remote, anywhere in the country."""
+    body = _REMOTE_CONDITIONAL_RE.sub(" ", _REMOTE_DENIAL_RE.sub(" ", description))
+    return any(
+        not _REMOTE_REGIONAL_RE.search(body[found.start() : found.end() + _REMOTE_REGIONAL_WINDOW])
+        for found in _REMOTE_DECLARED_RE.finditer(body)
+    )
 
 
 def _prose_reads_as_remote(description: str) -> bool:
@@ -159,7 +224,7 @@ def _prose_reads_as_remote(description: str) -> bool:
     try:
         remote = _REMOTE_PROSE_CACHE.pop(key)
     except KeyError:
-        remote = bool(_REMOTE_PROSE_RE.search(_REMOTE_DENIAL_RE.sub(" ", description)))
+        remote = _declares_remote(description)
     _REMOTE_PROSE_CACHE[key] = remote
     if len(_REMOTE_PROSE_CACHE) > 4096:
         _REMOTE_PROSE_CACHE.popitem(last=False)
@@ -1337,6 +1402,23 @@ def wholly_abroad(location: str | None) -> bool:
     return True
 
 
+#: Canadian province and territory codes. None is a US state's.
+_CANADIAN_REGION_CODES = frozenset(
+    {"ab", "bc", "mb", "nb", "nl", "ns", "nt", "nu", "on", "pe", "qc", "sk", "yt"}
+)
+
+
+def _canada_by_its_parts(parts: list[str]) -> bool:
+    """A bare "CA" listed beside a Canadian province code is the country.
+
+    Iron Mountain writes country | region | city: "CA | BC | Burnaby | 5566
+    Trapp Avenue" read as California, since each entry is judged on its own
+    and "CA" alone is the state. "US | CA | San Jose" lists no province.
+    """
+    codes = {part.strip().lower() for part in parts}
+    return "ca" in codes and bool(codes & _CANADIAN_REGION_CODES)
+
+
 def area_exclusion(
     location: str | None,
     *,
@@ -1363,6 +1445,8 @@ def area_exclusion(
       is the strict reading, and drops both.
     """
     parts = locations_in(location)
+    if _canada_by_its_parts(parts):
+        return f"location {location!r} is outside the United States"
     # "Houston, TX or Remote": the remote option names no place of its own and
     # sits beside American offices, so it is remote within the country they
     # name. Beside only foreign ones ("Toronto or Remote") it gains nothing,

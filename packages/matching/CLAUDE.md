@@ -725,3 +725,43 @@ Keep both flags off for now; if enabling discovery, enable both together.
 The owner already imported live vectors: activation is settings plus API
 restart. Full method, old/new numbers and the copy-only HNSW probe are in
 `.claude/rules/assistant-search.md`; old CSVs remain historical evidence.
+
+## A description offers remote work only by saying so (2026-11-04)
+
+The 500 paraphrased questions found 72 of their 500 target postings on-site outside California
+and kept in the search area because their description said "remote" somewhere. Over all 16,251
+open postings with text, 1,020 were kept that way. The words were a hybrid schedule ("onsite
+Tuesdays through Fridays, with the flexibility to work remotely on Mondays"), a perk ("Remote
+workspace stipend", "four weeks per year of fully remote work"), pay fine print ("Maryland,
+Colorado, Washington and remote workers"), boilerplate, a scam warning about "remote interviews",
+an FAA "Remote Pilot Certificate", "remote attestation", or LinkedIn's `#LI-Remote` tag.
+
+`locality._declares_remote` now wants the description to say this role is remote:
+`_REMOTE_DECLARED_RE` ("Work location: Remote", "This full-time position is remote", "a fully remote
+position", "can be performed remotely", "Remote: Available for candidates outside these
+locations", "a remote-first company", "Other locations are remote", "a home-based role"), or an
+offer that ends its sentence ("You can work remotely.", "WFH is available."), which "work
+remotely on Mondays" and "Work From Anywhere 4 weeks per year" do not. A pay table's "If this role is remote" is
+removed first, and a declaration narrowed to one place in the words after it ("within 50 miles of
+Washington, DC", "based in Dallas") does not count, since the owner cannot take it from
+California. A location or title still declares a working mode with `_REMOTE_RE` alone.
+
+A bare "CA" listed beside a Canadian province code is Canada (`_canada_by_its_parts`): Iron
+Mountain writes country | region | city, and "CA | BC | Burnaby" was California.
+
+Measured read-only on the live database, 19,245 open postings: 973 left the search area and 3
+joined; 2,336 postings no longer read as remote and 33 newly do (wording the old rule missed, such
+as "can be performed remotely"). Of the 72 suspect 500-set targets, 70 left the area; the other 2
+declare remote work. In a random 25 of the lost remote readings, 23 were the kinds above; the 2
+real ones ("a fully-remote company", "Other locations are remote") are now patterns.
+
+What a later change could undo:
+
+- **The same reader serves the feed, the scoring gate and the assistant's "remote" filter**
+  (`reads_as_remote`), so "remote backend jobs" now finds fewer postings, by design.
+- **`#LI-Remote` is not a declaration.** It is how a recruiter files the posting on LinkedIn,
+  and on these boards it marks home-based territory roles ("Territory Manager - Nashville").
+- **Not caught:** "remote work may be available for highly qualified candidates" is left out on
+  purpose, and so is a role whose only evidence is wording no pattern lists. A "home-based
+  role" counts, as `tests/test_remote_work_evidence.py` already held, territory roles included.
+  `tests/test_remote_declared.py` holds both directions.
