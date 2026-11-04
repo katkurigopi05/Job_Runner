@@ -6,9 +6,13 @@ paths:
   - "packages/matching/gaps.py"
   - "packages/matching/evidence.py"
   - "packages/matching/chunks.py"
+  - "packages/matching/chunk_vectors.py"
+  - "packages/matching/query_vectors.py"
+  - "packages/matching/chunk_search.py"
   - "apps/api/routers/chat*.py"
   - "tests/test_chat*.py"
   - "tests/test_retriev*.py"
+  - "tests/test_qwen_search.py"
 ---
 # Notes on the assistant's search
 
@@ -102,6 +106,9 @@ Four things are load-bearing:
   description, plus the `content_hash` it was cut from. A chunk whose hash no
   longer matches its posting is ignored by search and replaced by the next
   pass, never read at the wrong place.
+  A posting with no text keeps no chunks at all (2026-11-02): one that loses
+  its description, or that the backfill leaves without one, has its chunks
+  deleted by the next pass, so the index holds only postings with text.
 - **Only bge-small chunks.** Lexical chunk vectors would repeat what the
   keyword scan reads, so with `EMBEDDING_BACKEND=lexical` the pass does
   nothing and search behaves exactly as before. Chunk queries carry bge's
@@ -465,9 +472,9 @@ area 61 postings were that role. Four causes, each with a test in
   listed first and the rest of the role after them, never dropped (below).
 - **Nothing said there were more.** `Retrieval.role_total` is how many open
   postings in the area carry the title. The context tells the model the
-  number; the reply carries the next matches as `more_sources` (up to
-  `MORE_LIMIT`, 100), and the dock lists them ten at a time, with a link to
-  `/matches?role=…` for whatever is past that.
+  number; the reply carries every further match as `more_sources`, and the
+  dock lists them ten at a time or all at once (the 100 cap that was here
+  went on 2026-11-02, below).
 - **The excerpt was the employer's pitch.** Found by title, a posting has no
   term to quote on, so `excerpt` took the first 600 characters. With nothing
   to quote it now starts at the requirements heading, when
@@ -624,7 +631,12 @@ Routing, each from one word (`tests/test_chat_intent_routing.py`,
   "queue".
 - **"target" is a framing word**, and **a question that names nothing is not
   searched** (`Retrieval.unnamed`). It used to be reported as "searched 0 of
-  11,147, 11,147 not searchable yet".
+  11,147, 11,147 not searchable yet". One that names nothing and asks *how
+  many* gets the totals (`Retrieval.totals`, 2026-11-02): all open postings,
+  their companies, and the search area's count, the percentage denominator's
+  own rule. "how many job posting are available" had been answered "I can't
+  give a total" by the Kaggle 27B, correctly, from a context that held none.
+  `tests/test_chat_open_posting_count.py`.
 - **A company's name is its words in order.** "AI-native" is not Native AI.
   A common word after "at" is a name only where a name would stand: "at
   fast-growing firms" is not Fast.
@@ -796,8 +808,9 @@ matched is where a missed job hides. `matching/tiers.py` does it, and
   277 titles with AI and then 43 "Machine Learning Engineer"-like titles
   without it, under "related:". `postings_related_total` keeps them out of
   the count of titles with the word.
-- **The list is capped per tier**, at `MORE_LIMIT` each. One cap let the 277
-  fill it and the related were never listed.
+- **No tier is capped.** One cap of 100 for the whole list let the 277 fill
+  it and the related were never listed; a cap per tier followed, and since
+  2026-11-02 there is none (below).
 - **The mentions keep the keyword scan's order.** Fused in the role's
   newest-first order, "software engineer jobs in London" dropped from a
   relevant posting first to third in the owner's grades.
@@ -908,3 +921,350 @@ company or level restriction; its scope is stated. This accounting uses a
 separate place filter so it cannot alter the query's omitted-role counts.
 Ordinary role queries do not pay for the denominator scan. No model performs
 division. `tests/test_chat_posting_share.py`.
+
+## "Software jobs" is a kind of job (2026-11-02)
+
+Asked "software job roles", the assistant searched for the word: 3,920
+postings that mention "software", a UX designer of scientific software in
+the first five and a software-asset-management lead in the list. Nearly every
+employer calls itself a software company, so the mentions are noise. When
+"software" (optionally with "engineering" or "development") before a job
+noun is all a question asks, it is read from titles, the way "any roles with
+AI" is (`retrieve._job_type_words`): 1,100 titles in the area, software
+engineer 808 first, then the role's titles without the word (member of
+technical staff and the like) under "related:". The qualifier is not required
+in the title, so "software development jobs" lists "Software Developer".
+
+What was measured and left alone, on the live corpus in one read-only
+snapshot: all 207 benchmark and judged questions are unchanged.
+
+- **The role table was tried first.** Mapping the word onto it made
+  "backend roles" 32 postings where the keyword search had 642, because
+  "Software Engineer, Backend" is not a backend-engineer title to the table.
+- **"backend" and "frontend" stay keyword searches.** Their titles already
+  came first, and a description saying "backend" is often a backend role
+  titled "Software Engineer".
+- **With anything else asked** ("software jobs using Kafka", "software jobs
+  at Stripe") the search is unchanged.
+- **Said after the job noun it is the same question** (2026-11-02): "any jobs
+  on software engineering" had found the phrase in descriptions and opened
+  with "Manager, Software Engineering" and a lead data scientist. "on", "in",
+  "for" and "about" are read; "jobs in software testing" still searches,
+  because "testing" is asked too. None of the 195 saved questions use it.
+- **One employer's repeats still take places among the five** (§26): Process
+  Street lists "Senior Software Engineer | Remote | AI SaaS Software Role" six
+  times, and the newest-first order shows four of them. Collapsing them is
+  the owner's decision.
+
+`tests/test_chat_job_type_words.py`.
+
+## Every posting is listed (2026-11-02)
+
+The owner asked for software jobs and said the list "should show every
+single role". A reply listed the five the model read and at most 100 more:
+892 software titles stopped at 105, and a search by mention listed the 30 it
+ranked of the 1,619 it counted for "python jobs", with no way past either.
+
+- **Every list carries everything its count covers.** Title, role and tier
+  lists drop the cap. A simple search lists every posting `_matching_totals`
+  counted, after the ranked ones, in the keyword ranking's order; an
+  employer's in newest-first order. The head of each list, and what the model
+  is shown, are unchanged.
+- **The count and the list are one set.** `_Totals.kept` is what was
+  counted, so a listed posting is never one the area or the level left out.
+- **Only metadata is read for the rest** (`_listed`: title, company, place,
+  link, 1,000 ids a query). No description, no excerpt.
+- **The dock adds "show all"** beside "show next 10".
+
+Measured on the live database: "python jobs" lists 1,619 (390 KB), "which
+roles use Kafka" 156, "product manager jobs" 3,976 (about 1 MB, the largest
+seen), with search times unchanged. A compound search ("python jobs using
+Kafka") has no exact count and still lists what it ranked.
+`tests/test_chat_lists_every_match.py`.
+
+## Qwen chunk vectors, stored beside bge-small's (2026-11-02)
+
+The owner embedded the whole index with Qwen3-Embedding-4B on a Colab TPU v5e-1
+(224,361 chunks, 27 minutes). Over all 16,306 postings it put the posting a
+question was written from in its top five for 35 of 56 natural questions and 10
+of 56 paraphrased ones, where bge-small found 21 and 2; question by question it
+ranked the target higher on 32 and 45. The same questions embedded on the Mac
+with the 4-bit build through Ollama found 34 and 11, at 0.1-0.2 s a question.
+The run and its numbers: `storage/embed_rank_bench/whole_index_2026-11-02/`.
+
+`posting_chunk_vectors` holds them, one row per chunk and model, 2,560 wide.
+**Nothing searches them yet**; that is a later change, measured first.
+
+- **A vector goes only onto the text it was made from.** `make
+  import-chunk-vectors` writes a posting's vectors only when its chunk rows
+  are current and cut exactly the exported text; anything else is skipped and
+  counted. Dry-run on the live database: all 16,251 open postings matched.
+- **A chunk's vectors go with it** (`ON DELETE CASCADE`), so re-chunking or
+  pruning a posting cannot leave a vector behind.
+- **Default storage, measured.** `STORAGE PLAIN` kept each vector inline: a
+  full scan about 40% faster warm, but one vector per 8 KB page, 1.75 GB
+  against 1.3 GB. Revisit when search speed is measured on the real table.
+- The vectors file stays out of git and iCloud (`vectors.nosync/`).
+
+`tests/test_chunk_vectors_import.py`, `tests/test_migration_posting_chunk_vectors.py`.
+
+**A question's Qwen vector is made on the Mac** (`query_vectors.embed_question`),
+through the Ollama daemon the local chat model uses, with the 4-bit build
+`QUERY_EMBED_MODEL`. Live on 2026-11-02: 2.3 s for the first question (loading),
+0.11 s after, `make query-embedder-check`. What holds:
+
+- **The question never leaves the machine.** An `OLLAMA_BASE_URL` that is not
+  loopback, or a `:cloud` model, is refused before anything is sent
+  (`audit.is_loopback`, `audit.is_cloud_model`, shared with `privacy.py`).
+  So it stays local when Kaggle answers too, and does not depend on Kaggle.
+- **Worded as measured**: `QUERY_PREFIX` in front of the question.
+- **No guessing**: another width, a zero vector or a non-finite value is a
+  `QueryEmbeddingError` naming the fix (`ollama serve`, `ollama pull …`).
+- **`keep_alive` per call.** Five minutes by default (about 2.5 GB held);
+  "0" unloads at once, for when the local chat model needs the memory.
+**New postings get Qwen vectors in batches** (`make export-chunk-vectors-pending`).
+Every crawl adds postings after the whole-index run; until they have Qwen vectors
+the search ranks them with bge-small. The export writes exactly the open postings
+whose current chunks are missing one, whole, so the vectors file lines up with
+their chunks; a posting not yet chunked from today's text is counted and left
+for the matching pass. `scripts/colab/qwen_embed_batch.ipynb` embeds the file on
+a Colab TPU with the whole-index run's settings (bfloat16, left padding,
+last-token pooling, unit length), which `tests/test_qwen_batch_notebook.py`
+holds, and `make import-chunk-vectors export=… vectors=…` attaches them with
+the same text check. On the live database on 2026-11-03: 16,251 covered,
+nothing pending (4 s to count). `tests/test_chunk_vectors_export.py`.
+
+## Original Qwen implementation at 2f87d89 (2026-11-02)
+
+`CHAT_QWEN_SEARCH=false` remains the default. The opt-in search uses the local
+Qwen question vector and `posting_chunk_vectors`; bge-small handles postings
+without current Qwen rows. `chunk_search.py` owns the shared query, model/text
+predicates, disjoint coverage and rank merging. The keyword, title, company,
+area, place, level, sponsorship and required-skill rules remain in force.
+
+Measured the real `retrieve()`, never a pure vector simulation, on a restored
+copy of the live database. No production writes, migrations or imports were
+performed. The copy held 19,300 open postings: 16,306 with searchable text and
+224,361 imported Qwen chunks, including the 55 closed benchmark targets restored
+from the public export. Their unavailable locations were left unknown and
+inserts use default timestamps: this compares modes on one controlled copy,
+not current live-corpus hit rates. All three modes read the same copy; the search area
+was applied and the optional second-stage reranker was off.
+
+One target per question: 56 natural and 56 paraphrased questions from
+`storage/embed_rank_bench/embed_rank/pool.json`. Five other appropriate jobs
+still count as a target miss; these are known-item ranks, not relevance grades.
+Times include real local embedding, warmed before each mode, on the owner's
+shared Mac. Local chat answers would additionally reload the query model when
+`keep_alive="0"` is required; that cold cost is not represented here.
+
+| Mode | Natural in 5 / listed | Paraphrased in 5 / listed | Median s, natural / paraphrased |
+|---|---:|---:|---:|
+| bge-small, shipped | 44/56 / 54/56 | 4/56 / 10/56 | 1.59 / 1.94 |
+| Qwen, reranking only | 43/56 / 54/56 | 5/56 / 10/56 | 2.08 / 2.39 |
+| Qwen + semantic candidates | 45/56 / 54/56 | 15/56 / 31/56 | 6.58 / 6.83 |
+
+Semantic finds beyond each question's one known target are **ungraded**;
+15/56 in five and 31/56 listed do not grade the other retrieved postings.
+
+Against bge-small, per-question target rank (higher / lower / unchanged):
+
+- **Qwen only:** natural 7 / 9 / 40; paraphrased 7 / 1 / 48.
+- **Qwen + semantic candidates:** natural 8 / 10 / 38; paraphrased 27 / 3 / 26.
+
+Regression: all 195 distinct saved questions from
+`seeds/chat_judgment_questions.json` and `seeds/retrieval_questions.json` were
+asked in each mode. The ordered five shown changed on
+178/195 with Qwen only and
+179/195 with Qwen + semantic candidates.
+Changed does not mean better. A sample of public titles and excerpts was read:
+Qwen-only promoted Fireworks pricing roles for “jobs using PyTorch” on founder
+boilerplate and moved the known weekend Support Engineer from rank 2 to 7 behind
+other shift work. “Kafka”, fraud/payments, Astranis, junior Python, remote
+backend and grounding questions were also inspected. Semantic additions need
+fresh relevance grades; the original pool does not grade all their new finds.
+
+No query embedding failed in this measurement. Synthetic tests separately
+prove the missing-Qwen bge-small path (chunks and posting vectors), current-text
+and model stamps, coverage, interleaving, constraints and the rare-term guard.
+A `QueryEmbeddingError` returns the original search and records its reason on
+`Retrieval`; both prompt context and the finished reply state the bge-small
+fallback. This is never an answer-provider fallback. Ollama answers request
+`keep_alive="0"`; explicitly remote answers leave the local embedder warm.
+
+Activation remains the owner's decision after reading these results. The owner
+already ran the migration and imported 223,576 vectors on the live database on
+2026-11-02. Activation now means choosing the two settings in `.env` and
+restarting `make api`; neither migration nor import needs repeating. This PR
+does no production writes. The new-posting export/Colab/import pipeline is PR 4.
+
+**Recommendation:** leave both `CHAT_QWEN_SEARCH` and
+`CHAT_SEMANTIC_CANDIDATES` off for now. Reranking alone does not establish an
+improvement (one fewer natural hit, one more paraphrased hit). Semantic discovery
+recovers eleven additional paraphrased targets, but costs about five seconds per
+question and its new finds need relevance grades. It exceeds the promotion allowance of one extra second in
+`score_judgments.THRESHOLDS`. The implementation is available for an explicit
+experiment; these numbers do not promote it as the default.
+
+Per-question ranks and warm timings are committed in
+`docs/evaluations/qwen-search-2026-11-02.csv`; the 195 ordered-head comparisons
+are in `docs/evaluations/qwen-saved-questions-2026-11-02.csv`. Blank rank cells
+mean the target was not listed, not a closed target (all 56 were restored).
+
+The canonical `make eval-retrieval` was also run in all three modes. Of 80
+cases, 17 are open/in-area, 62 gone and one outside the area. Dev has just one
+target: natural in five 1/1 in every mode; paraphrased 0/1, 0/1, 1/1. Held-out
+natural in five: 12/16, 12/16, 11/16; paraphrased: 5/16, 4/16, 6/16. Listed
+held-out natural: 14/16 throughout; paraphrased: 6/16, 6/16, 10/16. No rules or
+thresholds were tuned from those held-out results.
+
+`make score-judgments` also completed on the copy with Qwen off, using the
+harness's existing shipped / semantic / cross-encoder modes. Of 330 saved grades,
+33 were by the owner and 297 by Claude. Dev P@5 was .187 / .240 / .227;
+MRR .288 / .379 / .336; median seconds .63 / .64 / .99. Only 22% / 29% / 29%
+of retrieved results were judged in that old pool. These are baseline harness
+results, not grades for the new Qwen candidates; the sparse coverage cannot
+justify promoting them. Both the manual Qwen-only and semantic samples retained
+fraud/payments and employer constraints; semantic PyTorch results also included
+a pricing role on founder boilerplate. New finds need pooled judgments.
+
+
+## Qwen discovery after owner review (2026-11-02)
+
+This supersedes the original implementation and recommendation details above.
+Both flags still default to false. `CHAT_QWEN_SEARCH` now selects Qwen for
+**discovery only**: semantic candidates, the vector-only path, and the optional
+judge's additional candidates. Keyword matches retain the shipped bge-small
+ordering and spans. An empty rare-term keyword result still cannot be filled.
+
+Each question owns an `ExactRanking`. One materialized sequential scan computes
+Qwen chunk distances; one grouped result keeps every open/current posting's
+best span. The same compact in-memory ranking serves every discovery stage and
+widening; it never survives the question. The materialization matters: the
+current-hash join was estimated at about 12 rows and otherwise chose a vector
+primary-key lookup for nearly every chunk. The final copy plan uses a vector
+sequential scan and hash joins. Synthetic tests compare complete original/exact
+rankings and spans; a real-copy check also matched the original exhaustive scan.
+
+Embedding is lazy: a keyword-only question never loads Qwen. The scope keeps
+local embeddings warm (`5m`) until its last embedding, then releases once for
+local chat. Semantic discovery now needs only the full question's Qwen vector.
+A release failure logs a warning and continues to the provider's own error;
+a down daemon retains the `ollama serve` remedy. Remote answers retain the
+configured keep-alive. Question-embedding failures still state the bge-small
+fallback in context and reply.
+
+Measured the real `retrieve()` on a fresh read-only copy of the same corpus,
+restoring the same 55 public targets, with no live writes. All 56 targets were
+present; 16,306 postings had 224,361 Qwen chunks. Restored locations remain
+unknown and insertion timestamps default, as in the original controlled copy.
+All 307 baseline ordered heads (112 pool plus 195 saved questions) matched the
+previous copy. The optional second-stage reranker was off.
+
+| Mode | Natural in 5 / listed | Paraphrased in 5 / listed | Warm median s, natural / paraphrased |
+|---|---:|---:|---:|
+| Shipped bge-small | 44/56 / 54/56 | 4/56 / 10/56 | 3.41 / 4.22 |
+| Qwen discovery, semantics off | 44/56 / 54/56 | 4/56 / 10/56 | 3.53 / 4.30 |
+| Qwen + semantic candidates | 46/56 / 54/56 | 12/56 / 31/56 | 7.02 / 7.40 |
+
+**Semantic finds beyond each question's one known target are ungraded.**
+12/56 in five and 31/56 listed do not establish relevance of the other finds.
+Against this run's shipped baseline, target-rank wins / losses / unchanged:
+Qwen alone 0 / 0 / 56 for each form; discovery with semantics natural
+3 / 1 / 52 and paraphrased 26 / 4 / 26. The earlier semantic implementation
+had 45/56 natural and 15/56 paraphrased in five; preserving bge-small keyword
+order trades three previous paraphrased top-five hits for broader stability.
+The adult-primary-care target returns to rank 1 (previous semantic 11), and
+weekend Support Engineer to rank 2 (previous semantic 5).
+
+Ordered heads changed on **0/195** saved questions with Qwen alone (previously
+178/195), and **125/195** with semantics (previously 179/195). Changes are not
+relevance grades. Per-question ranks, explicit wins/losses, timings and scan
+counts: `docs/evaluations/qwen-discovery-review-2026-11-02.csv`; ordered saved
+heads: `docs/evaluations/qwen-discovery-saved-2026-11-02.csv`. No embedding failed
+in the 921 measured retrievals, and each timed question performed at most one
+Qwen distance scan.
+
+The 112 questions per mode were timed serially with warm applicable models.
+The 195 saved questions were rank checks only: three SQL workers, one warmed
+and serialized native encoder. Their concurrent times are not reported.
+Intermediate unused-model-preload and nested-loop timing runs were discarded.
+The fresh shipped baseline was slower than the original 1.59/1.94 s on this
+shared Mac (heavy Chrome/VM activity and about 9 GB swap observed). Absolute
+before/after wall times are not a controlled speedup comparison. The current
+same-run semantic overhead is **+3.61/+3.18 s**, still above the +1.5 s goal.
+
+**Recommendation for this exact implementation: keep both flags off.**
+Qwen-only changes nothing for these keyword questions; enabling discovery means
+using the two flags together. The latency goal is unmet and the non-target
+semantic finds remain ungraded. The conditional HNSW experiment below measures
+an alternative; it is not shipped or used by application retrieval.
+
+The owner already migrated and imported 223,576 live vectors. Once this code is
+available, activation is only setting `CHAT_QWEN_SEARCH=true` and
+`CHAT_SEMANTIC_CANDIDATES=true` in `.env`, then restarting `make api`. Do not
+repeat migration/import as activation steps. Workers and the crawl sweep remain
+off; the new-posting export/Colab/import pipeline remains PR 4.
+
+### Conditional HNSW measurement (2026-11-02, copy only)
+
+Because the exact implementation missed the latency goal, built a temporary
+`halfvec(2560)` cosine HNSW index on the marked evaluation copy only: pgvector
+0.8.6, `m=16`, `ef_construction=64`; build 346.1 s,
+1,530,789,888 bytes. Model unloaded before the build; serial maintenance
+with 2 GB work memory avoided Docker's 64 MB shared-memory limit and graph
+spilling. No schema migration or approximate application search is shipped.
+
+Compared 112 public question vectors against full exact posting rankings.
+The exact grouped ranking and spans matched the original exhaustive query for
+all 16,306 postings. Each ANN query shortlisted up to 10,000 chunks,
+then filtered current/open text, deduplicated postings and retained distance
+order. Strict iterative scan used `max_scan_tuples=20000`.
+
+| ef_search | Median ANN DB seconds | Mean posting recall@5 | @20 | @200 |
+|---|---:|---:|---:|---:|
+| 100 | 1.338 | 98.75% | 97.19% | 92.26% |
+| 400 | 1.476 | 99.64% | 99.60% | 97.46% |
+| 1000 | 1.445 | 100.00% | 99.91% | 99.38% |
+
+The same probe's full exact grouped DB median was
+1.016 s: this conservative 10,000-chunk ANN probe was slower than exact.
+These are database-ranking timings only,
+excluding embedding, keyword retrieval, hydration and chat. They are not an
+end-to-end latency promise, and global posting recall does not establish recall
+under company/area/level filters or semantic relevance. Per-question data:
+`docs/evaluations/qwen-hnsw-review-2026-11-02.csv`.
+
+The default planner did not choose HNSW. The experiment verified an HNSW index
+scan with transaction-local custom plans and sequential/bitmap scans and sorts
+disabled. Those diagnostic settings are not deployed; adding the index alone
+would not give these results. The index belongs only to the disposable copy.
+
+The owner's later PR comment reports a promising 1-bit shortlist with exact
+re-scoring. That is separate evidence, not this experiment or shipped behavior.
+The recommendation remains both flags off until latency and ungraded semantic
+finds are addressed.
+
+## Qwen through a 1-bit shortlist (2026-11-03)
+
+Graded, Qwen + semantic candidates was 2.9 s slower a question than the shipped search, against the
+owner's limit of +1.0 s. Profiled: 1.28 s was the exact scan of all 1.3 GB of Qwen vectors, 0.6 s the
+keyword stage slowed by that scan evicting the cache, and about 0.7 s bge-small "without Qwen" scans that
+found nothing because every posting had Qwen vectors.
+
+- **`posting_chunk_vectors.embedding_bits`** is `binary_quantize(embedding)::bit(2560)`, a stored generated
+  column (85 MB for the table), so it cannot disagree with the vector. Migration `e1a3c5e7f9b2`: 6 s on a
+  copy of the owner's database.
+- **`chunk_search.ShortlistRanking`** replaces the exact scan: Hamming distance on the bits picks at least
+  `SHORTLIST_CHUNKS` (2,000) chunks, only those get exact cosine, best chunk per posting. Widening asks for
+  four times the caller's window. Named postings and companies are scored exactly, without a shortlist.
+  One shortlist per question, shared by its stages. Measured 2026-11-02: shortlists of 500, 2,000 and 8,000
+  gave the exact top five on all 112 benchmark questions.
+- **Coverage is counted once per question, first**, and when no open posting lacks Qwen vectors the
+  bge-small fallback spaces are left out; with one uncovered posting they run as before.
+
+On a copy of the live database, graded set (582 grades): `qwen_semantic` keeps its quality (dev nDCG@8
+0.786 vs 0.788 before, P@5 0.880 both) and its median went from 3.79 s to **1.20 s** against shipped's
+0.62 s (+0.58 s; held out +0.41 s). Against the 2026-10-19 thresholds, five of six now pass; "better" still
+misses on the held-out half (+0.040 [−0.006, +0.103], 13 questions). `tests/test_qwen_bit_shortlist.py`,
+`tests/test_migration_qwen_vector_bits.py`, and the full-coverage test in `tests/test_qwen_search.py`.

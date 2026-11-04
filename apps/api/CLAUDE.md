@@ -115,7 +115,10 @@ remote eligibility or required skills. Regional omission notices remain part
 of the answer. Incomplete regional accounting is labelled as candidate coverage.
 These replies use provider `facts`, no model, and no mail-sharing provenance.
 Selected review details, conversation follow-ups, skill gaps and application
-rates keep their existing paths. No system prompt changed.
+rates keep their existing paths. No system prompt changed. "How many jobs are
+there?", which names nothing to search, gets the open-posting totals the same
+way (`chat_facts.render_totals`); in a follow-up the model is handed them as
+`OPEN POSTINGS` rather than "not searched".
 
 **A posting percentage has an explicit denominator.** A question asking what
 percentage a role or other completely counted search represents gets its share
@@ -256,6 +259,17 @@ Not done:
   it misses what that misses.
 
 ## §17: live status updates, and the process boundary they had to cross
+
+**Startup ordering, 2026-11-02.** CI intermittently timed out waiting for a
+new application's `created` event. The ready frame could precede the watcher's
+history query; an application committed in that gap could be marked as
+already seen and never published. `StatusStream.wait_ready()` now gates the
+initial counts read on completed history classification. The subscriber is
+registered first, so later events are still queued normally. A regression
+yields during priming and observes the counts-read ordering: it failed before
+the barrier and passed afterwards, with all 57 focused status-stream and
+assistant checks. Timeouts, the overlap window, cooperative shutdown and
+post-commit publication were left alone.
 
 `GET /events/applications` (`apps/api/routers/events.py`) streams application
 status changes to the dashboard, which was `force-dynamic` and therefore only
@@ -610,8 +624,51 @@ including freshly reread earlier postings. It excludes mailbox, application,
 resume and prior model-written prose. Context packing budgets this exact
 prompt; removed excerpts disappear from both the allowed catalogue and quote
 fallback. The response's citation metadata comes from validated source labels,
-not citation-like text inside source quotes. Assistant system prompt is v9.
+not citation-like text inside source quotes.
+
+**The selection protocol is its own prompt** (2026-11-02): `assistant.selection` v1,
+sent only by `selected_reply`; `assistant.system` is v10 without it. In v9 the
+protocol was a paragraph of the one prompt every question was sent with, and said
+it took precedence over the answer format: the Kaggle Qwen models answered "Have I
+had any replies?" and a skills-gap question with `{"ids": []}`, and the dock sent
+those back as history. An ordinary answer that is only `{"ids": [...]}` is now
+refused on both routes (`selection_instead_of_answer`), and an earlier one is not
+remembered. `tests/test_chat_selection_prompt_split.py`.
 
 Application, recruiter-mail, rate and skill-gap conversations retain their
 existing paths. The selection protocol does not establish semantic accuracy;
 manual source review and useful-answer coverage remain evaluation requirements.
+
+### Qwen query model lifetime and search notices (2026-11-02)
+
+With `CHAT_QWEN_SEARCH` on, `prepare` asks retrieval to release its question
+embedder (`keep_alive="0"`) before an Ollama chat answer needs the memory.
+Kaggle and other explicitly selected remote answer providers leave the local
+query embedder warm. The query itself stays local regardless of answer provider.
+With the setting off the original retrieve call is retained.
+
+A query embedding failure is a search limitation, never an answer-provider
+fallback. The context names the bge-small search and its reason; `reply_for`
+also prefixes the finished reply with that notice so fixed, selection and
+streamed answers cannot silently lose it. Qwen and uncovered bge-small coverage
+are separate counts in the postings context. Provider privacy, recruiter-mail
+consent and citation/evidence selection rules remain unchanged.
+
+Switching from a remote search to a local **non-search** question also releases
+any warm query model: `query_vectors.unload_embedder` inspects Ollama first and
+releases only the configured query model, never loading an absent one. This
+runs only when a local model answer is needed; computed answers still work
+with Ollama down. Its regression failed before the lifetime check was added.
+
+
+### Review correction: one release, no release error replacing an answer (2026-11-02)
+
+Retrieval keeps the query embedder warm across a question's embeddings and
+releases it once afterward for local chat. Discovery now needs just one Qwen
+embedding; the subject used to order keyword matches stays bge-small. If a
+local non-search answer follows a remote search, `prepare` still releases the
+warm query model. Both paths use `chunk_search.release_embedder`: failure logs
+`query_embedder_release_failed` and continues. An unavailable daemon reaches
+the provider's established `ollama serve` remedy, not a release ApiError.
+Remote answers retain the configured keep-alive. Tests use fake embeddings,
+a fake down provider and a fake release; no Ollama or network is contacted.

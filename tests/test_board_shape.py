@@ -112,3 +112,18 @@ def test_every_extractor_has_a_known_board_shape() -> None:
 def test_an_unregistered_ats_raises_rather_than_condemning() -> None:
     with pytest.raises(UnknownBoardShape):
         _api_is_board(_response(json.dumps({"jobs": []})), "smartrecruiters")
+
+
+def test_reading_a_detail_board_leaves_the_board_apis_alone() -> None:
+    """What `EXTRACTORS` holds must not depend on what ran first.
+
+    Workday used to be added to it on first use, so a suite that read a
+    Workday board before this file made the test above demand a board shape
+    for an endpoint that is POSTed to and paged.
+    """
+    from packages.crawler.extract import extractor_for
+
+    before = set(EXTRACTORS)
+    for ats in ("workday", "breezy", "rippling"):
+        assert extractor_for(ats) is not None
+    assert set(EXTRACTORS) == before

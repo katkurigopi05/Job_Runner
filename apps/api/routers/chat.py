@@ -61,6 +61,8 @@ from apps.api.chat_facts import (
     asks_for_counts,
     count_facts,
     render_postings,
+    render_totals,
+    totals_lines,
 )
 from apps.api.chat_figures import (
     asks_for_application_rates,
@@ -72,6 +74,7 @@ from apps.api.chat_selection import (
     EvidenceItem,
     SelectionResult,
     constrain_selection,
+    is_bare_selection,
     parse_selection,
     render_selection,
 )
@@ -115,6 +118,7 @@ from packages.llm.provider import (
     ModelUnreachable,
     PromptTooLong,
 )
+from packages.matching import chunk_search
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
 from packages.matching.level import LevelCount
 from packages.matching.retrieve import Passage, Retrieval, asks_about_own_applications, retrieve
@@ -156,6 +160,7 @@ ALLOWED_PROVIDERS = (
 
 #: Defined in packages/llm/prompts.py — see the note there on versioning.
 SYSTEM = CHAT_SYSTEM.text
+#: Sent only with an EVIDENCE_SELECTION message (`selected_reply`).
 SELECTION_SYSTEM = CHAT_SELECTION_SYSTEM.text
 
 
@@ -695,6 +700,10 @@ def _postings_section(
     "no postings matched", which is a different answer.
     """
     if not found.attempted:
+        if found.totals is not None:
+            # "How many jobs are there?" names nothing, and the number is known.
+            lines = totals_lines(found)
+            return "OPEN POSTINGS: " + lines[0] + "".join(f"\n  {line}" for line in lines[1:])
         if found.unnamed:
             # Nothing was looked for, which is not the same as nothing being
             # there. The owner can be told what to add.
@@ -707,6 +716,13 @@ def _postings_section(
     lines = [f"POSTINGS: searched {found.searched} of {total} open postings"]
     if found.unsearchable:
         lines[0] += f" ({found.unsearchable} are not searchable yet)"
+    if found.qwen_searched is not None:
+        lines.append(
+            f"  vector coverage — Qwen3-Embedding-4B: {found.qwen_searched} open postings; "
+            f"bge-small: {found.bge_fallback_searched} without Qwen vectors"
+        )
+    if fallback := chunk_search.notice(found.embedding_fallback):
+        lines.append("  " + fallback + ". Repeat this search limitation in the answer.")
     if found.share is not None:
         share = found.share
         percent = (
@@ -1031,7 +1047,11 @@ async def prepare(
 
     owner_facts = await _read_context(session, body.application_id, include_mail=include_mail)
     context = owner_facts.context
-    found = await retrieve(session, question)
+    found = (
+        await retrieve(session, question, free_embedder=selected == LOCAL_PROVIDER)
+        if get_settings().chat_qwen_search
+        else await retrieve(session, question)
+    )
     # A rate of the owner's applications is computed here and handed over. If
     # retrieval also took "what percentage" as a posting share it could not
     # count, its "percentage unavailable" line would contradict the rates.
@@ -1094,6 +1114,8 @@ async def prepare(
             and asks_for_application_snapshot(question)
         ):
             factual_answer = owner_facts.answer()
+        elif found.totals is not None:
+            factual_answer = render_totals(found)
         elif found.attempted and (asks_for_counts(question) or found.required_skill is not None):
             factual_answer = render_postings(found, skill_lines(found, named_skills, requirements))
         elif (
@@ -1190,6 +1212,14 @@ async def prepare(
             )
             if not selection_evidence:
                 factual_answer = selection_summary
+    if (
+        get_settings().chat_qwen_search
+        and factual_answer is None
+        and selected == LOCAL_PROVIDER
+        and found.qwen_searched is None
+        and found.embedding_fallback is None
+    ):
+        await chunk_search.release_embedder()
     return Ready(
         selected=selected,
         include_mail=include_mail,
@@ -1264,6 +1294,20 @@ def _local_remedy(exc: LLMError) -> str:
     )
 
 
+def selection_instead_of_answer(selected: str, model: str | None) -> ApiError:
+    """A model that answered an ordinary question with `{"ids": [...]}`.
+
+    That is the evidence-selection shape, not an answer, and shown as one it
+    read as a broken reply (2026-11-02). It is refused rather than displayed,
+    and the dock keeps no turn for it, so it is not sent back as history.
+    """
+    return ApiError(
+        ErrorCode.INTERNAL_ERROR,
+        f"{model or selected} replied with an evidence selection instead of an answer. "
+        "Nothing fell back to another model. Ask again, or start a new conversation.",
+    )
+
+
 def did_not_answer(selected: str, exc: LLMError) -> ApiError:
     """What the owner is told when the model they asked for fails."""
     # Ollama is running and refused: the advice for a model that is down is wrong here.
@@ -1317,6 +1361,8 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
     """The finished answer and everything the dock lists under it."""
     selected, include_mail, found = ready.selected, ready.include_mail, ready.found
     cited = cited_labels(answer)
+    if fallback := chunk_search.notice(found.embedding_fallback):
+        answer = fallback + "\n\n" + answer
     return ChatReply(
         reply=answer,
         count_facts=list(count_facts(found)),
@@ -1489,4 +1535,6 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
         validate_prose_answer(answer)
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
+    if is_bare_selection(answer):
+        raise selection_instead_of_answer(ready.selected, model)
     return reply_for(ready, model, answer)

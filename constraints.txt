@@ -116,6 +116,8 @@ mypy-extensions==1.1.0
     # via mypy
 nltk==3.10.3
     # via jobrunner (pyproject.toml)
+numpy==2.5.4
+    # via jobrunner (pyproject.toml)
 openpyxl==3.1.5
     # via jobrunner (pyproject.toml)
 opentelemetry-api==1.45.0
@@ -261,6 +263,8 @@ webencodings==0.6.1
     #   tinycss2
     #   tinyhtml5
 websockets==17.1
-    # via uvicorn
+    # via
+    #   jobrunner (pyproject.toml)
+    #   uvicorn
 zopfli==0.4.3
     # via fonttools

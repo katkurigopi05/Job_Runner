@@ -459,3 +459,34 @@ The worktree uses ignored symlinks for `.venv` and `.env`; the full run
 unsets `JOBRUNNER_ENV_FILE` so the existing no-configuration test can leave
 the configured directory. The live database was only read. The root branch,
 search code, grades, pool, feed and defaults were not changed.
+
+## Qwen modes graded (2026-11-03)
+
+`qwen` (`chat_qwen_search`) and `qwen_semantic` (with `chat_semantic_candidates`) were added to the set's
+modes and pooled (`make judge-pool-write` added 252 rows: every mode's new finds since 2026-10-19, not only
+Qwen's). Claude graded the 252 on the same scale, blind to the mode, each with a `claude:` note: 158 twos,
+62 ones, 32 zeros. The set now has 582 grades, 33 by the owner and 549 by Claude. Frozen as
+`storage/evaluation/chat-v1-baseline-20261103T214948Z.json`.
+
+Dev, 15 questions (95% intervals):
+
+| mode | P@5 | R@8 | MRR | nDCG@8 | none ok | median s |
+|---|---|---|---|---|---|---|
+| shipped | 0.827 | 0.405 | 0.900 | 0.716 [0.55, 0.87] | 5/6 | 0.89 |
+| semantic (bge-small) | 0.867 | 0.435 | 0.867 | 0.751 | **3/6** | 0.78 |
+| cross_encoder | 0.840 | 0.395 | 0.867 | 0.701 | 5/6 | 1.16 |
+| qwen | identical to shipped (discovery only) | | | | 5/6 | 0.72 |
+| qwen_semantic | 0.880 | 0.447 | 0.889 | **0.788** [0.64, 0.92] | 5/6 | **3.79** |
+
+Paired against shipped: dev nDCG@8 **+0.072 [+0.020, +0.132]**, 6 better, 1 worse (kafka-roles), 8 the
+same; the largest gains are the paraphrased questions (+0.22 to +0.31) and PyTorch, Terraform. Held out,
+read once for this decision: nDCG@8 +0.040 [−0.006, +0.103], 5 better, 1 worse (intern-data-science), 7 the
+same; MRR 1.0 both; no abstention or routing lost. Unlike the bge-small semantic mode, `qwen_semantic` still
+answers "none" for zig, blacksmith and kafka-at-Stripe.
+
+Against the thresholds approved on 2026-10-19: MRR, nDCG, abstention and coverage pass; **"better" misses**
+(the held-out interval touches zero) and **latency misses** (+2.9 s against at most +1.0 s). Not promoted.
+The 1-bit shortlist measured on 2026-11-02 (identical top 5 on 112 questions, 0.02 s against 1.7 s per scan;
+`storage/embed_rank_bench/whole_index_2026-11-02/speed_and_hybrid.md`) is the fix for the latency miss; then
+measure again. Grades are mostly Claude's: the owner's 2026-10-19 spot check agreed on relevant-or-not for
+29 of 33.

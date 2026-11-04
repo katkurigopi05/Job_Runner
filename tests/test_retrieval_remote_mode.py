@@ -87,7 +87,7 @@ async def test_mode_only_reads_past_pool_and_counts_more_than_120_matches(db_ses
     assert found.match_total == 130
     assert found.company_total == 1
     assert len(found.passages) == 5
-    assert len(found.more) == 25
+    assert len(found.more) == 125, "every counted posting is listed"
     assert {p.location for p in (*found.passages, *found.more)} == {"Remote, US"}
 
 

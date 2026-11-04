@@ -31,9 +31,9 @@ PINNED = [
     ),
     ("assistant.system", 10, "1443041dcb688d325df46754e72769c124987ebcb0b5bae91cf1dd96a428e252"),
     (
-        "assistant.selection.system",
+        "assistant.selection",
         2,
-        "71d39dff1792991ee327cebe34250e271d3ed71262909675f957355457e437c7",
+        "3a00a4ce53d027f6f49c22a14cabd1e9e0c240cbd7aebea762d4109b14eb7e3e",
     ),
     (
         "tailor.cover_letter.system",

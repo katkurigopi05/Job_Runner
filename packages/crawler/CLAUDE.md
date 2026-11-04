@@ -426,12 +426,26 @@ a refusal or HTTP 403 is a failure, never an invitation to evade it.
 
 The existing POST path already uses the same robots and host-rate gates as
 GET. Tenant hosts remain outside `SHARED_API_HOSTS`: **60 seconds**, unchanged.
+(Since 2026-11-02 §2.6 is 5 to 60 s a host, 5 by default, so the timings below
+are the 60 s worst case. `details.DETAIL_REQUESTS_PER_CRAWL` = 5 was sized for 60 s
+and could now be raised; that is the owner's decision.)
 At 300 jobs, 15 list pages span at least 14 minutes between first and last
 request, plus network time. Fetching 300 details in that cycle would mean
 315 requests, at least 314 minutes (5h14m). Instead:
 
 - All list pages each crawl, up to 60; truncation or inconsistent/duplicate
   pagination closes nothing. A page failure abandons the read.
+- **Only the first page names the total.** Every later page says `total: 0`
+  (read live on 2026-11-01: 94, then 0). Until then a later page's 0 counted
+  as the board shifting mid-walk, so every board longer than one page came
+  back `suspect` on every crawl. Two costs: nothing it dropped was closed
+  (2 of 16,716 Workday postings had ever closed), and `suspect` is a failure
+  status, so the backoff spaced those boards to every 13 hours and 15,838
+  descriptions waited. 89 of 106 multi-page boards were affected; all 19
+  single-page boards were fine. A later page naming a different nonzero
+  count still marks the read, and the distinct-id count must still equal the
+  first page's total. The synthetic boards in the tests used to repeat the
+  total on every page, which is how a green suite missed it.
 - At most five details per crawl. New/missing or visibly changed listings
   get four slots when cached jobs exist; one rotates through cached jobs to
   detect description-only edits. Once caught up all five rotate. The nullable
@@ -590,3 +604,71 @@ largest systems among them. Both are read now.
 `tests/test_breezy_reader.py`, `tests/test_rippling_reader.py`, with trimmed
 public payloads and their provenance in `tests/fixtures/breezy` and
 `tests/fixtures/rippling`.
+
+## Reading a description backlog at once (2026-11-02)
+
+Five job pages a crawl keeps one crawl short, and leaves a large or new
+board without text for weeks. On 2026-11-01, 16,102 of 26,263 open postings
+had none (15,838 Workday, 265 Rippling), so the assistant's search could not
+see them. `make backfill-descriptions` (`backfill.py`) reads every missing
+page at once:
+
+- **The floor holds because it is per host.** Each host waits its own minute
+  between pages through the same PoliteFetcher and the shared limiter, so a
+  crawl running beside it waits its turn too. Hosts run side by side, the
+  longest first; the largest board decides the run's length (552 pages, a
+  little over nine hours). Every Rippling company shares `ats.rippling.com`,
+  so those 265 are one queue.
+- **Not a crawl.** It reads no list, so it opens and closes nothing. A page
+  that fails (a 404 for a job closed since the list) leaves that posting
+  waiting; the next read of the list decides whether it closed. robots.txt
+  refusing a job page stops that host, and so do three refusals in a row
+  (401, 403, 429) from a host that has served nothing this run: §2.5 leaves a
+  site that says no alone. In a one-page-a-host trial on 2026-11-02, 114 of
+  118 hosts gave their text; Zoetis, NiSource and ConocoPhillips answered 403.
+- **A host that serves pages needs ten refusals in a row to stop.** Big
+  tenants refuse about one page in five (jobs no longer public, it seems)
+  and serve the rest, so three in a row came by chance: the live run left 21
+  hosts alone that had each served 12 to 58 pages, J.B. Hunt with 498 to go.
+  Pages a run is refused or cannot read are written to
+  `storage/logs/backfill_left_waiting.txt` and a rerun reads them after the
+  rest; a restart used to open every host with them.
+- **Stored as a crawl stores it.** `_store` writes the version and drops the
+  vector, so the matching pass that follows embeds and scores it, and the
+  chunker makes it searchable. Each posting is committed as it lands; a
+  stopped run keeps what it read, and a rerun reads only what is missing.
+- **Looked at again before storing.** `_store` writes `closed_at = NULL`, and
+  the list of what was missing is hours old by the end. A posting a crawl
+  closed or filled since is skipped, never reopened or written over.
+- **The index step is the crawler's own pass**, so with
+  `POSTING_AUTO_PRUNE` on it prunes, as every crawl does.
+- The readers' detail URLs are module functions now (`detail_url_for`), so
+  a crawl and the backfill build the same address.
+
+`tests/test_backfill_descriptions.py`.
+
+## New postings wholly abroad are not stored (2026-10-28)
+
+The crawler stored every posting a board listed and left the search area to
+the scoring gate and the feed. After the 244 sheet boards were added, one
+sweep stored 12,573 postings in six hours, 3,703 of them wholly abroad; the
+owner had 9,175 deleted (backup first, list in
+`storage/exports/non_us_postings/`). Boards poll hourly, so a deleted posting
+came straight back as new.
+
+`_store` now skips a **new** posting when `locality.wholly_abroad` says every
+office it lists is abroad and `Settings.search_us_only` is on, beside the age
+rule and with the same exception: a posting already held is still stamped as
+seen, or `_close_missing` would close a listed job. What must not be undone:
+
+- **One American office keeps the posting** ("San Francisco, CA; Toronto, ON").
+- **No evidence is not evidence of abroad.** A location that names no place,
+  a part no rule places ("2 Locations", Workday's list form), and a bare name
+  shared with a Californian city ("Dublin", `_AMBIGUOUS_CALIFORNIA_CITIES`)
+  are all stored, and the area rule decides at read time as before.
+- **It follows the setting.** With `search_us_only` off everything is stored
+  again from the next poll; postings skipped earlier come back only when a
+  board is next read, since nothing was kept to restore.
+
+`StoreResult.abroad` counts the skips and `abroad_postings_not_stored` logs
+them per company. `tests/test_crawl_skips_abroad.py`.

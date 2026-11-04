@@ -25,6 +25,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 from urllib.parse import urlparse
 
@@ -190,6 +191,13 @@ def read_detail(body: str, listing: ExtractedPosting) -> ExtractedPosting:
     return result
 
 
+def detail_url_for(company_slug: str, item: ExtractedPosting) -> str:
+    """The job's detail endpoint, on the board's own host."""
+    host, tenant, site = company_slug.split("|")
+    path = urlparse(item.url).path.removeprefix(f"/{site}")
+    return f"https://{host}/wday/cxs/{tenant}/{site}{path}"
+
+
 async def hydrate_details(
     fetcher: PoliteFetcher,
     company_slug: str,
@@ -206,18 +214,12 @@ async def hydrate_details(
     is strict: its detail endpoint is the board's own API, so one failure is
     the board failing.
     """
-    host, tenant, site = company_slug.split("|")
-
-    def detail_url(item: ExtractedPosting) -> str:
-        path = urlparse(item.url).path.removeprefix(f"/{site}")
-        return f"https://{host}/wday/cxs/{tenant}/{site}{path}"
-
     return await hydrate(
         fetcher,
         pages,
         previous,
         cursor,
-        detail_url=detail_url,
+        detail_url=partial(detail_url_for, company_slug),
         read_detail=read_detail,
         max_age_days=max_age_days,
         pending_cursor=pending_cursor,
@@ -327,9 +329,15 @@ class WorkdayExtractor:
 
             # A skipped/malformed entry or shifting pagination is not proof
             # that an unseen requisition closed. Refuse closure on that read.
+            # Workday names the total on the first page only and sends 0 on
+            # every later one, so only a later page naming a different count
+            # is the board shifting. Reading the 0 as one flagged every board
+            # longer than a page; the distinct-id check below still holds the
+            # walk to the first page's count.
             payload = json.loads(response.text)
             entries = payload.get("jobPostings", [])
-            if len(postings) != len(entries) or (page_total is not None and page_total != total):
+            shifted = page > 0 and page_total not in (None, 0) and page_total != total
+            if len(postings) != len(entries) or shifted:
                 pages.truncated = True
 
             if not postings:

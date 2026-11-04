@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { type LabelCandidate } from "@/lib/api";
 import { recordGrade } from "@/app/label/actions";
+import { POSTING_LINK } from "@/lib/external";
 
 /**
  * Grade one posting at a time on the 0–3 relevance scale.
@@ -146,14 +147,9 @@ export function LabelDeck({
           </p>
         ) : null}
 
-        {/* `rel` is not cosmetic here: the URL comes from a crawled
-            third-party page, and a named browsing context can reach back
-            through `window.opener` to navigate the dashboard — which has no
-            authentication to fall back on. */}
         <a
           href={current.url}
-          target="jobrunner-form"
-          rel="noopener noreferrer"
+          {...POSTING_LINK}
           className="mt-7 inline-block font-mono text-xs text-ink-soft underline decoration-rule underline-offset-4 hover:text-ink"
         >
           read the posting ↗

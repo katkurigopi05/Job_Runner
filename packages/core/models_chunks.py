@@ -25,8 +25,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pgvector.sqlalchemy import HALFVEC
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func, text
+from pgvector.sqlalchemy import BIT, HALFVEC
+from sqlalchemy import (
+    Computed,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -65,4 +75,46 @@ class PostingChunk(Base):
     )
 
 
-__all__ = ["PostingChunk"]
+#: Qwen3-Embedding-4B's width.
+LARGE_EMBEDDING_DIM = 2560
+
+
+class PostingChunkVector(Base):
+    """A chunk's vector from a larger model, beside the 384-dim one it already has.
+
+    Qwen3-Embedding-4B found the posting a question was written from in its
+    top five for 35 of 56 natural questions and 10 of 56 paraphrased ones over
+    the whole index, where bge-small found 21 and 2 (2026-11-02). Its vectors
+    are 2,560 wide, so they are a table of their own rather than a second
+    width in `posting_chunks.embedding`, which everything that reads
+    bge-small's vectors would then have to tell apart.
+
+    A row belongs to one chunk and goes with it: a re-chunked posting loses
+    its old chunks and their vectors together, so a vector never outlives the
+    text it was made from.
+    """
+
+    __tablename__ = "posting_chunk_vectors"
+
+    chunk_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("posting_chunks.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    #: Which model made the vector; only vectors of one model are compared.
+    embedding_model: Mapped[str] = mapped_column(String(64), primary_key=True)
+    embedding: Mapped[list[float]] = mapped_column(HALFVEC(LARGE_EMBEDDING_DIM), nullable=False)
+    #: The vector's sign bits, kept by Postgres, for a fast first pass: 320
+    #: bytes a chunk against 5 KB, so the whole column is 85 MB against 1.3 GB.
+    #: Search shortlists by Hamming distance here and re-ranks those chunks
+    #: with `embedding` (`chunk_search.ShortlistRanking`).
+    embedding_bits: Mapped[str] = mapped_column(
+        BIT(LARGE_EMBEDDING_DIM),
+        Computed(f"binary_quantize(embedding)::bit({LARGE_EMBEDDING_DIM})", persisted=True),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+__all__ = ["LARGE_EMBEDDING_DIM", "PostingChunk", "PostingChunkVector"]
