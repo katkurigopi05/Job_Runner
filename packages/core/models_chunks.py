@@ -25,8 +25,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pgvector.sqlalchemy import HALFVEC
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func, text
+from pgvector.sqlalchemy import BIT, HALFVEC
+from sqlalchemy import (
+    Computed,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -94,6 +104,14 @@ class PostingChunkVector(Base):
     #: Which model made the vector; only vectors of one model are compared.
     embedding_model: Mapped[str] = mapped_column(String(64), primary_key=True)
     embedding: Mapped[list[float]] = mapped_column(HALFVEC(LARGE_EMBEDDING_DIM), nullable=False)
+    #: The vector's sign bits, kept by Postgres, for a fast first pass: 320
+    #: bytes a chunk against 5 KB, so the whole column is 85 MB against 1.3 GB.
+    #: Search shortlists by Hamming distance here and re-ranks those chunks
+    #: with `embedding` (`chunk_search.ShortlistRanking`).
+    embedding_bits: Mapped[str] = mapped_column(
+        BIT(LARGE_EMBEDDING_DIM),
+        Computed(f"binary_quantize(embedding)::bit({LARGE_EMBEDDING_DIM})", persisted=True),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
