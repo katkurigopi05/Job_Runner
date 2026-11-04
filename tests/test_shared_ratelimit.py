@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from packages.core.models import CrawlerHostBudget
+from packages.crawler import host_budget
 from packages.crawler.host_budget import SharedHostRateLimiter
 from packages.crawler.ratelimit import (
     MIN_DELAY_SECONDS,
@@ -180,7 +181,10 @@ async def test_many_workers_are_spaced_cumulatively(worker_sessions) -> None:
         assert waited >= expected * 0.85, f"caller {index} waited {waited:.2f}s, wanted {expected}s"
 
 
-async def test_concurrent_workers_take_distinct_slots(worker_sessions) -> None:
+@pytest.mark.parametrize("last_worker_delay", [0.0, 0.8])
+async def test_concurrent_workers_take_distinct_slots(
+    worker_sessions, monkeypatch, last_worker_delay
+) -> None:
     """Arriving together must not mean going together.
 
     Each reservation is one statement, so the second cannot read the marker
@@ -188,13 +192,34 @@ async def test_concurrent_workers_take_distinct_slots(worker_sessions) -> None:
     read-then-write pair could not have.
     """
     limiters = [worker_sessions() for _ in range(5)]
+    slots = []
+    execute = AsyncSession.execute
 
-    waits = sorted(await asyncio.gather(*(limiter.acquire(SHARED) for limiter in limiters)))
+    async def record_reservation(session, statement, *args, **kwargs):
+        result = await execute(session, statement, *args, **kwargs)
+        if statement is host_budget._RESERVE:
+            frozen = result.freeze()
+            row = frozen().one()
+            slots.append(row.next_allowed_at - timedelta(seconds=float(row.delay_seconds)))
+            return frozen()
+        return result
 
-    assert waits[0] == 0.0
-    assert len(set(waits)) == 5, f"slots collided: {waits}"
-    for earlier, later in zip(waits, waits[1:], strict=False):
-        assert later - earlier >= MIN_SHARED_API_DELAY_SECONDS * 0.85
+    monkeypatch.setattr(AsyncSession, "execute", record_reservation)
+
+    async def acquire(index, limiter):
+        if index == len(limiters) - 1:
+            await asyncio.sleep(last_worker_delay)
+        return await limiter.acquire(SHARED)
+
+    await asyncio.gather(*(acquire(i, limiter) for i, limiter in enumerate(limiters)))
+
+    # Wait durations have different clock origins. A late worker legitimately
+    # waits less while reserving a slot exactly one floor after the previous.
+    # Check the database's actual reservations, not differences between waits.
+    slots.sort()
+    assert len(slots) == len(set(slots)) == 5, f"slots collided: {slots}"
+    for earlier, later in zip(slots, slots[1:], strict=False):
+        assert (later - earlier).total_seconds() >= MIN_SHARED_API_DELAY_SECONDS
 
 
 # --------------------------------------------------------------------------
