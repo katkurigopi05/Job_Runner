@@ -43,6 +43,7 @@ from apps.api.routers.chat import (
     reply_for,
     selected_reply,
     selection_instead_of_answer,
+    validate_prose_answer,
 )
 from packages.core import db as core_db
 from packages.core.schemas import ChatReply, ChatRequest
@@ -120,6 +121,35 @@ async def _written(
     yield _frame("done", reply=reply.model_dump(mode="json", by_alias=True))
 
 
+async def _prose_pieces(pieces: AsyncIterator[str]) -> AsyncIterator[str]:
+    """Hold structured prefixes until validation; ordinary prose still streams."""
+    buffered: list[str] = []
+    decided = False
+    structured = False
+    try:
+        async for piece in pieces:
+            if decided and not structured:
+                yield piece
+                continue
+            buffered.append(piece)
+            text = "".join(buffered).lstrip()
+            if not text:
+                continue
+            if not decided:
+                structured = text.startswith(("{", "`"))
+                decided = True
+            if not structured:
+                for pending in buffered:
+                    yield pending
+                buffered.clear()
+        if buffered:
+            validate_prose_answer("".join(buffered))
+            for pending in buffered:
+                yield pending
+    finally:
+        await pieces.aclose()  # type: ignore[attr-defined]
+
+
 @router.post("/stream")
 async def chat_stream(body: ChatRequest) -> StreamingResponse:
     """`POST /chat`, with the answer sent as the model writes it.
@@ -153,8 +183,14 @@ async def chat_stream(body: ChatRequest) -> StreamingResponse:
         )
     try:
         provider, model = provider_for(ready.selected)
-        pieces = stream_text(
-            provider, SYSTEM, ready.prompt, max_tokens=ANSWER_TOKENS, temperature=ANSWER_TEMPERATURE
+        pieces = _prose_pieces(
+            stream_text(
+                provider,
+                SYSTEM,
+                ready.prompt,
+                max_tokens=ANSWER_TOKENS,
+                temperature=ANSWER_TEMPERATURE,
+            )
         )
         first = await anext(pieces, "")
     except LLMError as exc:

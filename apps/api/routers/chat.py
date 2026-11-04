@@ -73,6 +73,7 @@ from apps.api.chat_figures import (
 from apps.api.chat_selection import (
     EvidenceItem,
     SelectionResult,
+    constrain_selection,
     is_bare_selection,
     parse_selection,
     render_selection,
@@ -84,7 +85,12 @@ from apps.api.protected_questions import (  # noqa: F401
     is_refused,
     names_a_protected_field,
 )
-from apps.api.routers.chat_evidence import skill_lines, skills_asked_about, unsupported_citations
+from apps.api.routers.chat_evidence import (
+    compound_required_evidence,
+    skill_lines,
+    skills_asked_about,
+    unsupported_citations,
+)
 from apps.worker.crawl_job import request_crawl
 from packages.ats.registry import detect_ats
 from packages.core import heartbeat
@@ -751,14 +757,14 @@ def _postings_section(
     if found.place_total is not None:
         reach = "" if found.place_counts_complete else " among retrieved candidates"
         lines.append(
-            f"  place filter applied — in the Bay Area: {found.place_total}{reach}; "
+            f"  place filter applied — in {found.place_scope}: {found.place_total}{reach}; "
             f"{found.search_area_total} matching postings in your search area{reach} "
             "before this filter."
         )
         lines.append(
             f"  {found.remote_or_unplaced_not_listed} remote or unplaced roles "
             "in your search area are not listed "
-            f"because they do not establish a Bay Area office{reach}."
+            f"because they do not establish {found.place_office}{reach}."
         )
     if found.work_mode:
         lines.append(
@@ -839,7 +845,7 @@ def _postings_section(
     if not found.passages:
         within = " in the search area" if found.outside_area else ""
         lines.append(
-            "  none in the Bay Area"
+            f"  none in {found.place_scope}"
             if found.place_total is not None
             else (
                 f"  no open postings at {', '.join(map(_one_line, found.companies))}{within}"
@@ -860,7 +866,7 @@ def _postings_section(
         # separate: experimental semantic candidates need not say the term.
         if found.match_total is not None:
             scope = (
-                "in the Bay Area"
+                f"in {found.place_scope}"
                 if found.place_total is not None
                 else "in the search area"
                 if found.area
@@ -976,6 +982,7 @@ class Ready:
     #: A posting answer accepts only allowed source IDs, never model prose.
     selection_evidence: tuple[EvidenceItem, ...] | None = None
     selection_summary: str = ""
+    question: str = ""
 
 
 async def prepare(
@@ -1111,6 +1118,29 @@ async def prepare(
             factual_answer = render_totals(found)
         elif found.attempted and (asks_for_counts(question) or found.required_skill is not None):
             factual_answer = render_postings(found, skill_lines(found, named_skills, requirements))
+        elif (
+            found.attempted
+            and body.application_id is None
+            and not asks_about_own_applications(question)
+        ):
+            direct = compound_required_evidence(question, found, requirements)
+            if direct is not None:
+                factual_answer = "\n\n".join(
+                    (
+                        render_postings(found, include_sources=False),
+                        "Direct requirements established among the supplied postings follow. "
+                        "Alternatives, preferences and stack mentions are excluded. "
+                        "This sample does not establish an exhaustive required total."
+                        if direct.items
+                        else "No supplied posting establishes those direct requirements. "
+                        "This does not establish that no matching jobs exist.",
+                        render_selection(direct),
+                    )
+                ).rstrip()
+            elif found.roles and not found.beyond_role:
+                factual_answer = render_postings(
+                    found, skill_lines(found, named_skills, requirements)
+                )
     selection_evidence = None
     selection_summary = ""
     if (
@@ -1169,7 +1199,7 @@ async def prepare(
         prompt = render()
     else:
         prompt, budget_report = pack(
-            system=SYSTEM,
+            system=SELECTION_SYSTEM if selection_evidence is not None else SYSTEM,
             render=render,
             labels=[p.label for p in (*found.passages, *earlier)],
             budget=context_budget,
@@ -1203,6 +1233,7 @@ async def prepare(
         factual_answer=factual_answer,
         selection_evidence=selection_evidence,
         selection_summary=selection_summary,
+        question=question,
     )
 
 
@@ -1308,6 +1339,24 @@ def did_not_answer(selected: str, exc: LLMError) -> ApiError:
     )
 
 
+def validate_prose_answer(answer: str) -> None:
+    """Reject selection protocol data where the caller requested prose."""
+    raw = answer.strip()
+    if raw.startswith("```") and raw.endswith("```"):
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    try:
+        payload = json.loads(raw)
+    except (ValueError, RecursionError):
+        return
+    if isinstance(payload, dict) and set(payload) == {"ids"}:
+        raise LLMError("The model returned selection data instead of an answer.")
+
+
+def prose_reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
+    validate_prose_answer(answer)
+    return reply_for(ready, model, answer)
+
+
 def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
     """The finished answer and everything the dock lists under it."""
     selected, include_mail, found = ready.selected, ready.include_mail, ready.found
@@ -1377,7 +1426,7 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
         postings_share=ChatPostingShare.model_validate(found.share) if found.share else None,
         matched_term=found.matched_term,
         matched_companies=list(found.companies) if found.match_total is not None else [],
-        place_filter="Bay Area" if found.place_total is not None else None,
+        place_filter=found.place_name if found.place_total is not None else None,
         place_matched_total=found.place_total,
         place_counts_complete=found.place_counts_complete,
         search_area_matched_total=found.search_area_total,
@@ -1426,7 +1475,14 @@ async def selected_reply(ready: Ready) -> ChatReply:
         )
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
-    selection = parse_selection(raw, evidence)
+    return selection_reply_for(ready, model, raw)
+
+
+def selection_reply_for(ready: Ready, model: str | None, raw: str) -> ChatReply:
+    """Render captured selections through the same validation as live replies."""
+    evidence = ready.selection_evidence
+    assert evidence is not None
+    selection = constrain_selection(parse_selection(raw, evidence), ready.question)
     if not selection.valid or not selection.items:
         lead = (
             "No answer to the requested task was established by this selection. "
@@ -1476,6 +1532,7 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
         answer = await provider.complete(
             SYSTEM, ready.prompt, max_tokens=ANSWER_TOKENS, temperature=ANSWER_TEMPERATURE
         )
+        validate_prose_answer(answer)
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
     if is_bare_selection(answer):

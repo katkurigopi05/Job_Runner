@@ -208,3 +208,92 @@ async def test_same_metadata_keeps_independent_remote_evidence_in_denominator(db
     found = await R.retrieve(db_session, QUESTION)
     assert found.share.open_total == 3
     assert found.share.percentage == 33.33
+
+
+async def test_remote_share_of_a_role_uses_that_role_population(db_session):
+    await posting(db_session, "Data Engineer", "Remote, US")
+    await posting(db_session, "Data Engineer", "San Jose, CA")
+    for title in ("Designer", "Product Manager", "Accountant"):
+        await posting(db_session, title)
+
+    found = await R.retrieve(db_session, "What percentage of data engineer roles are remote?")
+
+    assert found.role_total == found.share.matching == 1
+    assert found.share.open_total == 2
+    assert found.share.percentage == 50.0
+    assert found.share.scope == "the data engineer role population in your search area"
+
+
+async def test_remote_role_share_of_all_jobs_keeps_corpus_denominator(db_session):
+    await posting(db_session, "Data Engineer", "Remote, US")
+    await posting(db_session, "Data Engineer", "San Jose, CA")
+    for title in ("Designer", "Product Manager", "Accountant"):
+        await posting(db_session, title)
+
+    found = await R.retrieve(db_session, "What percentage of jobs are remote data engineer roles?")
+
+    assert found.share.matching == 1
+    assert found.share.open_total == 5
+    assert found.share.percentage == 20.0
+    assert found.share.scope == "your search area"
+
+
+@pytest.mark.parametrize("mode", ["remote", "fully remote"])
+async def test_conditional_remote_role_share_keeps_city_level_and_open_scope(db_session, mode):
+    await posting(db_session, "Senior Data Engineer", "San Jose, CA", "This role is remote.")
+    await posting(db_session, "Senior Data Engineer", "San Jose, CA")
+    await posting(db_session, "Senior Data Engineer", "San Francisco, CA", "This role is remote.")
+    await posting(db_session, "Junior Data Engineer", "San Jose, CA", "This role is remote.")
+    await posting(db_session, "Senior Software Engineer", "San Jose, CA", "This role is remote.")
+    await posting(db_session, "Senior Data Engineer", "San Jose, CA", closed=True)
+
+    found = await R.retrieve(
+        db_session, f"What percentage of senior data engineer roles in San Jose are {mode}?"
+    )
+
+    assert found.share.matching == found.place_total == 1
+    assert found.share.open_total == 2
+    assert found.share.percentage == 50.0
+    assert found.share.scope == "the senior data engineer role population in San Jose"
+    # Counting the unfiltered denominator must not change the numerator's place accounting.
+    assert found.search_area_total == 2
+
+
+async def test_conditional_remote_role_share_keeps_standing_area(db_session):
+    await posting(db_session, "Data Engineer", "Remote, US")
+    await posting(db_session, "Data Engineer", "San Jose, CA")
+    await posting(db_session, "Data Engineer", "Austin, TX", "On-site only.")
+    await posting(db_session, "Data Engineer", "London, UK", "This role is remote.")
+    await posting(db_session, "Designer", "San Jose, CA")
+
+    found = await R.retrieve(db_session, "What percentage of data engineer roles are remote?")
+
+    assert found.share.matching == 1
+    assert found.share.open_total == 2
+    assert found.share.percentage == 50.0
+
+
+async def test_topic_qualified_role_population_does_not_guess_a_remote_share(db_session):
+    await posting(db_session, "Data Engineer", "Remote, US", "Use Kafka.")
+    await posting(db_session, "Data Engineer", "San Jose, CA", "Use Kafka.")
+    await posting(db_session, "Data Engineer", "Remote, US", "Use RabbitMQ.")
+
+    found = await R.retrieve(db_session, "What percentage of Kafka data engineer jobs are remote?")
+
+    assert found.work_mode == "remote"
+    assert found.share_requested is True
+    assert found.beyond_role == ("Kafka",)
+    assert found.share is None
+
+
+@pytest.mark.parametrize("onsite_roles", [0, 1])
+async def test_conditional_remote_role_share_handles_no_remote_matches(db_session, onsite_roles):
+    await posting(db_session, "Designer")
+    if onsite_roles:
+        await posting(db_session, "Data Engineer", "San Jose, CA")
+
+    found = await R.retrieve(db_session, "What percentage of data engineer roles are remote?")
+
+    assert found.share.matching == 0
+    assert found.share.open_total == onsite_roles
+    assert found.share.percentage == (0.0 if onsite_roles else None)

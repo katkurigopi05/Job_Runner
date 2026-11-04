@@ -85,11 +85,13 @@ async def test_empty_place_reports_the_search_area_total(db_session):
     assert "1 matching postings in your search area" in context
 
 
-async def test_named_city_keeps_the_region_and_ranks_the_city_first(db_session):
+async def test_named_city_filters_before_counts_and_ranking(db_session):
     posts = await corpus(db_session, "Software Engineer")
     found = await retrieve(db_session, "software engineer jobs in San Francisco")
     assert found.passages[0].posting_id == posts[0].id
-    assert {p.posting_id for p in (*found.passages, *found.more)} == {p.id for p in posts[:2]}
+    assert {p.posting_id for p in (*found.passages, *found.more)} == {posts[0].id}
+    assert found.place_name == "San Francisco"
+    assert found.role_total == found.place_total == 1
 
 
 async def test_named_city_outranks_a_different_citys_exact_role_title(db_session):
@@ -106,9 +108,10 @@ async def test_named_city_outranks_a_different_citys_exact_role_title(db_session
     )
     found = await retrieve(db_session, "software engineer jobs in San Francisco")
     assert found.passages[0].posting_id == here.id
-    assert {p.posting_id for p in (*found.passages, *found.more)} == {here.id, elsewhere.id}
+    assert {p.posting_id for p in (*found.passages, *found.more)} == {here.id}
     assert found.beyond_role == ()
-    assert found.role_total == found.place_total == 2
+    assert found.role_total == found.place_total == 1
+    assert elsewhere.id not in {p.posting_id for p in (*found.passages, *found.more)}
 
 
 async def test_a_shared_city_word_is_not_a_match_for_the_whole_city(db_session):
@@ -119,7 +122,7 @@ async def test_a_shared_city_word_is_not_a_match_for_the_whole_city(db_session):
     await _posting(db_session, company, "San Jose, CA", "Kafka Specialist", "Kafka pipelines.")
     found = await retrieve(db_session, "Kafka jobs in San Francisco")
     assert found.passages[0].posting_id == here.id
-    assert found.match_total == 2
+    assert found.match_total == 1
     assert found.matched_term == "Kafka"
 
 
@@ -133,20 +136,21 @@ async def test_city_and_skill_keep_only_the_skill_as_beyond_role_subject(db_sess
     )
     found = await retrieve(db_session, "data engineer jobs in San Francisco using Kafka")
     assert found.beyond_role == ("Kafka",)
-    assert found.passages[0].posting_id == with_skill.id
-    assert without_skill.id in {p.posting_id for p in (*found.passages, *found.more)}
-    assert found.role_total == 2
+    assert found.passages[0].posting_id == without_skill.id
+    assert with_skill.id not in {p.posting_id for p in (*found.passages, *found.more)}
+    assert found.role_total == 1
 
 
-async def test_company_and_city_preserve_employer_recognition_and_regional_counts(db_session):
+async def test_company_and_city_preserve_employer_recognition_and_city_counts(db_session):
     company = await _company(db_session, "Acme")
     here = await _posting(db_session, company, "San Francisco, CA", "Specialist", "Build.")
     elsewhere = await _posting(db_session, company, "San Jose, CA", "Specialist", "Build.")
     found = await retrieve(db_session, "jobs at Acme in San Francisco")
     assert found.companies == ("Acme",)
     assert found.passages[0].posting_id == here.id
-    assert found.match_total == 2
-    assert {p.posting_id for p in (*found.passages, *found.more)} == {here.id, elsewhere.id}
+    assert found.match_total == 1
+    assert {p.posting_id for p in (*found.passages, *found.more)} == {here.id}
+    assert elsewhere.id not in {p.posting_id for p in (*found.passages, *found.more)}
 
 
 async def test_multiple_offices_and_remote_prose_use_the_shared_place_reading(db_session):
@@ -223,7 +227,9 @@ async def test_vector_pool_filters_before_the_cut_without_claiming_a_full_count(
 
     await _common(db_session, "kafka", "san", "francisco")
     company = await _company(db_session)
-    here = await _posting(db_session, company, "San Jose, CA", "Specialist", "Kafka", embedded=True)
+    here = await _posting(
+        db_session, company, "San Francisco, CA", "Specialist", "Kafka", embedded=True
+    )
     await _posting(db_session, company, "Remote, US", "Specialist", "Kafka", embedded=True)
     found = await retrieve(db_session, "Kafka jobs in San Francisco")
     assert [p.posting_id for p in found.passages] == [here.id]
@@ -258,3 +264,51 @@ async def test_chat_exposes_the_filter_and_omissions(client, worker_session, mon
     assert reply["search_area_matched_total"] == 3
     assert reply["remote_or_unplaced_not_listed"] == 2
     assert "2 remote or unplaced roles" in seen["user"]
+
+
+async def test_city_alias_and_full_office_name_exclude_south_sf(db_session):
+    company = await _company(db_session)
+    here = await _posting(db_session, company, "SF, CA", "Data Engineer", "Kafka")
+    multi = await _posting(
+        db_session, company, "Toronto, ON; San Francisco, CA", "Data Engineer", "Kafka"
+    )
+    await _posting(db_session, company, "South San Francisco, CA", "Data Engineer", "Kafka")
+    await _posting(db_session, company, "San Jose, CA", "Data Engineer", "Kafka")
+    await _posting(db_session, company, "Remote, US", "Data Engineer", "Kafka")
+    found = await retrieve(db_session, "data engineer jobs in San Francisco")
+    assert {p.posting_id for p in (*found.passages, *found.more)} == {here.id, multi.id}
+    assert found.place_name == "San Francisco"
+    assert found.role_total == found.place_total == 2
+    assert found.search_area_total == 5
+    assert "in San Francisco: 2" in _postings_section(found)
+    from apps.api.chat_facts import render_postings
+
+    assert "in San Francisco: 2" in render_postings(found)
+    assert "in the Bay Area" not in render_postings(found)
+
+
+async def test_city_share_uses_city_denominator(db_session):
+    company = await _company(db_session)
+    await _posting(db_session, company, "SF, CA", "Data Engineer", "Kafka")
+    await _posting(db_session, company, "San Francisco, CA", "Software Engineer", "Build")
+    await _posting(db_session, company, "San Jose, CA", "Data Engineer", "Kafka")
+    found = await retrieve(
+        db_session, "What percentage of jobs are data engineer roles in San Francisco?"
+    )
+    assert found.share is not None
+    assert found.share.matching == 1
+    assert found.share.open_total == 2
+    assert found.share.scope == "San Francisco"
+
+
+async def test_chat_exposes_exact_city_in_metadata(client, worker_session, monkeypatch):
+    from tests.test_chat_skill_gaps import _ask
+
+    company = await _company(worker_session)
+    await _posting(worker_session, company, "SF, CA", "Data Engineer", "Kafka")
+    await _posting(worker_session, company, "San Jose, CA", "Data Engineer", "Kafka")
+    await worker_session.commit()
+    reply, seen = await _ask(client, monkeypatch, "data engineer jobs in SF")
+    assert reply["place_filter"] == "San Francisco"
+    assert reply["place_matched_total"] == reply["postings_matched_total"] == 1
+    assert "in San Francisco: 1" in seen["user"]

@@ -117,7 +117,10 @@ async def test_actual_prepare_preserves_default_and_facts_when_packed(worker_ses
         context_budget=PromptBudget(
             counter=words,
             tokenizer_id="test-words",
-            context_tokens=words(chat.SYSTEM, ready.prompt) + chat.ANSWER_TOKENS + 128 - 10,
+            context_tokens=words(chat.SELECTION_SYSTEM, ready.prompt)
+            + chat.ANSWER_TOKENS
+            + 128
+            - 10,
         ),
     )
     assert isinstance(small, chat.Ready)
