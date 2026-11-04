@@ -171,3 +171,88 @@ def test_evidence_contract_is_frozen_and_forbids_extra_fields():
 def test_invalid_selection_limit_is_a_configuration_error(limit):
     with pytest.raises(ValueError):
         _selection().parse_selection('{"ids":[]}', _items(), max_items=limit)
+
+
+def _support_items():
+    module = _selection()
+    return (
+        module.EvidenceItem(id="E1", text="Build LLM agents that improve employee experiences."),
+        module.EvidenceItem(id="E2", text="Own customer contact workflows.", source_label="P2"),
+        module.EvidenceItem(id="E3", text="Experience with LLM redteaming and quality assurance."),
+        module.EvidenceItem(
+            id="E4", text="Our agents support customers directly.", source_label="P4"
+        ),
+        module.EvidenceItem(id="E5", text="Improve developer experience with language models."),
+        module.EvidenceItem(
+            id="E6", text="Deliver AI-assisted client services.", source_label="P6"
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Which jobs build LLMs for customer support?",
+        "Find customer-service AI roles.",
+        "Which roles use AI to support customers directly?",
+        "Find LLM support for clients.",
+        "Find client support jobs.",
+        "Who builds customer/client service agents?",
+        "Find AI support to customers.",
+    ],
+)
+def test_customer_support_scope_excludes_employee_and_generic_evidence(question):
+    module = _selection()
+    items = _support_items()
+    selected = module.parse_selection('{"ids":["E6","E1","E2","E3","E4","E5"]}', items)
+
+    constrained = module.constrain_selection(selected, question)
+
+    assert constrained.valid and constrained.failure is None
+    assert constrained.ids == ("E6", "E2", "E4")
+    assert constrained.items == (items[5], items[1], items[3])
+    assert constrained.source_labels == ("P6", "P2", "P4")
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Which jobs build LLMs?",
+        "Which roles support employees?",
+        "Find developer support jobs.",
+        "Which jobs mention customer data?",
+        "Which jobs use service meshes?",
+        "Find LLM jobs, not customer support.",
+        "Find LLM jobs without client service.",
+        "Find LLM jobs with no customer/client support.",
+        "Find LLM jobs that do not support customers.",
+    ],
+)
+def test_unrelated_queries_leave_selection_unchanged(question):
+    module = _selection()
+    selected = module.parse_selection('{"ids":["E1","E3"]}', _support_items())
+    assert module.constrain_selection(selected, question) is selected
+
+
+def test_scope_filter_may_abstain_without_repairing_or_adding_evidence():
+    module = _selection()
+    selected = module.parse_selection('{"ids":["E1","E3","E5"]}', _support_items())
+    constrained = module.constrain_selection(selected, "Find customer support LLM roles.")
+    assert constrained.valid and constrained.ids == () and constrained.failure is None
+    assert module.render_selection(constrained) == ""
+
+
+def test_scope_check_preserves_empty_positive_and_invalid_results():
+    module = _selection()
+    question = "Which roles support clients?"
+    items = _support_items()
+    for raw in ('{"ids":[]}', '{"ids":["E4","E6"]}', '{"ids":["E2","unknown"]}', "not JSON"):
+        selected = module.parse_selection(raw, items)
+        assert module.constrain_selection(selected, question) is selected
+
+
+def test_positive_scope_still_applies_when_another_scope_phrase_is_negated():
+    module = _selection()
+    selected = module.parse_selection('{"ids":["E1","E4"]}', _support_items())
+    question = "Not customer service phone work; find AI roles that support clients."
+    assert module.constrain_selection(selected, question).ids == ("E4",)

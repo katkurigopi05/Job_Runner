@@ -1,5 +1,15 @@
 # Notes on what the gates prove, and the test database
 
+## Shared limiter concurrency proof (2026-11-04)
+
+PR integration CI exposed a false failure when concurrent database requests
+arrived at different times: subtracting their returned waits does not compare
+reserved slots. Delaying one worker by 0.8 seconds reproduced the failure before
+the correction. The test now observes the actual SQL reservation timestamps,
+requires five distinct slots at least the shared-host floor apart, and covers
+both simultaneous and staggered arrivals. All 19 shared-limiter tests pass.
+Production reservation SQL, crawler behavior and live host budgets are unchanged.
+
 ## Dashboard dependency security floor (2026-11-03)
 
 `test_dashboard_security_dependencies.py` checks every minimatch engine in
