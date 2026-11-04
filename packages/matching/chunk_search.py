@@ -10,9 +10,12 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 import structlog
-from sqlalchemy import ColumnElement, and_, exists, func, select
+from sqlalchemy import ColumnElement, and_, any_, exists, func, literal, select
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -40,6 +43,18 @@ Row = tuple[uuid.UUID, int, int, float, uuid.UUID | None]
 def sign_bits(vector: Sequence[float]) -> str:
     """What `binary_quantize` stores: 1 where a value is above zero."""
     return "".join("1" if value > 0 else "0" for value in vector)
+
+
+_UUIDS = ARRAY(PG_UUID(as_uuid=True))
+
+
+def one_of(column: ColumnElement[uuid.UUID] | Any, ids: Sequence[uuid.UUID]) -> ColumnElement[bool]:
+    """`column = ANY(:ids)`: one array parameter however many ids there are.
+
+    An IN list spends a parameter an id, and asyncpg refuses a statement with
+    more than 32,767. A widened shortlist passed that on 2026-11-03.
+    """
+    return column == any_(literal(list(ids), type_=_UUIDS))
 
 
 class ShortlistRanking:
@@ -85,9 +100,9 @@ class ShortlistRanking:
             .where(PostingChunkVector.embedding_model == QWEN_4B, *_current_chunks())
         )
         if chunk_ids is not None:
-            query = query.where(PostingChunkVector.chunk_id.in_(chunk_ids))
+            query = query.where(one_of(PostingChunkVector.chunk_id, chunk_ids))
         if posting_ids is not None:
-            query = query.where(PostingChunk.posting_id.in_(posting_ids))
+            query = query.where(one_of(PostingChunk.posting_id, posting_ids))
         if companies:
             query = query.where(Posting.company_id.in_(companies))
         query = query.distinct(PostingChunk.posting_id).order_by(
@@ -216,7 +231,7 @@ async def chunk_ranking(
         query = query.join(PostingChunkVector, PostingChunkVector.chunk_id == PostingChunk.id)
     query = query.where(*chunk_filter(model))
     if among is not None:
-        query = query.where(PostingChunk.posting_id.in_(among))
+        query = query.where(one_of(PostingChunk.posting_id, among))
     else:
         query = (
             query.where(distance < 1.0)
