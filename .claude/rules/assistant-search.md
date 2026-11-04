@@ -1268,3 +1268,44 @@ On a copy of the live database, graded set (582 grades): `qwen_semantic` keeps i
 0.62 s (+0.58 s; held out +0.41 s). Against the 2026-10-19 thresholds, five of six now pass; "better" still
 misses on the held-out half (+0.040 [−0.006, +0.103], 13 questions). `tests/test_qwen_bit_shortlist.py`,
 `tests/test_migration_qwen_vector_bits.py`, and the full-coverage test in `tests/test_qwen_search.py`.
+
+## A company name that is also a word (2026-11-04)
+
+The 500 paraphrased questions (`docs/evaluations/paraphrased_questions_500.md`) found 15
+wordings read as a hiring employer: "the ramp program" as Ramp, "front desk support" as Front,
+"for current or recent students" as Current, "pay-later" as Later, "household humanoid robots" as
+Humanoid, "a global payments company" as Global Payments. Each search then answered about that
+employer only, and none of the 15 found its posting in either search mode. Frequency could not
+tell these apart from brands others mention: "ramp" is in 4.1% of other employers' postings, the
+same band as Stripe.
+
+How others write the name can (`retrieve._written_as_a_word`). Over the open postings of every
+other company: in lower case 77% of the time for "ramp", 94% "front", 85% "current", 99% "later",
+80% "pilot", 89% "outreach", 95% "humanoid", 94% "scale", 99% "global payments"; 0-1% for OpenAI,
+Anthropic, Stripe, Notion, Snowflake, Databricks, Figma and Plaid. A name written in lower case in
+at least half of the postings that say it, and in at least 20, names its company only where the
+question writes it as a name (`_names_it_as_a_word`): after "at", typed with a capital or ending
+what is said; "Ramp's", "does Ramp have", "is Ramp hiring" in any case; "Ramp jobs" only with a
+capital and not opening the question, because "current jobs" are jobs open now. The company's own
+postings are left out of the count: Global Payments writes its own name 140 times.
+
+A name of several words must also be said as written (`_said_as_written`): `tokenize` drops small
+words from both sides, so "models at scale for an AI company" said `scale ai`.
+
+What a later change could undo:
+
+- **Lower-case "ramp jobs" no longer names Ramp.** Deliberate: the same frame read "current jobs"
+  as Current. "jobs at ramp" still does, and "ramp" is then searched for as a word, which Ramp's
+  own postings say.
+- **One count per name and process**, about 0.4 s on 19,000 postings, kept in `_WORD_USAGE`
+  (cleared at 4,096 entries). Only names a question already matched are counted.
+- **Monte Carlo is not fixed.** Other postings write "Monte Carlo simulation" with capitals, so
+  case cannot tell the method from the company.
+
+Measured over all 710 saved questions (the graded set, the benchmark sets, the 500 and their 15
+traps), read-only: 18 readings changed, every one a misread removed. 14 of the 15 traps, and four
+in the older sets: "forward deployed engineer jobs" (graded set) had been read as a company called
+Forward, "Front Desk roles" as Front, "vehicles sense surroundings" as Sense, "client event
+outreach jobs" as Outreach. No question gained a company, and the seven still named are the ones
+meant (Stripe, Astranis, Anthropic, Okta, Postman's not-hiring notice, and Monte Carlo).
+`tests/test_retrieval_names.py`.
