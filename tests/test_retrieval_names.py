@@ -533,3 +533,132 @@ async def test_a_shortened_name_with_nothing_open_is_not_an_employer(db_session)
 
     found = await retrieve(db_session, "What jobs does Snowflake have open right now?")
     assert found.companies == ()
+
+
+# --- a name other employers write as an ordinary word ------------------------------
+#
+# Found on 2026-11-03 by 500 paraphrased questions: "the ramp program", "front desk
+# support", "models served at scale", "household humanoid robots" and "a global
+# payments company" were read as Ramp, Front, Scale AI, Humanoid and Global
+# Payments, and each search answered about that employer only. On the owner's
+# postings other employers write those words in lower case 77-99% of the time;
+# OpenAI, Anthropic, Stripe and Notion 0-1%.
+
+
+async def _said_in_lower_case(session, sentence: str, *, postings: int = 20) -> None:
+    other = await _company(session, "Acme")
+    for n in range(postings):
+        await _posting(session, other, f"Account Manager {n}", sentence)
+
+
+async def test_a_name_others_write_in_lower_case_is_a_word_there(db_session) -> None:
+    ramp = await _company(db_session, "Ramp")
+    await _posting(db_session, ramp, "Account Executive")
+    await _said_in_lower_case(db_session, "You will ramp up new sellers quickly.")
+    await _stats(db_session, ramp=4, sellers=2)
+
+    found = await retrieve(db_session, "jobs designing the ramp program for new sellers")
+
+    assert found.companies == ()
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "account executive jobs at Ramp",
+        "account executive jobs at ramp",
+        "Ramp's account executive roles",
+        "is Ramp hiring account executives",
+        "any Ramp jobs for account executives",
+    ],
+)
+async def test_the_same_word_written_as_a_name_still_names_it(db_session, question) -> None:
+    ramp = await _company(db_session, "Ramp")
+    await _posting(db_session, ramp, "Account Executive")
+    await _said_in_lower_case(db_session, "You will ramp up new sellers quickly.")
+    await _stats(db_session, ramp=4, account=10, executive=10)
+
+    assert (await retrieve(db_session, question)).companies == ("Ramp",)
+
+
+@pytest.mark.parametrize("question", ["ramp jobs for account executives", "Ramp jobs for sellers?"])
+async def test_a_name_others_write_as_a_word_needs_more_than_jobs_after_it(
+    db_session, question
+) -> None:
+    """ "current jobs" are jobs open now; the frame alone does not make it a name."""
+    ramp = await _company(db_session, "Ramp")
+    await _posting(db_session, ramp, "Account Executive")
+    await _said_in_lower_case(db_session, "You will ramp up new sellers quickly.")
+    await _stats(db_session, ramp=4, account=10, executive=10, sellers=2)
+
+    assert (await retrieve(db_session, question)).companies == ()
+
+
+async def test_a_brand_others_write_with_a_capital_is_still_named(db_session) -> None:
+    notion = await _company(db_session, "Notion")
+    await _posting(db_session, notion, "Product Designer")
+    await _said_in_lower_case(db_session, "We work in Notion and Slack every day.")
+    await _stats(db_session, notion=5, designer=3)
+
+    assert (await retrieve(db_session, "designer roles using Notion")).companies == ("Notion",)
+
+
+async def test_a_rare_word_others_write_in_lower_case_is_a_word_too(db_session) -> None:
+    humanoid = await _company(db_session, "Humanoid")
+    await _posting(db_session, humanoid, "Robotics Engineer")
+    await _said_in_lower_case(db_session, "You will build humanoid robots for homes.")
+    await _stats(db_session, humanoid=1, robots=2)
+
+    assert (await retrieve(db_session, "jobs building humanoid robots for homes")).companies == ()
+    assert (await retrieve(db_session, "robots jobs at Humanoid")).companies == ("Humanoid",)
+
+
+async def test_a_shortened_name_said_as_a_phrase_is_not_the_employer(db_session) -> None:
+    scale = await _company(db_session, "Scale AI")
+    await _posting(db_session, scale, "Machine Learning Engineer")
+    await _said_in_lower_case(db_session, "You will serve models at scale for customers.")
+    await _stats(db_session, scale=8, models=5, serving=2)
+
+    found = await retrieve(db_session, "jobs serving models at scale for customers")
+
+    assert found.companies == ()
+    assert (await retrieve(db_session, "models jobs at Scale")).companies == ("Scale AI",)
+
+
+async def test_a_two_word_name_others_write_in_lower_case_is_a_phrase(db_session) -> None:
+    """The company's own postings, which write its name with capitals, are not counted."""
+    payments = await _company(db_session, "Global Payments")
+    for n in range(30):
+        await _posting(db_session, payments, f"Payments Analyst {n}", "Join Global Payments today.")
+    await _said_in_lower_case(db_session, "We run a global payments platform for merchants.")
+    await _stats(db_session, **{"global": 30, "payments": 20, "merchants": 5})
+
+    question = "roles at a cross-border global payments company for merchants"
+    assert (await retrieve(db_session, question)).companies == ()
+    found = await retrieve(db_session, "analyst jobs at Global Payments")
+    assert found.companies == ("Global Payments",)
+
+
+async def test_a_name_of_several_words_is_said_with_nothing_between_them(db_session) -> None:
+    """ "at scale for an AI company" holds `scale ai` once "for" and "an" are dropped.
+
+    "scale" is in 24% of the owner's postings, too common for "at scale" to
+    be read as a shortened name; the full name was what the question matched.
+    """
+    scale = await _company(db_session, "Scale AI")
+    await _posting(db_session, scale, "Machine Learning Engineer")
+    await _stats(db_session, scale=24, models=5, serving=2)
+
+    question = "jobs serving models at scale for an AI model company"
+    assert (await retrieve(db_session, question)).companies == ()
+    assert (await retrieve(db_session, "Scale AI machine learning jobs")).companies == ("Scale AI",)
+
+
+async def test_a_name_with_its_own_small_words_still_names_it(db_session) -> None:
+    bank = await _company(db_session, "Bank of America")
+    await _posting(db_session, bank, "Data Engineer")
+    await _stats(db_session, bank=3, america=4, data=50, engineer=40)
+
+    assert (await retrieve(db_session, "data engineer jobs at Bank of America")).companies == (
+        "Bank of America",
+    )
