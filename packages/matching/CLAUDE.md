@@ -677,3 +677,62 @@ Requirement and sponsorship paths retain the same mode constraint. The shared
 locality reader rejects technical and negative remote mentions; negative
 metadata overrides weaker company prose. Counts describe work-mode evidence,
 not an independent verification of applicant eligibility.
+
+## Opt-in Qwen search (2026-11-02)
+
+`CHAT_QWEN_SEARCH` defaults to false. `chunk_search.py` owns the two chunk
+spaces and their shared ranking query. Qwen compares only its stamped vectors;
+postings without a current Qwen row retain their original bge-small chunks
+and posting vectors. Ranks, never distances, merge the spaces. Closed postings,
+stale offsets and the existing company/area/place/level predicates still apply.
+
+A failed local question embedding returns the original bge-small search with
+its reason on `Retrieval.embedding_fallback`. The chat context carries that
+reason, and reply construction repeats it in code, including fixed and evidence
+selection replies. Coverage reports Qwen and bge-small fallback separately.
+The optional semantic-candidate experiment uses the selected spaces; Qwen mode
+never fills an empty keyword result. The original setting-off behavior stays
+unchanged, including the existing semantic experiment.
+
+Tests use synthetic 384- and 2,560-wide vectors and patch the query embedder.
+The session fixture keeps a developer's opt-in from loading a model in the
+ordinary suite. The feed, matching scores, ingestion and workers are unchanged.
+
+The real-search measurement and recommendation are in
+`.claude/rules/assistant-search.md`, dated 2026-11-02. Reranking only: natural
+44/56 → 43/56, paraphrased 4/56 → 5/56 in the five shown. Qwen plus semantic
+candidates: 45/56 and 15/56, with warm medians 6.58/6.83 s versus 1.59/1.94 s.
+Both switches stay off by default; new semantic finds need grades before
+promotion. Question-by-question results are in `docs/evaluations/qwen-*.csv`.
+
+
+### Owner review: exact Qwen discovery only (2026-11-02)
+
+The earlier Qwen keyword reordering is superseded. Keywords retain bge-small;
+Qwen is lazy discovery, with one materialized distance scan and a grouped best
+span per open/current posting reused within that question. The materialized
+scan avoids the current-hash join's bad row estimate and vector PK lookups.
+No cross-question cache or ANN query/index is shipped. Model lifetime belongs
+to the question scope; local release happens once and failure warns rather
+than replacing the provider error.
+
+Final affected tests: 916 passed; lint, formatting and mypy passed. Controlled
+copy evaluation: natural top-five 44 → 46 and paraphrased 4 → 12 with semantics;
+listed paraphrased 10 → 31. Other semantic finds are ungraded. Qwen alone
+changes 0/195 saved heads, semantics 125/195. Warm semantic medians 7.02/7.40 s
+versus the fresh 3.41/4.22 s baseline still miss the added-1.5-second goal.
+Keep both flags off for now; if enabling discovery, enable both together.
+The owner already imported live vectors: activation is settings plus API
+restart. Full method, old/new numbers and the copy-only HNSW probe are in
+`.claude/rules/assistant-search.md`; old CSVs remain historical evidence.
+
+### Accuracy-fix integration (2026-11-04)
+
+The conditional remote-role percentage and quantified framework-choice fixes
+were integrated with current `main`, including Qwen discovery and exact-city
+filters. The existing posting-share regression first reproduced a
+`ValueError` because `_matching_totals` now returns four fields. Read its
+`total` attribute while retaining the role population, company, seniority,
+city and open-posting constraints. Framework alternatives still use extractor
+version 4 and preserve separate direct requirements. Stored postings, frozen
+evaluation labels and the shipped search defaults were left alone.

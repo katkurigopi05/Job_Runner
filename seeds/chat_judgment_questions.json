@@ -10,7 +10,9 @@
   "modes": {
     "shipped": {},
     "semantic": {"chat_semantic_candidates": true},
-    "cross_encoder": {"chat_rerank_model": "cross-encoder/ms-marco-MiniLM-L-12-v2"}
+    "cross_encoder": {"chat_rerank_model": "cross-encoder/ms-marco-MiniLM-L-12-v2"},
+    "qwen": {"chat_qwen_search": true},
+    "qwen_semantic": {"chat_qwen_search": true, "chat_semantic_candidates": true}
   },
   "questions": [
     {"key": "kafka-roles", "stratum": "skill", "expect": "answer", "question": "Which open roles use Kafka?"},

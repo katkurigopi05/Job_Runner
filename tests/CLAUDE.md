@@ -1,5 +1,18 @@
 # Notes on what the gates prove, and the test database
 
+## Dashboard dependency security floor (2026-11-03)
+
+`test_dashboard_security_dependencies.py` checks every minimatch engine in
+the lockfile, including aliases and nested copies, against the 11.0.1 fix
+for CVE-2026-118764. The expanded test failed on legacy 3.1.5 before its
+replacement; it no longer checks only the parser's copy. The focused offline
+dependency/dashboard/CI suites pass **93 tests**, without model, network or
+database fixtures. Seven Node compatibility tests exercise the adapter's
+actual ESLint consumers and glob options via `npm run test:dependencies`;
+the dashboard CI job runs them before lint. Full npm audit now reports zero
+vulnerabilities, superseding the initial parser-only patch's 13 remaining
+moderate entries. No advisory is dismissed or filtered out.
+
 Moved here from the root `CLAUDE.md` on 2026-10-11, word for word, so they
 load only when work touches this directory. "§N" below is a section of
 the root file, which keeps every heading and says where each section went.
@@ -88,7 +101,7 @@ before trusting either number.
   IDs. Synthetic `test_workday.py` boards still cover pagination, empty boards,
   failures, robots refusals and truncation without touching the network.
 
-  A tenant retains §2.6's 60s floor. The reader caps list pages at 60 and
+  A tenant retains §2.6's floor (60 s then; 5 to 60 s, default 5, since 2026-11-02). The reader caps list pages at 60 and
   details at five per crawl. Missing/changed descriptions take priority;
   cached descriptions rotate for revalidation. Tests establish progress on
   identical listings, description-only edits, versioning, age lower bounds,
@@ -99,6 +112,16 @@ before trusting either number.
 
   Workday forms remain unsupported. Both adapter lookup and the real apply
   worker are tested to refuse them with `unsupported_site`.
+
+**Verification, 2026-11-02:** the five-second-rule branch passed 553 crawler,
+reader, backfill, discovery, scheduling, rate-limit and migration tests. An
+independent scratch-database run upgraded through `c4e6a8b0d2f4`, repeated the
+upgrade, checked schema consistency, downgraded and upgraded again. Delays of
+0, 2, 5, 10, 59, 60, 60.5, 90, 300 and 600 seconds changed only at exactly 60
+on upgrade and exactly 5 on downgrade; row counts and both timestamps stayed
+unchanged. Full Ruff checks and types for `packages/crawler packages/matching`
+passed. Live budgets and the five-details-per-crawl limit were left alone;
+the owner still needs to merge, migrate and start workers.
 
 ### Closing the gate gaps §15 had only described
 
@@ -360,3 +383,44 @@ Not cleaned up: the live table holds eleven rows for made-up hosts
 (`h0.example`, `acme.example`, `careers.slowsite.test` and others) dated
 2026-09-14, from an earlier version of the suite with the same leak. They
 are no host the crawler asks, and they are the owner's table to tidy.
+
+### Qwen search regression proof (2026-11-02)
+
+`test_qwen_search.py` uses hand-built 384- and 2,560-wide unit directions, never
+a real model or network: Qwen can outrank a disagreeing bge-small result; chunks
+and posting vectors without Qwen remain reachable; spaces interleave by rank;
+closed/stale/other-model rows do not count as Qwen coverage. Company, area,
+place and level rules apply to semantic additions, and a nonexistent rare term
+still returns nothing. Embedding failure is visible in both context and reply.
+Ollama answers release the query model while Kaggle answers leave it warm.
+The ordinary suite forces the new flag off regardless of the owner's `.env`.
+
+The first run failed before implementation. With the feature wired, 907
+assistant/retrieval/import/query-embedding tests passed on a disposable marked
+database. Production database measurements use a separate restored copy;
+pytest never receives the live database or that evaluation copy.
+
+Final affected suites: 911 passed (including non-search local-model release
+and computed answers without Ollama). The full local suite before those final
+focused additions had 5,783 passed, two skipped, and one unrelated failure:
+`test_build_provider_defaults_to_stub` inherits the owner's absolute
+`JOBRUNNER_ENV_FILE` instead of the test's temporary directory. That existing
+test and the new flag-default test both passed with an empty env-file override.
+Ruff, formatting and mypy passed; no test called a real model or the network.
+The real embedding measurements ran separately on the evaluation copy. A manual
+warm-to-empty Ollama transition confirmed the query model was released afterward.
+
+
+### Qwen review regression proof (2026-11-02)
+
+The review regressions failed first: keyword ordering followed Qwen, no exact
+ranking snapshot existed, two embeddings unloaded independently, and a failed
+release raised an ApiError. The revised focused suites pass **916 tests**.
+Synthetic SQL fixtures compare the original exact scan's complete ranking and
+best spans against the grouped snapshot, including company subsets, repeated
+chunks, non-positive similarity and widening. SQL event counts prove one Qwen
+scan across repeated stages; semantic discovery and the fake judge share that
+same scan, and a second question gets a fresh one. Local embeddings explicitly
+stay warm within the scope and release exactly once; release failure logs a
+warning and the fake down provider retains its `ollama serve` error. Keyword
+search with Qwen enabled and semantics disabled equals the shipped Retrieval.

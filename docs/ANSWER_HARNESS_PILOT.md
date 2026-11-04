@@ -123,3 +123,21 @@ questions and selected-application context retain their existing answer paths.
 These local answers describe the supplied sample, not an exhaustive semantic
 search result. A focused frozen-retrieval replay can verify these routes without
 establishing general answer accuracy or replacing independent source review.
+
+## Integration verification, 2026-11-04
+
+Updated the pilot against current `main`, retaining Qwen discovery, query-embedder
+release handling and the shared live selection renderer. The focused offline
+pilot/CLI and selection-route suites pass 75 tests against the marked test
+database. No inference, live database writes, prompt promotion or worker start
+was performed. Historical frozen plans keep their recorded code identities;
+this integration does not make them replayable under changed code.
+
+The answer-mode fixes were then integrated with current search: one registered
+`assistant.selection` version 2 retains the stricter duty/qualification rules,
+and prose streams reject selection JSON before exposing any delta. Existing
+prompt/stream regressions failed before this reconciliation. The combined
+chat, retrieval, requirements, Qwen and pilot suites pass 1,128 offline tests;
+required packages and the two pilot modules type-check across 187 files. Exact
+city percentage denominators use the current `_Totals.total` result. Frozen
+historical reviews and rejected experimental instructions remain unchanged.

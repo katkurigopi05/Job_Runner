@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ApiError, api, type PostingHistory, type VersionChange } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
 import { SplitButton } from "./split-button";
+import { POSTING_LINK } from "@/lib/external";
 
 export const dynamic = "force-dynamic";
 
@@ -106,8 +107,7 @@ export default async function PostingPage({ params }: { params: Promise<{ id: st
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <a
                   href={source.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  {...POSTING_LINK}
                   className="break-all text-sm text-ink underline-offset-4 hover:underline"
                 >
                   {source.url} ↗

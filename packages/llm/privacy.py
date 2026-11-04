@@ -14,12 +14,12 @@ import secrets
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, cast
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote
 
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from packages.llm.audit import is_local
+from packages.llm.audit import is_local, is_loopback
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -367,11 +367,7 @@ def protect_provider(provider: LLMProvider) -> LLMProvider:
     if local and provider.name == "ollama":
         # A non-cloud model on somebody else's Ollama host still leaves this
         # machine. Only a loopback daemon qualifies for the local exemption.
-        local = urlsplit(getattr(provider, "base_url", "")).hostname in {
-            "localhost",
-            "127.0.0.1",
-            "::1",
-        }
+        local = is_loopback(getattr(provider, "base_url", ""))
     if isinstance(provider, PrivacyProvider) or local:
         return provider
     return PrivacyProvider(provider)

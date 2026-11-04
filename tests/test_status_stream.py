@@ -196,6 +196,39 @@ async def test_the_stream_opens_with_the_current_counts(
     assert set(ready["counts"]) == ALL_STATUSES, "every status, including the zeroes"
 
 
+async def test_ready_counts_are_read_after_history_is_classified(live_api, monkeypatch) -> None:
+    """A ready client may create an application immediately.
+
+    Priming after that commit would classify the new event as history and
+    swallow it. Yield once in priming to reproduce the startup ordering
+    without depending on database speed or a wall-clock delay.
+    """
+    from apps.api.routers import events
+
+    primed = asyncio.Event()
+    counts_after_priming: list[bool] = []
+    original_history = status_stream.StatusStream._ids_before
+    original_counts = events._read_counts
+
+    async def delayed_history(self, since):
+        await asyncio.sleep(0)
+        history = await original_history(self, since)
+        primed.set()
+        return history
+
+    async def observed_counts():
+        counts_after_priming.append(primed.is_set())
+        return await original_counts()
+
+    monkeypatch.setattr(status_stream.StatusStream, "_ids_before", delayed_history)
+    monkeypatch.setattr(events, "_read_counts", observed_counts)
+    async with live_api.stream("GET", "/events/applications") as response:
+        ready = await Frames(response).until("ready")
+
+    assert set(ready["counts"]) == ALL_STATUSES
+    assert counts_after_priming == [True], "ready must follow history classification"
+
+
 async def test_the_response_refuses_to_be_compressed(live_api: AsyncClient) -> None:
     """`no-transform`, and the feature is dead in a browser without it.
 

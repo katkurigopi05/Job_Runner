@@ -98,7 +98,7 @@ async def _clear_budgets(engine):
 def test_a_delay_below_the_floor_is_refused() -> None:
     """Refused, not clamped — the same rule as the in-process limiter."""
     with pytest.raises(RateLimitTooLow):
-        SharedHostRateLimiter(delay_seconds=5.0)
+        SharedHostRateLimiter(delay_seconds=MIN_DELAY_SECONDS - 1)
 
 
 def test_a_shared_api_override_below_its_floor_is_refused() -> None:

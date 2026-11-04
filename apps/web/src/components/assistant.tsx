@@ -12,6 +12,7 @@ import { KaggleConnection } from "@/components/kaggle-connection";
 import { ReplyText } from "@/components/reply-text";
 import { historyFrom } from "@/lib/chat-history";
 import { readFrames } from "@/lib/chat-stream";
+import { POSTING_LINK } from "@/lib/external";
 
 /* Styling cues borrowed from the photo-editor: an emoji-prefixed toolbar row,
    a grey working canvas the content sits on, and a left-aligned status line
@@ -56,6 +57,10 @@ interface PostingShare {
 /** How many further matches one click reveals. */
 const MORE_PAGE = 10;
 
+/** The two buttons under the list: the next page, and everything at once. */
+const MORE_BUTTON =
+  "rounded border border-rule px-2.5 py-1 font-mono text-xs text-ink-soft transition-colors hover:border-attn hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn";
+
 /** How many kinds the summary names before it says "and N more". */
 const KINDS_NAMED = 8;
 
@@ -99,7 +104,6 @@ interface Turn {
   chart?: Chart | null;
 }
 
-/** One retrieved posting, linked to its page. */
 function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
   return (
     <li>
@@ -110,6 +114,7 @@ function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
       ) : null}
       <Link
         href={`/postings/${source.posting_id}`}
+        {...POSTING_LINK}
         className={`${muted ? "text-ink-soft" : "text-ink"} underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn`}
       >
         {source.title}
@@ -136,7 +141,10 @@ function groupByKind(items: Source[]): Array<{ kind: string; items: Source[] }> 
 }
 
 /**
- * The matches that did not fit in the answer, ten at a time.
+ * The matches that did not fit in the answer, ten at a time or all at once.
+ *
+ * Every one the search found is here (2026-11-02): the owner asked for every
+ * posting, and 892 software titles had stopped at the first 105.
  *
  * Five postings fit in a prompt. Asked for "jobs with job types AI engineer",
  * the assistant showed three and there were sixty-one, with nothing on screen
@@ -232,9 +240,14 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
           <button
             type="button"
             onClick={() => setVisible((count) => count + MORE_PAGE)}
-            className="rounded border border-rule px-2.5 py-1 font-mono text-xs text-ink-soft transition-colors hover:border-attn hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+            className={MORE_BUTTON}
           >
             show next {Math.min(MORE_PAGE, remaining)} · {remaining} more
+          </button>
+        ) : null}
+        {remaining > MORE_PAGE ? (
+          <button type="button" onClick={() => setVisible(more.length)} className={MORE_BUTTON}>
+            show all {remaining}
           </button>
         ) : null}
         {turn.matchedRoleFilter && (remaining === 0 || beyondTheList > 0) ? (

@@ -131,12 +131,12 @@ Be brief. This is a tool, not a chat companion.""",
 
 
 CHAT_SELECTION_SYSTEM = Prompt(
-    name="assistant.selection.system",
+    name="assistant.selection",
     task="assistant",
     version=2,
-    text="""Filter the supplied postings for the exact question. A ranked search result is not proof of a match.
+    text="""The user message starts with EVIDENCE_SELECTION. Filter the supplied postings for the exact question. A ranked search result is not proof of a match.
 
-Return only {"ids":["P1"]}, with at most eight distinct supplied catalogue IDs, or {"ids":[]} if none is established. No Markdown, prose, extra fields or invented IDs.
+Return only {"ids": ["P1"]}, with at most eight distinct evidence IDs from the supplied catalogue, or {"ids": []} if none is established. No Markdown, prose, extra fields or invented IDs.
 
 Check every posting against ALL conditions in the original question, including the task and who it serves. Do not substitute a related topic. A question about customer support is not answered by employee support, generic testing or developer advocacy.
 
