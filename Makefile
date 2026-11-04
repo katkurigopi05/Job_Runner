@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching eval-retrieval judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings export-chunk-vectors-pending import-chunk-vectors query-embedder-check backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval eval-paraphrased judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings export-chunk-vectors-pending import-chunk-vectors query-embedder-check backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -364,6 +364,14 @@ bench-matching:
 # what the numbers do not say.
 eval-retrieval:
 	$(PY)/python -m scripts.eval_retrieval $(if $(set),--set $(set),) $(if $(out),--json $(out),)
+
+# make eval-paraphrased — the 500 paraphrased questions in
+# docs/evaluations/paraphrased_questions_500.md through the real search: where
+# each question's own posting lands, overall, by family and for the 15 trap
+# wordings. Read-only. `mode=qwen_semantic` (or any mode of the graded set);
+# `limit=20` for a quick run; `out=file.json` keeps every outcome.
+eval-paraphrased:
+	$(PY)/python -m scripts.eval_paraphrased --mode $(or $(mode),shipped) $(if $(limit),--limit $(limit),) $(if $(out),--json $(out),)
 
 # make judge-pool — the postings to grade for the assistant's search
 # (Phase 5 part 2). Asks every question in seeds/chat_judgment_questions.json
