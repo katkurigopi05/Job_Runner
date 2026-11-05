@@ -30,7 +30,11 @@ PINNED = [
         "2fdebc22e4494764980b48065467286f1386ec34650a2ef6a10aa493d0be1ab0",
     ),
     ("assistant.system", 10, "1443041dcb688d325df46754e72769c124987ebcb0b5bae91cf1dd96a428e252"),
-    ("assistant.selection", 1, "15631018523436960fb3be49d774beb78394ac54fc83b4b16622f7f8349adaa9"),
+    (
+        "assistant.selection",
+        2,
+        "3a00a4ce53d027f6f49c22a14cabd1e9e0c240cbd7aebea762d4109b14eb7e3e",
+    ),
     (
         "tailor.cover_letter.system",
         1,
@@ -58,6 +62,7 @@ def test_the_registry_is_the_only_definition() -> None:
     assert identify(SYSTEM_PROMPT) is not None
     assert identify(CLASSIFY_SYSTEM_PROMPT) is not None
     assert identify(chat.SYSTEM) is not None
+    assert identify(chat.SELECTION_SYSTEM) is not None
 
 
 def test_an_unregistered_prompt_is_not_labelled() -> None:

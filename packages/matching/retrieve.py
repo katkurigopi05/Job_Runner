@@ -114,10 +114,12 @@ from packages.matching.level import (
 from packages.matching.locality import (
     Locality,
     area_exclusion,
+    bay_area_city_names,
     bay_area_place_spans,
     has_unplaced_location,
     locality_of,
     names_bay_area_office,
+    names_city_office,
     reads_as_remote,
 )
 from packages.matching.required_skills import (
@@ -650,6 +652,7 @@ class Retrieval:
     #: different answers.
     outside_area: int = 0
     #: An explicit Bay Area question narrows the standing search area.
+    place_name: str = "Bay Area"
     place_total: int | None = None
     place_counts_complete: bool = False
     search_area_total: int | None = None
@@ -726,6 +729,18 @@ class Retrieval:
     bge_fallback_searched: int = 0
     #: Why the opt-in Qwen query failed; surfaced in context and the reply.
     embedding_fallback: str | None = None
+
+    @property
+    def place_scope(self) -> str:
+        return "the Bay Area" if self.place_name == "Bay Area" else self.place_name
+
+    @property
+    def place_office(self) -> str:
+        return (
+            "a Bay Area office"
+            if self.place_name == "Bay Area"
+            else f"an office in {self.place_name}"
+        )
 
 
 def _sentence_transformer_embedder() -> SentenceTransformerEmbedder | None:
@@ -848,18 +863,34 @@ class _PlaceFilter:
     separately. Descriptions can establish remote work, never a Bay Area office.
     """
 
+    cities: tuple[str, ...] = ()
     inside: set[uuid.UUID] = field(default_factory=set)
     bay: set[uuid.UUID] = field(default_factory=set)
     omitted: set[uuid.UUID] = field(default_factory=set)
 
+    @property
+    def name(self) -> str:
+        return " or ".join(city.title() for city in self.cities) if self.cities else "Bay Area"
+
+    @property
+    def scope(self) -> str:
+        return self.name if self.cities else "the Bay Area"
+
+    def _matches(self, location: str | None, title: str | None) -> bool:
+        return (
+            names_city_office(location, title=title, cities=self.cities)
+            if self.cities
+            else names_bay_area_office(location, title=title)
+        )
+
     def keeps(self, hit: _Hit) -> bool:
-        return names_bay_area_office(hit.location, title=hit.title)
+        return self._matches(hit.location, hit.title)
 
     def record(
         self, ident: uuid.UUID, title: str | None, location: str | None, description: str | None
     ) -> bool:
         self.inside.add(ident)
-        here = names_bay_area_office(location, title=title)
+        here = self._matches(location, title)
         if here:
             self.bay.add(ident)
         elif has_unplaced_location(location) or reads_as_remote(
@@ -2516,6 +2547,7 @@ async def _stating_sponsorship(
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,
         work_mode="remote" if remote_only else None,
+        place_name=place_filter.name if place_filter is not None else "Bay Area",
         place_total=len(place_filter.bay) if place_filter is not None else None,
         place_counts_complete=True,
         search_area_total=len(place_filter.inside) if place_filter is not None else None,
@@ -2654,6 +2686,7 @@ async def _requiring_skill(
         area=area,
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,
+        place_name=place_filter.name if place_filter is not None else "Bay Area",
         place_total=len(place_filter.bay) if place_filter is not None else None,
         search_area_total=len(place_filter.inside) if place_filter is not None else None,
         remote_or_unplaced_not_listed=len(place_filter.omitted) if place_filter is not None else 0,
@@ -2708,9 +2741,11 @@ async def _retrieve(
     for start, end in reversed(mode_spans):
         question = question[:start] + " " + question[end:]
     # Read the question's place once. State/country questions retain their
-    # existing behavior; a named Bay Area city narrows to its whole region.
+    # existing behavior; a named city constrains offices to that city.
     place = locality_of(question)
-    place_filter = _PlaceFilter() if place is Locality.BAY_AREA else None
+    place_filter = (
+        _PlaceFilter(cities=bay_area_city_names(question)) if place is Locality.BAY_AREA else None
+    )
     place_surfaces: list[str] = []
     if place_filter is not None:
         # A place constrains the region, rather than becoming an additional
@@ -3502,14 +3537,16 @@ async def _retrieve(
                     level=None,
                     allow_unknown=True,
                     # Independent accounting: do not alter the query's omitted counts.
-                    place_filter=_PlaceFilter() if place_filter is not None else None,
+                    place_filter=_PlaceFilter(cities=place_filter.cities)
+                    if place_filter is not None
+                    else None,
                 )
             ).total
             share = PostingShare(
                 matching=exact,
                 open_total=denominator,
                 scope=(
-                    "the Bay Area"
+                    place_filter.scope
                     if place_filter is not None
                     else "your search area"
                     if area
@@ -3569,6 +3606,7 @@ async def _retrieve(
         area_waived=area is None and get_settings().search_us_only,
         outside_area=outside,
         work_mode="remote" if remote_only else None,
+        place_name=place_filter.name if place_filter is not None else "Bay Area",
         place_total=len(place_filter.bay) if place_filter is not None else None,
         place_counts_complete=role_pool is not None or matching_ids is not None,
         search_area_total=len(place_filter.inside) if place_filter is not None else None,
