@@ -1,6 +1,6 @@
 # Kaggle GPU dashboard assistant
 
-Choose **Kaggle GPU (remote)** per question in the dashboard assistant.
+Choose **Kaggle GPU (auto, remote)** per question in the dashboard assistant.
 The default remains local Ollama. Kaggle receives the question and retrieved
 application/profile/skill context. Recruiter mail and mail-bearing history
 remain withheld unless **share mail** is enabled for that question. Protected
@@ -13,7 +13,77 @@ contacts. Other identifying prose can remain; this does not anonymize the
 context or replace the separate mail-consent choice. The mapping is held only
 in local memory, not sent to the notebook, logged or persisted.
 
+## Auto model selection
+
+The connection panel checks the helpers already loaded in the selected kernel,
+without generating an answer or loading weights. It supports:
+
+| Loaded model | Helper | Readiness requirements |
+|---|---|---|
+| Qwen3.8 27B UD-Q6_K | `jobrunner_qwen38_complete` | Pinned artifact SHA-256, two GPUs, thinking disabled, 4,096-token context |
+| Qwen3 8B 4-bit | `jobrunner_complete` | Existing verified protocol-1 GPU helper, 4,096-token context |
+
+Auto prefers ready 27B, otherwise ready 8B. It binds that choice before a question
+is sent and refuses a model change during the request. The status panel, reply
+metadata and audit name the actual model; unsupported models are refused rather
+than relabelled. This does not change the default local provider or enable
+fallback during a question. An unknown model needs a reviewed helper contract
+before it can join auto selection.
+
+When a session has multiple notebooks, reconnect checks their readiness without
+generating answers. If exactly one notebook has a ready supported model, it
+selects that notebook automatically. Otherwise the picker shows labels such as
+“Notebook 2 — Qwen3.8 27B Q6_K” or “Notebook 1 — no model helper loaded” instead
+of opaque kernel IDs. Two ready notebooks still require an explicit choice unless this session already
+has a saved ready notebook, which is kept selected.
+The other notebook is not deleted or restarted.
+
+For a new Harness evaluation, opt into the currently ready model when freezing
+the plan:
+
+```sh
+python -m scripts.run_answer_harness prepare CASES OUTPUT --auto-model
+```
+
+The detected model is pinned in that plan. Baseline and pilot phases refuse a
+different loaded model and report the pinned identity in every captured reply.
+They also require enough shared quota for the complete planned phase before
+sending any inference prompt; a quota-blocked zero-call phase is retryable.
+Preparing a plan performs readiness checks only, not inference. Existing sealed
+evaluation files are never edited. Omitting the option retains the 8B default.
+
+For an already staged and verified 27B engine, run the contents of
+`scripts/kaggle_qwen38_helper.py` in its kernel, then install:
+
+```python
+jobrunner_qwen38_complete = install(
+    jobrunner27_engine, jobrunner27_tokenizer, jobrunner27_identity
+)
+```
+
+The identity must come from the artifact-hash and two-GPU allocation checks in
+the loader, not an invented model label. The supported GGUF SHA-256 is
+`c9c206812fbe4ac7b76a729e25928b63f2ae89d37f69da7a71c20aec763cd436`.
+Installing this helper does not download or reload the model. `make kaggle-setup`
+preserves a ready 27B helper; if the three `jobrunner27_*` globals above survive,
+it can reinstall just that helper. It does not stage or download 27B weights.
+After a complete session restart, stage and load 27B again before using auto;
+the existing fresh-kernel setup path still loads the attached 8B dataset.
+
 ## Quick start: one command per session
+
+The connection card shows only the saved, ready notebook, named for its loaded
+model (for example, **Current notebook — Qwen3.8 27B Q6_K**). Reconnecting the
+same session keeps that choice. For a new session with several kernels, a single
+ready supported model is selected automatically; otherwise the picker uses
+readable model labels. Empty kernels are hidden when a ready choice exists.
+Readiness checks do not generate answers or load weights.
+
+**Load Kaggle helper** stays visible when ready. It reuses a healthy helper and
+can install the matching helper over an already loaded, identity-verified
+Qwen3.8 27B UD-Q6_K engine. The fresh-model setup below still describes the
+attached 8B model; this button does not download or load 27B weights.
+
 
 1. Start the Kaggle notebook session with a GPU and the model dataset attached.
    Running cells is not needed.
@@ -63,13 +133,18 @@ The manual steps below do the same by hand.
    chat, issues, screenshots, shell command arguments or tracked files.
 4. In the dashboard assistant, select **Kaggle GPU (remote)**, click
    **Reconnect**, and paste the URL into the password field. Click **Save and
-   check**. If several kernels are active, choose the ID printed in step 2.
+   check**. If several notebooks are active and exactly one is ready, it is
+   selected automatically. Otherwise choose a notebook using its model/readiness
+   label. The printed kernel ID remains useful for the CLI/manual connection.
    The URL is stored privately on this machine and is never returned by the API.
 
    The panel distinguishes an unavailable session, a restarted kernel, a missing
    or outdated helper, and a model that is not ready. A reachable kernel alone
-   does not mean that the model is loaded. Run the current helper after updating
-   Jobrunner, then click **Check connection**. Wait for **Kaggle ready** before
+   does not mean that the model is loaded. Click **Load Kaggle helper** to reuse
+   a healthy helper or install the matching helper over the loaded model. Progress
+   appears in the panel; first-time 8B loading can take several minutes. Setup
+   continues if the panel closes, and reopening it resumes progress. Wait for
+   **Kaggle ready** before
    asking model questions. Factual answers that do not use a model still work.
 
    The CLI remains available from this checkout:

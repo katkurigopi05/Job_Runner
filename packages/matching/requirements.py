@@ -40,7 +40,7 @@ from packages.matching.experience import Demand, heading_kind, line_demand
 from packages.matching.skill_vocab import BY_KEY, find_skills
 
 #: Bump when extraction changes, so the backfill knows which rows to redo.
-EXTRACTOR_VERSION = 3
+EXTRACTOR_VERSION = 4
 #: Version history, because a bump re-reads every stored posting:
 #:   1 — first reading.
 #:   2 — found by sampling the live corpus: "€95.000" read as 95, benefit
@@ -49,6 +49,8 @@ EXTRACTOR_VERSION = 3
 #:       accepted.
 #:   3 — read Essential headings; prefer direct required evidence over an
 #:       equally required alternative, including versioned framework options.
+#:   4 — treat quantified framework/tool lists as alternatives, not a direct
+#:       requirement for every named technology.
 
 #: Evidence is a quote for a person to check, not a copy of the posting.
 MAX_QUOTE = 240

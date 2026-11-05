@@ -1475,7 +1475,7 @@ async def selected_reply(ready: Ready) -> ChatReply:
         )
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
-    return selection_reply_for(ready, model, raw)
+    return selection_reply_for(ready, getattr(provider, "model", model), raw)
 
 
 def selection_reply_for(ready: Ready, model: str | None, raw: str) -> ChatReply:
@@ -1535,6 +1535,7 @@ async def chat(body: ChatRequest, session: SessionDep) -> ChatReply:
         validate_prose_answer(answer)
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
+    actual_model = getattr(provider, "model", model)
     if is_bare_selection(answer):
-        raise selection_instead_of_answer(ready.selected, model)
-    return reply_for(ready, model, answer)
+        raise selection_instead_of_answer(ready.selected, actual_model)
+    return reply_for(ready, actual_model, answer)

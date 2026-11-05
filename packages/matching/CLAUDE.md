@@ -726,6 +726,17 @@ The owner already imported live vectors: activation is settings plus API
 restart. Full method, old/new numbers and the copy-only HNSW probe are in
 `.claude/rules/assistant-search.md`; old CSVs remain historical evidence.
 
+### Accuracy-fix integration (2026-11-04)
+
+The conditional remote-role percentage and quantified framework-choice fixes
+were integrated with current `main`, including Qwen discovery and exact-city
+filters. The existing posting-share regression first reproduced a
+`ValueError` because `_matching_totals` now returns four fields. Read its
+`total` attribute while retaining the role population, company, seniority,
+city and open-posting constraints. Framework alternatives still use extractor
+version 4 and preserve separate direct requirements. Stored postings, frozen
+evaluation labels and the shipped search defaults were left alone.
+
 ## A description offers remote work only by saying so (2026-11-04)
 
 The 500 paraphrased questions found 72 of their 500 target postings on-site outside California
