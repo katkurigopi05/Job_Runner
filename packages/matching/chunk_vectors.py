@@ -22,7 +22,7 @@ import gzip
 import json
 import uuid
 from collections import Counter, defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.models import Posting
 from packages.core.models_chunks import LARGE_EMBEDDING_DIM, PostingChunk, PostingChunkVector
 from packages.matching.chunks import normalize
+from packages.matching.locality import california_or_us_remote
 
 log = structlog.get_logger(__name__)
 
@@ -240,6 +241,41 @@ class PendingReport:
     #: Open postings with text whose chunks are missing or cut from an older
     #: text. The matching pass (or `make chunk-postings`) chunks them first.
     not_chunked: int = 0
+    #: Postings the export's scope left out, chunked or not.
+    out_of_scope: int = 0
+
+
+#: Which postings an export may hold, read from title, location and description.
+Scope = Callable[[str | None, str | None, str | None], bool]
+
+
+def _owner_area(title: str | None, location: str | None, description: str | None) -> bool:
+    return california_or_us_remote(title=title, location=location, description=description)
+
+
+#: What gets Qwen vectors (owner, 2026-11-05): a California office in any
+#: working mode, else remote in the United States. Never "2 Locations".
+OWNER_AREA: Scope = _owner_area
+
+
+def _keeps(scope: Scope | None, title: str | None, location: str | None, body: str | None) -> bool:
+    return scope is None or scope(title, location, body)
+
+
+async def _not_chunked(session: AsyncSession, scope: Scope | None) -> tuple[int, int]:
+    """Postings waiting to be chunked: how many the scope keeps, and how many it leaves out."""
+    if scope is None:
+        waiting = await session.scalar(select(func.count()).where(_with_text(), ~_chunked()))
+        return int(waiting or 0), 0
+    rows = (
+        await session.execute(
+            select(Posting.title, Posting.location, Posting.description_raw).where(
+                _with_text(), ~_chunked()
+            )
+        )
+    ).all()
+    kept = sum(1 for row in rows if scope(row.title, row.location, row.description_raw))
+    return kept, len(rows) - kept
 
 
 def _with_text() -> Any:
@@ -278,24 +314,30 @@ def _missing_vector(model: str) -> Any:
 
 
 async def pending(
-    session: AsyncSession, *, model: str = QWEN_4B
+    session: AsyncSession, *, model: str = QWEN_4B, scope: Scope | None = None
 ) -> tuple[tuple[Exported, ...], PendingReport]:
     """Every open posting whose current chunks are missing a vector, as the importer reads them.
 
     A posting is exported whole, so its rows in the vectors file line up with
     its chunks; chunks that already have a vector are skipped on import. A
     posting not chunked from today's text is counted and left for the
-    matching pass, which chunks it with bge-small first.
+    matching pass, which chunks it with bge-small first. `scope` keeps only
+    the postings it accepts (`OWNER_AREA`); the rest are counted, not exported.
     """
-    rows = (
+    found = (
         await session.execute(
-            select(Posting.id, Posting.description_raw)
+            select(Posting.id, Posting.title, Posting.location, Posting.description_raw)
             .where(_with_text(), _chunked(), _missing_vector(model))
             .order_by(Posting.first_seen_at, Posting.id)
         )
     ).all()
+    rows = [
+        (row.id, row.description_raw)
+        for row in found
+        if _keeps(scope, row.title, row.location, row.description_raw)
+    ]
     spans: dict[uuid.UUID, list[tuple[int, int, int]]] = defaultdict(list)
-    ids = [row.id for row in rows]
+    ids = [posting_id for posting_id, _ in rows]
     for first in range(0, len(ids), 1000):
         for chunk in (
             await session.execute(
@@ -321,12 +363,13 @@ async def pending(
     covered = await session.scalar(
         select(func.count()).where(_with_text(), _chunked(), ~_missing_vector(model))
     )
-    not_chunked = await session.scalar(select(func.count()).where(_with_text(), ~_chunked()))
+    not_chunked, unchunked_out = await _not_chunked(session, scope)
     report = PendingReport(
         postings=len(exported),
         chunks=sum(len(posting.chunks) for posting in exported),
         covered=int(covered or 0),
-        not_chunked=int(not_chunked or 0),
+        not_chunked=not_chunked,
+        out_of_scope=len(found) - len(rows) + unchunked_out,
     )
     return tuple(exported), report
 

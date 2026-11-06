@@ -77,6 +77,42 @@ async def test_postings_that_need_chunking_first_are_counted_not_exported(db_ses
     assert report.not_chunked == 2
 
 
+async def _at(session, location: str | None, *, chunked: bool = True):
+    posting = await _posting(session, chunked=chunked)
+    posting.location = location
+    await session.flush()
+    return posting
+
+
+async def test_a_scope_exports_only_california_and_us_remote(db_session):
+    # Arrange
+    kept = [
+        await _at(db_session, "San Francisco, CA"),
+        await _at(db_session, "Hybrid - Oakland, CA"),
+        await _at(db_session, "Remote - US"),
+    ]
+    for location in ("Austin, TX", "2 Locations", "Toronto, ON"):
+        await _at(db_session, location)
+    await _at(db_session, "Seattle, WA", chunked=False)
+    await _at(db_session, "San Jose, CA", chunked=False)
+
+    # Act
+    exported, report = await CV.pending(db_session, scope=CV.OWNER_AREA)
+
+    # Assert: the unchunked Seattle job is out of scope, San Jose waits for chunking.
+    assert {posting.id for posting in exported} == {str(posting.id) for posting in kept}
+    assert (report.postings, report.not_chunked, report.out_of_scope) == (3, 1, 4)
+
+
+async def test_no_scope_exports_every_posting_as_before(db_session):
+    for location in ("San Francisco, CA", "Austin, TX", "2 Locations"):
+        await _at(db_session, location)
+
+    exported, report = await CV.pending(db_session)
+
+    assert (len(exported), report.out_of_scope) == (3, 0)
+
+
 async def test_export_then_import_leaves_nothing_pending(db_session, tmp_path):
     first, second = await _posting(db_session), await _posting(db_session, BODY + " Kafka too.")
     exported, report = await CV.pending(db_session)

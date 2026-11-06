@@ -501,8 +501,9 @@ chunk-postings:
 # have no Qwen vector yet (new since the last import), for the Colab notebook
 # scripts/colab/qwen_embed_batch.ipynb. Prints the next two steps. dry=1 counts
 # only; out= picks the folder (default storage/qwen_batches.nosync/<date>).
+# Only California (any mode) and US-remote postings unless all=1.
 export-chunk-vectors-pending:
-	$(PY)/python -m scripts.export_pending_chunks $(if $(dry),--dry-run) $(if $(out),--out $(out))
+	$(PY)/python -m scripts.export_pending_chunks $(if $(dry),--dry-run) $(if $(all),--all) $(if $(out),--out $(out))
 
 # make import-chunk-vectors — attach Qwen3-Embedding-4B vectors made on a Colab
 # TPU to the chunks they were made from. Each posting is checked against today's
