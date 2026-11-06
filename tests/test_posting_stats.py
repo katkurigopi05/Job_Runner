@@ -115,6 +115,16 @@ async def test_title_places_a_job_only_when_the_location_names_no_place(db_sessi
     assert stats.total == 1
 
 
+async def test_a_canadian_address_written_country_first_is_not_california(db_session):
+    # Iron Mountain writes country | province | city.
+    await posting(db_session, "Data Engineer", "CA | BC | Burnaby")
+    await posting(db_session, "Data Engineer", "San Diego, CA")
+
+    stats = await posting_stats(db_session, StatsRequest(place=Place.CALIFORNIA))
+
+    assert stats.total == 1
+
+
 async def test_everywhere_counts_every_open_posting(db_session):
     await california_mix(db_session)
 

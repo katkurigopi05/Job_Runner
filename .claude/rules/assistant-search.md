@@ -1309,3 +1309,19 @@ Forward, "Front Desk roles" as Front, "vehicles sense surroundings" as Sense, "c
 outreach jobs" as Outreach. No question gained a company, and the seven still named are the ones
 meant (Stripe, Astranis, Anthropic, Okta, Postman's not-hiring notice, and Monte Carlo).
 `tests/test_retrieval_names.py`.
+
+## Which new postings get Qwen vectors, and on what (2026-11-05)
+
+The first full Workday crawl added 50,485 postings, 18,227 of them in the search area only because
+their location reads "2 Locations". The owner: Qwen vectors are for California jobs in any working
+mode and US jobs that are remote. `make export-chunk-vectors-pending` now exports only those
+(`locality.california_or_us_remote`, `chunk_vectors.OWNER_AREA`): the area rule, then any California
+office, else remote with every office in the US or unnamed. `all=1` exports everything. On
+2026-11-05 that was 1,691 of 3,530 pending postings.
+
+A batch can be embedded on a Kaggle GPU (`scripts/kaggle/qwen_embed_batch_gpu.ipynb`) as well as a
+Colab TPU. A T4 has no native bfloat16, so the Kaggle notebook embeds in float16, which could put new
+postings on a different scale from the 223,576 stored vectors without anything failing. The export
+therefore puts 10 postings that already have vectors first, and the import compares each re-made
+vector with the stored one before it writes anything: below cosine 0.98 (`MIN_AGREEMENT`, chosen
+before the first run) it raises `DisagreementError`, and it prints what it measured.

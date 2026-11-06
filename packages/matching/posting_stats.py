@@ -40,13 +40,10 @@ from packages.core.config import get_settings
 from packages.core.models import Company, Posting
 from packages.matching.chunk_search import one_of
 from packages.matching.locality import (
-    Locality,
     area_exclusion,
-    locality_of,
-    locations_in,
     names_bay_area_office,
+    names_california_office,
     names_city_office,
-    names_no_place,
     reads_as_remote,
     remote_by_metadata,
 )
@@ -64,7 +61,6 @@ from packages.matching.stats_schema import (
 #: whose work mode only its body states never holds all their text at once.
 DESCRIPTION_BATCH = 1_000
 
-_CALIFORNIA = frozenset({Locality.CALIFORNIA, Locality.BAY_AREA})
 #: The one search-area verdict a description can change, as in
 #: `retrieve._open_area_total`: prose can make an on-site job remote.
 _PROSE_CAN_KEEP = " is on-site outside California"
@@ -91,13 +87,6 @@ def _role_of(title: str) -> str | None:
 @lru_cache(maxsize=50_000)
 def _words_of(title: str) -> str:
     return normalize(title)
-
-
-def _in_california(title: str | None, location: str | None) -> bool:
-    parts = locations_in(location)
-    if any(locality_of(part) in _CALIFORNIA for part in parts):
-        return True
-    return all(names_no_place(part) for part in parts) and locality_of(title) in _CALIFORNIA
 
 
 def _kind_matches(roles: tuple[str, ...], title_words: str | None, row: _Row) -> bool:
@@ -162,7 +151,7 @@ class _Classifier:
         if place is Place.EVERYWHERE:
             return True
         if place is Place.CALIFORNIA:
-            return _in_california(row.title, row.location)
+            return names_california_office(row.location, title=row.title)
         if place is Place.BAY_AREA:
             if self.request.cities:
                 return names_city_office(row.location, title=row.title, cities=self.request.cities)
