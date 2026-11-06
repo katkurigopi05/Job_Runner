@@ -21,10 +21,12 @@ from sqlalchemy import delete, func, select
 from packages.core.models import Company, Posting
 from packages.core.models_chunks import LARGE_EMBEDDING_DIM, PostingChunk, PostingChunkVector
 from packages.matching import chunk_vectors as CV
-from packages.matching.chunks import normalize, spans
+from packages.matching.chunks import OVERLAP, normalize, spans
 
 #: Long enough for three chunks of 500 characters overlapping by 25.
 BODY = " ".join(f"Requirement {i}: build reliable data pipelines in Python." for i in range(24))
+#: How many chunks `BODY` is cut into at today's overlap.
+CHUNKS = len(spans(normalize(BODY)))
 
 
 async def _posting(session, body: str = BODY, *, chunked: bool = True) -> Posting:
@@ -53,6 +55,7 @@ async def _posting(session, body: str = BODY, *, chunked: bool = True) -> Postin
                     content_hash=posting.content_hash,
                     embedding_model="sentence-transformers",
                     embedding=[0.0] * 384,
+                    overlap=OVERLAP,
                 )
             )
         await session.flush()
@@ -154,12 +157,16 @@ async def test_a_dry_run_counts_and_writes_nothing(db_session):
 
 @pytest.mark.parametrize(
     ("rows", "width"),
-    [(3, LARGE_EMBEDDING_DIM - 1), (2, LARGE_EMBEDDING_DIM), (4, LARGE_EMBEDDING_DIM)],
+    [
+        (CHUNKS, LARGE_EMBEDDING_DIM - 1),
+        (CHUNKS - 1, LARGE_EMBEDDING_DIM),
+        (CHUNKS + 1, LARGE_EMBEDDING_DIM),
+    ],
 )
 async def test_a_vectors_file_that_does_not_fit_the_export_is_refused(db_session, rows, width):
     posting = await _posting(db_session)
     exported = [_exported(posting)]
-    assert len(exported[0].chunks) == 3
+    assert len(exported[0].chunks) == CHUNKS
 
     with pytest.raises(ValueError):
         await CV.import_vectors(db_session, exported, np.zeros((rows, width), dtype=np.float16))
@@ -168,7 +175,7 @@ async def test_a_vectors_file_that_does_not_fit_the_export_is_refused(db_session
 async def test_a_vector_that_is_not_finite_is_refused(db_session):
     posting = await _posting(db_session)
     exported = [_exported(posting)]
-    vectors = _vectors(3)
+    vectors = _vectors(CHUNKS)
     vectors[1, 7] = np.nan
 
     with pytest.raises(ValueError, match="finite"):
@@ -178,7 +185,7 @@ async def test_a_vector_that_is_not_finite_is_refused(db_session):
 async def test_a_chunk_takes_its_large_vector_with_it(db_session):
     posting = await _posting(db_session)
     exported = [_exported(posting)]
-    await CV.import_vectors(db_session, exported, _vectors(3))
+    await CV.import_vectors(db_session, exported, _vectors(CHUNKS))
 
     await db_session.execute(delete(PostingChunk).where(PostingChunk.posting_id == posting.id))
 

@@ -384,6 +384,12 @@ What has to hold, in one place:
   authorization, sponsorship, employment history, salary.
 - **"Run crawler" is a command matched in code**, never inferred from a
   question.
+- **Chunks are 500 characters overlapping by 25%: 125 characters** (owner,
+  2026-11-06). DP-800's `AI_GENERATE_CHUNKS(CHUNK_SIZE = 500, OVERLAP = 25)`
+  means a percent, which the chunker had read as 25 characters; measured with
+  Qwen3-Embedding-4B, 25% beat 5% (MRR +0.028) and 10-30% otherwise did not.
+  `chunks.OVERLAP_PERCENT`. A chunk records the overlap it was cut at, so a
+  change re-cuts every posting, and its Qwen vectors are made again.
 
 The rules in full, chat memory and the audit trail are in
 `apps/api/CLAUDE.md`. The local model, its measurements and Ollama's hosted

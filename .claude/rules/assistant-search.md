@@ -90,7 +90,8 @@ a median 5,874 characters with the requirements last. Of the 143 postings
 that mentioned RAG, the mention fell inside the embedded window in 27, and a
 semantic search for "RAG" found none of them in its top 50. The fix is the
 owner's own DP-800 recipe (`AI_GENERATE_CHUNKS`, fixed 500-character chunks
-overlapping by 25): `matching/chunks.py` splits each open posting,
+overlapping by 25 percent, 125 characters; read as 25 characters until
+2026-11-06, see the end of this file): `matching/chunks.py` splits each open posting,
 `posting_chunks` stores one `halfvec(384)` per chunk, and search ranks a
 posting by its best chunk. Measured before building, chunking took "RAG" from
 0/10 to 4/10 in the semantic top ten; float16 halved the vectors (124 to 62
@@ -1327,3 +1328,35 @@ postings on a different scale from the 223,576 stored vectors without anything f
 therefore puts 10 postings that already have vectors first, and the import compares each re-made
 vector with the stored one before it writes anything: below cosine 0.98 (`MIN_AGREEMENT`, chosen
 before the first run) it raises `DisagreementError`, and it prints what it measured.
+
+## Chunks overlap by 25 percent (2026-11-06)
+
+`AI_GENERATE_CHUNKS`' `OVERLAP` is "the percentage of the preceding text" (Microsoft Learn), so the
+DP-800 recipe's `OVERLAP = 25` is 125 characters of a 500-character chunk. The chunker read it as
+25 characters (5%) from 2026-10-01. The owner caught it and asked for a measurement first.
+
+Measured in a separate database (`jobrunner_overlap_bench`) with Qwen3-Embedding-4B in float16 on the
+owner's Kaggle T4s: 398 of the 500 paraphrased questions whose postings were still open, over a pool
+of those 392 postings, each ranked by its best chunk. The question carried production's Qwen prompt.
+
+| overlap | chunks | first | top 5 | top 20 | MRR |
+|---|---|---|---|---|---|
+| 5% (25 chars) | 5,580 | 75.1% | 93.2% | 98.7% | 0.832 |
+| 10% | 5,860 | 74.6% | 93.2% | 98.7% | 0.834 |
+| 15% | 6,168 | 75.4% | 95.5% | 99.5% | 0.845 |
+| 20% | 6,529 | 73.6% | 94.5% | 99.7% | 0.828 |
+| **25% (125 chars)** | 6,931 | **77.9%** | **96.0%** | 99.2% | **0.860** |
+| 30% | 7,372 | 75.6% | 95.7% | 99.0% | 0.841 |
+
+25% against 5%: MRR +0.028 [+0.003, +0.053] (paired bootstrap), higher on 60 questions and lower on
+38; the other four intervals include 0. bge-small showed no difference either way and was dropped
+from the comparison at the owner's word. One pool, one question set, five settings compared, so the
+lower bound is thin; the owner fixed 25% as the rule (root `CLAUDE.md` §14).
+
+What a later change could undo:
+
+- **A chunk records its overlap** (`posting_chunks.overlap`, migration `b5d7f9a1c3e6`; old rows 25).
+  `chunk_postings` and the Qwen export treat a row cut at another overlap as stale, so old and new
+  code can run side by side: whichever runs `chunk_postings` with today's `OVERLAP` re-cuts the rest.
+- **Re-cutting deletes a posting's Qwen vectors** with its old chunks (`ON DELETE CASCADE`), so the
+  switch is followed by a Qwen batch of every re-cut posting. About a quarter more chunks.

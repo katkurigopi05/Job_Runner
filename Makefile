@@ -492,7 +492,8 @@ fetch-board-directories:
 	$(PY)/python -m scripts.fetch_board_directories
 
 # make chunk-postings — split every open posting into 500-character chunks
-# (25-character overlap) and embed each with bge-small, for the chat search.
+# (125-character overlap, 25%) and embed each with bge-small, for the chat search.
+# A posting cut at another overlap is cut again, which drops its Qwen vectors.
 # The matching pass after each crawl does new postings; this clears a backlog.
 chunk-postings:
 	$(PY)/python -m scripts.chunk_postings

@@ -2,7 +2,7 @@
 
 A posting's single vector covers its first 512 tokens; a skill named in the
 requirements, which come last, is invisible to it. Chunks of 500 characters
-overlapping by 25 make every part of a posting searchable. These tests use
+overlapping by 25% (125 characters) make every part of a posting searchable. These tests use
 the lexical embedder as the chunk model, which is deterministic; production
 chunks with bge-small, which `chunk_embedder` requires.
 """
@@ -27,11 +27,13 @@ FILLER = "Our team values ownership and curiosity in everything we ship. " * 40 
 # --- where the chunks fall ---------------------------------------------------------
 
 
-def test_chunks_are_500_characters_overlapping_by_25() -> None:
+def test_chunks_are_500_characters_overlapping_by_25_percent() -> None:
+    """DP-800's `AI_GENERATE_CHUNKS(OVERLAP = 25)` is a percent of the chunk: 125 characters."""
     body = "x" * 1_200
     cut = spans(body)
 
-    assert cut == [(0, 500), (475, 500), (950, 250)]
+    assert OVERLAP == 125
+    assert cut == [(0, 500), (375, 500), (750, 450)]
     assert all(length <= CHUNK_SIZE for _, length in cut)
     for (start, length), (next_start, _) in zip(cut, cut[1:], strict=False):
         assert start + length - next_start == OVERLAP
@@ -107,6 +109,24 @@ async def test_chunking_twice_does_nothing_the_second_time(db_session) -> None:
 
     await chunk_postings(db_session, embedder=LEXICAL)
     assert await chunk_postings(db_session, embedder=LEXICAL) == 0
+
+
+async def test_chunks_cut_at_another_overlap_are_cut_again(db_session) -> None:
+    """Rows from before the 25% overlap (25 characters) are stale, as old text is."""
+    company = await _company(db_session)
+    posting = await _posting(db_session, company, "Data Engineer", FILLER)
+    await chunk_postings(db_session, embedder=LEXICAL)
+    await db_session.execute(
+        PostingChunk.__table__.update()
+        .where(PostingChunk.posting_id == posting.id)
+        .values(overlap=25)
+    )
+
+    assert await chunk_postings(db_session, embedder=LEXICAL) == 1
+
+    chunks = await _chunks(db_session, posting)
+    assert {c.overlap for c in chunks} == {OVERLAP}
+    assert [(c.start, c.length) for c in chunks] == spans(normalize(FILLER))
 
 
 async def test_an_edited_posting_is_chunked_again(db_session) -> None:

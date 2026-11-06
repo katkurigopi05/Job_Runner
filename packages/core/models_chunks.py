@@ -5,7 +5,8 @@ Postings run to a median 5,874 characters and put their requirements last,
 so a skill named there is invisible to the vector: of 143 postings that
 mention RAG, the mention fell inside the embedded window in 27. Chunking the
 way the owner's DP-800 work does (`AI_GENERATE_CHUNKS`, fixed 500-character
-chunks overlapping by 25) took a semantic search for "RAG" from 0 of the top
+chunks overlapping by 25 characters, as it was read until 2026-11-06; 25 percent
+since) took a semantic search for "RAG" from 0 of the top
 10 to 4. `matching/chunks.py` has the rest.
 
 The text is not stored. A chunk is its offsets into the posting's
@@ -32,6 +33,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     String,
     UniqueConstraint,
     func,
@@ -61,6 +63,10 @@ class PostingChunk(Base):
     length: Mapped[int] = mapped_column(Integer, nullable=False)
     #: The posting's `content_hash` when it was chunked.
     content_hash: Mapped[str | None] = mapped_column(String(64))
+    #: Characters each chunk shares with the next when it was cut
+    #: (`chunks.OVERLAP`). Rows from before 2026-11-06 were cut at 25; a row cut
+    #: at any other overlap than today's is stale, like one cut from old text.
+    overlap: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("25"))
     #: Which embedder made the vector. Vectors from different models are not
     #: comparable, so a search only ever compares within one.
     embedding_model: Mapped[str] = mapped_column(String(64), nullable=False)
