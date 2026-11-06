@@ -30,13 +30,13 @@ from typing import Any
 
 import numpy as np
 import structlog
-from sqlalchemy import and_, exists, func, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Posting
 from packages.core.models_chunks import LARGE_EMBEDDING_DIM, PostingChunk, PostingChunkVector
-from packages.matching.chunks import normalize
+from packages.matching.chunks import OVERLAP, normalize
 
 log = structlog.get_logger(__name__)
 
@@ -251,14 +251,18 @@ def _with_text() -> Any:
 
 
 def _chunked() -> Any:
-    """Chunk rows exist, and every one was cut from the text the posting holds now."""
+    """Chunk rows exist, and every one was cut from today's text at today's overlap."""
     current = exists().where(
         PostingChunk.posting_id == Posting.id,
         PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
+        PostingChunk.overlap == OVERLAP,
     )
     stale = exists().where(
         PostingChunk.posting_id == Posting.id,
-        PostingChunk.content_hash.is_distinct_from(Posting.content_hash),
+        or_(
+            PostingChunk.content_hash.is_distinct_from(Posting.content_hash),
+            PostingChunk.overlap != OVERLAP,
+        ),
     )
     return and_(current, ~stale)
 

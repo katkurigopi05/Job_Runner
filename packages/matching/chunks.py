@@ -1,7 +1,9 @@
 """Split postings into fixed chunks and embed each one.
 
 The recipe is the owner's DP-800 work, `AI_GENERATE_CHUNKS(CHUNK_TYPE = FIXED,
-CHUNK_SIZE = 500, OVERLAP = 25)`, applied to job postings. Measured on the
+CHUNK_SIZE = 500, OVERLAP = 25)`, applied to job postings. Its `OVERLAP` is a
+percent of the chunk (Microsoft Learn: "the percentage of the preceding text"),
+so 125 characters; until 2026-11-06 it was read as 25 characters. Measured on the
 5,922 postings of 2026-10-01 before it was built: a semantic search for "RAG"
 went from 0 of the top 10 to 4, because one vector per posting covers only the
 first 512 tokens and requirements come last. Fixed-size chunks rather than
@@ -9,9 +11,17 @@ paragraph-aware ones because the numbers above were measured with them, and
 because postings arrive with their structure flattened by the extractors.
 
 **Characters, not tokens.** 500 characters is about 110 tokens, well inside
-bge-small's 512, so no chunk is truncated. The 25-character overlap means a
+bge-small's 512, so no chunk is truncated. The 125-character overlap means a
 phrase cut by a boundary still appears whole in one of the two chunks, as long
-as it is shorter than 25 characters, which a skill name is.
+as it is shorter than 125 characters: a skill name, and most requirement lines.
+
+**25% was measured, not only read** (2026-11-05). Qwen3-Embedding-4B on 398 of
+the 500 paraphrased questions over their 392 target postings, a posting ranked
+by its best chunk: MRR 0.832 at 5% (25 characters), 0.860 at 25%, +0.028
+[+0.003, +0.053]; 10, 15, 20 and 30% were within noise of 5%. It costs about a
+quarter more chunks (5,580 to 6,931 on that pool). A chunk records the overlap
+it was cut at (`PostingChunk.overlap`), so changing `OVERLAP_PERCENT` re-cuts
+every posting on the next pass and its Qwen vectors go with the old chunks.
 
 **Only a semantic model embeds chunks.** Chunk vectors from the lexical
 embedder would only repeat what the keyword scan already reads. With
@@ -39,9 +49,12 @@ from packages.matching.embed import Embedder, SentenceTransformerEmbedder, get_e
 
 log = structlog.get_logger(__name__)
 
-#: `AI_GENERATE_CHUNKS(CHUNK_TYPE = FIXED, CHUNK_SIZE = 500, OVERLAP = 25)`.
+#: `AI_GENERATE_CHUNKS(CHUNK_TYPE = FIXED, CHUNK_SIZE = 500, OVERLAP = 25)`,
+#: whose OVERLAP is a percent of CHUNK_SIZE.
 CHUNK_SIZE = 500
-OVERLAP = 25
+OVERLAP_PERCENT = 25
+#: Characters a chunk shares with the next: 125.
+OVERLAP = CHUNK_SIZE * OVERLAP_PERCENT // 100
 
 #: Postings chunked per call. About 13.6 chunks each, so 500 postings is
 #: roughly 7,000 vectors per call.
@@ -109,6 +122,7 @@ async def chunk_postings(
         PostingChunk.posting_id == Posting.id,
         PostingChunk.embedding_model == stamp,
         PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
+        PostingChunk.overlap == OVERLAP,
     )
     pending = (
         await session.execute(
@@ -141,6 +155,7 @@ async def chunk_postings(
                     "length": length,
                     "content_hash": content_hash,
                     "embedding_model": stamp,
+                    "overlap": OVERLAP,
                 }
             )
     # An employer's boilerplate repeats across its postings, so a text is

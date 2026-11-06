@@ -29,7 +29,8 @@ async def test_a_posting_without_qwen_vectors_is_exported_with_its_current_chunk
     exported, report = await CV.pending(db_session)
 
     assert exported == (_exported(posting),)
-    assert (report.postings, report.chunks, report.covered, report.not_chunked) == (1, 3, 0, 0)
+    chunks = len(exported[0].chunks)
+    assert (report.postings, report.chunks, report.covered, report.not_chunked) == (1, chunks, 0, 0)
 
 
 async def test_covered_closed_and_textless_postings_are_left_out(db_session):
