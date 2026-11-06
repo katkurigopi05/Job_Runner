@@ -1533,3 +1533,60 @@ def area_exclusion(
     if allow_unknown_location:
         return None
     return "location not recognized" if unplaced else "no location given"
+
+
+def names_california_office(location: str | None, *, title: str | None) -> bool:
+    """An office in California, the Bay Area included, in any working mode.
+
+    Any listed office counts. The title places a job only when the location
+    field names no place, as `names_bay_area_office` reads it, and a Canadian
+    address written country | province | city ("CA | BC | Burnaby") is not one.
+    """
+    parts = locations_in(location)
+    if _canada_by_its_parts(parts):
+        return False
+    if any(locality_of(part) in ONSITE_LOCALITIES for part in parts):
+        return True
+    return all(names_no_place(part) for part in parts) and locality_of(title) in ONSITE_LOCALITIES
+
+
+#: Workday's summary of a job listed at several offices, which its list omits.
+_OFFICE_COUNT_RE = re.compile(r"\d+\s+locations?", re.IGNORECASE)
+
+
+def names_several_offices(location: str | None) -> bool:
+    """Whether the location field only counts offices: Workday's "2 Locations"."""
+    parts = locations_in(location)
+    return bool(parts) and all(_OFFICE_COUNT_RE.fullmatch(part.strip()) for part in parts)
+
+
+def california_or_us_remote(
+    *, title: str | None, location: str | None, description: str | None
+) -> bool:
+    """The owner's area read strictly: a California office, else remote in the United States.
+
+    The owner, 2026-11-05: on-site, hybrid or remote in California, and only
+    remote outside it. `area_exclusion` already says no to abroad and on-site
+    in another state; this also says no to a location it cannot read (nothing
+    at all, "PH, Taguig", a bare "United States" that is not remote), which
+    the search area keeps as a maybe. It decides what gets Qwen vectors, the
+    expensive part (`chunk_vectors.OWNER_AREA`), so a maybe waits until its
+    job page says where it is.
+
+    Workday's "2 Locations" is the exception, by the owner's word the same
+    day: a job listed at several offices will take any of them.
+    """
+    if (
+        area_exclusion(
+            location, title=title, description=description, remote_outside_california=True
+        )
+        is not None
+    ):
+        return False
+    if names_california_office(location, title=title) or names_several_offices(location):
+        return True
+    if not reads_as_remote(title=title, location=location, description=description):
+        return False
+    return all(
+        names_no_place(part) or is_domestic(locality_of(part)) for part in locations_in(location)
+    )

@@ -15,6 +15,7 @@ from packages.crawler.backfill import (
     backfill,
     fill_host,
     find_pending,
+    in_owner_area,
 )
 from packages.crawler.crawl import crawl_company
 from packages.crawler.extract import CompanySeed
@@ -327,3 +328,27 @@ async def test_pages_that_failed_before_can_be_left_as_not_available(db_session)
     assert len(calls) == 5
     texts = await _descriptions(db_session)
     assert all(texts[eid] is None for eid in failed)
+
+
+async def test_the_owner_area_reads_only_pages_that_can_be_in_it(db_session):
+    # Arrange: of the four postings without text, one is on-site in Texas.
+    await _crawled(db_session)
+    missing = sorted(key for key, text in (await _descriptions(db_session)).items() if text is None)
+    places = dict(
+        zip(missing, ("San Jose, CA", "2 Locations", "Remote", "Austin, TX"), strict=True)
+    )
+    for external_id, location in places.items():
+        await db_session.execute(
+            update(Posting).where(Posting.external_id == external_id).values(location=location)
+        )
+
+    # Act
+    pending = await find_pending(db_session, scope=in_owner_area)
+    fetcher, calls = _board()
+    report = await backfill(fetcher, _sessions(db_session), scope=in_owner_area)
+
+    # Assert
+    assert sum(len(items) for items in pending.values()) == 3
+    assert report.filled == 3 and len(calls) == 3
+    texas = next(key for key, location in places.items() if location == "Austin, TX")
+    assert (await _descriptions(db_session))[texas] is None

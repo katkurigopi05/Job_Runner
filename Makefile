@@ -501,8 +501,9 @@ chunk-postings:
 # have no Qwen vector yet (new since the last import), for the Colab notebook
 # scripts/colab/qwen_embed_batch.ipynb. Prints the next two steps. dry=1 counts
 # only; out= picks the folder (default storage/qwen_batches.nosync/<date>).
+# Only California (any mode) and US-remote postings unless all=1.
 export-chunk-vectors-pending:
-	$(PY)/python -m scripts.export_pending_chunks $(if $(dry),--dry-run) $(if $(out),--out $(out))
+	$(PY)/python -m scripts.export_pending_chunks $(if $(dry),--dry-run) $(if $(all),--all) $(if $(out),--out $(out))
 
 # make import-chunk-vectors — attach Qwen3-Embedding-4B vectors made on a Colab
 # TPU to the chunks they were made from. Each posting is checked against today's
@@ -526,8 +527,10 @@ query-embedder-check:
 # no_retry=1 leaves pages that failed before without text instead of asking again.
 # pace=5,10,15,20 reads job pages at 5 s a host, stepping slower when sites
 # refuse; without it the crawler's configured delay (5 to 60 s, §2.6) applies.
+# area=1 reads only listings that can be in the owner's area: a California office,
+# Workday's "2 Locations", or remote in the title or location.
 backfill-descriptions:
-	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit)) $(if $(hosts),--max-hosts $(hosts)) $(if $(no_retry),--no-retry) $(if $(pace),--pace $(pace))
+	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit)) $(if $(hosts),--max-hosts $(hosts)) $(if $(no_retry),--no-retry) $(if $(pace),--pace $(pace)) $(if $(area),--owner-area)
 
 # make audit-locations — how the search area reads every open posting's
 # location, read-only. Lists the places no rule recognized and the strings most

@@ -20,7 +20,13 @@ from pathlib import Path
 import numpy as np
 
 from packages.core import db as core_db
-from packages.matching.chunk_vectors import QWEN_4B, import_vectors, load_export
+from packages.matching.chunk_vectors import (
+    MIN_AGREEMENT,
+    QWEN_4B,
+    DisagreementError,
+    import_vectors,
+    load_export,
+)
 
 #: The run of 2026-11-02 (Colab TPU v5e-1, 224,361 chunks).
 RUN = Path("storage/embed_rank_bench/whole_index_2026-11-02")
@@ -50,9 +56,13 @@ async def main(argv: list[str] | None = None) -> None:
     )
     started = time.perf_counter()
     async with core_db.get_sessionmaker()() as session:
-        report = await import_vectors(
-            session, exported, vectors, model=args.model, dry_run=args.dry_run
-        )
+        try:
+            report = await import_vectors(
+                session, exported, vectors, model=args.model, dry_run=args.dry_run
+            )
+        except DisagreementError as error:
+            await session.rollback()
+            raise SystemExit(f"not imported: {error}") from error
     verb = "would import" if args.dry_run else "imported"
     print(
         f"{verb} {report.chunks_imported:,} chunk vectors for {report.imported:,} postings "
@@ -62,6 +72,12 @@ async def main(argv: list[str] | None = None) -> None:
         f"skipped: {report.changed:,} changed since the export, {report.not_chunked:,} not "
         f"chunked yet, {report.absent:,} closed or gone"
     )
+    if report.agreement_chunks:
+        print(
+            f"agreement with stored vectors on {report.agreement_chunks:,} chunks: "
+            f"min {report.agreement_min:.4f}, mean {report.agreement_mean:.4f} "
+            f"(at least {MIN_AGREEMENT} needed)"
+        )
 
 
 if __name__ == "__main__":

@@ -43,6 +43,7 @@ from packages.crawler.details import ReadDetail
 from packages.crawler.extract import ExtractedPosting
 from packages.crawler.fetch import Blocked, PoliteFetcher
 from packages.crawler.ratelimit import HostRateLimiter, RateLimitTooLow
+from packages.matching.locality import california_or_us_remote
 
 log = structlog.get_logger(__name__)
 
@@ -198,13 +199,32 @@ class BackfillReport:
         return [h.host for h in self.hosts if h.refused]
 
 
+#: Which listings a scoped run reads, from the title and location the list gave.
+ListingScope = Callable[[str | None, str | None], bool]
+
+
+def in_owner_area(title: str | None, location: str | None) -> bool:
+    """A California office, Workday's "2 Locations", or remote in the title or location.
+
+    The owner's choice of 2026-11-05: read the pages of the postings that can
+    be in the area from the list alone, rather than all 50,000 Workday ones.
+    An on-site job in another state whose page might say it is remote is
+    left without text, as before.
+    """
+    return california_or_us_remote(title=title, location=location, description=None)
+
+
 async def find_pending(
-    session: AsyncSession, *, ats: Iterable[str] = tuple(READERS)
+    session: AsyncSession,
+    *,
+    ats: Iterable[str] = tuple(READERS),
+    scope: ListingScope | None = None,
 ) -> dict[str, list[Pending]]:
     """Open postings with no description, grouped by the host their pages are on.
 
     Newest first within a host, so a run that is stopped early has read the
-    postings most likely to still be open.
+    postings most likely to still be open. `scope` keeps only the listings it
+    accepts (`in_owner_area`).
     """
     kinds = [kind for kind in ats if kind in READERS]
     rows = (
@@ -233,6 +253,8 @@ async def find_pending(
 
     grouped: dict[str, list[Pending]] = {}
     for row in rows:
+        if scope is not None and not scope(row.title, row.location):
+            continue
         listing = ExtractedPosting(
             external_id=row.external_id,
             url=row.url,
@@ -378,6 +400,7 @@ async def backfill(
     on_progress: Callable[[HostReport], None] | None = None,
     on_left_waiting: Callable[[str], None] | None = None,
     pace: Pace | None = None,
+    scope: ListingScope | None = None,
 ) -> BackfillReport:
     """Fill every missing description on the given boards, hosts side by side.
 
@@ -389,7 +412,7 @@ async def backfill(
     nothing is written in their place, since an unknown stays NULL.
     """
     async with sessions() as session:
-        pending = await find_pending(session, ats=ats)
+        pending = await find_pending(session, ats=ats, scope=scope)
     semaphore = asyncio.Semaphore(max_hosts)
 
     async def one(host: str, items: list[Pending]) -> HostReport:
