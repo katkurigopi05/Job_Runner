@@ -22,7 +22,7 @@ import gzip
 import json
 import uuid
 from collections import Counter, defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.models import Posting
 from packages.core.models_chunks import LARGE_EMBEDDING_DIM, PostingChunk, PostingChunkVector
 from packages.matching.chunks import OVERLAP, normalize
+from packages.matching.locality import california_or_us_remote
 
 log = structlog.get_logger(__name__)
 
@@ -45,6 +46,14 @@ QWEN_4B = "Qwen/Qwen3-Embedding-4B"
 #: Postings checked and written per transaction, so a stopped import keeps
 #: what it wrote and a second run carries on.
 BATCH_POSTINGS = 200
+#: Postings that already have vectors, put first in an export so the import
+#: can compare a new batch with what is stored before it writes anything.
+CALIBRATION_POSTINGS = 10
+#: The least cosine a re-made vector may have with its stored one. Chosen,
+#: not measured: float16 against bfloat16 should sit near 0.999, and a wrong
+#: pooling, padding or prompt far below. The first Kaggle run reports the
+#: real value.
+MIN_AGREEMENT = 0.98
 
 
 @dataclass(frozen=True)
@@ -69,6 +78,15 @@ class ImportReport:
     chunks_imported: int = 0
     #: Already imported for this model.
     chunks_present: int = 0
+    #: Cosine between each stored vector and the file's vector for the same
+    #: chunk: the calibration postings an export puts first (`pending(calibrate=)`).
+    agreement_chunks: int = 0
+    agreement_min: float | None = None
+    agreement_mean: float | None = None
+
+
+class DisagreementError(ValueError):
+    """The file's vectors are not the stored vectors' kind: a setting changed."""
 
 
 def load_export(path: Path) -> tuple[Exported, ...]:
@@ -120,7 +138,8 @@ async def _import_group(
     *,
     model: str,
     dry_run: bool,
-) -> Counter[str]:
+) -> tuple[Counter[str], list[float]]:
+    """Counts for one transaction, and the cosine of each already-stored chunk."""
     ids = {posting.id: _as_uuid(posting.id) for posting in group}
     wanted = [value for value in ids.values() if value is not None]
     postings = {
@@ -148,18 +167,20 @@ async def _import_group(
     chunks_of: dict[uuid.UUID, dict[int, Any]] = defaultdict(dict)
     for row in chunk_rows:
         chunks_of[row.posting_id][row.ordinal] = row
-    present = set(
-        (
-            await session.scalars(
-                select(PostingChunkVector.chunk_id).where(
+    present = {
+        chunk_id: _as_array(embedding)
+        for chunk_id, embedding in (
+            await session.execute(
+                select(PostingChunkVector.chunk_id, PostingChunkVector.embedding).where(
                     PostingChunkVector.embedding_model == model,
                     PostingChunkVector.chunk_id.in_([row.id for row in chunk_rows]),
                 )
             )
         ).all()
-    )
+    }
 
     counts: Counter[str] = Counter()
+    agreement: list[float] = []
     rows: list[dict[str, Any]] = []
     for exported, offset in zip(group, offsets, strict=True):
         posting = postings.get(ids[exported.id]) if ids[exported.id] else None
@@ -181,14 +202,31 @@ async def _import_group(
             chunk_id = chunks[ordinal].id
             if chunk_id in present:
                 counts["chunks_present"] += 1
+                agreement.append(_cosine(present[chunk_id], block[ordinal]))
             else:
                 rows.append(
                     {"chunk_id": chunk_id, "embedding_model": model, "embedding": block[ordinal]}
                 )
     counts["chunks_imported"] += len(rows)
+    if agreement and min(agreement) < MIN_AGREEMENT:
+        raise DisagreementError(
+            f"a re-made vector has cosine {min(agreement):.4f} with its stored one "
+            f"(at least {MIN_AGREEMENT} expected): the notebook's model, precision, "
+            "padding or pooling differs from the whole-index run, so nothing was imported"
+        )
     if rows and not dry_run:
         await session.execute(insert(PostingChunkVector).on_conflict_do_nothing(), rows)
-    return counts
+    return counts, agreement
+
+
+def _as_array(embedding: Any) -> np.ndarray:
+    values = embedding.to_numpy() if hasattr(embedding, "to_numpy") else embedding
+    return np.asarray(values, dtype=np.float32)
+
+
+def _cosine(stored: np.ndarray, made: np.ndarray) -> float:
+    made32 = np.asarray(made, dtype=np.float32)
+    return float(np.dot(stored, made32) / (np.linalg.norm(stored) * np.linalg.norm(made32)))
 
 
 async def import_vectors(
@@ -209,9 +247,10 @@ async def import_vectors(
     _check_shape(exported, vectors)
     offsets = np.cumsum([0, *(len(posting.chunks) for posting in exported)])[:-1]
     totals: Counter[str] = Counter()
+    agreement: list[float] = []
     for first in range(0, len(exported), batch_postings):
         group = exported[first : first + batch_postings]
-        totals += await _import_group(
+        counts, cosines = await _import_group(
             session,
             group,
             [int(offset) for offset in offsets[first : first + len(group)]],
@@ -219,6 +258,8 @@ async def import_vectors(
             model=model,
             dry_run=dry_run,
         )
+        totals += counts
+        agreement = [*agreement, *cosines]
         if not dry_run:
             await session.commit()
         log.info(
@@ -227,7 +268,13 @@ async def import_vectors(
             of=len(exported),
             chunks_imported=totals["chunks_imported"],
         )
-    return ImportReport(postings=len(exported), **totals)
+    return ImportReport(
+        postings=len(exported),
+        **totals,
+        agreement_chunks=len(agreement),
+        agreement_min=min(agreement) if agreement else None,
+        agreement_mean=float(np.mean(agreement)) if agreement else None,
+    )
 
 
 @dataclass(frozen=True)
@@ -240,6 +287,43 @@ class PendingReport:
     #: Open postings with text whose chunks are missing or cut from an older
     #: text. The matching pass (or `make chunk-postings`) chunks them first.
     not_chunked: int = 0
+    #: Postings the export's scope left out, chunked or not.
+    out_of_scope: int = 0
+    #: Postings with vectors already, put first for the import's check.
+    calibration: int = 0
+
+
+#: Which postings an export may hold, read from title, location and description.
+Scope = Callable[[str | None, str | None, str | None], bool]
+
+
+def _owner_area(title: str | None, location: str | None, description: str | None) -> bool:
+    return california_or_us_remote(title=title, location=location, description=description)
+
+
+#: What gets Qwen vectors (owner, 2026-11-05): a California office in any
+#: working mode, Workday's "2 Locations", else remote in the United States.
+OWNER_AREA: Scope = _owner_area
+
+
+def _keeps(scope: Scope | None, title: str | None, location: str | None, body: str | None) -> bool:
+    return scope is None or scope(title, location, body)
+
+
+async def _not_chunked(session: AsyncSession, scope: Scope | None) -> tuple[int, int]:
+    """Postings waiting to be chunked: how many the scope keeps, and how many it leaves out."""
+    if scope is None:
+        waiting = await session.scalar(select(func.count()).where(_with_text(), ~_chunked()))
+        return int(waiting or 0), 0
+    rows = (
+        await session.execute(
+            select(Posting.title, Posting.location, Posting.description_raw).where(
+                _with_text(), ~_chunked()
+            )
+        )
+    ).all()
+    kept = sum(1 for row in rows if scope(row.title, row.location, row.description_raw))
+    return kept, len(rows) - kept
 
 
 def _with_text() -> Any:
@@ -282,24 +366,73 @@ def _missing_vector(model: str) -> Any:
 
 
 async def pending(
-    session: AsyncSession, *, model: str = QWEN_4B
+    session: AsyncSession,
+    *,
+    model: str = QWEN_4B,
+    scope: Scope | None = None,
+    calibrate: int = 0,
 ) -> tuple[tuple[Exported, ...], PendingReport]:
     """Every open posting whose current chunks are missing a vector, as the importer reads them.
 
     A posting is exported whole, so its rows in the vectors file line up with
     its chunks; chunks that already have a vector are skipped on import. A
     posting not chunked from today's text is counted and left for the
-    matching pass, which chunks it with bge-small first.
+    matching pass, which chunks it with bge-small first. `scope` keeps only
+    the postings it accepts (`OWNER_AREA`); the rest are counted, not exported.
+    `calibrate` puts that many postings that already have vectors first, so
+    the import can compare the new batch with what is stored (`MIN_AGREEMENT`).
     """
-    rows = (
+    found = (
         await session.execute(
-            select(Posting.id, Posting.description_raw)
+            select(Posting.id, Posting.title, Posting.location, Posting.description_raw)
             .where(_with_text(), _chunked(), _missing_vector(model))
             .order_by(Posting.first_seen_at, Posting.id)
         )
     ).all()
+    waiting = [
+        (row.id, row.description_raw)
+        for row in found
+        if _keeps(scope, row.title, row.location, row.description_raw)
+    ]
+    calibration = await _calibration(session, model, calibrate)
+    exported = await _chunk_texts(session, [*calibration, *waiting])
+    covered = await session.scalar(
+        select(func.count()).where(_with_text(), _chunked(), ~_missing_vector(model))
+    )
+    not_chunked, unchunked_out = await _not_chunked(session, scope)
+    new = exported[len(calibration) :]
+    report = PendingReport(
+        postings=len(new),
+        chunks=sum(len(posting.chunks) for posting in new),
+        covered=int(covered or 0),
+        not_chunked=not_chunked,
+        out_of_scope=len(found) - len(waiting) + unchunked_out,
+        calibration=len(calibration),
+    )
+    return exported, report
+
+
+async def _calibration(
+    session: AsyncSession, model: str, count: int
+) -> list[tuple[uuid.UUID, str | None]]:
+    """The newest postings whose every current chunk already has a vector."""
+    if count <= 0:
+        return []
+    result = await session.execute(
+        select(Posting.id, Posting.description_raw)
+        .where(_with_text(), _chunked(), ~_missing_vector(model))
+        .order_by(Posting.first_seen_at.desc(), Posting.id)
+        .limit(count)
+    )
+    return [(row.id, row.description_raw) for row in result.all()]
+
+
+async def _chunk_texts(
+    session: AsyncSession, rows: Sequence[tuple[uuid.UUID, str | None]]
+) -> tuple[Exported, ...]:
+    """Each posting's chunk texts in reading order, cut from today's text."""
     spans: dict[uuid.UUID, list[tuple[int, int, int]]] = defaultdict(list)
-    ids = [row.id for row in rows]
+    ids = [posting_id for posting_id, _ in rows]
     for first in range(0, len(ids), 1000):
         for chunk in (
             await session.execute(
@@ -315,24 +448,15 @@ async def pending(
     exported = []
     for posting_id, description in rows:
         body = normalize(description or "")
-        ordered = sorted(spans[posting_id])
         exported.append(
             Exported(
                 id=str(posting_id),
-                chunks=tuple(body[start : start + length] for _, start, length in ordered),
+                chunks=tuple(
+                    body[start : start + length] for _, start, length in sorted(spans[posting_id])
+                ),
             )
         )
-    covered = await session.scalar(
-        select(func.count()).where(_with_text(), _chunked(), ~_missing_vector(model))
-    )
-    not_chunked = await session.scalar(select(func.count()).where(_with_text(), ~_chunked()))
-    report = PendingReport(
-        postings=len(exported),
-        chunks=sum(len(posting.chunks) for posting in exported),
-        covered=int(covered or 0),
-        not_chunked=int(not_chunked or 0),
-    )
-    return tuple(exported), report
+    return tuple(exported)
 
 
 def write_export(path: Path, exported: Sequence[Exported]) -> None:

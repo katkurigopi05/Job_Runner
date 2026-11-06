@@ -24,10 +24,12 @@ from packages.crawler.backfill import (
     MAX_HOSTS,
     READERS,
     HostReport,
+    ListingScope,
     Pace,
     PacedRateLimiter,
     backfill,
     find_pending,
+    in_owner_area,
 )
 from packages.crawler.fetch import PoliteFetcher, build_fetcher
 
@@ -75,6 +77,12 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-index", action="store_true", help="skip embedding, scoring and chunking"
     )
+    parser.add_argument(
+        "--owner-area",
+        action="store_true",
+        help="only postings that can be in the owner's area from their listing: a California "
+        "office, Workday's '2 Locations', or remote in the title or location",
+    )
     return parser.parse_args(argv)
 
 
@@ -97,9 +105,9 @@ def _paced_fetcher(pace: Pace) -> PoliteFetcher:
     )
 
 
-async def dry_run(ats: list[str]) -> int:
+async def dry_run(ats: list[str], scope: ListingScope | None) -> int:
     async with core_db.get_sessionmaker()() as session:
-        pending = await find_pending(session, ats=ats)
+        pending = await find_pending(session, ats=ats, scope=scope)
     sizes = sorted(((len(items), host) for host, items in pending.items()), reverse=True)
     total = sum(n for n, _ in sizes)
     print(f"{total} open postings with no description, on {len(sizes)} hosts")
@@ -130,8 +138,9 @@ async def index() -> None:
 async def run(argv: list[str] | None = None) -> int:
     args = _args(argv)
     ats = [kind.strip() for kind in args.ats.split(",") if kind.strip()]
+    scope = in_owner_area if args.owner_area else None
     if args.dry_run:
-        return await dry_run(ats)
+        return await dry_run(ats, scope)
 
     started = time.monotonic()
     seen: dict[str, HostReport] = {}
@@ -176,6 +185,7 @@ async def run(argv: list[str] | None = None) -> int:
                 on_progress=progress,
                 on_left_waiting=left_waiting,
                 pace=pace,
+                scope=scope,
             )
     minutes = (time.monotonic() - started) / 60
     print(
