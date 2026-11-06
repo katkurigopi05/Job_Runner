@@ -2,8 +2,9 @@
 
 What gets Qwen vectors (owner, 2026-11-05): "california but remote or hybrid
 which we can accept but out of california we need remote". The search area
-keeps a location it cannot read; this does not, because a Workday "2
-Locations" may be anywhere and the vectors are the expensive part.
+keeps a location it cannot read; this does not, because the vectors are the
+expensive part. Except Workday's "2 Locations": the owner, the same day, "if
+job show multiple location they will accept any location".
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ REMOTE_BODY = "This role is fully remote."
         ("Data Engineer", "Houston, TX or Remote", ""),
         ("Data Engineer", "Denver, CO", REMOTE_BODY),
         ("Data Engineer", None, REMOTE_BODY),
+        ("Data Engineer", "2 Locations", ""),
+        ("Data Engineer", "12 Locations", REMOTE_BODY),
     ],
 )
 def test_california_in_any_mode_and_us_remote_are_in(title, location, body):
@@ -42,9 +45,8 @@ def test_california_in_any_mode_and_us_remote_are_in(title, location, body):
         ("Data Engineer", "Austin, TX", ""),
         ("Data Engineer", "Hybrid - Seattle, WA", ""),
         ("Data Engineer", "United States", ""),
-        ("Data Engineer", "2 Locations", ""),
-        ("Data Engineer", "2 Locations", REMOTE_BODY),
         ("Data Engineer", None, ""),
+        ("Data Engineer", "PH, Taguig", ""),
         ("Data Engineer", "Toronto, ON", ""),
         ("Data Engineer", "Remote - EMEA", ""),
         ("Data Engineer", "CA | BC | Burnaby", ""),

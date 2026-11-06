@@ -1550,6 +1550,16 @@ def names_california_office(location: str | None, *, title: str | None) -> bool:
     return all(names_no_place(part) for part in parts) and locality_of(title) in ONSITE_LOCALITIES
 
 
+#: Workday's summary of a job listed at several offices, which its list omits.
+_OFFICE_COUNT_RE = re.compile(r"\d+\s+locations?", re.IGNORECASE)
+
+
+def names_several_offices(location: str | None) -> bool:
+    """Whether the location field only counts offices: Workday's "2 Locations"."""
+    parts = locations_in(location)
+    return bool(parts) and all(_OFFICE_COUNT_RE.fullmatch(part.strip()) for part in parts)
+
+
 def california_or_us_remote(
     *, title: str | None, location: str | None, description: str | None
 ) -> bool:
@@ -1557,11 +1567,14 @@ def california_or_us_remote(
 
     The owner, 2026-11-05: on-site, hybrid or remote in California, and only
     remote outside it. `area_exclusion` already says no to abroad and on-site
-    in another state; this also says no to a location it cannot read ("2
-    Locations", nothing at all, a bare "United States" that is not remote),
-    which the search area keeps as a maybe. It decides what gets Qwen
-    vectors, the expensive part (`chunk_vectors.OWNER_AREA`), so a maybe waits
-    until its job page says where it is.
+    in another state; this also says no to a location it cannot read (nothing
+    at all, "PH, Taguig", a bare "United States" that is not remote), which
+    the search area keeps as a maybe. It decides what gets Qwen vectors, the
+    expensive part (`chunk_vectors.OWNER_AREA`), so a maybe waits until its
+    job page says where it is.
+
+    Workday's "2 Locations" is the exception, by the owner's word the same
+    day: a job listed at several offices will take any of them.
     """
     if (
         area_exclusion(
@@ -1570,7 +1583,7 @@ def california_or_us_remote(
         is not None
     ):
         return False
-    if names_california_office(location, title=title):
+    if names_california_office(location, title=title) or names_several_offices(location):
         return True
     if not reads_as_remote(title=title, location=location, description=description):
         return False

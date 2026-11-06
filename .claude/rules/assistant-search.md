@@ -1317,7 +1317,9 @@ their location reads "2 Locations". The owner: Qwen vectors are for California j
 mode and US jobs that are remote. `make export-chunk-vectors-pending` now exports only those
 (`locality.california_or_us_remote`, `chunk_vectors.OWNER_AREA`): the area rule, then any California
 office, else remote with every office in the US or unnamed. `all=1` exports everything. On
-2026-11-05 that was 1,691 of 3,530 pending postings.
+2026-11-05 that was 1,691 of 3,530 pending postings. Workday's "2 Locations" counts too, by the
+owner's word ("if job show multiple location they will accept any location"); most of those have
+no description until `make backfill-descriptions` reads their pages, so they wait for chunking.
 
 A batch can be embedded on a Kaggle GPU (`scripts/kaggle/qwen_embed_batch_gpu.ipynb`) as well as a
 Colab TPU. A T4 has no native bfloat16, so the Kaggle notebook embeds in float16, which could put new

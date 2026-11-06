@@ -302,7 +302,7 @@ def _owner_area(title: str | None, location: str | None, description: str | None
 
 
 #: What gets Qwen vectors (owner, 2026-11-05): a California office in any
-#: working mode, else remote in the United States. Never "2 Locations".
+#: working mode, Workday's "2 Locations", else remote in the United States.
 OWNER_AREA: Scope = _owner_area
 
 
