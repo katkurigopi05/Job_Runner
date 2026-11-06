@@ -30,6 +30,8 @@ from packages.core.schemas_jobs import (
     VersionChangeOut,
 )
 from packages.matching.pick_resume import choose_base_resume
+from packages.matching.posting_stats import posting_stats
+from packages.matching.stats_schema import PostingStats, StatsRequest
 from packages.tailor import ats as ats_scorer
 from packages.tailor.parse import ParsedResume
 
@@ -86,6 +88,16 @@ async def search_postings(
         total_indexed=total,
         note=note,
     )
+
+
+@router.post("/stats", response_model=PostingStats)
+async def stats(request: StatsRequest, session: SessionDep) -> PostingStats:
+    """Counts, shares and breakdowns of open postings, computed from the rows.
+
+    Read-only. A role, city or title the tables do not know is refused as
+    `invalid_request` with the reason (`stats_schema`).
+    """
+    return await posting_stats(session, request)
 
 
 @router.get("/{posting_id}", response_model=PostingOut)
