@@ -257,3 +257,31 @@ Résumés page. `curate_project` sends `pinned` and `include` and nothing
 else, and `tests/test_mcp.py::test_no_tool_can_link_a_repository_to_a_resume_entry`
 fails if any tool's schema gains the field. A model that could set it could
 put any repository's stack onto any project it chose.
+
+
+## Counts and percentages come from `posting_stats` (2026-11-05)
+
+A model asked "what percentage of California jobs are data engineer roles"
+either estimates or counts the page of results it was shown, and both are
+wrong. `posting_stats` (`POST /postings/stats`, `packages/matching/posting_stats.py`)
+counts the rows instead, and the server's instructions send every count and
+percentage there. What holds it:
+
+- **Every argument is a fixed choice or a name checked against a table**
+  (`packages/matching/stats_schema.py`). An unknown role, a city outside the
+  Bay Area, or a title with no role words is refused with the reason, never
+  read as something close. The tool's `Literal` choices and the schema's
+  enums are held equal by `tests/test_posting_stats_api.py`.
+- **"California" is an office in California**, read with the feed's location
+  rules, office by office. Before this, the assistant searched for the word.
+- **"By role" has two meanings.** `group_by="role"` is the role table's nine
+  engineering and data roles, which labelled 586 of 4,115 California postings
+  on 2026-11-05; `group_by="title"` is each title's role words and labels all
+  but 82. Vague titles stay vague: "Director, Product Marketing" is "director".
+- **Cost:** under a second on the owner's 19,245 open postings, except a
+  remote share over the whole search area, which reads about 10,000
+  descriptions (42 s on 2026-11-05).
+
+Not done: the dashboard assistant does not call it yet. That needs the model
+to fill a request (`complete_json`), which changes §27's "the model runs no
+query", so it waits for the owner's go-ahead behind a switch.

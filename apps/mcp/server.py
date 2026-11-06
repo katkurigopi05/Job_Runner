@@ -59,6 +59,9 @@ unanswered questions carries the employer's exact wording. You do not answer
 them: approving shows the owner a form and they type the answers themselves.
 The same goes for a verification code, and for a posting's grade: show the
 posting, do not say how well you think it fits, and let `grade_posting` ask.
+
+A count or a percentage of postings comes from `posting_stats`, never from an
+estimate or from counting a page of search results.
 """.strip()
 
 server = MCPServer(name="jobrunner", instructions=INSTRUCTIONS)
@@ -185,6 +188,70 @@ async def search_postings(
     if ats:
         params["ats"] = ats
     return await _call("GET", "/postings", params=params)
+
+
+#: The fixed choices of `posting_stats`, as `packages/matching/stats_schema.py`
+#: names them; `tests/test_posting_stats_api.py` holds the two together.
+StatsPlace = Literal["search_area", "everywhere", "california", "bay_area"]
+StatsWorkMode = Literal["any", "remote", "not_remote"]
+StatsGrouping = Literal["role", "title", "company"]
+
+
+@server.tool()
+async def posting_stats(
+    roles: list[str] | None = None,
+    title: str | None = None,
+    place: StatsPlace = "search_area",
+    cities: list[str] | None = None,
+    work_mode: StatsWorkMode = "any",
+    share_roles: list[str] | None = None,
+    share_title: str | None = None,
+    share_work_mode: StatsWorkMode = "any",
+    group_by: StatsGrouping | None = None,
+    top: int = 10,
+) -> dict[str, Any]:
+    """Count open postings, with shares and breakdowns, computed from the database.
+
+    Use it for every "how many", "what percentage" or "by role / title /
+    company" question about postings, and never estimate one of those numbers
+    yourself. Repeat `total`, `matching` and `percentage` as returned, and say
+    `scope` and `share_of` so the answer names what was counted.
+
+    The postings counted: `roles` (the role table's nine engineering and data
+    roles, such as "data engineer" or "ML engineer"), `title` (the role words
+    of any title, such as "product manager"), `place`, `cities` (Bay Area
+    cities, with place "bay_area") and `work_mode`. `place` defaults to the
+    owner's search area; "california" means an office in California.
+
+    The share among them: `share_roles`, `share_title`, `share_work_mode`;
+    `percentage` is `matching` out of `total`. `group_by` breaks the counted
+    postings down, the `top` largest first; `unclassified` counts what the
+    grouping cannot label (most titles, for "role": use "title" to cover all).
+
+    Examples:
+    - What percentage of California jobs are data engineer roles?
+      place="california", share_roles=["data engineer"]
+    - What percentage of data engineer roles are remote?
+      roles=["data engineer"], share_work_mode="remote"
+    - Jobs in California by title: place="california", group_by="title"
+
+    An unknown role, city or title is refused with the reason. Tell the owner
+    rather than substituting a different one.
+    """
+    body: dict[str, Any] = {
+        "roles": roles or [],
+        "title": title,
+        "place": place,
+        "cities": cities or [],
+        "work_mode": work_mode,
+        "share_roles": share_roles or [],
+        "share_title": share_title,
+        "share_work_mode": share_work_mode,
+        "group_by": group_by,
+        "top": top,
+    }
+    stats: dict[str, Any] = await _call("POST", "/postings/stats", json=body)
+    return stats
 
 
 #: What a match is cut down to. The feed's own row also carries the rubric, the
