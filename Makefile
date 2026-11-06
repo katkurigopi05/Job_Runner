@@ -527,8 +527,10 @@ query-embedder-check:
 # no_retry=1 leaves pages that failed before without text instead of asking again.
 # pace=5,10,15,20 reads job pages at 5 s a host, stepping slower when sites
 # refuse; without it the crawler's configured delay (5 to 60 s, §2.6) applies.
+# area=1 reads only listings that can be in the owner's area: a California office,
+# Workday's "2 Locations", or remote in the title or location.
 backfill-descriptions:
-	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit)) $(if $(hosts),--max-hosts $(hosts)) $(if $(no_retry),--no-retry) $(if $(pace),--pace $(pace))
+	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit)) $(if $(hosts),--max-hosts $(hosts)) $(if $(no_retry),--no-retry) $(if $(pace),--pace $(pace)) $(if $(area),--owner-area)
 
 # make audit-locations — how the search area reads every open posting's
 # location, read-only. Lists the places no rule recognized and the strings most
