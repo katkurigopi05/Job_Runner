@@ -246,12 +246,27 @@ def reads_as_remote(
     on-site marker in the title or location overrides it: a posting headed
     "Hybrid" whose benefits blurb mentions remote work is not remote.
     """
+    decided = remote_by_metadata(title=title, location=location)
+    if decided is not None:
+        return decided
+    return _prose_reads_as_remote(description or "")
+
+
+def remote_by_metadata(*, title: str | None, location: str | None) -> bool | None:
+    """`reads_as_remote` from the title and location alone, or None when the body decides.
+
+    A count over every open posting reads descriptions only for the postings
+    this leaves open (`posting_stats`), since most say how they are worked
+    where a location field can.
+    """
     haystack = f"{title or ''} {location or ''}"
     if _REMOTE_DENIAL_RE.search(haystack):
         return False
     if _REMOTE_RE.search(haystack):
         return True
-    return not _ONSITE_MARKER_RE.search(haystack) and _prose_reads_as_remote(description or "")
+    if _ONSITE_MARKER_RE.search(haystack):
+        return False
+    return None
 
 
 def names_no_place(location: str | None) -> bool:
