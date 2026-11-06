@@ -20,7 +20,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from packages.core import db as core_db
-from packages.matching.chunk_vectors import OWNER_AREA, pending, write_export
+from packages.matching.chunk_vectors import (
+    CALIBRATION_POSTINGS,
+    OWNER_AREA,
+    pending,
+    write_export,
+)
 
 #: `.nosync` keeps a batch out of iCloud, which syncs the owner's Desktop.
 BATCHES = Path("storage/qwen_batches.nosync")
@@ -38,6 +43,12 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
         "--all", action="store_true", help="every posting, not only California or US-remote"
     )
     parser.add_argument(
+        "--calibrate",
+        type=int,
+        default=CALIBRATION_POSTINGS,
+        help="postings that already have vectors, first, for the import's check (0 for none)",
+    )
+    parser.add_argument(
         "--out", type=Path, default=None, help="folder for the batch (default: a dated one)"
     )
     return parser.parse_args(argv)
@@ -46,7 +57,9 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
 async def main(argv: list[str] | None = None) -> None:
     args = _args(argv)
     async with core_db.get_sessionmaker()() as session:
-        exported, report = await pending(session, scope=None if args.all else OWNER_AREA)
+        exported, report = await pending(
+            session, scope=None if args.all else OWNER_AREA, calibrate=args.calibrate
+        )
         await session.rollback()
     print(
         f"{report.covered:,} open postings have Qwen vectors; {report.postings:,} do not "
@@ -58,8 +71,8 @@ async def main(argv: list[str] | None = None) -> None:
             f"{report.out_of_scope:,} more are outside California and US-remote and are left "
             "out (all=1 exports them)"
         )
-    if args.dry_run or not exported:
-        if not exported:
+    if args.dry_run or not report.postings:
+        if not report.postings:
             print("nothing to export")
         return
     folder = args.out or BATCHES / datetime.now(UTC).strftime("%Y-%m-%d-%H%M")
@@ -68,9 +81,15 @@ async def main(argv: list[str] | None = None) -> None:
     minutes = report.chunks / TPU_CHUNKS_PER_S / 60
     print(f"wrote {path} ({path.stat().st_size / 1e6:.1f} MB); about {minutes:.0f} min on the TPU")
     print("next:")
-    print(f"  1. run scripts/colab/qwen_embed_batch.ipynb on a Colab TPU with {EXPORT_NAME}")
+    print(f"  1. embed {EXPORT_NAME} on a Kaggle GPU (scripts/kaggle/qwen_embed_batch_gpu.ipynb)")
+    print("     or a Colab TPU (scripts/colab/qwen_embed_batch.ipynb)")
     print(f"  2. put the {VECTORS_NAME} it saves in {folder}/")
     print(f"  3. make import-chunk-vectors export={path} vectors={folder / VECTORS_NAME}")
+    if report.calibration:
+        print(
+            f"the first {report.calibration} postings already have vectors: the import compares "
+            "the new ones with them and writes nothing if they disagree"
+        )
 
 
 if __name__ == "__main__":
