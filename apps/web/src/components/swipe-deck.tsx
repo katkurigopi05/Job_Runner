@@ -78,7 +78,7 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
   if (!current) {
     return (
       <div className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-10 text-center">
-        <p className="font-display text-2xl">Nothing left to rate</p>
+        <p className="text-2xl">Nothing left to rate</p>
         <p className="mt-3 text-sm text-ink-soft">
           {decided.interested + decided.skipped > 0
             ? `${decided.interested} kept, ${decided.skipped} skipped this session.`
@@ -91,7 +91,7 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
   return (
     <div className="space-y-6">
       <article
-        className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-8 shadow-[var(--shadow-panel)] transition-transform"
+        className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-5 shadow-[var(--shadow-panel)] transition-transform"
         style={{
           transform: pending
             ? `translateX(${pending === "interested" ? "8%" : "-8%"}) rotate(${
@@ -101,19 +101,19 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
         }}
       >
         <div className="flex items-start justify-between gap-6">
-          <h2 className="font-display text-2xl leading-tight">{current.title ?? "Untitled role"}</h2>
+          <h2 className="text-2xl leading-tight">{current.title ?? "Untitled role"}</h2>
           <span
             className="shrink-0 font-mono text-xs tabular-nums text-ink-faint"
             title="Cosine similarity between this posting and your profile. Useful for ordering the feed, not as a grade out of 100."
           >
-            {Math.round(current.score * 100)}% similar
+            {(Math.round(current.score * 100)).toLocaleString("en-US")}% similar
           </span>
         </div>
 
         <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-ink-soft">
           {current.location ? <span>{current.location}</span> : null}
           {current.location && current.ats_type ? <span className="text-ink-faint">·</span> : null}
-          {current.ats_type ? <span className="font-mono">{current.ats_type}</span> : null}
+          {current.ats_type ? <span >{current.ats_type}</span> : null}
         </div>
 
         {/* Shown before the keep/skip, not after: a citizens-only posting is a
@@ -127,7 +127,7 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
             with is one you end up ignoring. */}
         {current.matched_terms?.length ? (
           <div className="mt-6">
-            <div className="font-mono text-xs uppercase tracking-widest text-ink-faint">Matched</div>
+            <div className="text-label text-ink-soft">Matched</div>
             <div className="mt-2 flex flex-wrap gap-2">
               {current.matched_terms.slice(0, 12).map((term) => (
                 <span key={term} className="rounded-full border border-go/40 px-3 py-1 text-xs text-go">
@@ -140,7 +140,7 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
 
         {current.missing_terms?.length ? (
           <div className="mt-5">
-            <div className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+            <div className="text-label text-ink-soft">
               Asked for, not on your résumé
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -165,14 +165,14 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
         </a>
       </article>
 
-      {error ? <p className="font-mono text-xs text-stop">{error}</p> : null}
+      {error ? <p className="text-xs text-stop">{error}</p> : null}
 
       <div className="flex items-center gap-4">
         <button
           type="button"
           onClick={() => setChoosingReason(true)}
           disabled={pending !== null}
-          className="flex-1 rounded-[var(--radius)] border border-rule px-6 py-4 font-mono text-sm text-ink-soft transition-colors hover:border-stop hover:text-stop disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stop"
+          className="flex-1 rounded-[var(--radius)] border border-rule px-6 py-4 text-sm text-ink-soft transition-colors hover:border-stop hover:text-stop disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stop"
         >
           ← skip
         </button>
@@ -180,9 +180,9 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
           type="button"
           onClick={() => void decide("interested")}
           disabled={pending !== null}
-          className="flex-1 rounded-[var(--radius)] border border-go bg-go/10 px-6 py-4 font-mono text-sm text-go transition-colors hover:bg-go hover:text-on-accent disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-go"
+          className="flex-1 rounded-[var(--radius)] border border-go bg-go/10 px-6 py-4 text-sm text-go transition-colors hover:bg-go hover:text-on-accent disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-go"
         >
-          worth applying to →
+          Worth applying to →
         </button>
       </div>
 
@@ -192,7 +192,7 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
           aria-label="Why skip?"
           className="rounded-[var(--radius)] border border-rule bg-paper-raised p-4"
         >
-          <p className="font-mono text-xs uppercase tracking-widest text-ink-faint">why skip? (optional)</p>
+          <p className="text-label text-ink-soft">why skip? (optional)</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {SKIP_REASONS.map((reason, index) => (
               <button
@@ -201,7 +201,7 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
                 onClick={() => void decide("skipped", reason.value)}
                 className="rounded-full border border-rule px-3 py-1 text-xs text-ink-soft transition-colors hover:border-stop hover:text-stop"
               >
-                <span className="mr-1 font-mono text-ink-faint">{index + 1}</span>
+                <span className="mr-1 text-ink-faint">{(index + 1).toLocaleString("en-US")}</span>
                 {reason.label}
               </button>
             ))}
@@ -210,16 +210,16 @@ export function SwipeDeck({ initial }: { initial: Match[] }) {
               onClick={() => void decide("skipped")}
               className="rounded-full border border-dashed border-rule px-3 py-1 text-xs text-ink-faint hover:text-ink"
             >
-              no reason
+              No reason
             </button>
           </div>
         </div>
       ) : null}
 
-      <div className="flex justify-between font-mono text-xs text-ink-faint">
+      <div className="flex justify-between text-xs text-ink-faint">
         <span>{choosingReason ? "1–9 reason · enter none · esc back" : "← → to decide"}</span>
         <span>
-          {decided.interested} kept · {decided.skipped} skipped · {queue.length} left
+          {(decided.interested).toLocaleString("en-US")} kept · {(decided.skipped).toLocaleString("en-US")} skipped · {(queue.length).toLocaleString("en-US")} left
         </span>
       </div>
     </div>

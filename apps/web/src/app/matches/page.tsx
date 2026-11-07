@@ -124,7 +124,7 @@ export default async function MatchesPage({
   return (
     <div className="space-y-10">
       <header>
-        <h1 className="font-display text-display leading-[1.05] tracking-tight">
+        <h1 className="text-display leading-[1.05] tracking-tight">
           Matches
         </h1>
         <p className="mt-3 max-w-prose text-ink-soft">
@@ -156,8 +156,8 @@ export default async function MatchesPage({
           <p className="mx-auto mt-3 max-w-prose text-sm text-ink-soft">
             Scoring happens during a crawl. Run the worker and give it a cycle
             over the company registry in{" "}
-            <code className="font-mono text-xs">seeds/companies.yaml</code>, or{" "}
-            <code className="font-mono text-xs">make crawl dispatch=1</code> for
+            <code className="text-xs">seeds/companies.yaml</code>, or{" "}
+            <code className="text-xs">make crawl dispatch=1</code> for
             companies imported from a spreadsheet. The counts above say which of
             those is still outstanding.
           </p>
@@ -179,19 +179,19 @@ export default async function MatchesPage({
                     caption, while the caption sat wider than the number. */}
                 <div className="flex items-start justify-between gap-6">
                   <div className="min-w-0">
-                    <h2 className="font-display text-xl leading-tight">
+                    <h2 className="text-xl leading-tight">
                       {match.title ?? "Untitled posting"}
                     </h2>
                     <p className="mt-1.5 text-xs text-ink-soft">
                       {match.location ?? "location not stated"} ·{" "}
-                      <span className="font-mono">
+                      <span >
                         {match.ats_type ?? "unknown ats"}
                       </span>
                       {match.closed ? " · closed" : ""}
                       {/* A failed fetch closes nothing, so this stays open for
                           as long as its board is down. */}
                       {match.board_unanswered ? (
-                        <span className="text-attn">
+                        <span className="text-ink-soft">
                           {" "}
                           · board not answering
                           {match.board_last_answered_at
@@ -222,7 +222,7 @@ export default async function MatchesPage({
                   </div>
                   <div className="shrink-0 text-right">
                     <p
-                      className={`font-display text-lg leading-none ${call.tone}`}
+                      className={` text-lg leading-none ${call.tone}`}
                     >
                       {call.label}
                     </p>
@@ -230,7 +230,7 @@ export default async function MatchesPage({
                       className="mt-1.5 font-mono text-xs tabular-nums text-ink-faint"
                       title="Cosine similarity between this posting and your profile. It orders the feed; it is not a grade out of 100."
                     >
-                      {percent}% similar
+                      {(percent).toLocaleString("en-US")}% similar
                     </p>
                     {clears ? (
                       <p className="mt-0.5 text-xs text-go">
@@ -246,15 +246,15 @@ export default async function MatchesPage({
                     version put the same 16px it put between every other row. */}
                 <dl className="mt-6 flex flex-wrap gap-x-8 gap-y-1 text-xs text-ink-soft">
                   <div className="flex gap-2">
-                    <dt className="text-ink-faint">title match</dt>
+                    <dt className="text-ink-faint">Title match</dt>
                     <dd className="font-mono tabular-nums">
-                      {Math.round(match.title_similarity * 100)}%
+                      {(Math.round(match.title_similarity * 100)).toLocaleString("en-US")}%
                     </dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="text-ink-faint">body match</dt>
+                    <dt className="text-ink-faint">Body match</dt>
                     <dd className="font-mono tabular-nums">
-                      {Math.round(match.body_similarity * 100)}%
+                      {(Math.round(match.body_similarity * 100)).toLocaleString("en-US")}%
                     </dd>
                   </div>
                   {/* The weakest dimension stays on the face of the card even
@@ -262,8 +262,8 @@ export default async function MatchesPage({
                       says *why* the score is what it is. */}
                   {match.rubric?.weakest ? (
                     <div className="flex gap-2">
-                      <dt className="text-ink-faint">held back by</dt>
-                      <dd className="text-attn">
+                      <dt className="text-ink-faint">Held back by</dt>
+                      <dd className="text-ink-soft">
                         {match.rubric.weakest.replace(/_/g, " ")}
                       </dd>
                     </div>
@@ -280,11 +280,11 @@ export default async function MatchesPage({
                     <p className="text-xs text-ink-faint">
                       What you already have for this
                     </p>
-                    <ul className="mt-2 flex flex-wrap gap-1.5">
+                    <ul className="mt-2 flex flex-wrap gap-2">
                       {match.matched_terms.slice(0, 12).map((term) => (
                         <li
                           key={term}
-                          className="rounded border border-go/40 bg-go-soft px-2 py-0.5 font-mono text-xs text-go"
+                          className="rounded-lg border border-go/40 bg-go-soft px-2 py-0.5 text-xs text-go"
                         >
                           {term}
                         </li>
@@ -325,11 +325,11 @@ export default async function MatchesPage({
                         <p className="text-xs text-ink-faint">
                           Worth adding, if any of it is true of you
                         </p>
-                        <ul className="mt-2 flex flex-wrap gap-1.5">
+                        <ul className="mt-2 flex flex-wrap gap-2">
                           {match.missing_terms.map((term) => (
                             <li
                               key={term}
-                              className="rounded border border-rule px-2 py-0.5 font-mono text-xs text-ink-soft"
+                              className="rounded-lg border border-rule px-2 py-0.5 text-xs text-ink-soft"
                             >
                               {term}
                             </li>
@@ -381,17 +381,17 @@ export default async function MatchesPage({
 
                 {match.personalized_score !== null ? (
                   <div className="mt-3 text-xs text-ink-soft">
-                    <span className="font-mono text-ink">
-                      personalized {Math.round(match.personalized_score * 100)}
+                    <span className="text-ink">
+                      personalized {(Math.round(match.personalized_score * 100)).toLocaleString("en-US")}
                     </span>{" "}
-                    <span className="text-ink-faint">(base {Math.round(match.score * 100)})</span>
+                    <span className="text-ink-faint">(base {(Math.round(match.score * 100)).toLocaleString("en-US")})</span>
                     {match.adjustments.length > 0 ? (
                       <ul className="mt-1 space-y-0.5">
                         {match.adjustments.map((item) => (
                           <li key={`${item.kind}:${item.value}`}>
                             <span className={item.weight >= 0 ? "text-go" : "text-stop"}>
                               {item.weight >= 0 ? "+" : "−"}
-                              {Math.round(Math.abs(item.weight) * 100)}
+                              {(Math.round(Math.abs(item.weight) * 100)).toLocaleString("en-US")}
                             </span>{" "}
                             {item.why}
                           </li>
@@ -410,11 +410,11 @@ export default async function MatchesPage({
 
                 {match.sources.length > 1 ? (
                   <p className="mt-3 text-xs text-ink-soft">
-                    Listed in {match.sources.length} places
+                    Listed in {(match.sources.length).toLocaleString("en-US")} places
                     {match.sources.some(
                       (source) => source.decision && source.posting_id !== match.posting_id,
                     ) ? (
-                      <span className="text-attn">
+                      <span className="text-ink-soft">
                         {" "}— already{" "}
                         {match.sources
                           .filter((source) => source.decision && source.posting_id !== match.posting_id)
@@ -481,27 +481,27 @@ function RubricBars({ rubric }: { rubric: Rubric }) {
           with no axis, so "1.0" and "5.0" read as unrelated numbers rather
           than as one fifth and full marks. */}
       <p className="text-xs text-ink-faint">Score out of 5, by dimension</p>
-      <div className="mt-2 space-y-1.5">
+      <div className="mt-2 space-y-2">
         {scored.map((dimension) => {
           const isWeakest = dimension.name === rubric.weakest;
           return (
             <div
               key={dimension.name}
-              className="flex items-center gap-3 text-xs"
+              className="grid grid-cols-[minmax(0,1fr)_5rem_2.5rem] items-center gap-x-3 gap-y-1 text-xs sm:flex"
             >
-              <span className="w-32 shrink-0 text-ink-faint">
+              <span className="min-w-0 text-ink-faint sm:w-32 sm:shrink-0">
                 {dimension.name.replace(/_/g, " ")}
               </span>
               <span className="h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-rule-soft">
                 <span
-                  className={`block h-full rounded-full ${isWeakest ? "bg-attn" : "bg-ink-faint"}`}
+                  className={`block h-full rounded-full ${isWeakest ? "bg-ink-soft" : "bg-ink-faint"}`}
                   style={{ width: `${(dimension.score / 5) * 100}%` }}
                 />
               </span>
               <span className="w-10 shrink-0 font-mono tabular-nums text-ink-soft">
                 {dimension.score.toFixed(1)}
               </span>
-              <span className="min-w-0 text-ink-faint">
+              <span className="col-span-3 min-w-0 text-ink-faint sm:flex-1">
                 {dimension.finding}
               </span>
             </div>
@@ -523,7 +523,7 @@ function LegitimacyPanel({ legitimacy }: { legitimacy: Legitimacy }) {
   const tone =
     legitimacy.tier === "suspicious"
       ? "aside-stop text-stop"
-      : "aside-attn text-attn";
+      : "text-ink-soft";
 
   return (
     <div className={`aside mt-4 ${tone}`}>
@@ -539,7 +539,7 @@ function LegitimacyPanel({ legitimacy }: { legitimacy: Legitimacy }) {
           </li>
         ))}
         {legitimacy.advisories.map((signal) => (
-          <li key={signal.name} className="font-mono text-xs opacity-80">
+          <li key={signal.name} className="text-xs opacity-80">
             {signal.finding}
           </li>
         ))}

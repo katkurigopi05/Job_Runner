@@ -56,7 +56,7 @@ function Marked({ text, pattern }: { text: string; pattern: RegExp | null }) {
     <>
       {text.split(pattern).map((part, index) =>
         index % 2 === 1 ? (
-          <mark key={index} className="rounded-sm bg-attn/25 px-0.5 text-ink">
+          <mark key={index} className="rounded-sm bg-paper-high px-0.5 text-ink">
             {part}
           </mark>
         ) : (
@@ -127,7 +127,7 @@ export function JudgmentDeck({
     const waiting = Math.max(0, remaining - graded);
     return (
       <div className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-10 text-center">
-        <p className="font-display text-2xl">
+        <p className="text-2xl">
           {waiting > 0 ? `${waiting} more waiting` : "Everything is graded"}
         </p>
         <p className="mt-3 text-sm text-ink-soft">
@@ -141,7 +141,7 @@ export function JudgmentDeck({
           <button
             type="button"
             onClick={() => router.refresh()}
-            className="mt-6 rounded bg-ink px-4 py-1.5 font-mono text-xs uppercase tracking-widest text-paper transition-opacity hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+            className="mt-6 rounded-lg bg-ink px-4 py-1.5 text-label text-paper transition-opacity hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
           >
             Load the next batch
           </button>
@@ -154,20 +154,20 @@ export function JudgmentDeck({
     <div className="space-y-6">
       <section
         aria-label="The question"
-        className="rounded-[var(--radius-lg)] border border-ink/70 bg-surface px-6 py-5"
+        className="rounded-[var(--radius-lg)] border border-ink/70 bg-surface px-5 py-5"
       >
-        <div className="flex items-baseline justify-between gap-4 font-mono text-xs text-ink-faint">
-          <span className="uppercase tracking-widest">asked</span>
+        <div className="flex items-baseline justify-between gap-4 text-xs text-ink-faint">
+          <span >asked</span>
           <span>
-            posting {current.position} of {current.of} for this question
+            posting {(current.position).toLocaleString("en-US")} of {(current.of).toLocaleString("en-US")} for this question
           </span>
         </div>
-        <p className="mt-2 font-display text-[1.6rem] leading-snug">“{current.question}”</p>
+        <p className="mt-2 text-[1.6rem] leading-snug">“{current.question}”</p>
       </section>
 
-      <article className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-8 shadow-[var(--shadow-panel)]">
-        <h2 className="font-display text-2xl leading-tight">{current.title ?? "Untitled role"}</h2>
-        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 font-mono text-xs text-ink-faint">
+      <article className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-5 shadow-[var(--shadow-panel)]">
+        <h2 className="text-2xl leading-tight">{current.title ?? "Untitled role"}</h2>
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-ink-faint">
           {current.company ? <span>{current.company}</span> : null}
           {current.location ? <span>{current.location}</span> : null}
           {current.closed ? <span className="text-attn">closed since it was pooled</span> : null}
@@ -187,13 +187,13 @@ export function JudgmentDeck({
         <a
           href={current.url}
           {...POSTING_LINK}
-          className="mt-7 inline-block font-mono text-xs text-ink-soft underline decoration-rule underline-offset-4 hover:text-ink"
+          className="mt-7 inline-block text-xs text-ink-soft underline decoration-rule underline-offset-4 hover:text-ink"
         >
           read the posting ↗
         </a>
       </article>
 
-      {error ? <p className="font-mono text-xs text-stop">{error}</p> : null}
+      {error ? <p className="text-xs text-stop">{error}</p> : null}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {GRADES.map((g) => (
@@ -210,17 +210,17 @@ export function JudgmentDeck({
                   : "border-rule hover:border-ink focus-visible:outline-ink"
             }`}
           >
-            <div className="font-mono text-xs text-ink-faint">{g.key}</div>
-            <div className="mt-1 font-mono text-sm">{g.label}</div>
+            <div className="text-xs text-ink-faint">{g.key}</div>
+            <div className="mt-1 text-sm">{g.label}</div>
             <div className="mt-1 text-xs text-ink-faint">{g.hint}</div>
           </button>
         ))}
       </div>
 
-      <div className="flex justify-between font-mono text-xs text-ink-faint">
+      <div className="flex justify-between text-xs text-ink-faint">
         <span>0–2 to grade · grade the question, not whether you want the job</span>
         <span>
-          {graded} graded · {queue.length} left in this batch
+          {(graded).toLocaleString("en-US")} graded · {(queue.length).toLocaleString("en-US")} left in this batch
         </span>
       </div>
     </div>

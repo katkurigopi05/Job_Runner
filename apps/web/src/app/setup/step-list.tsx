@@ -28,7 +28,7 @@ export function StepList({ steps }: { steps: string[] }) {
       {steps.map((step, index) => (
         <li key={`${index}-${step}`} className="flex items-start gap-3">
           <span className="mt-2 w-5 shrink-0 font-mono text-xs tabular-nums text-ink-faint">
-            {index + 1}.
+            {(index + 1).toLocaleString("en-US")}.
           </span>
           <code className="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-words rounded-[var(--radius)] border border-rule-soft bg-paper px-3 py-2 font-mono text-[13px] leading-relaxed text-ink">
             {step}
@@ -37,7 +37,7 @@ export function StepList({ steps }: { steps: string[] }) {
             type="button"
             onClick={() => copy(index, step)}
             aria-label={`Copy step ${index + 1}`}
-            className="mt-1 shrink-0 rounded-[var(--radius)] border border-rule px-2.5 py-1 font-mono text-xs text-ink-soft transition-colors hover:border-go hover:text-go focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-go"
+            className="mt-1 shrink-0 rounded-[var(--radius)] border border-rule px-2.5 py-1 text-xs text-ink-soft transition-colors hover:border-ink-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-go"
           >
             {copied === index ? "copied" : "copy"}
           </button>

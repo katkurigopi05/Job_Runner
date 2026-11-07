@@ -22,7 +22,7 @@ function Field({
     <div>
       <label
         htmlFor={name}
-        className="font-mono text-xs uppercase tracking-widest text-ink-soft"
+        className="text-label text-ink-soft"
       >
         {label}
       </label>
@@ -32,7 +32,7 @@ function Field({
         name={name}
         type={type}
         defaultValue={defaultValue ?? ""}
-        className="mt-2 w-full rounded-md border border-rule bg-paper px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+        className="mt-2 w-full rounded-lg border border-rule bg-paper px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
       />
     </div>
   );
@@ -44,7 +44,7 @@ function Save() {
     <button
       type="submit"
       disabled={pending}
-      className="rounded-md bg-ink px-6 py-2.5 font-mono text-xs uppercase tracking-widest text-paper transition-opacity hover:opacity-85 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+      className="rounded-lg bg-ink px-6 py-2 text-label text-paper transition-opacity hover:opacity-85 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
     >
       {pending ? "saving…" : "save"}
     </button>
@@ -87,7 +87,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
             type="checkbox"
             name="needs_sponsorship"
             defaultChecked={profile.needs_sponsorship ?? false}
-            className="size-4 accent-attn"
+            className="size-4 accent-ink"
           />
           <span className="text-sm">
             I will need visa sponsorship in future
@@ -102,7 +102,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
         <div className="mt-5">
           <label
             htmlFor={`citizenship-${profile.id}`}
-            className="font-mono text-xs uppercase tracking-widest text-ink-soft"
+            className="text-label text-ink-soft"
           >
             Current status, for filtering only
           </label>
@@ -115,7 +115,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
             id={`citizenship-${profile.id}`}
             name="citizenship_status"
             defaultValue={profile.citizenship_status ?? ""}
-            className="mt-2 w-full max-w-sm rounded-md border border-rule bg-paper px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+            className="mt-2 w-full max-w-sm rounded-lg border border-rule bg-paper px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
           >
             <option value="">Not stated — filter nothing</option>
             <option value="us_citizen">US citizen</option>
@@ -141,7 +141,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
           records for `citizenship_status`: a filter with no control can never
           fire. */}
       <fieldset className="border border-rule px-5 py-5">
-        <legend className="px-2 font-mono text-xs uppercase tracking-widest text-ink-soft">
+        <legend className="px-2 text-label text-ink-soft">
           Which postings you see
         </legend>
         <p className="max-w-prose text-sm text-ink-soft">
@@ -154,7 +154,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
           <div>
             <label
               htmlFor={`seniority-${profile.id}`}
-              className="font-mono text-xs uppercase tracking-widest text-ink-soft"
+              className="text-label text-ink-soft"
             >
               Applying at
             </label>
@@ -162,7 +162,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
               id={`seniority-${profile.id}`}
               name="target_seniority"
               defaultValue={profile.target_seniority ?? ""}
-              className="mt-2 block w-56 rounded-md border border-rule bg-paper px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+              className="mt-2 block w-56 rounded-lg border border-rule bg-paper px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
             >
               <option value="">Any level</option>
               <option value="intern">intern / apprentice</option>
@@ -180,7 +180,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
           <div>
             <label
               htmlFor={`max-years-${profile.id}`}
-              className="font-mono text-xs uppercase tracking-widest text-ink-soft"
+              className="text-label text-ink-soft"
             >
               Most years a posting may ask for
             </label>
@@ -197,7 +197,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
                   ? ""
                   : String(profile.max_required_experience_years)
               }
-              className="mt-2 block w-56 rounded-md border border-rule bg-paper px-3 py-2 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+              className="mt-2 block w-56 rounded-lg border border-rule bg-paper px-3 py-2 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
             />
             <p className="mt-2 max-w-xs text-xs text-ink-faint">
               Your bound, not your experience. A posting that says the years are
@@ -209,14 +209,14 @@ export function ProfileForm({ profile }: { profile: Profile }) {
       </fieldset>
 
       <fieldset className="border border-rule px-5 py-5">
-        <legend className="px-2 font-mono text-xs uppercase tracking-widest text-ink-soft">
+        <legend className="px-2 text-label text-ink-soft">
           Auto-submit
         </legend>
         <p className="max-w-prose text-sm text-ink-soft">
           Off by default, and off is the safe setting. With it on, an
           application scoring at or above your threshold is sent without
           stopping for you. It also requires{" "}
-          <code className="font-mono text-xs">AUTO_SUBMIT=true</code> in the
+          <code className="text-xs">AUTO_SUBMIT=true</code> in the
           environment — both halves, deliberately.
         </p>
         <label className="mt-4 flex items-center gap-3">
@@ -224,7 +224,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
             type="checkbox"
             name="auto_submit"
             defaultChecked={profile.auto_submit}
-            className="size-4 accent-attn"
+            className="size-4 accent-ink"
           />
           <span className="text-sm">
             Let this profile submit without asking me
@@ -246,7 +246,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
         {state ? (
           <p
             role="status"
-            className={`font-mono text-xs ${state.ok ? "text-go" : "text-stop"}`}
+            className={`text-xs ${state.ok ? "text-go" : "text-stop"}`}
           >
             {state.message}
           </p>

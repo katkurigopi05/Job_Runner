@@ -9,15 +9,11 @@ import { ThinkingOrb } from "thinking-orbs";
 import { AssistantChart, type Chart } from "@/components/assistant-chart";
 import { EditQuestion, TurnActions } from "@/components/assistant-turn-actions";
 import { KaggleConnection } from "@/components/kaggle-connection";
+import { AssistantPrompts } from "@/components/assistant-prompts";
 import { ReplyText } from "@/components/reply-text";
 import { historyFrom } from "@/lib/chat-history";
 import { readFrames } from "@/lib/chat-stream";
 import { POSTING_LINK } from "@/lib/external";
-
-/* Styling cues borrowed from the photo-editor: an emoji-prefixed toolbar row,
-   a grey working canvas the content sits on, and a left-aligned status line
-   pinned to the bottom. That app leans on system defaults, so there is no
-   palette to copy — these are the shapes, carried into this app's colours. */
 
 /**
  * A posting retrieved for a question. `cited` is read out of the reply. The
@@ -59,7 +55,7 @@ const MORE_PAGE = 10;
 
 /** The two buttons under the list: the next page, and everything at once. */
 const MORE_BUTTON =
-  "rounded border border-rule px-2.5 py-1 font-mono text-xs text-ink-soft transition-colors hover:border-attn hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn";
+  "rounded-lg border border-rule px-3 py-1 text-xs text-ink-soft transition-colors hover:border-ink-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft";
 
 /** How many kinds the summary names before it says "and N more". */
 const KINDS_NAMED = 8;
@@ -109,13 +105,13 @@ function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
     <li>
       {source.label ? (
         <>
-          <span className="font-mono text-ink-faint">{source.label}</span>{" "}
+          <span className="text-ink-faint">{source.label}</span>{" "}
         </>
       ) : null}
       <Link
         href={`/postings/${source.posting_id}`}
         {...POSTING_LINK}
-        className={`${muted ? "text-ink-soft" : "text-ink"} underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn`}
+        className={`${muted ? "text-ink-soft" : "text-ink"} underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft`}
       >
         {source.title}
       </Link>
@@ -126,7 +122,7 @@ function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
 }
 
 const LINK =
-  "text-ink-soft underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn";
+  "text-ink-soft underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft";
 
 /** Consecutive matches of one kind, in the order they arrived. */
 function groupByKind(items: Source[]): Array<{ kind: string; items: Source[] }> {
@@ -180,7 +176,7 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
   }
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       {counted ? (
         <p className="text-ink-soft">
           {counted}
@@ -190,7 +186,7 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
               {kinds.slice(0, KINDS_NAMED).map((kind, index) => (
                 <span key={kind.label}>
                   {index > 0 ? " · " : ""}
-                  {kind.label} <span className="font-mono tabular-nums">{kind.count}</span>
+                  {kind.label} <span className="font-mono tabular-nums">{kind.count.toLocaleString("en-US")}</span>
                 </span>
               ))}
               {kinds.length > KINDS_NAMED ? ` · and ${kinds.length - KINDS_NAMED} more kinds` : ""}
@@ -204,16 +200,16 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
       ) : null}
 
       {kinds.length > 0 ? (
-        <dl className="space-y-1.5">
+        <dl className="space-y-2">
           {groupByKind(shown).map((group) => {
             const above = aboveOf.get(group.kind) ?? 0;
             return (
               <div key={group.kind}>
-                <dt className="font-mono text-ink">
+                <dt className="text-ink">
                   {group.kind}
                   <span className="text-ink-faint">
-                    {countOf.has(group.kind) ? ` · ${countOf.get(group.kind)}` : ""}
-                    {above > 0 ? ` · ${above} in the answer above` : ""}
+                    {countOf.has(group.kind) ? ` · ${countOf.get(group.kind)?.toLocaleString("en-US")}` : ""}
+                    {above > 0 ? ` · ${above.toLocaleString("en-US")} in the answer above` : ""}
                   </span>
                 </dt>
                 <dd>
@@ -242,17 +238,17 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
             onClick={() => setVisible((count) => count + MORE_PAGE)}
             className={MORE_BUTTON}
           >
-            show next {Math.min(MORE_PAGE, remaining)} · {remaining} more
+            Show next {Math.min(MORE_PAGE, remaining).toLocaleString("en-US")} · {remaining.toLocaleString("en-US")} More
           </button>
         ) : null}
         {remaining > MORE_PAGE ? (
           <button type="button" onClick={() => setVisible(more.length)} className={MORE_BUTTON}>
-            show all {remaining}
+            Show all {remaining.toLocaleString("en-US")}
           </button>
         ) : null}
         {turn.matchedRoleFilter && (remaining === 0 || beyondTheList > 0) ? (
           <Link href={`/matches?role=${turn.matchedRoleFilter}`} className={LINK}>
-            {beyondTheList > 0 ? `${beyondTheList} more on the feed` : "see them all on the feed"}
+            {beyondTheList > 0 ? `${beyondTheList.toLocaleString("en-US")} more on the feed` : "see them all on the feed"}
           </Link>
         ) : null}
       </div>
@@ -295,10 +291,10 @@ function RetrievedPostings({ turn }: { turn: Turn }) {
   const total = (turn.searched ?? 0) + (turn.unsearchable ?? 0);
 
   return (
-    <div className="mt-1.5 max-w-[90%] space-y-1.5 text-left text-xs">
+    <div className="mt-1.5 max-w-[90%] space-y-2 text-left text-xs">
       {turn.postingsShare ? (
         <p className="text-ink-soft">
-          {turn.postingsShare.matching} of {turn.postingsShare.open_total} open postings in{" "}
+          {turn.postingsShare.matching.toLocaleString("en-US")} of {turn.postingsShare.open_total.toLocaleString("en-US")} open postings in{" "}
           {turn.postingsShare.scope}
           {turn.postingsShare.percentage == null
             ? " · percentage undefined (no open postings)"
@@ -326,7 +322,7 @@ function RetrievedPostings({ turn }: { turn: Turn }) {
       ) : null}
       <MoreMatches turn={turn} shownAbove={sources.length} />
       <p className="text-ink-faint">
-        from a search of {turn.searched ?? 0} of {total} open postings
+        From a search of {(turn.searched ?? 0).toLocaleString("en-US")} of {total.toLocaleString("en-US")} open postings
       </p>
     </div>
   );
@@ -351,18 +347,6 @@ function InventedCitations({ turn }: { turn: Turn }) {
   );
 }
 
-
-const PROMPTS = [
-  { icon: "📋", label: "What needs me?", text: "Which applications are waiting on me right now?" },
-  { icon: "📊", label: "How's it going?", text: "Summarize where my applications stand." },
-  { icon: "📮", label: "Any replies?", text: "Have I had any replies, and what did they say?" },
-  { icon: "🔎", label: "Find new jobs", text: "Find new jobs" },
-  {
-    icon: "🧭",
-    label: "What am I lagging on?",
-    text: "Compared with my résumés, which skills do my top matches ask for that I am missing?",
-  },
-];
 
 /** The reply `/chat` returns, and the closing frame of `/chat/stream`. */
 interface Reply {
@@ -583,18 +567,18 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col border border-rule bg-paper-raised">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--radius-panel)] border border-rule bg-paper-raised">
       {/* Who answers. Above the prompts because it changes what they cost. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-3 py-2.5">
-        <label htmlFor="assistant-provider" className="font-mono text-xs text-ink-faint">
-          model
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-3 py-2">
+        <label htmlFor="assistant-provider" className="text-xs text-ink-faint">
+          Model
         </label>
         <select
           id="assistant-provider"
           value={provider}
           disabled={busy}
           onChange={(event) => setProvider(event.target.value)}
-          className="rounded border border-rule bg-paper px-2 py-1 font-mono text-xs text-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+          className="rounded-lg border border-rule bg-paper px-2 py-1 text-xs text-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
         >
           {PROVIDERS.map((entry) => (
             <option key={entry.value} value={entry.value}>
@@ -615,22 +599,22 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           one there is no boundary to gate: it always sees the mail and saying
           "always on" beside a control that does nothing would be worse than
           not showing a control. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule px-3 py-2">
         {chosen.local ? (
           <p className="text-xs text-ink-faint">
             recruiter mail: included — it never leaves this machine
           </p>
         ) : (
           <>
-            <label className="flex items-center gap-2 font-mono text-xs text-ink">
+            <label className="flex items-center gap-2 text-xs text-ink">
               <input
                 type="checkbox"
                 checked={shareMail}
                 disabled={busy}
                 onChange={(event) => setShareMail(event.target.checked)}
-                className="accent-attn disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+                className="accent-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
               />
-              send recruiter mail to {chosen.label}
+              Send recruiter mail to {chosen.label}
             </label>
             <p className="min-w-0 flex-1 text-xs text-ink-faint">
               {shareMail
@@ -641,20 +625,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
         )}
       </div>
 
-      {/* Toolbar — the photo-editor's emoji row. */}
-      <div className="flex flex-wrap gap-2 border-b border-rule px-3 py-2.5">
-        {PROMPTS.map((prompt) => (
-          <button
-            key={prompt.label}
-            type="button"
-            disabled={busy}
-            onClick={() => send(prompt.text)}
-            className="rounded border border-rule px-2.5 py-1 font-mono text-xs text-ink-soft transition-colors hover:border-attn hover:text-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
-          >
-            {prompt.icon} {prompt.label}
-          </button>
-        ))}
-      </div>
+      <AssistantPrompts busy={busy} onPrompt={(text) => void send(text)} />
 
       {/* The grey canvas. */}
       <div
@@ -664,13 +635,13 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
         // same CSS property — the floor won, the panel outgrew the page's fixed
         // height, and the overflow painted over the note beneath it. The
         // container governs the height; this scrolls inside whatever it gets.
-        className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-rule/25 p-3"
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-paper p-4"
       >
         {turns.length === 0 ? (
           <p className="px-1 py-8 text-center text-xs text-ink-faint">
             {chosen.local
-              ? "runs on your machine. asks nothing of the internet."
-              : `answers come from ${chosen.label}. your job search goes with the question.`}
+              ? "Ask about your applications or open postings. Answers stay on this machine."
+              : `Answers come from ${chosen.label}. Your job search goes with the question.`}
           </p>
         ) : (
           turns.map((turn, index) => (
@@ -678,7 +649,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
               {/* Per turn, not just in the status line: a conversation can mix
                   local and remote answers, and afterwards only the label says
                   which of them cost anything. */}
-              <p className="font-mono text-xs text-ink-faint">
+              <p className="text-xs text-ink-faint">
                 {turn.role}
                 {turn.provider === "refused" ? " · refused" : ""}
                 {turn.provider === "crawler" ? " · crawler" : ""}
@@ -717,7 +688,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
                 />
               ) : (
                 <div
-                  className={`mt-1 inline-block max-w-[90%] rounded px-3 py-2 text-left text-sm leading-relaxed whitespace-pre-wrap ${
+                  className={`mt-1 inline-block max-w-[90%] rounded px-3 py-2 text-left text-sm leading-relaxed whitespace-pre-wrap break-words ${
                     turn.role === "you"
                       ? "bg-ink text-paper"
                       : turn.provider === "refused"
@@ -739,7 +710,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           // what is happening, and says where the question went.
           <p className="flex items-center gap-2 px-1 text-xs text-ink-faint">
             <ThinkingOrb state="working" size={20} aria-hidden="true" />
-            <span className="font-mono">assistant</span>
+            <span >assistant</span>
           </p>
         ) : null}
         <div ref={endRef} />
@@ -750,7 +721,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           event.preventDefault();
           void send(draft);
         }}
-        className="flex gap-2 border-t border-rule px-3 py-2.5"
+        className="flex gap-2 border-t border-rule px-3 py-2"
       >
         <label htmlFor="assistant-input" className="sr-only">
           Ask the assistant
@@ -760,16 +731,16 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
           ref={inputRef}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="ask about your applications or open postings…"
+          placeholder="Ask about your applications or open postings…"
           disabled={busy}
-          className="min-w-0 flex-1 rounded border border-rule bg-paper px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+          className="min-w-0 flex-1 rounded-lg border border-rule bg-paper px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
         />
         <button
           type="submit"
           disabled={busy || !draft.trim()}
-          className="rounded bg-ink px-4 py-1.5 font-mono text-xs uppercase tracking-widest text-paper transition-opacity hover:opacity-85 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+          className="rounded-lg bg-ink px-4 py-1.5 text-label text-paper transition-opacity hover:opacity-85 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
         >
-          send
+          Send
         </button>
       </form>
 
@@ -789,7 +760,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
               setEditing(null);
               setStatus("new conversation · nothing remembered");
             }}
-            className="shrink-0 text-xs text-ink-soft underline decoration-rule underline-offset-4 transition-colors hover:text-ink hover:decoration-attn disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+            className="shrink-0 text-xs text-ink-soft underline decoration-rule underline-offset-4 transition-colors hover:text-ink hover:decoration-ink-soft disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
           >
             New conversation
           </button>

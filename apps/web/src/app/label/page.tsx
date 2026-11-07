@@ -56,9 +56,9 @@ export default async function LabelPage({
   if (!selected) {
     return (
       <div className="mx-auto max-w-2xl space-y-6">
-        <h1 className="font-display text-[length:var(--text-display)] leading-none">Grade</h1>
+        <h1 className="text-display leading-none">Grade</h1>
         <p className="text-sm text-ink-soft">
-          You have {profiles.length} profiles. A grade records how well a posting matches{" "}
+          You have {(profiles.length).toLocaleString("en-US")} profiles. A grade records how well a posting matches{" "}
           <em>one</em> of them, so pick which before starting.
         </p>
         <ProfileChoices profiles={profiles} selected={undefined} />
@@ -83,7 +83,7 @@ export default async function LabelPage({
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <header className="space-y-3">
-        <h1 className="font-display text-[length:var(--text-display)] leading-none">Grade</h1>
+        <h1 className="text-display leading-none">Grade</h1>
         <GradeTabs active="postings" />
         <p className="text-sm text-ink-soft">
           A graded label is not a swipe. Nothing is applied to — this records how well the
@@ -109,26 +109,26 @@ export default async function LabelPage({
           bias `provenance: owner` is supposed to have escaped. */}
       <section
         aria-labelledby="corpus"
-        className="rounded-[var(--radius-lg)] border border-rule-soft bg-paper-raised/50 p-6"
+        className="rounded-[var(--radius-lg)] border border-rule-soft bg-paper-raised/50 p-5"
       >
-        <h2 id="corpus" className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+        <h2 id="corpus" className="text-label text-ink-soft">
           The corpus so far
         </h2>
 
         <dl className="mt-4 grid gap-x-8 gap-y-2 sm:grid-cols-[auto_1fr]">
-          <dt className="font-mono text-xs text-ink-faint">Graded</dt>
+          <dt className="text-xs text-ink-faint">Graded</dt>
           <dd className="text-sm">
-            {summary.total} of {summary.target}
-            <span className="ml-2 text-ink-faint">({progress}%)</span>
+            {(summary.total).toLocaleString("en-US")} of {(summary.target).toLocaleString("en-US")}
+            <span className="ml-2 text-ink-faint">({(progress).toLocaleString("en-US")}%)</span>
           </dd>
 
-          <dt className="font-mono text-xs text-ink-faint">By grade</dt>
-          <dd className="font-mono text-sm">
+          <dt className="text-xs text-ink-faint">By grade</dt>
+          <dd className="text-sm">
             {[0, 1, 2, 3].map((g) => `${g}:${summary.by_grade[String(g)] ?? 0}`).join("  ")}
           </dd>
 
-          <dt className="font-mono text-xs text-ink-faint">By stream</dt>
-          <dd className="font-mono text-sm">
+          <dt className="text-xs text-ink-faint">By stream</dt>
+          <dd className="text-sm">
             {Object.keys(summary.by_stream).length
               ? Object.entries(summary.by_stream)
                   .map(([stream, count]) => `${stream}:${count}`)
@@ -150,7 +150,7 @@ export default async function LabelPage({
         {summary.usable ? (
           <p className="mt-4 text-xs text-go">
             Usable. Export with{" "}
-            <code className="font-mono">make export-labels kind=owner</code>
+            <code >make export-labels kind=owner</code>
           </p>
         ) : null}
       </section>
@@ -168,15 +168,15 @@ function ProfileChoices({
 }) {
   return (
     <nav className="flex flex-wrap items-center gap-2 text-xs">
-      <span className="font-mono text-ink-faint">grading for</span>
+      <span className="text-ink-faint">grading for</span>
       {profiles.map((profile) => (
         <Link
           key={profile.id}
           href={`/label?profile_id=${profile.id}`}
           className={
             profile.id === selected
-              ? "rounded border border-rule bg-surface px-2 py-1 font-mono"
-              : "rounded border border-rule/40 px-2 py-1 font-mono text-ink-faint underline decoration-rule underline-offset-4"
+              ? "rounded-lg border border-rule bg-surface px-2 py-1 font-mono"
+              : "rounded-lg border border-rule/40 px-2 py-1 font-mono text-ink-faint underline decoration-rule underline-offset-4"
           }
         >
           {profile.label || profile.id.slice(0, 8)}

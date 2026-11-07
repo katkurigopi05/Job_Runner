@@ -34,13 +34,13 @@ const COLUMNS: { key: string; title: string; blurb: string; tone: string }[] = [
     key: "offer",
     title: "Offer",
     blurb: "they said yes",
-    tone: "border-go/40 bg-go-soft text-go",
+    tone: "bg-go",
   },
   {
     key: "interview",
     title: "Interview",
     blurb: "they want to talk",
-    tone: "border-attn/40 bg-attn-soft text-attn",
+    tone: "bg-attn",
   },
   {
     // Above info_requested for the reason §15 gives: an assessment is an
@@ -49,31 +49,31 @@ const COLUMNS: { key: string; title: string; blurb: string; tone: string }[] = [
     key: "assessment",
     title: "Assessment",
     blurb: "a timed exercise, usually with a deadline",
-    tone: "border-attn/40 bg-attn-soft text-attn",
+    tone: "bg-attn",
   },
   {
     key: "info_requested",
     title: "They asked something",
     blurb: "needs a reply from you",
-    tone: "border-attn/40 bg-attn-soft text-attn",
+    tone: "bg-attn",
   },
   {
     key: "acknowledged",
     title: "Acknowledged",
     blurb: "received, nothing decided",
-    tone: "border-rule text-ink-soft",
+    tone: "bg-ink-faint",
   },
   {
     key: "awaiting",
     title: "Waiting",
     blurb: "sent, nothing back yet",
-    tone: "border-wait/40 bg-wait-soft text-wait",
+    tone: "bg-ink-faint",
   },
   {
     key: "rejected",
     title: "Rejection",
     blurb: "closed",
-    tone: "border-stop/40 bg-stop-soft text-stop",
+    tone: "bg-stop",
   },
 ];
 
@@ -104,7 +104,7 @@ function columnsFor(tracked: Application[]) {
       key,
       title: key.replace(/_/g, " "),
       blurb: "no column defined for this outcome yet",
-      tone: "border-rule text-ink-soft",
+      tone: "bg-ink-faint",
     }));
   return [...COLUMNS, ...orphans];
 }
@@ -155,10 +155,10 @@ export default async function TrackerPage() {
   return (
     <div className="space-y-12">
       <header>
-        <h1 className="font-display text-display leading-[1.05] tracking-tight">Tracker</h1>
+        <h1 className="text-display leading-[1.05] tracking-tight">Tracker</h1>
         <p className="mt-3 max-w-prose text-ink-soft">
           What came back. Grouped by what the employer said, not by what we did — an application
-          stays <span className="font-mono text-sm">submitted</span> whether the answer is an offer
+          stays <span className="text-sm">submitted</span> whether the answer is an offer
           or silence.
         </p>
       </header>
@@ -167,12 +167,12 @@ export default async function TrackerPage() {
           board below still looks calm. */}
       <section aria-labelledby="upcoming" className="space-y-3">
         <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-rule pb-3">
-          <h2 id="upcoming" className="font-display text-xl">
+          <h2 id="upcoming" className="text-xl">
             Next two weeks
           </h2>
           <a
             href={`${API_BASE}/tasks.ics`}
-            className="font-mono text-xs text-ink-soft underline-offset-4 hover:underline"
+            className="text-xs text-ink-soft underline-offset-4 hover:underline"
           >
             all dated tasks (.ics)
           </a>
@@ -191,9 +191,9 @@ export default async function TrackerPage() {
                   }`}
                 >
                   {task.overdue ? "overdue · " : ""}
-                  {task.due_at ? new Date(task.due_at).toLocaleString() : "no date yet"}
+                  {task.due_at ? new Date(task.due_at).toLocaleString("en-US") : "no date yet"}
                 </span>
-                <span className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+                <span className="text-label text-ink-soft">
                   {task.kind.replace("_", " ")}
                 </span>
                 <Link
@@ -220,12 +220,12 @@ export default async function TrackerPage() {
             return (
               <section key={column.key} aria-labelledby={`col-${column.key}`}>
                 <div className="flex flex-wrap items-baseline gap-4 border-b border-rule pb-3">
-                  <h2 id={`col-${column.key}`} className="font-display text-xl">
+                  <h2 id={`col-${column.key}`} className="text-xl">
                     {column.title}
                   </h2>
-                  <span className="font-mono text-xs text-ink-faint">{column.blurb}</span>
+                  <span className="text-xs text-ink-faint">{column.blurb}</span>
                   <span className="ml-auto font-mono text-sm tabular-nums text-ink-soft">
-                    {rows.length}
+                    {(rows.length).toLocaleString("en-US")}
                   </span>
                 </div>
                 <ul className="divide-y divide-rule">
@@ -241,14 +241,15 @@ export default async function TrackerPage() {
                             {application.url}
                           </Link>
                           <span
-                            className={`rounded-full border px-3 py-0.5 font-mono text-xs ${column.tone}`}
+                            className="inline-flex items-center gap-2 text-label text-ink-soft"
                           >
-                            {column.key.replace(/_/g, " ")}
+                            <span aria-hidden="true" className={`status-dot ${column.tone}`} />
+                            {column.title}
                           </span>
                         </div>
                         {latest ? (
                           <div className="mt-3 border-l border-rule pl-4">
-                            <p className="font-mono text-xs text-ink-faint">
+                            <p className="text-xs text-ink-faint">
                               {latest.from_addr} · {new Date(latest.at).toLocaleDateString()}
                               {latest.classification
                                 ? ` · read as ${CLASSIFICATION_LABEL[latest.classification]}`
@@ -269,7 +270,7 @@ export default async function TrackerPage() {
                                 classification above is a guess, and this is
                                 what you check it against. */}
                             {latest.subject ? (
-                              <p className="mt-1 font-display">{latest.subject}</p>
+                              <p className="mt-1">{latest.subject}</p>
                             ) : null}
                             {latest.body ? (
                               <p className="mt-1 line-clamp-3 text-sm text-ink-soft">
@@ -291,14 +292,14 @@ export default async function TrackerPage() {
       {unrouted.length > 0 ? (
         <section aria-labelledby="unrouted">
           <div className="flex flex-wrap items-baseline gap-4 border-b border-rule pb-3">
-            <h2 id="unrouted" className="font-display text-xl">
+            <h2 id="unrouted" className="text-xl">
               Matched nothing
             </h2>
             <span className="text-xs text-ink-faint">
               arrived, but no application claimed them
             </span>
             <span className="ml-auto font-mono text-sm tabular-nums text-ink-soft">
-              {unrouted.length}
+              {(unrouted.length).toLocaleString("en-US")}
             </span>
           </div>
           <p className="mt-3 max-w-prose text-sm text-ink-soft">
@@ -308,7 +309,7 @@ export default async function TrackerPage() {
           <ul className="mt-4 divide-y divide-rule">
             {unrouted.map((message) => (
               <li key={message.id} className="py-3">
-                <p className="font-mono text-xs text-ink-faint">
+                <p className="text-xs text-ink-faint">
                   {message.from_addr} · {new Date(message.at).toLocaleDateString()}
                 </p>
                 {message.subject ? <p className="mt-1">{message.subject}</p> : null}

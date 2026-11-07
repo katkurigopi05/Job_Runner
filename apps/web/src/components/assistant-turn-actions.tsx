@@ -23,7 +23,7 @@ const EDITOR_MAX_ROWS = 6;
    it is a control's name and not prose (globals.css rule 1), and never amber:
    nothing here needs the owner (rule 2). */
 const ACTION =
-  "font-mono text-xs text-ink-faint underline-offset-2 transition-colors hover:text-ink hover:underline disabled:opacity-40 disabled:hover:text-ink-faint disabled:hover:no-underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn";
+  "text-xs text-ink-faint underline-offset-2 transition-colors hover:text-ink hover:underline disabled:opacity-40 disabled:hover:text-ink-faint disabled:hover:no-underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft";
 
 type Copied = "idle" | "copied" | "failed";
 
@@ -86,7 +86,7 @@ export function TurnActions({ role, text, canEdit, isEditing, onEdit, onCopied }
             aria-label="Edit this question and ask again"
             className={ACTION}
           >
-            edit
+            Edit
           </button>
         </>
       ) : null}
@@ -133,7 +133,7 @@ export function EditQuestion({ initial, following, onSend, onCancel }: EditQuest
         event.preventDefault();
         if (question) onSend(question);
       }}
-      className="mt-1 ml-auto max-w-[90%] space-y-1.5 text-left"
+      className="mt-1 ml-auto max-w-[90%] space-y-2 text-left"
     >
       <label htmlFor={fieldId} className="sr-only">
         Edit your question
@@ -155,7 +155,7 @@ export function EditQuestion({ initial, following, onSend, onCancel }: EditQuest
             if (question) onSend(question);
           }
         }}
-        className="block w-full resize-none rounded border border-ink-faint bg-paper px-3 py-2 text-sm leading-relaxed text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+        className="block w-full resize-none rounded-lg border border-ink-faint bg-paper px-3 py-2 text-sm leading-relaxed text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
       />
       {/* On a line of its own: in the dock the editor is 360px wide, and beside
           the two buttons this sentence was squeezed to a word a line. */}
@@ -164,14 +164,14 @@ export function EditQuestion({ initial, following, onSend, onCancel }: EditQuest
       </p>
       <div className="flex items-center justify-end gap-3">
         <button type="button" onClick={onCancel} className={ACTION}>
-          cancel
+          Cancel
         </button>
         <button
           type="submit"
           disabled={!question}
-          className="rounded bg-ink px-3 py-1 font-mono text-xs uppercase tracking-widest text-paper transition-opacity hover:opacity-85 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+          className="rounded-lg bg-ink px-3 py-1 text-label text-paper transition-opacity hover:opacity-85 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
         >
-          ask again
+          Ask again
         </button>
       </div>
     </form>

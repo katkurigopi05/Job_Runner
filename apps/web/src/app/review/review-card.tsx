@@ -43,14 +43,14 @@ function Submitting({
   const status = useFormStatus();
   const busy = forced ?? status.pending;
   const base =
-    "rounded-md px-5 py-2.5 font-mono text-xs uppercase tracking-widest transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2";
+    "rounded-md px-5 py-2.5 text-label transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2";
   const tones = {
-    go: "bg-go text-paper hover:bg-go/85 focus-visible:outline-go",
+    go: "bg-attn text-on-accent hover:bg-attn/90 focus-visible:outline-ink-soft",
     stop: "border border-stop/50 text-stop hover:bg-stop-soft focus-visible:outline-stop",
   };
   return (
     <button type="submit" form={form} disabled={busy} className={`${base} ${tones[tone]}`}>
-      {busy ? "working…" : children}
+      {busy ? "Working…" : children}
     </button>
   );
 }
@@ -111,9 +111,9 @@ export function ReviewCard({
   })();
 
   return (
-    <article className="border border-rule bg-paper-raised">
+    <article className="rounded-xl border border-rule bg-paper-raised">
       {/* A light travelling round the heading of the card that is next.
-          Amber means "this needs you" (globals.css, rule 2), hence the warm
+          Clay means "this needs you" (globals.css, rule 2), hence the warm
           palette with its hue held still; a light on every card would say
           nothing about any of them.
 
@@ -133,16 +133,16 @@ export function ReviewCard({
         size="md"
         colorVariant="sunset"
         staticColors
-        borderRadius={0}
+        borderRadius={12}
         duration={BEAM_SECONDS}
       >
-        <header className="flex flex-wrap items-start justify-between gap-4 border-b border-rule px-6 py-5">
+        <header className="flex flex-wrap items-start justify-between gap-4 rounded-t-xl border-b border-rule px-5 py-5">
           <div className="min-w-0">
-            <h2 className="font-display text-2xl leading-tight">{host}</h2>
+            <h2 className="text-2xl leading-tight">{host}</h2>
             <a
               href={application.url}
               {...POSTING_LINK}
-              className="mt-1 block truncate font-mono text-xs text-ink-faint underline-offset-4 hover:text-ink-soft hover:underline"
+              className="mt-1 block truncate text-xs text-ink-faint underline-offset-4 hover:text-ink-soft hover:underline"
             >
               {application.url}
             </a>
@@ -159,13 +159,13 @@ export function ReviewCard({
       <ScreeningPanel screening={review.screening} />
 
       {review.cover_letter ? (
-        <section className="border-b border-rule px-6 py-5">
+        <section className="border-b border-rule px-5 py-5">
           <p className="text-xs text-ink-faint">
             cover letter — every sentence traced back to your résumé before it got here
             {review.cover_letter.answered_by ? ` · written by ${review.cover_letter.answered_by}` : null}
           </p>
           {review.cover_letter.text ? (
-            <p className="mt-2 whitespace-pre-wrap font-display leading-relaxed">
+            <p className="mt-2 whitespace-pre-wrap leading-relaxed">
               {review.cover_letter.text}
             </p>
           ) : (
@@ -183,8 +183,8 @@ export function ReviewCard({
       ) : null}
 
       {application.status === "needs_otp" ? (
-        <form action={runOtp} className="border-b border-rule px-6 py-5">
-          <label htmlFor={`otp-${application.id}`} className="font-mono text-xs text-ink-soft">
+        <form action={runOtp} className="border-b border-rule px-5 py-5">
+          <label htmlFor={`otp-${application.id}`} className="text-xs text-ink-soft">
             The site sent a one-time code
           </label>
           <div className="mt-2 flex gap-3">
@@ -193,9 +193,9 @@ export function ReviewCard({
               name="code"
               inputMode="numeric"
               autoComplete="one-time-code"
-              className="w-40 rounded-md border border-rule bg-paper px-3 py-2 font-mono focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+              className="w-40 rounded-lg border border-rule bg-paper px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
             />
-            <Submitting tone="go">send code</Submitting>
+            <Submitting tone="go">Send code</Submitting>
           </div>
           {otpState ? (
             <p className={`mt-3 text-xs ${otpState.ok ? "text-go" : "text-stop"}`}>
@@ -207,9 +207,9 @@ export function ReviewCard({
 
       <form id={approveFormId} action={runApprove}>
         {review.reason ? (
-          <section className={`border-b border-rule px-6 py-5 ${ledgerStop ? "bg-stop/5" : ""}`}>
+          <section className={`border-b border-rule px-5 py-5 ${ledgerStop ? "bg-stop/5" : ""}`}>
             <h3
-              className={`font-mono text-xs uppercase tracking-widest ${
+              className={`text-label ${
                 ledgerStop ? "text-stop" : "text-attn"
               }`}
             >
@@ -223,7 +223,7 @@ export function ReviewCard({
             {review.submission_conflict_application_id ? (
               <p className="mt-2 text-xs text-ink-soft">
                 This job has already been recorded by application{" "}
-                <span className="font-mono">{review.submission_conflict_application_id}</span>.
+                <span >{review.submission_conflict_application_id}</span>.
                 Approving cannot submit. You can reject this application, mark it submitted if
                 already sent
                 {review.submission_conflict_by_canonical
@@ -235,7 +235,7 @@ export function ReviewCard({
             {review.submission_recorded_application_id ? (
               <p className="mt-2 text-xs text-ink-soft">
                 This job was already sent, through application{" "}
-                <span className="font-mono">{review.submission_recorded_application_id}</span>.
+                <span >{review.submission_recorded_application_id}</span>.
                 Approving cannot send it again. Reject this application.
               </p>
             ) : null}
@@ -244,8 +244,8 @@ export function ReviewCard({
 
         {required.length > 0 ? (
           <section className="border-b border-rule px-6 py-6">
-            <h3 className="font-mono text-xs uppercase tracking-widest text-attn">
-              {required.length} question{required.length === 1 ? "" : "s"} the agent would not guess
+            <h3 className="text-label text-attn">
+              {(required.length).toLocaleString("en-US")} Question{required.length === 1 ? "" : "s"} The agent would not guess
             </h3>
             <p className="mt-2 max-w-prose text-sm text-ink-soft">
               Quoted exactly as the employer wrote them. Answer in your own words — nothing here is
@@ -265,7 +265,7 @@ export function ReviewCard({
                         id={id}
                         name={`answer:${key}`}
                         defaultValue=""
-                        className="mt-3 w-full max-w-lg rounded-md border border-rule bg-paper px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+                        className="mt-3 w-full max-w-lg rounded-lg border border-rule bg-paper px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
                       >
                         <option value="">— choose —</option>
                         {question.options.map((option) => (
@@ -279,7 +279,7 @@ export function ReviewCard({
                         id={id}
                         name={`answer:${key}`}
                         rows={question.kind === "textarea" || question.kind === "cover_letter" ? 5 : 2}
-                        className="mt-3 w-full rounded-md border border-rule bg-paper px-3 py-2 leading-relaxed focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+                        className="mt-3 w-full rounded-lg border border-rule bg-paper px-3 py-2 leading-relaxed focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
                       />
                     )}
                   </li>
@@ -288,7 +288,7 @@ export function ReviewCard({
             </ul>
           </section>
         ) : !review.reason ? (
-          <section className="border-b border-rule px-6 py-5">
+          <section className="border-b border-rule px-5 py-5">
             <p className="text-sm text-ink-soft">
               Every required field was filled from your profile. Nothing is waiting on an answer —
               only on your approval.
@@ -299,11 +299,11 @@ export function ReviewCard({
 
       {review.base_resume ? (
           <div className="border-b border-rule px-6 py-3">
-            <p className="font-mono text-xs uppercase tracking-widest text-ink-soft">
+            <p className="text-label text-ink-soft">
               Started from
             </p>
             <p className="mt-1 text-sm">
-              Résumé v{review.base_resume.version}
+              Résumé v{(review.base_resume.version).toLocaleString("en-US")}
               <span className="text-ink-soft"> — {review.base_resume.reason}</span>
             </p>
             {review.base_resume.considered && review.base_resume.considered.length > 1 ? (
@@ -318,7 +318,7 @@ export function ReviewCard({
 
       {review.resume_diff ? (
           <details className="border-b border-rule px-6 py-4" open>
-            <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
+            <summary className="cursor-pointer text-label text-ink-soft hover:text-ink">
               What tailoring changed
             </summary>
             <div className="mt-4">
@@ -333,7 +333,7 @@ export function ReviewCard({
             Absent entirely when the form never asked, which most do not. */}
         {review.cover_letter ? (
           <details className="border-b border-rule px-6 py-4" open>
-            <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
+            <summary className="cursor-pointer text-label text-ink-soft hover:text-ink">
               Cover letter
             </summary>
             <div className="mt-4">
@@ -347,7 +347,7 @@ export function ReviewCard({
             would have done better. Collapsed by default because running it
             uploads the résumé again. */}
         <details className="border-b border-rule px-6 py-4">
-          <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
+          <summary className="cursor-pointer text-label text-ink-soft hover:text-ink">
             Compare models
           </summary>
           <div className="mt-4">
@@ -368,22 +368,22 @@ export function ReviewCard({
 
         <FilledSummary review={review} />
 
-        <footer className="flex flex-wrap items-center gap-4 px-6 py-5">
+        <footer className="flex flex-wrap items-center gap-4 px-5 py-5">
           {/* Both belong to the approve form above by id, not by nesting. */}
           <Submitting tone="go" form={approveFormId} pending={approving}>
-            approve &amp; submit
+            Approve &amp; submit
           </Submitting>
           <input
             form={approveFormId}
             name="note"
             placeholder="note to self (optional)"
-            className="min-w-0 flex-1 rounded-md border border-rule bg-paper px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+            className="min-w-0 flex-1 rounded-lg border border-rule bg-paper px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
           />
         </footer>
 
       <form action={runReject} className="border-t border-rule px-6 py-4">
         <div className="flex items-center gap-4">
-          <Submitting tone="stop">reject</Submitting>
+          <Submitting tone="stop">Reject</Submitting>
           <p className="text-xs text-ink-faint">
             Marks it failed as rejected_at_review. Nothing is sent.
           </p>
@@ -410,8 +410,8 @@ function FilledSummary({ review }: { review: NonNullable<Application["review"]> 
 
   return (
     <details className="border-b border-rule px-6 py-4">
-      <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
-        {filled.length} field{filled.length === 1 ? "" : "s"} filled from your profile
+      <summary className="cursor-pointer text-label text-ink-soft hover:text-ink">
+        {(filled.length).toLocaleString("en-US")} Field{filled.length === 1 ? "" : "s"} Filled from your profile
       </summary>
       <dl className="mt-4 grid gap-x-8 gap-y-3 sm:grid-cols-[minmax(0,14rem)_1fr]">
         {filled.map((field, index) => (
@@ -456,8 +456,8 @@ function AttachedResume({
 
   if (resume === null) {
     return (
-      <section className="border-b border-rule px-6 py-5">
-        <h3 className="font-mono text-xs uppercase tracking-widest text-stop">
+      <section className="border-b border-rule px-5 py-5">
+        <h3 className="text-label text-stop">
           No résumé attached
         </h3>
         <p className="mt-2 max-w-prose text-sm text-ink-soft">
@@ -470,7 +470,7 @@ function AttachedResume({
 
   return (
     <details className="border-b border-rule px-6 py-4" open>
-      <summary className="cursor-pointer font-mono text-xs uppercase tracking-widest text-ink-soft hover:text-ink">
+      <summary className="cursor-pointer text-label text-ink-soft hover:text-ink">
         Résumé to be sent
         <span className="ml-2 text-ink-faint">
           {tailored ? "· tailored for this posting" : "· profile base, unmodified"}
@@ -494,7 +494,7 @@ function AttachedResume({
           <ResumeEditor
             parsed={resume}
             action={saveEdit}
-            editLabel="edit before sending"
+            editLabel="Edit before sending"
             extra={<AdoptBase />}
             note={
               <>
@@ -520,7 +520,7 @@ function AdoptBase() {
       <input
         type="checkbox"
         name="adopt"
-        className="mt-0.5 size-4 shrink-0 accent-go focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+        className="mt-0.5 size-4 shrink-0 accent-go focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
       />
       <span>
         Also make this my base résumé
@@ -553,18 +553,18 @@ function ReadinessPanel({ readiness }: { readiness?: Readiness | null }) {
   const unmeasured = components.filter((c) => !c.measured);
 
   return (
-    <section className="border-b border-rule px-6 py-5">
+    <section className="border-b border-rule px-5 py-5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <h3 className="font-mono text-xs uppercase tracking-widest text-ink-faint">readiness</h3>
+        <h3 className="text-label text-ink-soft">Readiness</h3>
         {score === null ? (
           // Not a low score. An application nobody could measure and one that
           // measured badly are different answers and must not look alike at
           // the moment of sending.
           <p className="text-xs text-ink-faint">not assessed — too little measured</p>
         ) : (
-          <p className="font-display text-2xl leading-none">
-            {Math.round(score * 100)}
-            <span className="ml-2 font-mono text-xs uppercase tracking-widest text-ink-faint">
+          <p className="text-2xl leading-none">
+            {(Math.round(score * 100)).toLocaleString("en-US")}
+            <span className="ml-2 text-label text-ink-soft">
               {tier}
             </span>
           </p>
@@ -596,11 +596,11 @@ function ReadinessPanel({ readiness }: { readiness?: Readiness | null }) {
         <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
           {measured.map((component) => (
             <div key={component.name}>
-              <dt className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+              <dt className="text-label text-ink-soft">
                 {component.name}
               </dt>
-              <dd className="font-display text-lg leading-tight">
-                {Math.round(component.score * 100)}
+              <dd className="text-lg leading-tight">
+                {(Math.round(component.score * 100)).toLocaleString("en-US")}
               </dd>
               <dd className="text-xs text-ink-faint">{component.finding}</dd>
             </div>
@@ -629,7 +629,7 @@ function ScreeningPanel({ screening }: { screening?: Screening | null }) {
   if (knockOuts.length === 0 && cautions.length === 0) return null;
 
   return (
-    <section className="border-b border-rule px-6 py-5">
+    <section className="border-b border-rule px-5 py-5">
       {knockOuts.length > 0 ? (
         <div className="rounded-[var(--radius)] border border-stop/40 bg-stop-soft px-3 py-2">
           <p className="text-xs text-stop">

@@ -29,7 +29,7 @@ function Change({ change }: { change: VersionChange }) {
   if (change.field === "text") {
     return (
       <li className="text-sm text-ink-soft">
-        <span className="font-mono text-xs text-ink-faint">{label}</span> edited, nothing comparable
+        <span className="text-xs text-ink-faint">{label}</span> edited, nothing comparable
         changed
       </li>
     );
@@ -39,7 +39,7 @@ function Change({ change }: { change: VersionChange }) {
     const added = (change.after as string[] | null) ?? [];
     return (
       <li className="text-sm">
-        <span className="font-mono text-xs text-ink-faint">{label}</span>{" "}
+        <span className="text-xs text-ink-faint">{label}</span>{" "}
         {added.map((skill) => (
           <span key={`+${skill}`} className="mr-1.5 text-go">
             +{skill}
@@ -55,7 +55,7 @@ function Change({ change }: { change: VersionChange }) {
   }
   return (
     <li className="text-sm">
-      <span className="font-mono text-xs text-ink-faint">{label}</span>{" "}
+      <span className="text-xs text-ink-faint">{label}</span>{" "}
       <span className="text-ink-faint line-through">{String(change.before ?? "not stated")}</span>
       <span className="px-1.5 text-ink-faint">→</span>
       <span className="text-ink">{String(change.after ?? "not stated")}</span>
@@ -79,10 +79,10 @@ export default async function PostingPage({ params }: { params: Promise<{ id: st
   return (
     <div className="space-y-12">
       <header>
-        <Link href="/matches" className="font-mono text-xs text-ink-faint hover:text-ink">
+        <Link href="/matches" className="text-xs text-ink-faint hover:text-ink">
           ← matches
         </Link>
-        <h1 className="mt-3 font-display text-4xl leading-tight tracking-tight">
+        <h1 className="mt-3 text-display leading-tight tracking-tight">
           {history.title ?? "Untitled posting"}
         </h1>
         <p className="mt-3 max-w-prose text-sm text-ink-soft">
@@ -95,7 +95,7 @@ export default async function PostingPage({ params }: { params: Promise<{ id: st
       </header>
 
       <section aria-labelledby="sources">
-        <h2 id="sources" className="border-b border-rule pb-2 font-display text-2xl">
+        <h2 id="sources" className="border-b border-rule pb-2 text-2xl">
           Sources
         </h2>
         <ul className="mt-4 space-y-3">
@@ -112,7 +112,7 @@ export default async function PostingPage({ params }: { params: Promise<{ id: st
                 >
                   {source.url} ↗
                 </a>
-                <span className="font-mono text-xs text-ink-faint">{source.source}</span>
+                <span className="text-xs text-ink-faint">{source.source}</span>
               </div>
               <p className="mt-1 text-xs text-ink-soft">
                 {source.location ?? "location not stated"}
@@ -140,7 +140,7 @@ export default async function PostingPage({ params }: { params: Promise<{ id: st
       </section>
 
       <section aria-labelledby="versions">
-        <h2 id="versions" className="border-b border-rule pb-2 font-display text-2xl">
+        <h2 id="versions" className="border-b border-rule pb-2 text-2xl">
           What it said over time
         </h2>
         {versions.length === 0 ? (
@@ -152,9 +152,9 @@ export default async function PostingPage({ params }: { params: Promise<{ id: st
           <ol className="mt-4 space-y-4 border-l border-rule pl-5">
             {versions.map((version) => (
               <li key={version.version} className="relative">
-                <span className="absolute -left-[25px] top-1.5 h-2 w-2 rounded-full bg-ink-faint" />
-                <p className="font-mono text-xs text-ink-faint">
-                  v{version.version} · {new Date(version.captured_at).toLocaleDateString()}
+                <span className="absolute -left-6 top-1.5 h-2 w-2 rounded-full bg-ink-faint" />
+                <p className="text-xs text-ink-faint">
+                  v{(version.version).toLocaleString("en-US")} · {new Date(version.captured_at).toLocaleDateString()}
                 </p>
                 <p className="mt-1 text-sm text-ink">Pay: {version.pay}</p>
                 {version.changes.length > 0 ? (

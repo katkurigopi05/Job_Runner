@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { Icon } from "./icon";
 import { useFormStatus } from "react-dom";
 import type { ResumeParsed } from "@/lib/api";
 import { ResumePreview } from "@/components/resume-preview";
@@ -31,9 +32,9 @@ function Saving() {
     <button
       type="submit"
       disabled={pending}
-      className="rounded-md bg-go px-5 py-2.5 font-mono text-xs uppercase tracking-widest text-paper transition-colors hover:bg-go/85 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-go"
+      className="rounded-lg bg-ink px-5 py-2 text-label text-paper transition-colors hover:bg-ink/85 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
     >
-      {pending ? "saving…" : "save as new version"}
+      {pending ? "Saving…" : "Save as new version"}
     </button>
   );
 }
@@ -71,16 +72,16 @@ function EditableLine({
           onChange(event.target.value);
           fit(event.target);
         }}
-        className={`w-full resize-none rounded border border-transparent bg-transparent px-1.5 py-0.5 leading-relaxed hover:border-rule focus:border-attn focus-visible:outline-none ${className}`}
+        className={`w-full resize-none rounded-lg border border-transparent bg-transparent px-1.5 py-0.5 leading-relaxed hover:border-rule focus:border-ink-soft focus-visible:outline-none ${className}`}
       />
       {onRemove ? (
         <button
           type="button"
           onClick={onRemove}
           aria-label="Remove this line"
-          className="mt-1 shrink-0 rounded px-1 font-mono text-xs text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:text-stop focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-stop"
+          className="mt-1 shrink-0 rounded-lg px-1 text-xs text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:text-stop focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-stop"
         >
-          ✕
+          <Icon name="close" />
         </button>
       ) : null}
     </div>
@@ -158,7 +159,7 @@ export function ResumeEditor({
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="absolute top-3 right-3 rounded border border-rule bg-paper-raised px-3 py-1.5 font-mono text-xs text-ink-soft transition-colors hover:border-ink-faint hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+          className="absolute top-3 right-3 rounded-lg border border-rule bg-paper-raised px-3 py-1.5 text-xs text-ink-soft transition-colors hover:border-ink-faint hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
         >
           {editLabel}
         </button>
@@ -166,7 +167,7 @@ export function ResumeEditor({
     );
   }
 
-  const legend = "font-mono text-xs uppercase tracking-widest text-ink-faint";
+  const legend = "text-label text-ink-faint";
 
   return (
     <form action={run} className="border border-attn/40 bg-paper">
@@ -188,7 +189,7 @@ export function ResumeEditor({
       <header className="flex flex-wrap items-baseline justify-between gap-3 border-b border-rule px-5 py-3">
         <p className={legend}>editing — this is the document, type in it</p>
         <p className="text-xs text-ink-faint">
-          from v{parsed.version} · saves as a new version
+          from v{(parsed.version).toLocaleString("en-US")} · saves as a new version
         </p>
       </header>
 
@@ -199,20 +200,20 @@ export function ResumeEditor({
           value={name}
           onChange={setName}
           placeholder="Your name"
-          className="font-display text-lg"
+          className="text-lg"
         />
         <div className="mt-1 grid gap-1 sm:grid-cols-2">
           <EditableLine
             value={email}
             onChange={setEmail}
             placeholder="email"
-            className="font-mono text-xs text-ink-soft"
+            className="text-xs text-ink-soft"
           />
           <EditableLine
             value={phone}
             onChange={setPhone}
             placeholder="phone"
-            className="font-mono text-xs text-ink-soft"
+            className="text-xs text-ink-soft"
           />
         </div>
         <div className="mt-1">
@@ -220,7 +221,7 @@ export function ResumeEditor({
             value={linkText}
             onChange={setLinkText}
             placeholder="links — one per line"
-            className="font-mono text-xs text-ink-soft"
+            className="text-xs text-ink-soft"
           />
         </div>
       </div>
@@ -230,7 +231,7 @@ export function ResumeEditor({
           <section key={section} className="px-5 py-4">
             <h4 className={legend}>
               {section}{" "}
-              <span className="tabular-nums">· {lines.filter((l) => l.trim()).length}</span>
+              <span className="tabular-nums">· {(lines.filter((l) => l.trim()).length).toLocaleString("en-US")}</span>
             </h4>
             <div className="mt-3 space-y-1">
               {lines.map((line, index) => (
@@ -247,7 +248,7 @@ export function ResumeEditor({
             <button
               type="button"
               onClick={() => addLine(section)}
-              className="mt-2 rounded border border-rule px-2 py-1 font-mono text-xs text-ink-soft transition-colors hover:border-ink-faint hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+              className="mt-2 rounded-lg border border-rule px-2 py-1 text-xs text-ink-soft transition-colors hover:border-ink-faint hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
             >
               + line
             </button>
@@ -260,15 +261,15 @@ export function ResumeEditor({
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="font-mono text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline"
+          className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline"
         >
-          cancel
+          Cancel
         </button>
         {state ? (
-          <span className={`text-sm ${state.ok ? "text-go" : "text-stop"}`}>{state.message}</span>
+          <span className={`text-sm ${state.ok ? "text-ink" : "text-stop"}`}>{state.message}</span>
         ) : null}
         {extra ? <div className="w-full">{extra}</div> : null}
-        <p className="w-full font-mono text-xs text-ink-faint">
+        <p className="w-full text-xs text-ink-faint">
           {note ?? (
             <>
               Blank lines are dropped and an emptied section is removed, so what gets saved is what

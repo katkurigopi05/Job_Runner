@@ -28,7 +28,7 @@ export default async function PipelinePage() {
   return (
     <div className="space-y-10">
       <header>
-        <h1 className="font-display text-display leading-[1.05] tracking-tight">Pipeline</h1>
+        <h1 className="text-display leading-[1.05] tracking-tight">Pipeline</h1>
         <p className="mt-3 max-w-prose text-ink-soft">
           Every application, by where it stopped.
         </p>
@@ -41,12 +41,12 @@ export default async function PipelinePage() {
           return (
             <section key={status} aria-labelledby={`col-${status}`}>
               <div className="flex items-baseline gap-4 border-b border-rule pb-3">
-                <h2 id={`col-${status}`} className="font-display text-xl">
+                <h2 id={`col-${status}`} className="text-xl">
                   {status.replace(/_/g, " ")}
                 </h2>
-                <span className="font-mono text-xs text-ink-faint">{blurb}</span>
+                <span className="text-xs text-ink-faint">{blurb}</span>
                 <span className="ml-auto font-mono text-sm tabular-nums text-ink-soft">
-                  {rows.length}
+                  {(rows.length).toLocaleString("en-US")}
                 </span>
               </div>
               <ul className="divide-y divide-rule">
@@ -58,7 +58,7 @@ export default async function PipelinePage() {
                     >
                       {application.url}
                     </Link>
-                    <span className="font-mono text-xs text-ink-faint">
+                    <span className="text-xs text-ink-faint">
                       {application.ats ?? "unknown ats"}
                     </span>
                     <StatusPill status={application.status} reason={application.failure_reason} />

@@ -45,7 +45,7 @@ export default async function SwipePage() {
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <header className="space-y-3">
-        <h1 className="font-display text-[length:var(--text-display)] leading-none">Rate</h1>
+        <h1 className="text-display leading-none">Rate</h1>
         <p className="text-sm text-ink-soft">
           Keep or skip — this just records what you think. You start applications yourself, from
           the{" "}
@@ -62,18 +62,18 @@ export default async function SwipePage() {
           decisions say the score threshold should be. */}
       <section
         aria-labelledby="calibration"
-        className="rounded-[var(--radius-lg)] border border-rule-soft bg-paper-raised/50 p-6"
+        className="rounded-[var(--radius-lg)] border border-rule-soft bg-paper-raised/50 p-5"
       >
-        <h2 id="calibration" className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+        <h2 id="calibration" className="text-label text-ink-soft">
           What your ratings say about the score
         </h2>
         {calibration.enough_data ? (
           <dl className="mt-4 grid gap-x-8 gap-y-2 sm:grid-cols-[auto_1fr]">
-            <dt className="font-mono text-xs text-ink-faint">Suggested min score</dt>
-            <dd className="text-sm text-go">{calibration.suggested_min_score}</dd>
-            <dt className="font-mono text-xs text-ink-faint">Kept vs skipped</dt>
+            <dt className="text-xs text-ink-faint">Suggested min score</dt>
+            <dd className="text-sm text-go">{(calibration.suggested_min_score)?.toLocaleString("en-US")}</dd>
+            <dt className="text-xs text-ink-faint">Kept vs skipped</dt>
             <dd className="text-sm">
-              {calibration.interested_mean} vs {calibration.skipped_mean}
+              {(calibration.interested_mean)?.toLocaleString("en-US")} vs {(calibration.skipped_mean)?.toLocaleString("en-US")}
               {calibration.separation !== null && calibration.separation <= 0 ? (
                 <span className="ml-2 text-attn">
                   — the scorer is not ranking what you want; no threshold fixes that
@@ -83,7 +83,7 @@ export default async function SwipePage() {
           </dl>
         ) : (
           <p className="mt-3 text-sm text-ink-soft">
-            {calibration.decided} rated so far. A suggested threshold needs at least 10 kept
+            {(calibration.decided).toLocaleString("en-US")} rated so far. A suggested threshold needs at least 10 kept
             postings — a number derived from fewer would be noise dressed as a measurement.
           </p>
         )}

@@ -17,7 +17,7 @@ import type { ResumeDiff } from "@/lib/api";
  */
 function TailoredBy({ model }: { model?: string | null }) {
   return (
-    <p className="font-mono text-xs text-ink-faint">
+    <p className="text-xs text-ink-faint">
       written by{" "}
       {model ? (
         <span className="text-ink-soft">{model}</span>
@@ -33,14 +33,14 @@ function Score({ label, before, after }: { label: string; before: number; after:
   const tone = delta < -0.001 ? "text-stop" : delta > 0.001 ? "text-go" : "text-ink-faint";
   return (
     <div className="flex items-baseline gap-2">
-      <span className="w-20 font-mono text-xs text-ink-faint">{label}</span>
-      <span className="font-mono text-sm text-ink-soft">{Math.round(before * 100)}%</span>
+      <span className="w-20 text-xs text-ink-faint">{label}</span>
+      <span className="text-sm text-ink-soft">{(Math.round(before * 100)).toLocaleString("en-US")}%</span>
       <span className="text-ink-faint">→</span>
-      <span className="font-mono text-sm">{Math.round(after * 100)}%</span>
+      <span className="text-sm">{(Math.round(after * 100)).toLocaleString("en-US")}%</span>
       {Math.abs(delta) > 0.001 ? (
-        <span className={`font-mono text-xs ${tone}`}>
+        <span className={`text-xs ${tone}`}>
           {delta > 0 ? "+" : ""}
-          {Math.round(delta * 100)}
+          {(Math.round(delta * 100)).toLocaleString("en-US")}
         </span>
       ) : null}
     </div>
@@ -62,8 +62,8 @@ function Score({ label, before, after }: { label: string; before: number; after:
  */
 function AtsPanel({ ats }: { ats: NonNullable<ResumeDiff["ats"]> }) {
   return (
-    <div className="space-y-2 border border-rule bg-paper px-3 py-2.5">
-      <p className="font-mono text-xs uppercase tracking-wide text-ink-faint">
+    <div className="space-y-2 border border-rule bg-paper px-3 py-2">
+      <p className="text-label tracking-wide text-ink-soft">
         How an ATS reads this
       </p>
       <Score label="parse" before={ats.parse_before} after={ats.parse_after} />
@@ -110,12 +110,12 @@ function AtsPanel({ ats }: { ats: NonNullable<ResumeDiff["ats"]> }) {
 function RecruiterPanel({ recruiter }: { recruiter: NonNullable<ResumeDiff["recruiter"]> }) {
   const regressed = recruiter.after < recruiter.before;
   return (
-    <div className="space-y-2 border border-rule bg-paper px-3 py-2.5">
-      <p className="font-mono text-xs uppercase tracking-wide text-ink-faint">
+    <div className="space-y-2 border border-rule bg-paper px-3 py-2">
+      <p className="text-label tracking-wide text-ink-soft">
         How a person reads this
       </p>
       <Score label="overall" before={recruiter.before} after={recruiter.after} />
-      <p className="font-mono text-xs text-ink-soft">
+      <p className="text-xs text-ink-soft">
         shortlist: {recruiter.shortlist_before} → {recruiter.shortlist_after}
       </p>
 
@@ -127,22 +127,22 @@ function RecruiterPanel({ recruiter }: { recruiter: NonNullable<ResumeDiff["recr
         </p>
       ) : null}
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs text-ink-soft">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-ink-soft">
         <div className="flex justify-between">
-          <dt>credibility</dt>
-          <dd>{Math.round(recruiter.credibility_after * 100)}%</dd>
+          <dt>Credibility</dt>
+          <dd>{(Math.round(recruiter.credibility_after * 100)).toLocaleString("en-US")}%</dd>
         </div>
         <div className="flex justify-between">
           <dt>10-second scan</dt>
-          <dd>{Math.round(recruiter.scan_after * 100)}%</dd>
+          <dd>{(Math.round(recruiter.scan_after * 100)).toLocaleString("en-US")}%</dd>
         </div>
         <div className="flex justify-between">
-          <dt>qualification</dt>
-          <dd>{Math.round(recruiter.qualification_after * 100)}%</dd>
+          <dt>Qualification</dt>
+          <dd>{(Math.round(recruiter.qualification_after * 100)).toLocaleString("en-US")}%</dd>
         </div>
         <div className="flex justify-between">
-          <dt>technical</dt>
-          <dd>{Math.round(recruiter.technical_after * 100)}%</dd>
+          <dt>Technical</dt>
+          <dd>{(Math.round(recruiter.technical_after * 100)).toLocaleString("en-US")}%</dd>
         </div>
       </dl>
 
@@ -226,7 +226,7 @@ export function ResumeDiffView({ diff }: { diff: ResumeDiff }) {
             <>
               {" "}
               <span className="text-attn">
-                {rejected} rewrite{rejected === 1 ? "" : "s"} were refused by the fabrication
+                {(rejected).toLocaleString("en-US")} rewrite{rejected === 1 ? "" : "s"} were refused by the fabrication
                 guard.
               </span>
             </>
@@ -245,9 +245,9 @@ export function ResumeDiffView({ diff }: { diff: ResumeDiff }) {
   return (
     <div className="space-y-4">
       <div className="space-y-1">
-        <p className="font-mono text-xs text-ink-soft">
-          {changed} line{changed === 1 ? "" : "s"} rewritten · {unchanged} unchanged
-          {rejected > 0 ? <span className="text-attn"> · {rejected} refused by the guard</span> : null}
+        <p className="text-xs text-ink-soft">
+          {(changed).toLocaleString("en-US")} line{changed === 1 ? "" : "s"} rewritten · {(unchanged).toLocaleString("en-US")} unchanged
+          {rejected > 0 ? <span className="text-attn"> · {(rejected).toLocaleString("en-US")} refused by the guard</span> : null}
         </p>
         <TailoredBy model={diff.answered_by} />
       </div>

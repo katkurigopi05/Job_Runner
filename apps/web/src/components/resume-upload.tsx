@@ -10,7 +10,7 @@ function Submit() {
     <button
       type="submit"
       disabled={pending}
-      className="rounded-[var(--radius)] bg-ink px-5 py-2 font-mono text-xs uppercase tracking-widest text-paper transition-opacity hover:opacity-85 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+      className="rounded-[var(--radius)] bg-ink px-5 py-2 text-label text-paper transition-opacity hover:opacity-85 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
     >
       {pending ? "parsing…" : "upload"}
     </button>
@@ -34,7 +34,7 @@ export function ResumeUpload({
       <input type="hidden" name="candidate_id" value={candidateId} />
       {profileId ? <input type="hidden" name="profile_id" value={profileId} /> : null}
 
-      <label htmlFor="resume-file" className="font-mono text-xs uppercase tracking-widest text-ink-soft">
+      <label htmlFor="resume-file" className="text-label text-ink-soft">
         Upload a résumé
       </label>
       <p className="mt-1 max-w-prose text-sm text-ink-soft">
@@ -50,7 +50,7 @@ export function ResumeUpload({
           name="file"
           accept=".pdf,.docx,.txt,.md"
           required
-          className="max-w-full text-sm file:mr-3 file:rounded-[var(--radius)] file:border file:border-rule file:bg-paper-high file:px-3 file:py-1.5 file:font-mono file:text-xs file:text-ink"
+          className="max-w-full text-sm file:mr-3 file:rounded-[var(--radius)] file:border file:border-rule file:bg-paper-high file:px-3 file:py-1.5 file:file:text-xs file:text-ink"
         />
         <Submit />
       </div>

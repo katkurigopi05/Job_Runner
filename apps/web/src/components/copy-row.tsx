@@ -27,13 +27,13 @@ export function CopyRow({ question, value }: { question: string; value: string }
   return (
     <li className="flex items-start justify-between gap-4 border-b border-rule-soft py-3 last:border-0">
       <div className="min-w-0">
-        <div className="font-mono text-xs text-ink-faint">{question}</div>
+        <div className="text-xs text-ink-faint">{question}</div>
         <div className="mt-1 break-words text-sm text-ink">{value}</div>
       </div>
       <button
         type="button"
         onClick={copy}
-        className="shrink-0 rounded-[var(--radius)] border border-rule px-3 py-1.5 font-mono text-xs text-ink-soft transition-colors hover:border-go hover:text-go focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-go"
+        className="shrink-0 rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink-soft transition-colors hover:border-ink-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-go"
         aria-label={`Copy ${question}`}
       >
         {copied ? "copied" : "copy"}

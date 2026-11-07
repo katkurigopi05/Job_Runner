@@ -42,16 +42,16 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
       <header className="space-y-4">
         <Link
           href={`/applications/${packet.application_id}`}
-          className="font-mono text-xs text-ink-faint hover:text-ink-soft"
+          className="text-xs text-ink-faint hover:text-ink-soft"
         >
           ← application
         </Link>
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-          <h1 className="font-display text-[length:var(--text-display)] leading-none">
+          <h1 className="text-display leading-none">
             {posting?.title ?? "Finish this application"}
           </h1>
           {posting?.company ? (
-            <span className="font-mono text-sm text-go">{posting.company}</span>
+            <span className="text-sm text-attn-text">{posting.company}</span>
           ) : null}
         </div>
         <p className="max-w-2xl text-sm text-ink-soft">
@@ -63,32 +63,32 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
       {/* Step one. Opening the posting is the only irreversible-feeling thing
           on this page, so it sits alone and reads as the primary action. */}
       <section aria-labelledby="posting" className="space-y-4">
-        <h2 id="posting" className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+        <h2 id="posting" className="text-label text-ink-soft">
           1 · The posting
         </h2>
-        <div className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-6 shadow-[var(--shadow-soft)]">
+        <div className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-5 shadow-[var(--shadow-soft)]">
           <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-[auto_1fr]">
             {posting?.location ? (
               <>
-                <dt className="font-mono text-xs text-ink-faint">Location</dt>
+                <dt className="text-xs text-ink-faint">Location</dt>
                 <dd className="text-sm">{posting.location}</dd>
               </>
             ) : null}
-            <dt className="font-mono text-xs text-ink-faint">ATS</dt>
+            <dt className="text-xs text-ink-faint">ATS</dt>
             <dd className="text-sm">{packet.ats ?? "unknown"}</dd>
           </dl>
 
           <a
             href={packet.apply_url}
             {...APPLY_LINK}
-            className="mt-6 inline-block rounded-[var(--radius)] bg-go px-5 py-2.5 font-mono text-sm text-on-accent transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-go"
+            className="mt-6 inline-block rounded-[var(--radius)] bg-attn px-5 py-2 text-sm text-on-accent transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
           >
             Open the application form ↗
           </a>
 
           {posting?.description ? (
             <details className="mt-6 border-t border-rule-soft pt-4">
-              <summary className="cursor-pointer font-mono text-xs text-ink-faint hover:text-ink-soft">
+              <summary className="cursor-pointer text-xs text-ink-faint hover:text-ink-soft">
                 Job description
               </summary>
               <p className="mt-4 max-w-3xl whitespace-pre-wrap text-sm leading-relaxed text-ink-soft">
@@ -100,11 +100,11 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
       </section>
 
       <section aria-labelledby="resume" className="space-y-4">
-        <h2 id="resume" className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+        <h2 id="resume" className="text-label text-ink-soft">
           2 · The résumé to upload
         </h2>
         {resume ? (
-          <div className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-6 shadow-[var(--shadow-soft)]">
+          <div className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-5 shadow-[var(--shadow-soft)]">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <div className="text-sm">
@@ -113,7 +113,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
                 {/* Rejections are shown, never hidden. A guard that silently
                     substituted the original would be indistinguishable from a
                     guard that never fired. */}
-                <div className="mt-1 font-mono text-xs text-ink-faint">
+                <div className="mt-1 text-xs text-ink-faint">
                   {resume.is_tailored
                     ? `${resume.rewritten_bullets} bullets rewritten · ${resume.rejected_rewrites} rejected by the guard`
                     : "Tailoring produced nothing for this run"}
@@ -121,7 +121,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
               </div>
               <a
                 href={`${API_BASE}${resume.download_path}`}
-                className="rounded-[var(--radius)] border border-go px-5 py-2.5 font-mono text-sm text-go transition-colors hover:bg-go hover:text-on-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-go"
+                className="rounded-[var(--radius)] border border-attn px-5 py-2 text-sm text-attn-text transition-colors hover:bg-attn hover:text-on-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
               >
                 Download PDF ↓
               </a>
@@ -139,7 +139,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
       </section>
 
       <section aria-labelledby="answers" className="space-y-4">
-        <h2 id="answers" className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+        <h2 id="answers" className="text-label text-ink-soft">
           3 · Answers to paste
         </h2>
         {packet.answers.length ? (
@@ -159,7 +159,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
           reworded question is an answer to a different question. */}
       {packet.unanswered.length ? (
         <section aria-labelledby="unanswered" className="space-y-4">
-          <h2 id="unanswered" className="text-xs uppercase tracking-widest text-attn">
+          <h2 id="unanswered" className="text-label text-attn">
             4 · You have to answer these
           </h2>
           <ul className="space-y-4">
@@ -169,7 +169,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ id: stri
                 className="rounded-[var(--radius)] border-l-2 border-attn bg-attn-soft/40 px-5 py-4"
               >
                 <div className="text-sm">{question.question}</div>
-                <div className="mt-2 font-mono text-xs text-ink-faint">
+                <div className="mt-2 text-xs text-ink-faint">
                   {question.kind ?? "text"}
                   {question.required ? " · required" : ""}
                 </div>

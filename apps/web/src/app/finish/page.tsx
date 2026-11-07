@@ -28,7 +28,7 @@ export default async function FinishPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <header className="space-y-3">
-        <h1 className="font-display text-[length:var(--text-display)] leading-none">Finish</h1>
+        <h1 className="text-display leading-none">Finish</h1>
         <p className="max-w-2xl text-sm text-ink-soft">
           Everything waiting on you, one at a time. The form is filled and screenshotted; you
           solve the captcha and submit. Keys are listed under each card.

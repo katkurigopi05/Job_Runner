@@ -7,32 +7,8 @@ import { backlogView, crawlerView } from "@/lib/crawler-state";
 /** Slow: this is a local queue, and a crawl runs for minutes, not milliseconds. */
 const POLL_MS = 10_000;
 
-/**
- * Whether the crawler is working, shown as a spider that moves while it is.
- *
- * The queue was invisible from every screen. `make crawl` enqueues and
- * `make worker` drains, and nothing said whether either was happening — so a
- * match feed six days stale looked exactly like a fresh one with nothing new.
- * That is how an empty "posted in the last day" search reads as "the market is
- * quiet" instead of "nothing has been looked for".
- *
- * Five states, because each needs a different thing from the owner:
- *
- * - **working** — a sweep or company task is running, or unfinished work has
- *   a live worker. The spider keeps walking through handoffs and rate-limit waits.
- * - **waiting** — unfinished work with no live worker. The spider is still and amber:
- *   `make worker` is not up, and this would otherwise look identical to working.
- * - **idle** — nothing queued. The spider sleeps: a slow breath and three z's
- *   drifting up. Nothing is crawling and nothing is wrong, and a motionless
- *   spider on its own reads the same as a broken one. The label carries the age
- *   of the newest posting, which is the number that actually answers "are my
- *   results current".
- * - **checking** — the first status request has not returned yet.
- * - **unavailable** — polling failed. The last response is not shown as current
- *   and the spider never keeps walking from stale data.
- *
- * Only genuinely idle sleeps. `queued` is waiting on a worker — a thing to fix,
- * not a thing to rest through — so it stays awake and amber.
+/** The drawn spider and the queue's five-state label, without decorative motion.
+ * Poll failures replace the last verdict; stale work never looks current.
  */
 export function CrawlerSpider() {
   const [status, setStatus] = useState<CrawlStatus | null>(null);
@@ -65,41 +41,20 @@ export function CrawlerSpider() {
     };
   }, []);
 
-  const { label, tone, moving, asleep, title } = crawlerView(status, reachable);
+  const { label, tone, moving, title } = crawlerView(status, reachable);
   // Only from a fresh response: a stale count would read as current.
   const backlog = reachable ? backlogView(status) : null;
 
   return (
-    <>
-      {/* While a crawl runs, the spider leaves the header and walks the top
-          edge of the page, left to right, on a thread. It is the only moving
-          thing on screen, which is the point: the question it answers — is
-          anything happening — should be answerable without reading a word.
-
-          Drawn rather than set as the 🕷 emoji, because an emoji cannot move
-          its legs and cannot be turned to face where it is going. Here the
-          cephalothorax and eyes are on the right, so it looks along its own
-          direction of travel, and the eight legs step in two alternating sets
-          the way a real spider's do.
-
-          Fixed and `pointer-events-none` so it crosses over the page without
-          intercepting a click on whatever it passes. `translateX` and `rotate`
-          only, per the project's animation rules: neither triggers layout. */}
-      {moving ? (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none fixed inset-x-0 top-0 z-50 h-0 overflow-visible"
-        >
-          <span className="absolute top-0 left-0 motion-safe:animate-[traverse_26s_linear_infinite]">
-            {/* The thread it descends on, so it reads as hanging from the top
-                of the window rather than floating in it. */}
-            <span className="mx-auto block h-4 w-px bg-current opacity-40" />
+    <div>
+      <p className={`flex items-center gap-2 text-xs ${moving ? "text-ink-soft" : tone}`}
+        title={title} aria-live="polite">
             <svg
-              viewBox="0 0 60 40"
-              className="block h-10 w-14 motion-safe:animate-[bob_1.8s_ease-in-out_infinite]"
+              aria-hidden="true" viewBox="0 0 60 40"
+              className="h-5 w-7 shrink-0"
               fill="none"
               stroke="currentColor"
-              strokeWidth="1.6"
+              strokeWidth="1.5"
               strokeLinecap="round"
             >
               {/* Legs first, so the body sits over where they attach. Four a
@@ -133,90 +88,9 @@ export function CrawlerSpider() {
               <circle cx="41" cy="18" r="1.4" fill="var(--color-paper, #fff)" stroke="none" />
               <circle cx="41" cy="22" r="1.4" fill="var(--color-paper, #fff)" stroke="none" />
             </svg>
-          </span>
-        </div>
-      ) : null}
-
-      <p
-        className={`flex items-center gap-1.5 font-mono text-xs ${tone}`}
-        title={title}
-        aria-live="polite"
-      >
-        {/* The header keeps a small spider as the label's marker. The one that
-            walks the top of the window is the signal; this is its legend.
-
-            Idle, it sleeps: a slow breath and three z's drifting up. Nothing is
-            crawling and nothing is wrong, and a still spider alone reads the
-            same as a broken one. Only the genuinely idle state gets this —
-            `queued` is waiting on a worker, which is a thing to fix rather
-            than a thing to rest through. */}
-        <span aria-hidden="true" className="relative inline-block">
-          <span
-            className={asleep ? "inline-block motion-safe:animate-[breathe_3.6s_ease-in-out_infinite]" : "inline-block"}
-          >
-            🕷
-          </span>
-          {asleep ? (
-            <span className="pointer-events-none absolute -top-1 -right-1 select-none">
-              <span className="absolute motion-safe:animate-[snore_3.6s_ease-in-out_infinite]">z</span>
-              <span className="absolute motion-safe:animate-[snore_3.6s_ease-in-out_infinite] [animation-delay:1.2s]">
-                z
-              </span>
-              <span className="absolute motion-safe:animate-[snore_3.6s_ease-in-out_infinite] [animation-delay:2.4s]">
-                z
-              </span>
-            </span>
-          ) : null}
-        </span>
-        <span>{label}</span>
+        <span>{label.charAt(0).toUpperCase() + label.slice(1)}</span>
       </p>
-      {/* What is left and how long it will take, so the owner need not ask.
-          Hidden on a phone, where the header has no room for it. */}
-      {backlog ? (
-        <p className="hidden font-mono text-[11px] text-ink-faint lg:block" title={backlog.title}>
-          {backlog.text}
-        </p>
-      ) : null}
-
-      {/* Keyframes live here rather than in the global sheet: this is the only
-          thing that uses them, and a reader of this file should not have to go
-          looking for what "traverse" means. `motion-safe:` on the animated
-          elements is what honours a reduced-motion preference — the spider then
-          does not appear at all, and the header label still says `crawling`. */}
-      <style>{`
-        @keyframes traverse {
-          from { transform: translateX(-4rem); }
-          to   { transform: translateX(calc(100vw + 4rem)); }
-        }
-        @keyframes bob {
-          0%, 100% { transform: translateY(0); }
-          50%      { transform: translateY(2px); }
-        }
-        @keyframes breathe {
-          0%, 100% { transform: scale(1); opacity: 0.75; }
-          50%      { transform: scale(1.08); opacity: 1; }
-        }
-        /* Up and out, fading as it goes. Staggered by animation-delay above so
-           the three z's trail rather than move as one block. */
-        @keyframes snore {
-          0%   { transform: translate(0, 0) scale(0.6); opacity: 0; }
-          20%  { opacity: 0.9; }
-          100% { transform: translate(6px, -10px) scale(1); opacity: 0; }
-        }
-        @keyframes step-a {
-          0%, 100% { transform: rotate(-7deg); }
-          50%      { transform: rotate(7deg); }
-        }
-        @keyframes step-b {
-          0%, 100% { transform: rotate(7deg); }
-          50%      { transform: rotate(-7deg); }
-        }
-        .spider-legs .leg { transform-box: view-box; }
-        @media (prefers-reduced-motion: no-preference) {
-          .spider-legs .leg-a { animation: step-a 1.8s ease-in-out infinite; }
-          .spider-legs .leg-b { animation: step-b 1.8s ease-in-out infinite; }
-        }
-      `}</style>
-    </>
+      {backlog ? <p className="mt-1 text-xs text-ink-faint" title={backlog.title}>{backlog.text}</p> : null}
+    </div>
   );
 }

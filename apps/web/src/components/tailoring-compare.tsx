@@ -22,10 +22,10 @@ import { compareTailoring, selectTailoring, type ReviewResult } from "@/app/revi
 function Pending({ children, tone = "quiet" }: { children: React.ReactNode; tone?: "quiet" | "go" }) {
   const { pending } = useFormStatus();
   const base =
-    "rounded-md px-4 py-2 font-mono text-xs uppercase tracking-widest transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2";
+    "rounded-md px-4 py-2 text-label transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2";
   const tones = {
     quiet: "border border-rule text-ink-soft hover:text-ink hover:border-ink-faint",
-    go: "bg-go text-paper hover:bg-go/85 focus-visible:outline-go",
+    go: "bg-ink text-paper hover:bg-ink/85 focus-visible:outline-ink-soft",
   };
   return (
     <button type="submit" disabled={pending} className={`${base} ${tones[tone]}`}>
@@ -51,7 +51,7 @@ function Column({
   if (side.error) {
     return (
       <section className="border border-rule bg-paper p-4">
-        <h4 className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+        <h4 className="text-label text-ink-soft">
           {side.requested}
         </h4>
         <p className="mt-3 text-sm text-attn">{side.error}</p>
@@ -61,22 +61,22 @@ function Column({
 
   return (
     <section
-      className={`border bg-paper p-4 ${chosen ? "border-go" : "border-rule"}`}
+      className={`border bg-paper p-4 ${chosen ? "border-ink" : "border-rule"}`}
       aria-label={`Tailored by ${side.answered_by ?? side.requested}`}
     >
       <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <h4 className="font-mono text-xs uppercase tracking-widest text-ink">
+        <h4 className="text-label text-ink">
           {side.answered_by ?? side.requested}
         </h4>
         {chosen ? (
-          <span className="font-mono text-xs uppercase tracking-widest text-go">will be sent</span>
+          <span className="text-label text-ink">will be sent</span>
         ) : null}
       </header>
 
-      <p className="mt-2 font-mono text-xs text-ink-soft">
-        {side.changed} rewritten · {side.unchanged} unchanged
+      <p className="mt-2 text-xs text-ink-soft">
+        {(side.changed).toLocaleString("en-US")} rewritten · {(side.unchanged).toLocaleString("en-US")} unchanged
         {side.rejected > 0 ? (
-          <span className="text-attn"> · {side.rejected} refused by the guard</span>
+          <span className="text-attn"> · {(side.rejected).toLocaleString("en-US")} refused by the guard</span>
         ) : null}
         {/* Never merged into the line above. "The guard refused it" is a
             verdict on what this model wrote; "it never answered" is a verdict
@@ -84,7 +84,7 @@ function Column({
             models, showing the second as the first is worse than showing
             nothing. */}
         {side.provider_failures ? (
-          <span className="text-stop"> · {side.provider_failures} never answered</span>
+          <span className="text-stop"> · {(side.provider_failures).toLocaleString("en-US")} never answered</span>
         ) : null}
         {side.reused ? <span className="text-ink-faint"> · reused, nothing sent</span> : null}
       </p>
@@ -121,7 +121,7 @@ function Column({
             {chosen ? "keep this one" : "send this one"}
           </Pending>
           {state ? (
-            <span className={`text-sm ${state.ok ? "text-go" : "text-stop"}`}>{state.message}</span>
+            <span className={`text-sm ${state.ok ? "text-ink" : "text-stop"}`}>{state.message}</span>
           ) : null}
         </form>
       ) : (
@@ -213,18 +213,18 @@ function CloudSides({
   const picked = CLOUD_SIDES.filter((side) => side.value && value.includes(side.value));
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <span className="font-mono text-xs text-ink-faint">cloud sides</span>
+        <span className="text-xs text-ink-faint">cloud sides</span>
         {CLOUD_SIDES.filter((side) => side.value).map((side) => (
-          <label key={side.value} className="flex items-center gap-1.5 font-mono text-xs">
+          <label key={side.value} className="flex items-center gap-2 text-xs">
             <input
               type="checkbox"
               name="clouds"
               value={side.value}
               checked={value.includes(side.value)}
               onChange={() => toggle(side.value)}
-              className="accent-attn focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn"
+              className="accent-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
             />
             {side.label}
           </label>
@@ -237,7 +237,7 @@ function CloudSides({
       ) : (
         <ul className="max-w-prose space-y-1">
           {picked.map((side) => (
-            <li key={side.value} className="font-mono text-xs text-ink-faint">
+            <li key={side.value} className="text-xs text-ink-faint">
               <span className="text-ink">{side.label}</span> — {side.hint}
             </li>
           ))}
@@ -268,7 +268,7 @@ export function TailoringCompare({
           <div className="flex flex-wrap items-center gap-3">
             <Pending>compare the tailorings</Pending>
             {state ? (
-              <span className={`text-sm ${state.ok ? "text-go" : "text-stop"}`}>
+              <span className={`text-sm ${state.ok ? "text-ink" : "text-stop"}`}>
                 {state.message}
               </span>
             ) : null}
@@ -304,7 +304,7 @@ export function TailoringCompare({
         <div className="flex flex-wrap items-center gap-3">
           <Pending>run it again</Pending>
           {state ? (
-            <span className={`text-sm ${state.ok ? "text-go" : "text-stop"}`}>{state.message}</span>
+            <span className={`text-sm ${state.ok ? "text-ink" : "text-stop"}`}>{state.message}</span>
           ) : null}
         </div>
       </form>

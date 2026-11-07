@@ -79,7 +79,7 @@ export default async function ResumesPage() {
   return (
     <div className="space-y-10">
       <header>
-        <h1 className="font-display text-display leading-[1.05] tracking-tight">Résumés</h1>
+        <h1 className="text-display leading-[1.05] tracking-tight">Résumés</h1>
         <p className="mt-3 max-w-prose text-ink-soft">
           Shown as the parser reads them, which is what an ATS gets. A section missing here is
           missing from every application that sends this file.
@@ -101,7 +101,7 @@ export default async function ResumesPage() {
       ) : null}
 
       {resumes.length === 0 ? (
-        <p className="border border-dashed border-rule px-6 py-16 text-center font-mono text-sm text-ink-faint">
+        <p className="border border-dashed border-rule px-6 py-16 text-center text-sm text-ink-faint">
           no résumés uploaded
         </p>
       ) : (
@@ -114,22 +114,22 @@ export default async function ResumesPage() {
               return (
                 <section key={resume.id} aria-labelledby={`r-${resume.id}`}>
                   <div className="flex flex-wrap items-baseline gap-4 border-b border-rule pb-3">
-                    <h2 id={`r-${resume.id}`} className="font-display text-xl">
-                      v{resume.version}
+                    <h2 id={`r-${resume.id}`} className="text-xl">
+                      V{(resume.version).toLocaleString("en-US")}
                     </h2>
                     {resume.is_default ? (
-                      <span className="rounded-full border border-go/40 bg-go-soft px-3 py-0.5 font-mono text-xs text-go">
+                      <span className="inline-flex items-center gap-2 text-label text-ink-soft">
                         default
                       </span>
                     ) : null}
                     {usedBy.length > 0 ? (
-                      <span className="font-mono text-xs text-ink-soft">
+                      <span className="text-xs text-ink-soft">
                         base for {usedBy.join(", ")}
                       </span>
                     ) : null}
                     <a
                       href={`/api/resumes/${resume.id}/file`}
-                      className="ml-auto font-mono text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline"
+                      className="ml-auto text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline"
                     >
                       original file
                     </a>

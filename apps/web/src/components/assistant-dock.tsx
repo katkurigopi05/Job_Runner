@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Icon } from "./icon";
 import { Assistant } from "./assistant";
 
 /**
@@ -27,10 +28,10 @@ export function AssistantDock({ applicationId }: { applicationId?: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed right-0 bottom-24 z-40 rounded-l border border-r-0 border-rule bg-paper-raised px-3 py-4 font-mono text-xs tracking-widest text-ink-soft [writing-mode:vertical-rl] transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+        className="fixed right-0 bottom-24 z-40 rounded-l border border-r-0 border-rule bg-paper-raised px-3 py-4 text-xs text-ink-soft inline-flex items-center gap-2 transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
         aria-label="Open the assistant"
       >
-        💬 assistant
+        <Icon name="assistant" /> Assistant
       </button>
     );
   }
@@ -41,16 +42,16 @@ export function AssistantDock({ applicationId }: { applicationId?: string }) {
       className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-rule bg-paper shadow-2xl"
     >
       <div className="flex items-center justify-between border-b border-rule px-3 py-2">
-        <p className="font-mono text-xs uppercase tracking-widest text-ink-soft">
-          assistant{applicationId ? " · this application" : ""}
+        <p className="text-label text-ink-soft">
+          Assistant{applicationId ? " · this application" : ""}
         </p>
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="rounded px-2 py-1 font-mono text-xs text-ink-faint hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+          className="rounded-lg px-2 py-1 text-xs text-ink-faint hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
           aria-label="Close the assistant"
         >
-          close ✕
+          <Icon name="close" />
         </button>
       </div>
       <div className="min-h-0 flex-1 p-3">

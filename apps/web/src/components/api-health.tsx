@@ -53,20 +53,20 @@ export function ApiHealth() {
   const { label, tone, title } =
     state === "unreachable"
       ? {
-          label: "api down",
+          label: "API down",
           tone: "text-stop",
           title: "The API is not answering. Start it with: make api",
         }
       : state.database !== "ok"
         ? {
-            label: "db down",
+            label: "DB down",
             tone: "text-attn",
             title: "The API is up but cannot reach Postgres. Start it with: make up",
           }
-        : { label: "localhost only", tone: "text-ink-faint", title: "API and database both up" };
+        : { label: "API on this machine only", tone: "text-ink-faint", title: "API and database both up" };
 
   return (
-    <p className={`font-mono text-xs ${tone}`} title={title} aria-live="polite">
+    <p className={`text-xs ${tone}`} title={title} aria-live="polite">
       {label}
     </p>
   );

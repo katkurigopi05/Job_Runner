@@ -1,3 +1,5 @@
+"use client";
+
 import type { Compensation, EducationRequirement, PostingRequirements, SkillEvidence } from "@/lib/api";
 
 /**
@@ -8,6 +10,10 @@ import type { Compensation, EducationRequirement, PostingRequirements, SkillEvid
  * filter just excluded or kept this job on the strength of it. An unstated
  * value is written out as unstated rather than left blank: a blank pay line
  * reads as "no information", and "not stated" is information.
+ *
+ * Keep this presentation subtree synchronous during hydration. Production
+ * Matches loads exposed a host-claim mismatch among its streamed Flight
+ * children; this boundary renders pay, skills and education together.
  */
 
 const EDUCATION: Record<EducationRequirement["level"], string> = {
@@ -35,8 +41,8 @@ function Evidence({ quote }: { quote: string | null }) {
   if (!quote) return null;
   return (
     <details className="group inline">
-      <summary className="inline cursor-pointer list-none font-mono text-[11px] text-ink-faint underline decoration-dotted underline-offset-2 hover:text-ink">
-        source
+      <summary className="inline cursor-pointer list-none text-label text-ink-faint underline decoration-dotted underline-offset-2 hover:text-ink">
+        Source
       </summary>
       <blockquote className="mt-1 border-l-2 border-rule pl-3 text-xs italic leading-relaxed text-ink-soft">
         “{quote}”
@@ -71,8 +77,8 @@ function PayLine({ pay }: { pay: Compensation | null }) {
 function Chips({ label, tone, skills }: { label: string; tone: string; skills: SkillEvidence[] }) {
   if (skills.length === 0) return null;
   return (
-    <div className="flex flex-wrap items-baseline gap-1.5">
-      <span className={`mr-1 font-mono text-[11px] uppercase tracking-widest ${tone}`}>{label}</span>
+    <div className="flex flex-wrap items-baseline gap-2">
+      <span className={`mr-1 text-label ${tone}`}>{label}</span>
       {skills.map((skill) => (
         <span
           key={skill.skill}
@@ -116,7 +122,7 @@ export function RequirementsPanel({
     return (
       <p className="mt-3 text-xs text-ink-faint">
         Pay and requirements not read yet —{" "}
-        <code className="font-mono">make extract-requirements</code>
+        <code >make extract-requirements</code>
       </p>
     );
   }
@@ -129,7 +135,7 @@ export function RequirementsPanel({
       {noSkills ? (
         <p className="text-sm text-ink-faint">No technologies named</p>
       ) : (
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <Chips label="requires" tone="text-stop" skills={skills.required} />
           <Chips label="prefers" tone="text-go" skills={skills.preferred} />
           <Chips label="names" tone="text-ink-faint" skills={skills.unclassified} />

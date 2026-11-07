@@ -18,7 +18,7 @@ export function SplitButton({ postingId, viewing }: { postingId: string; viewing
             setError(outcome.ok ? null : outcome.message);
           })
         }
-        className="rounded-[var(--radius)] border border-rule px-2.5 py-1 font-mono text-xs text-ink-soft transition-colors hover:border-stop hover:text-stop disabled:opacity-50"
+        className="rounded-[var(--radius)] border border-rule px-2.5 py-1 text-xs text-ink-soft transition-colors hover:border-stop hover:text-stop disabled:opacity-50"
       >
         {pending ? "splitting…" : "not the same job — split"}
       </button>

@@ -12,15 +12,15 @@ export function ErrorPanel({ error }: { error: ApiError }) {
   const fix = FIX[error.code];
   return (
     <div className="border border-stop/40 bg-stop-soft px-6 py-6">
-      <h1 className="font-display text-2xl text-stop">Cannot read the queue</h1>
+      <h1 className="text-display text-stop">Cannot read the queue</h1>
       <p className="mt-3 max-w-prose text-ink-soft">{error.message}</p>
       {fix ? (
-        <pre className="mt-5 inline-block rounded-md border border-rule bg-paper px-4 py-2 font-mono text-sm">
+        <pre className="mt-5 inline-block rounded-lg border border-rule bg-paper px-4 py-2 text-sm">
           {fix}
         </pre>
       ) : null}
-      <p className="mt-5 font-mono text-xs text-ink-faint">
-        {error.code} · {error.status}
+      <p className="mt-5 text-xs text-ink-faint">
+        {error.code} · {(error.status).toLocaleString("en-US")}
       </p>
     </div>
   );

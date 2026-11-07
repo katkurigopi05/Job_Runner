@@ -33,19 +33,19 @@ export function CoverLetterView({ letter }: { letter: CoverLetter }) {
 
   return (
     <div className="space-y-3">
-      <p className="font-mono text-xs text-ink-soft">
-        {letter.word_count ?? 0} words
+      <p className="text-xs text-ink-soft">
+        {(letter.word_count ?? 0).toLocaleString("en-US")} words
         {letter.sentences_dropped ? (
           <span className="text-attn">
             {" "}
-            · {letter.sentences_dropped} sentence{letter.sentences_dropped === 1 ? "" : "s"} dropped
+            · {(letter.sentences_dropped).toLocaleString("en-US")} sentence{letter.sentences_dropped === 1 ? "" : "s"} dropped
             by the guard
           </span>
         ) : null}
         {letter.reused ? <span className="text-ink-faint"> · reused, nothing sent</span> : null}
       </p>
 
-      <p className="font-mono text-xs text-ink-faint">
+      <p className="text-xs text-ink-faint">
         written by{" "}
         {model ? (
           <span className="text-ink-soft">{model}</span>

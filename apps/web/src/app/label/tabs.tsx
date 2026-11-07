@@ -24,7 +24,7 @@ export function GradeTabs({ active }: { active: "postings" | "questions" }) {
               : "rounded-[var(--radius)] border border-rule px-3 py-2 text-ink-soft hover:border-ink hover:text-ink"
           }
         >
-          <span className="font-mono text-sm">{tab.label}</span>
+          <span className="text-sm">{tab.label}</span>
           <span className="ml-2 text-xs text-ink-faint">{tab.hint}</span>
         </Link>
       ))}
