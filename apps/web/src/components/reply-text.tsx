@@ -18,7 +18,7 @@ import { blocksOf } from "@/lib/reply-blocks";
 function inline(text: string): ReactNode[] {
   return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
     part.startsWith("**") && part.endsWith("**") && part.length > 4 ? (
-      <strong key={i} className="font-semibold">
+      <strong key={i} className="font-medium">
         {part.slice(2, -2)}
       </strong>
     ) : (

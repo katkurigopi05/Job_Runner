@@ -32,14 +32,14 @@ export async function DiscoveryStrip() {
   return (
     <section className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised px-5 py-4">
       <dl className="flex flex-wrap gap-x-7 gap-y-2">
-        <Stat label="companies" value={status.companies_total} />
-        <Stat label="boards found" value={status.verified} />
-        <Stat label="still unresolved" value={unresolved} />
-        <Stat label="postings" value={status.postings_open} />
-        <Stat label="scored" value={status.matches_total} />
-        {working > 0 ? <Stat label="queued" value={working} /> : null}
+        <Stat label="Companies" value={status.companies_total} />
+        <Stat label="Boards found" value={status.verified} />
+        <Stat label="Still unresolved" value={unresolved} />
+        <Stat label="Postings" value={status.postings_open} />
+        <Stat label="Scored" value={status.matches_total} />
+        {working > 0 ? <Stat label="Queued" value={working} /> : null}
         {status.needs_review > 0 ? (
-          <Stat label="need a URL from you" value={status.needs_review} />
+          <Stat label="Need a URL from you" value={status.needs_review} />
         ) : null}
       </dl>
 
@@ -47,12 +47,12 @@ export async function DiscoveryStrip() {
         <p className="mt-3 max-w-prose text-sm text-ink-soft">
           Discovery is still working through the registry, so this feed is a partial view rather
           than a final one. {status.postings_unembedded > 0
-            ? `${status.postings_unembedded} fetched postings are not scored yet — a listing with no description never will be, and scoring happens on the next sweep. `
+            ? `${status.postings_unembedded.toLocaleString("en-US")} fetched postings are not scored yet — a listing with no description never will be, and scoring happens on the next sweep. `
             : ""}
           {status.retrying > 0 && status.retrying_next_at
-            ? `${status.retrying} companies failed and will be retried from ${new Date(
+            ? `${status.retrying.toLocaleString("en-US")} companies failed and will be retried from ${new Date(
                 status.retrying_next_at,
-              ).toLocaleString()}.`
+              ).toLocaleString("en-US")}.`
             : null}
         </p>
       ) : null}
@@ -69,7 +69,7 @@ export async function DiscoveryStrip() {
 function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div>
-      <dd className="font-mono text-lg leading-none tabular-nums text-ink">{value}</dd>
+      <dd className="font-mono text-lg leading-none tabular-nums text-ink">{value.toLocaleString("en-US")}</dd>
       <dt className="mt-1 text-xs text-ink-faint">{label}</dt>
     </div>
   );

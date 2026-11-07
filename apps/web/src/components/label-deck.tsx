@@ -106,7 +106,7 @@ export function LabelDeck({
   if (!current) {
     return (
       <div className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-10 text-center">
-        <p className="font-display text-2xl">Nothing left to grade</p>
+        <p className="text-2xl">Nothing left to grade</p>
         <p className="mt-3 text-sm text-ink-soft">
           {graded > 0
             ? `${graded} graded this session. Reload for the next batch.`
@@ -118,24 +118,24 @@ export function LabelDeck({
 
   return (
     <div className="space-y-6">
-      <article className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-8 shadow-[var(--shadow-panel)]">
+      <article className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-5 shadow-[var(--shadow-panel)]">
         <div className="flex items-start justify-between gap-6">
-          <h2 className="font-display text-2xl leading-tight">
+          <h2 className="text-2xl leading-tight">
             {current.title ?? "Untitled role"}
           </h2>
-          <span className="shrink-0 font-mono text-sm text-ink-faint">
+          <span className="shrink-0 text-sm text-ink-faint">
             {/* null is not zero: it means the ranker never weighed in, which
                 is the fact the unseen stream exists to capture. */}
             {current.score === null ? "unscored" : current.score.toFixed(3)}
           </span>
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 font-mono text-xs text-ink-faint">
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-ink-faint">
           {current.location ? <span>{current.location}</span> : null}
         </div>
 
         <div className="mt-5 rounded-[var(--radius)] border border-rule px-4 py-3">
-          <div className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+          <div className="text-label text-ink-soft">
             {current.stream}
           </div>
           <p className="mt-1 text-sm text-ink-soft">{STREAM_COPY[current.stream]}</p>
@@ -150,13 +150,13 @@ export function LabelDeck({
         <a
           href={current.url}
           {...POSTING_LINK}
-          className="mt-7 inline-block font-mono text-xs text-ink-soft underline decoration-rule underline-offset-4 hover:text-ink"
+          className="mt-7 inline-block text-xs text-ink-soft underline decoration-rule underline-offset-4 hover:text-ink"
         >
           read the posting ↗
         </a>
       </article>
 
-      {error ? <p className="font-mono text-xs text-stop">{error}</p> : null}
+      {error ? <p className="text-xs text-stop">{error}</p> : null}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {GRADES.map((g) => (
@@ -173,17 +173,17 @@ export function LabelDeck({
                   : "border-rule hover:border-ink focus-visible:outline-ink"
             }`}
           >
-            <div className="font-mono text-xs text-ink-faint">{g.key}</div>
-            <div className="mt-1 font-mono text-sm">{g.label}</div>
+            <div className="text-xs text-ink-faint">{g.key}</div>
+            <div className="mt-1 text-sm">{g.label}</div>
             <div className="mt-1 text-xs text-ink-faint">{g.hint}</div>
           </button>
         ))}
       </div>
 
-      <div className="flex justify-between font-mono text-xs text-ink-faint">
+      <div className="flex justify-between text-xs text-ink-faint">
         <span>0–3 to grade</span>
         <span>
-          {graded} graded · {queue.length} left in this batch
+          {(graded).toLocaleString("en-US")} graded · {(queue.length).toLocaleString("en-US")} left in this batch
         </span>
       </div>
     </div>

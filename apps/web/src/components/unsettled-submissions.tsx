@@ -33,7 +33,7 @@ export function UnsettledSubmissions({ initial }: { initial: UnsettledSubmission
   return (
     <section aria-labelledby="unsettled-heading" className="space-y-4">
       <div className="space-y-2">
-        <h2 id="unsettled-heading" className="font-display text-2xl leading-tight">
+        <h2 id="unsettled-heading" className="text-2xl leading-tight">
           Check with the employer first
         </h2>
         <p className="max-w-2xl text-sm text-ink-soft">
@@ -54,7 +54,7 @@ export function UnsettledSubmissions({ initial }: { initial: UnsettledSubmission
                 {row.title ?? row.url}
                 {row.company ? <span className="text-ink-soft"> at {row.company}</span> : null}
               </span>
-              <span className="font-mono text-xs text-ink-faint">
+              <span className="text-xs text-ink-faint">
                 {row.state}
                 {row.source === "legacy" ? ", from before the ledger" : ""}
                 {row.attempted_at ? `, ${new Date(row.attempted_at).toLocaleDateString()}` : ""}
@@ -64,31 +64,31 @@ export function UnsettledSubmissions({ initial }: { initial: UnsettledSubmission
               <button
                 type="button"
                 onClick={() => openApplyForm(row.url)}
-                className="rounded-[var(--radius)] border border-rule px-3 py-1.5 font-mono text-xs text-ink-soft transition-colors hover:border-go hover:text-go"
+                className="rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink-soft transition-colors hover:border-ink-soft hover:text-ink"
               >
-                open posting
+                Open posting
               </button>
               <button
                 type="button"
                 disabled={pending}
                 onClick={() => settle(row.application_id, true)}
-                className="rounded-[var(--radius)] border border-go px-3 py-1.5 font-mono text-xs text-go transition-colors hover:bg-go hover:text-on-accent disabled:opacity-40"
+                className="rounded-[var(--radius)] border border-attn px-3 py-1.5 text-xs text-attn-text transition-colors hover:bg-attn hover:text-on-accent disabled:opacity-40"
               >
-                it was sent
+                It was sent
               </button>
               <button
                 type="button"
                 disabled={pending}
                 onClick={() => settle(row.application_id, false)}
-                className="rounded-[var(--radius)] border border-rule px-3 py-1.5 font-mono text-xs text-ink-soft transition-colors hover:border-ink-soft disabled:opacity-40"
+                className="rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink-soft transition-colors hover:border-ink-soft disabled:opacity-40"
               >
-                it was not sent
+                It was not sent
               </button>
             </div>
           </li>
         ))}
       </ul>
-      {error ? <p className="font-mono text-xs text-stop">{error}</p> : null}
+      {error ? <p className="text-xs text-stop">{error}</p> : null}
     </section>
   );
 }

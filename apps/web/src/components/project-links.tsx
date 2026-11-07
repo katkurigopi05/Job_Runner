@@ -6,7 +6,7 @@ import { linkProject, syncProjects, type ProjectActionResult } from "@/app/resum
 import type { Project } from "@/lib/api";
 
 const BUTTON =
-  "rounded-[var(--radius)] border border-rule px-3 py-1.5 font-mono text-xs text-ink transition-colors hover:bg-paper-high disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn";
+  "rounded-[var(--radius)] border border-rule px-3 py-2 text-xs text-ink transition-colors hover:bg-paper-high disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft";
 
 function Save({ label, pending: pendingLabel }: { label: string; pending: string }) {
   const { pending } = useFormStatus();
@@ -20,7 +20,7 @@ function Save({ label, pending: pendingLabel }: { label: string; pending: string
 function Status({ state }: { state: ProjectActionResult | null }) {
   if (!state) return null;
   return (
-    <p role="status" className={`font-mono text-xs ${state.ok ? "text-go" : "text-stop"}`}>
+    <p role="status" className={`text-xs ${state.ok ? "text-go" : "text-stop"}`}>
       {state.message}
     </p>
   );
@@ -48,12 +48,12 @@ function RepositoryRow({
         <p className="flex flex-wrap items-baseline gap-2">
           <a
             href={project.url}
-            className="font-display text-base underline-offset-4 hover:underline"
+            className="text-base underline-offset-4 hover:underline"
           >
             {project.name}
           </a>
           {project.is_private ? (
-            <span className="font-mono text-xs text-ink-faint">private</span>
+            <span className="text-xs text-ink-faint">private</span>
           ) : null}
         </p>
         {project.dependency_technologies.length > 0 ? (
@@ -61,7 +61,7 @@ function RepositoryRow({
             {project.dependency_technologies.join(" · ")}
           </p>
         ) : (
-          <p className="mt-1 font-mono text-xs text-ink-faint">
+          <p className="mt-1 text-xs text-ink-faint">
             no known tools in its dependency files
           </p>
         )}
@@ -70,7 +70,7 @@ function RepositoryRow({
       <form action={run} className="flex flex-wrap items-center gap-2 self-start">
         <input type="hidden" name="project_id" value={project.id} />
         <label htmlFor={selectId} className="sr-only">
-          Résumé project {project.name} backs
+          Résumé project {project.name} Backs
         </label>
         <select
           id={selectId}
@@ -87,7 +87,7 @@ function RepositoryRow({
         </select>
         <Save label="save" pending="saving…" />
         {!current && suggested ? (
-          <p className="w-full font-mono text-xs text-ink-faint">
+          <p className="w-full text-xs text-ink-faint">
             suggested by name, not saved until you save it
           </p>
         ) : null}
@@ -122,7 +122,7 @@ export function ProjectLinks({
     <section aria-labelledby="github-evidence" className="space-y-4">
       <header className="flex flex-wrap items-end gap-4 border-b border-rule pb-3">
         <div className="max-w-prose">
-          <h2 id="github-evidence" className="font-display text-xl">
+          <h2 id="github-evidence" className="text-xl">
             GitHub evidence
           </h2>
           <p className="mt-1 text-sm text-ink-soft">
@@ -150,11 +150,11 @@ export function ProjectLinks({
       <Status state={syncState} />
 
       {own.length === 0 ? (
-        <p className="border border-dashed border-rule px-6 py-10 text-center font-mono text-sm text-ink-faint">
+        <p className="border border-dashed border-rule px-6 py-10 text-center text-sm text-ink-faint">
           no repositories imported yet
         </p>
       ) : entries.length === 0 ? (
-        <p className="font-mono text-sm text-ink-faint">
+        <p className="text-sm text-ink-faint">
           this résumé has no Projects entries to link to
         </p>
       ) : (

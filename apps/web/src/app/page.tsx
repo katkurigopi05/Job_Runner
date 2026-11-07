@@ -1,92 +1,37 @@
 import Link from "next/link";
 import {
-  ApiError,
-  api,
-  type Application,
-  type ApplicationStatus,
-  type Calibration,
-  type Digest,
-  type Match,
-  type MatchSummary,
+  ApiError, api, type Application, type Calibration, type Digest,
+  type Match, type MatchSummary,
 } from "@/lib/api";
-import { StatusPill } from "@/components/status";
+import { StatusPill, STATUS_ORDER } from "@/components/status";
 import { ErrorPanel } from "@/components/error-panel";
 import {
-  LivePipeline,
-  LiveWaitingCount,
-  LiveWaitingHeadline,
-  StatusStreamProvider,
-  type StatusCounts,
+  LivePipeline, LiveWaitingCount, LiveWaitingHeadline, StatusStreamProvider, type StatusCounts,
 } from "@/components/status-stream";
 
 export const dynamic = "force-dynamic";
 
-/**
- * One screen that answers "what is the state of this, and what do I do next".
- *
- * The dashboard had grown ten pages, and reading it meant visiting most of
- * them: counts here, the queue there, the score threshold somewhere else. At
- * five applications a day that is a mild annoyance. At the volume this is
- * being pointed at, navigation *is* the cost.
- *
- * So every panel below is a summary with a link, never a second copy of
- * another page. The rule is that this screen tells you whether you need to go
- * somewhere, and the other pages are where the work happens.
- */
-
-const ORDER: ApplicationStatus[] = [
-  "needs_review",
-  "needs_otp",
-  "running",
-  "queued",
-  "submitted",
-  "failed",
-];
-
-/** A count with a label. No chart — six numbers do not need one. */
-function Stat({ value, label, href }: { value: React.ReactNode; label: string; href?: string }) {
-  const body = (
-    <>
-      <div className="font-display text-3xl leading-none tabular-nums">{value}</div>
-      <div className="mt-2 font-mono text-xs uppercase tracking-widest text-ink-faint">{label}</div>
-    </>
-  );
-  return href ? (
-    <Link
-      href={href}
-      className="rounded-[var(--radius)] border border-rule-soft bg-paper-raised/60 p-5 transition-colors hover:border-go"
-    >
-      {body}
-    </Link>
-  ) : (
-    <div className="rounded-[var(--radius)] border border-rule-soft bg-paper-raised/60 p-5">
-      {body}
-    </div>
-  );
+function Stat({ value, label, detail, href }: {
+  value: React.ReactNode; label: string; detail: string; href?: string;
+}) {
+  const body = <>
+    <div className="desk-stat-label">{label}</div>
+    <div className="desk-stat-value">{value}</div>
+    <div className="desk-stat-detail">{detail}</div>
+  </>;
+  return href ? <Link href={href} className="desk-stat">{body}</Link> : <div className="desk-stat">{body}</div>;
 }
 
-function Panel({
-  title,
-  href,
-  linkLabel,
-  children,
-}: {
-  title: string;
-  href?: string;
-  linkLabel?: string;
-  children: React.ReactNode;
+function Panel({ title, href, linkLabel, children }: {
+  title: string; href?: string; linkLabel?: string; children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-6">
-      <div className="flex items-baseline justify-between gap-4">
-        <h2 className="font-mono text-xs uppercase tracking-widest text-ink-faint">{title}</h2>
-        {href ? (
-          <Link href={href} className="font-mono text-xs text-ink-faint hover:text-go">
-            {linkLabel ?? "open"} →
-          </Link>
-        ) : null}
+    <section className="desk-card">
+      <div className="desk-card-heading">
+        <h2>{title}</h2>
+        {href ? <Link href={href}>{linkLabel ?? "Open"}</Link> : null}
       </div>
-      <div className="mt-4">{children}</div>
+      {children}
     </section>
   );
 }
@@ -97,138 +42,79 @@ export default async function DeskPage() {
   let digest: Digest;
   let calibration: Calibration;
   let matchCounts: MatchSummary;
-
   try {
-    // One round of parallel reads rather than one per panel. Everything here
-    // is a summary endpoint, so the whole screen costs four requests.
     [applications, matches, digest, calibration, matchCounts] = await Promise.all([
-      api.applications(),
-      api.matches(false),
-      api.digest(),
-      api.calibration(),
-      api.matchSummary(),
+      api.applications(), api.matches(false), api.digest(), api.calibration(), api.matchSummary(),
     ]);
   } catch (error) {
     if (error instanceof ApiError) return <ErrorPanel error={error} />;
     throw error;
   }
-
-  // Every status present, including the zeroes: the stream sends the same
-  // shape, so the two sources cannot disagree about which columns exist.
-  const counts = Object.fromEntries(ORDER.map((status) => [status, 0])) as StatusCounts;
-  for (const application of applications) {
-    counts[application.status] = (counts[application.status] ?? 0) + 1;
-  }
-  const recent = [...applications]
-    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
-    .slice(0, 5);
+  const counts = Object.fromEntries(STATUS_ORDER.map((status) => [status, 0])) as StatusCounts;
+  for (const application of applications) counts[application.status] = (counts[application.status] ?? 0) + 1;
+  const recent = [...applications].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5);
   const topMatches = matches.slice(0, 6);
+  const date = new Intl.DateTimeFormat("en-GB", {
+    weekday: "long", day: "numeric", month: "long", timeZone: "America/Los_Angeles",
+  }).format(new Date());
 
   return (
     <StatusStreamProvider initial={counts}>
-      <div className="space-y-10">
-        <header className="space-y-3">
+      <div className="desk">
+        <header>
+          <p className="desk-eyebrow">Desk, {date}</p>
           <LiveWaitingHeadline initial={counts} />
         </header>
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat
-            value={digest.applications_submitted.toLocaleString()}
-            label="sent, 7 days"
-            href="/applications"
-          />
-          <Stat value={matchCounts.total.toLocaleString()} label="matches" href="/matches" />
-          <Stat value={digest.postings_seen.toLocaleString()} label="postings, 7 days" />
-          <Stat
-            value={<LiveWaitingCount initial={counts} />}
-            label="waiting on you"
-            href="/finish"
-          />
+        <div className="desk-stats">
+          <Stat value={digest.applications_submitted.toLocaleString("en-US")} label="Sent" detail="last 7 days" href="/applications" />
+          <Stat value={matchCounts.total.toLocaleString("en-US")} label="Matches" detail="scored against your profile" href="/matches" />
+          <Stat value={digest.postings_seen.toLocaleString("en-US")} label="Postings" detail="seen in the last 7 days" />
+          <Stat value={<LiveWaitingCount initial={counts} />} label="Waiting on you" detail="in review or awaiting a code" href="/finish" />
         </div>
-
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* The score threshold is the project's live defect, so it gets a
-            panel rather than a line on another page. */}
-          <Panel title="Score calibration" href="/swipe" linkLabel="rate">
-            {calibration.enough_data ? (
-              <dl className="space-y-2 text-sm">
-                <div className="flex justify-between gap-4">
-                  <dt className="text-ink-faint">Suggested min score</dt>
-                  <dd className="text-go tabular-nums">{calibration.suggested_min_score}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-ink-faint">Kept vs skipped</dt>
-                  <dd className="tabular-nums">
-                    {calibration.interested_mean} vs {calibration.skipped_mean}
-                  </dd>
-                </div>
-              </dl>
-            ) : (
-              <p className="text-sm text-ink-soft">
-                {calibration.decided} rated. Ten kept postings are needed before a threshold can be
-                derived — fewer would be noise dressed as a measurement.
-              </p>
-            )}
+        <div className="desk-grid">
+          <Panel title="Top matches" href="/matches" linkLabel="All matches">
+            {topMatches.length ? (
+              <ol className="divide-y divide-rule-soft">
+                {topMatches.map((match) => (
+                  <li key={match.id} className="flex min-h-10 items-center justify-between gap-3 py-2">
+                    <span className="min-w-0 truncate">{match.title ?? match.url}</span>
+                    <span className="shrink-0 font-mono text-xs text-ink-soft tabular-nums">{match.score.toFixed(3)}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : <p className="text-ink-soft">Your matches will appear here after a crawl and scoring against your profile.</p>}
           </Panel>
-
-          <Panel title="This week" href="/tracker" linkLabel="tracker">
-            {digest.quiet_week ? (
-              <p className="text-sm text-ink-soft">
-                A quiet week. Worth checking the crawler is still running before reading anything
-                into it — <span className="font-mono text-xs">make crawl</span> starts a cycle.
-              </p>
-            ) : (
+          <div className="desk-secondary">
+            <Panel title="This week" href="/tracker" linkLabel="Tracker">
               <dl className="space-y-2 text-sm">
-                {[
-                  ["Applications created", digest.applications_created],
-                  ["Submitted", digest.applications_submitted],
-                  ["Replies", digest.replies_received],
-                  ["Follow-ups due", digest.follow_ups_due],
-                ].map(([label, value]) => (
-                  <div key={String(label)} className="flex justify-between gap-4">
-                    <dt className="text-ink-faint">{label}</dt>
-                    <dd className="tabular-nums">{value}</dd>
+                {([
+                  ["Applications created", digest.applications_created], ["Submitted", digest.applications_submitted],
+                  ["Replies", digest.replies_received], ["Follow-ups due", digest.follow_ups_due],
+                ] as const).map(([label, value]) => (
+                  <div key={label} className="flex justify-between gap-4">
+                    <dt className="text-ink-soft">{label}</dt>
+                    <dd className="font-mono text-xs tabular-nums">{value.toLocaleString("en-US")}</dd>
                   </div>
                 ))}
               </dl>
-            )}
-          </Panel>
+            </Panel>
+            <Panel title="Score calibration" href="/swipe" linkLabel="Rate">
+              {calibration.enough_data ? (
+                <dl className="space-y-2 text-sm">
+                  <div className="flex justify-between gap-4"><dt className="text-ink-soft">Suggested min score</dt><dd className="font-mono text-xs tabular-nums">{(calibration.suggested_min_score)?.toLocaleString("en-US")}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="text-ink-soft">Kept vs skipped</dt><dd className="font-mono text-xs tabular-nums">{(calibration.interested_mean)?.toLocaleString("en-US")} vs {(calibration.skipped_mean)?.toLocaleString("en-US")}</dd></div>
+                </dl>
+              ) : <p className="text-sm text-ink-soft">{calibration.decided.toLocaleString("en-US")} rated so far. The match threshold is set once you have kept ten postings, since fewer would be noise.</p>}
+            </Panel>
+          </div>
         </div>
-
-        <Panel title="Top matches" href="/matches" linkLabel="all">
-          {topMatches.length ? (
-            <ul className="divide-y divide-rule-soft">
-              {topMatches.map((match) => (
-                <li key={match.id} className="flex items-baseline justify-between gap-4 py-2.5">
-                  <span className="min-w-0 truncate text-sm">{match.title ?? match.url}</span>
-                  <span className="shrink-0 font-mono text-xs text-ink-faint tabular-nums">
-                    {match.score.toFixed(3)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-ink-soft">
-              No matches yet. Run a crawl, then score against your profile.
-            </p>
-          )}
-        </Panel>
-
-        <Panel title="Pipeline" href="/applications" linkLabel="all">
-          <LivePipeline initial={counts} order={ORDER} />
+        <Panel title="Pipeline" href="/applications" linkLabel="All applications">
+          <LivePipeline initial={counts} order={STATUS_ORDER} />
           {recent.length ? (
-            <ul className="mt-5 divide-y divide-rule-soft">
+            <ul className="mt-2 divide-y divide-rule-soft">
               {recent.map((application) => (
-                <li
-                  key={application.id}
-                  className="flex items-baseline justify-between gap-4 py-2.5"
-                >
-                  <Link
-                    href={`/applications/${application.id}`}
-                    className="min-w-0 truncate text-sm hover:text-go"
-                  >
-                    {application.url}
-                  </Link>
+                <li key={application.id} className="flex min-h-11 min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
+                  <Link href={`/applications/${application.id}`} className="min-w-0 flex-1 basis-full truncate font-mono text-xs text-ink-soft hover:text-ink sm:basis-0">{application.url.replace(/^https?:\/\//, "")}</Link>
                   <StatusPill status={application.status} reason={application.failure_reason} />
                 </li>
               ))}

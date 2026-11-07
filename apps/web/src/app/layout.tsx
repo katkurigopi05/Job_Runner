@@ -1,80 +1,46 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { Instrument_Sans, JetBrains_Mono, Newsreader } from "next/font/google";
 import { ApiHealth } from "@/components/api-health";
 import { CrawlerSpider } from "@/components/crawler-spider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SideNotes } from "@/components/side-notes";
 import { ReleaseWindowName } from "@/components/release-window-name";
+import { DashboardShell } from "@/components/dashboard-shell";
+import { StatusStreamProvider, type StatusCounts } from "@/components/status-stream";
+import { STATUS_ORDER } from "@/components/status";
+import { api } from "@/lib/api";
 import "./globals.css";
+
+const interfaceFont = Instrument_Sans({ subsets: ["latin"], weight: ["400", "500", "600"], display: "swap", variable: "--font-instrument-sans" });
+const titleFont = Newsreader({ subsets: ["latin"], weight: "400", display: "swap", variable: "--font-newsreader" });
+const valueFont = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500"], display: "swap", variable: "--font-jetbrains-mono" });
 
 export const metadata: Metadata = {
   title: "Jobrunner",
   description: "Local job-application agent. You approve every application before it is sent.",
 };
 
-const NAV = [
-  { href: "/", label: "Desk" },
-  { href: "/review", label: "Review" },
-  { href: "/finish", label: "Finish" },
-  { href: "/matches", label: "Matches" },
-  { href: "/swipe", label: "Rate" },
-  { href: "/label", label: "Grade" },
-  { href: "/ranking", label: "Ranking" },
-  { href: "/applications", label: "Pipeline" },
-  { href: "/resumes", label: "Résumés" },
-  { href: "/tracker", label: "Tracker" },
-  { href: "/chat", label: "Assistant" },
-  { href: "/profile", label: "Profile" },
-  { href: "/setup", label: "Setup" },
-];
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Keep navigation usable while the page's ErrorPanel explains an unavailable API.
+  const applications = await api.applications().catch(() => null);
+  const counts = Object.fromEntries(STATUS_ORDER.map((status) => [status, 0])) as StatusCounts;
+  for (const application of applications ?? []) {
+    counts[application.status] = (counts[application.status] ?? 0) + 1;
+  }
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen">
+    <html lang="en" suppressHydrationWarning className={`${interfaceFont.variable} ${titleFont.variable} ${valueFont.variable}`}>
+      <body className="transition-colors">
         <ReleaseWindowName />
-        <header className="border-b border-rule">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-baseline gap-x-8 gap-y-2 px-6 py-5">
-            <Link href="/" className="font-display text-xl tracking-tight">
-              jobrunner
-            </Link>
-            {/* `flex-wrap` because it did not: eleven items (now twelve) in a nowrap row
-                overflowed a 390px screen and put seven pages out of reach on
-                the phone this dashboard is meant to be read from. */}
-            <nav
-              aria-label="Main"
-              className="flex flex-wrap gap-x-5 gap-y-2 font-mono text-xs uppercase tracking-widest"
-            >
-              {NAV.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="text-ink-soft transition-colors hover:text-ink focus-visible:text-ink focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-attn"
-                >
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
-            <div className="ml-auto flex items-center gap-4">
-              {/* Was a static "localhost only" label. It is still that when
-                  everything is up, but it now also answers the question the
-                  dashboard could not: which process stopped. */}
-              <CrawlerSpider />
-              <ApiHealth />
-              <ThemeToggle />
-              <SideNotes />
-            </div>
-          </div>
-        </header>
-        <div className="mx-auto max-w-5xl px-6 py-10">
-          <main className="min-w-0">{children}</main>
-        </div>
-        <footer className="mx-auto max-w-5xl px-6 pb-12">
-          <p className="border-t border-rule pt-5 text-xs leading-relaxed text-ink-faint">
-            You approve every application before it is sent, and your work-authorization answers go
-            profile verbatim, never generated.
-          </p>
-        </footer>
+        {/* The Desk keeps its nested provider so a fresh page read remains its
+            fallback when the stream is disconnected. The API shares one watcher. */}
+        <StatusStreamProvider initial={counts}>
+          <DashboardShell initial={counts} countsKnown={applications !== null}
+            services={<><CrawlerSpider /><ApiHealth /></>}
+            theme={<ThemeToggle />} notes={<SideNotes />}
+            footer={<p>You approve every application before it is sent. Work-authorization answers are copied from your profile word for word, never generated.</p>}>
+            {children}
+          </DashboardShell>
+        </StatusStreamProvider>
       </body>
     </html>
   );

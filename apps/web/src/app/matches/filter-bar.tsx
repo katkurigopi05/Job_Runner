@@ -52,8 +52,8 @@ const CURRENCIES = ["USD", "CAD", "GBP", "EUR", "INR", "AUD"];
 const PERIODS = ["year", "month", "hour"];
 
 const FIELD =
-  "rounded-[var(--radius)] border border-rule bg-paper px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn";
-const LABEL = "font-mono text-xs uppercase tracking-widest text-ink-soft";
+  "rounded-[var(--radius)] border border-rule bg-paper px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft";
+const LABEL = "text-label text-ink-soft";
 
 export function FilterBar({
   resultCount,
@@ -104,7 +104,7 @@ export function FilterBar({
         type="checkbox"
         checked={value(key) === "true"}
         onChange={(event) => set(key, event.target.checked ? "true" : "")}
-        className="h-3.5 w-3.5 accent-[var(--color-attn)]"
+        className="h-3.5 w-3.5 accent-[var(--color-ink)]"
       />
       {label}
     </label>
@@ -217,7 +217,7 @@ export function FilterBar({
           </select>
         </label>
 
-        <span className="ml-auto font-mono text-xs tabular-nums text-ink-faint">{resultCount} shown</span>
+        <span className="ml-auto font-mono text-xs tabular-nums text-ink-faint">{(resultCount).toLocaleString("en-US")} shown</span>
       </div>
 
       <fieldset className="mt-4 border-t border-rule-soft pt-4">
@@ -311,13 +311,13 @@ export function FilterBar({
             onChange={(event) =>
               set("exclude_citizenship_restricted", event.target.checked ? "true" : "")
             }
-            className="h-3.5 w-3.5 accent-[var(--color-attn)]"
+            className="h-3.5 w-3.5 accent-[var(--color-ink)]"
           />
-          hide roles restricted to citizens or permanent residents
+          Hide roles restricted to citizens or permanent residents
         </label>
 
         {unknownSwitches.length > 0 ? (
-          <div className="mt-3 flex flex-col gap-1.5">
+          <div className="mt-3 flex flex-col gap-2">
             <p className="text-xs text-ink-faint">
               A posting that doesn&apos;t say is not counted as meeting these. Widen one:
             </p>
@@ -333,25 +333,25 @@ export function FilterBar({
               type="button"
               onClick={save}
               disabled={saving}
-              className="rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink transition-colors hover:border-go hover:text-go disabled:opacity-50"
+              className="rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink transition-colors hover:border-ink-soft hover:text-ink disabled:opacity-50"
             >
               {saving ? "saving…" : "save as default search"}
             </button>
             <button
               type="button"
               onClick={() => router.replace("/matches", { scroll: false })}
-              className="rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink-soft transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn"
+              className="rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink-soft transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
             >
-              clear
+              Clear
             </button>
           </>
         ) : savedFilters && Object.keys(savedFilters).length > 0 ? (
           <button
             type="button"
             onClick={() => replace(new URLSearchParams(savedFilters))}
-            className="rounded-[var(--radius)] border border-go px-3 py-1.5 text-xs text-go transition-colors hover:bg-go hover:text-paper"
+            className="rounded-[var(--radius)] border border-ink px-3 py-1.5 text-xs text-ink transition-colors hover:bg-ink hover:text-paper"
           >
-            use my saved search
+            Use my saved search
           </button>
         ) : null}
         {saveNote ? (

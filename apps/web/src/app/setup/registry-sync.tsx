@@ -43,7 +43,7 @@ export function RegistrySync() {
           type="button"
           disabled={pending}
           onClick={() => run(true)}
-          className="rounded-[var(--radius)] border border-rule px-3 py-1.5 font-mono text-xs text-ink transition-colors hover:border-go hover:text-go disabled:opacity-50"
+          className="rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink transition-colors hover:border-ink-soft hover:text-ink disabled:opacity-50"
         >
           {pending && !preview ? "previewing…" : "Preview repair"}
         </button>
@@ -51,7 +51,7 @@ export function RegistrySync() {
           type="button"
           disabled={pending || preview === null}
           onClick={() => run(false)}
-          className="rounded-[var(--radius)] border border-go bg-go px-3 py-1.5 font-mono text-xs text-paper transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:border-rule disabled:bg-transparent disabled:text-ink-faint"
+          className="rounded-[var(--radius)] border border-ink bg-ink px-3 py-1.5 text-xs text-paper transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:border-rule disabled:bg-transparent disabled:text-ink-faint"
         >
           {pending && preview ? "applying…" : "Apply repair"}
         </button>
@@ -64,7 +64,7 @@ export function RegistrySync() {
         {error ? <p className="text-stop">{error}</p> : null}
         {preview ? (
           <p className="text-ink-soft">
-            <span className="font-mono text-xs uppercase tracking-widest text-attn">
+            <span className="text-label text-attn">
               preview · nothing written
             </span>
             <br />
@@ -73,7 +73,7 @@ export function RegistrySync() {
         ) : null}
         {applied ? (
           <p className="text-ink-soft">
-            <span className="font-mono text-xs uppercase tracking-widest text-go">applied</span>
+            <span className="text-label text-ink">applied</span>
             <br />
             {applied.summary}
           </p>

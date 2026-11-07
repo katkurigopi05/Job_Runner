@@ -43,9 +43,9 @@ const HEADINGS: Record<KaggleState, string> = {
 };
 
 const BUTTON =
-  "rounded border border-rule px-2.5 py-1 text-xs text-ink-soft transition-colors hover:border-attn hover:text-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn";
+  "rounded-lg border border-rule px-2.5 py-1 text-xs text-ink-soft transition-colors hover:border-ink-soft hover:text-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft";
 const INPUT =
-  "min-w-0 rounded border border-rule bg-paper px-2 py-1.5 text-xs text-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn";
+  "min-w-0 rounded-lg border border-rule bg-paper px-2 py-1.5 text-xs text-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft";
 
 async function readStatus(response: Response): Promise<KaggleStatus> {
   const body = await response.json();
@@ -187,7 +187,7 @@ export function KaggleConnection() {
   }
 
   return (
-    <section aria-label="Kaggle connection" className="space-y-2 border-b border-rule px-3 py-2.5">
+    <section aria-label="Kaggle connection" className="space-y-2 border-b border-rule px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
         <div role="status" aria-live="polite" className="min-w-0 flex-1 text-xs">
           <p className="text-ink">

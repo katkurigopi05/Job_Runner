@@ -13,7 +13,7 @@ import { addContact, addTask, deleteTask, removeContact, updateTask } from "./tr
  */
 
 const FIELD =
-  "rounded-[var(--radius)] border border-rule bg-paper px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-attn";
+  "rounded-[var(--radius)] border border-rule bg-paper px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft";
 
 const KINDS: { value: TaskKind; label: string }[] = [
   { value: "interview", label: "interview" },
@@ -50,12 +50,12 @@ function TaskRow({ applicationId, task }: { applicationId: string; task: Applica
     <li className={`rounded-[var(--radius)] border border-rule bg-paper-raised px-4 py-3 ${done ? "opacity-60" : ""}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className={`text-sm ${done ? "line-through" : "text-ink"}`}>
-          <span className="mr-2 font-mono text-xs uppercase tracking-widest text-ink-faint">
+          <span className="mr-2 text-label text-ink-soft">
             {task.kind.replace("_", " ")}
           </span>
           {task.title}
         </p>
-        <p className={`font-mono text-xs ${overdue ? "text-stop" : "text-ink-faint"}`}>
+        <p className={`text-xs ${overdue ? "text-stop" : "text-ink-faint"}`}>
           {overdue ? "overdue · " : ""}
           {when(task.due_at)}
           {task.source === "inbox" ? " · from a reply" : ""}
@@ -92,7 +92,7 @@ function TaskRow({ applicationId, task }: { applicationId: string; task: Applica
           type="button"
           disabled={pending}
           onClick={() => act(() => updateTask(applicationId, task.id, { completed: !done }))}
-          className="font-mono text-xs text-ink-soft hover:text-go disabled:opacity-50"
+          className="text-xs text-ink-soft hover:text-ink disabled:opacity-50"
         >
           {done ? "reopen" : "mark done"}
         </button>
@@ -100,9 +100,9 @@ function TaskRow({ applicationId, task }: { applicationId: string; task: Applica
           type="button"
           disabled={pending}
           onClick={() => act(() => deleteTask(applicationId, task.id))}
-          className="font-mono text-xs text-ink-faint hover:text-stop disabled:opacity-50"
+          className="text-xs text-ink-faint hover:text-stop disabled:opacity-50"
         >
-          delete
+          Delete
         </button>
         {error ? <span className="text-xs text-stop">{error}</span> : null}
       </div>
@@ -156,7 +156,7 @@ function AddTask({ applicationId }: { applicationId: string }) {
           </option>
         ))}
       </select>
-      <button type="submit" disabled={pending} className="rounded-[var(--radius)] border border-go px-3 py-1.5 text-xs text-go transition-colors hover:bg-go hover:text-paper disabled:opacity-50">
+      <button type="submit" disabled={pending} className="rounded-[var(--radius)] border border-ink px-3 py-1.5 text-xs text-ink transition-colors hover:bg-ink hover:text-paper disabled:opacity-50">
         {pending ? "adding…" : "add task"}
       </button>
       {message ? <span role="status" className="text-xs text-ink-soft">{message}</span> : null}
@@ -198,7 +198,7 @@ function AddContact({ applicationId }: { applicationId: string }) {
         <option value="referrer">referrer</option>
         <option value="other">other</option>
       </select>
-      <button type="submit" disabled={pending} className="rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink transition-colors hover:border-go hover:text-go disabled:opacity-50">
+      <button type="submit" disabled={pending} className="rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink transition-colors hover:border-ink-soft hover:text-ink disabled:opacity-50">
         {pending ? "adding…" : "add person"}
       </button>
       {message ? <span role="status" className="text-xs text-ink-soft">{message}</span> : null}
@@ -221,10 +221,10 @@ export function TrackingPanel({
     <div className="space-y-10">
       <section aria-labelledby="tasks" className="space-y-4">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <h2 id="tasks" className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+          <h2 id="tasks" className="text-label text-ink-soft">
             Interviews, assessments &amp; follow-ups
           </h2>
-          <a href={calendarUrl} className="font-mono text-xs text-ink-soft underline-offset-4 hover:underline">
+          <a href={calendarUrl} className="text-xs text-ink-soft underline-offset-4 hover:underline">
             add dated tasks to your calendar (.ics)
           </a>
         </div>
@@ -241,7 +241,7 @@ export function TrackingPanel({
       </section>
 
       <section aria-labelledby="people" className="space-y-4">
-        <h2 id="people" className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+        <h2 id="people" className="text-label text-ink-soft">
           People
         </h2>
         {tracking.contacts.length === 0 ? (
@@ -251,16 +251,16 @@ export function TrackingPanel({
             {tracking.contacts.map(({ contact, relationship }) => (
               <li key={contact.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
                 <span className="text-ink">{contact.name}</span>
-                <span className="font-mono text-xs text-ink-faint">{relationship.replace("_", " ")}</span>
+                <span className="text-xs text-ink-faint">{relationship.replace("_", " ")}</span>
                 {contact.role ? <span className="text-ink-soft">{contact.role}</span> : null}
                 {contact.email ? <span className="text-ink-soft">{contact.email}</span> : null}
                 <button
                   type="button"
                   disabled={pending}
                   onClick={() => start(async () => void (await removeContact(applicationId, contact.id)))}
-                  className="ml-auto font-mono text-xs text-ink-faint hover:text-stop disabled:opacity-50"
+                  className="ml-auto text-xs text-ink-faint hover:text-stop disabled:opacity-50"
                 >
-                  remove
+                  Remove
                 </button>
               </li>
             ))}

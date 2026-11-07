@@ -6,7 +6,7 @@ export default function ChatPage() {
   return (
     <div className="space-y-8">
       <header>
-        <h1 className="font-display text-display leading-[1.05] tracking-tight">Assistant</h1>
+        <h1 className="text-display leading-[1.05] tracking-tight">Assistant</h1>
         <p className="mt-3 max-w-prose text-ink-soft">
           Answers from a model running on this machine, grounded in your own data. It will not
           draft work-authorization, sponsorship, employment-history, or salary answers — those are

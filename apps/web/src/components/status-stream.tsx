@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ApplicationStatus } from "@/lib/api";
-import { StatusPill } from "@/components/status";
+import { StatusPill, STATUS_DOT, STATUS_LABEL } from "@/components/status";
+import { Icon } from "@/components/icon";
 
 /**
  * Live application status counts, from `GET /api/events/applications`.
@@ -126,26 +127,31 @@ export function useStatusCounts(fallback: StatusCounts): StreamState {
  * that changes how it looks when a convenience fails teaches the reader to
  * distrust it.
  */
-export function LivePipeline({
-  initial,
-  order,
-}: {
-  initial: StatusCounts;
-  order: ApplicationStatus[];
-}) {
+export function LivePipeline({ initial, order }: { initial: StatusCounts; order: ApplicationStatus[] }) {
   const { counts, live } = useStatusCounts(initial);
+  const total = order.reduce((sum, status) => sum + (counts[status] ?? 0), 0);
+  const description = order.map((status) => `${(counts[status] ?? 0).toLocaleString("en-US")} ${STATUS_LABEL[status].toLowerCase()}`).join(", ");
   return (
-    <div
-      className="flex flex-wrap gap-x-6 gap-y-2 font-mono text-xs"
-      aria-live="polite"
-      title={live ? "Updating live" : "Updated when this page was loaded"}
-    >
-      {order.map((status) => (
-        <span key={status} className="flex items-center gap-2">
-          <StatusPill status={status} reason={null} />
-          <span className="tabular-nums text-ink-faint">{counts[status] ?? 0}</span>
-        </span>
-      ))}
+    <div aria-live="polite" title={live ? "Updating live" : "Updated when this page was loaded"}>
+      <div className="mb-3 flex h-2 gap-0.5 overflow-hidden rounded-full bg-rule" role="img"
+        aria-label={total ? description : "No applications yet"}>
+        {order.filter((status) => counts[status] > 0).map((status) => (
+          <span key={status} className={status === "failed" ? "bg-stop/55" : STATUS_DOT[status]}
+            style={{ flex: counts[status] }} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-5 gap-y-2">
+        {order.map((status) => (
+          <span key={status} className="inline-flex items-center gap-2">
+            {counts[status] ? <StatusPill status={status} /> : (
+              <span className="inline-flex items-center gap-2 text-label text-ink-faint">
+                <span aria-hidden="true" className="status-dot bg-rule" />{STATUS_LABEL[status]}
+              </span>
+            )}
+            <span className="font-mono text-xs text-ink-faint tabular-nums">{(counts[status] ?? 0).toLocaleString("en-US")}</span>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -153,7 +159,7 @@ export function LivePipeline({
 /** How many applications are waiting on the owner, live. Just the number. */
 export function LiveWaitingCount({ initial }: { initial: StatusCounts }) {
   const { counts } = useStatusCounts(initial);
-  return <>{waitingFrom(counts)}</>;
+  return <>{waitingFrom(counts).toLocaleString("en-US")}</>;
 }
 
 /** The headline and its link, which say different things at zero.
@@ -168,20 +174,17 @@ export function LiveWaitingHeadline({ initial }: { initial: StatusCounts }) {
   const { counts } = useStatusCounts(initial);
   const waiting = waitingFrom(counts);
   return (
-    <>
-      <h1 className="font-display text-[length:var(--text-display)] leading-[1.05] tracking-tight">
-        {waiting > 0 ? `${waiting} waiting on you` : "Nothing waiting on you"}
-      </h1>
-      <p className="text-sm text-ink-soft">
-        {waiting > 0 ? (
-          <Link href="/finish" className="text-go underline decoration-rule underline-offset-4">
-            Work the queue →
-          </Link>
-        ) : (
-          "The queue is clear."
-        )}
-      </p>
-    </>
+    <div className="desk-heading">
+      <div>
+        <h1>{waiting > 0 ? `${waiting.toLocaleString("en-US")} waiting on you` : "Nothing waiting on you"}</h1>
+        <p className="desk-subtitle">
+          {waiting > 0
+            ? waiting === 1 ? "Your application is held until you approve it." : "Your applications are held until you approve them."
+            : "The queue is clear. You approve every application before it is sent."}
+        </p>
+      </div>
+      {waiting > 0 ? <Link href="/finish" className="primary-action">Work the queue <Icon name="arrow" /></Link> : null}
+    </div>
   );
 }
 

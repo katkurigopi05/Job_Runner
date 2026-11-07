@@ -116,7 +116,7 @@ export function FinishQueue({ initial }: { initial: ApplicationPacket[] }) {
   if (!current) {
     return (
       <div className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-10 text-center">
-        <p className="font-display text-2xl">Queue empty</p>
+        <p className="text-2xl">Queue empty</p>
         <p className="mt-3 text-sm text-ink-soft">
           {done > 0 ? `${done} recorded this session.` : "Nothing is waiting on you."}
         </p>
@@ -128,25 +128,25 @@ export function FinishQueue({ initial }: { initial: ApplicationPacket[] }) {
 
   return (
     <div className="space-y-6">
-      <article className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-7 shadow-[var(--shadow-panel)]">
+      <article className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-5 shadow-[var(--shadow-panel)]">
         <div className="flex items-start justify-between gap-6">
           <div className="min-w-0">
-            <h2 className="font-display text-2xl leading-tight">
+            <h2 className="text-2xl leading-tight">
               {current.posting?.title ?? current.apply_url}
             </h2>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-ink-faint">
-              {current.posting?.company ? <span className="text-go">{current.posting.company}</span> : null}
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-faint">
+              {current.posting?.company ? <span className="text-attn-text">{current.posting.company}</span> : null}
               {current.posting?.location ? <span>{current.posting.location}</span> : null}
               {current.ats ? <span>{current.ats}</span> : null}
             </div>
           </div>
-          <span className="shrink-0 font-mono text-xs text-ink-faint">{queue.length} left</span>
+          <span className="shrink-0 text-xs text-ink-faint">{(queue.length).toLocaleString("en-US")} left</span>
         </div>
 
         {blocking.length ? (
           <div className="mt-5 rounded-[var(--radius)] border-l-2 border-attn bg-attn-soft/40 px-4 py-3">
-            <div className="font-mono text-xs uppercase tracking-widest text-attn">
-              You must answer {blocking.length}
+            <div className="text-label text-attn">
+              You must answer {(blocking.length).toLocaleString("en-US")}
             </div>
             <ul className="mt-2 space-y-1 text-sm">
               {blocking.map((q, i) => (
@@ -160,25 +160,25 @@ export function FinishQueue({ initial }: { initial: ApplicationPacket[] }) {
           <button
             type="button"
             onClick={openForm}
-            className="rounded-[var(--radius)] bg-go px-4 py-3 font-mono text-sm text-on-accent transition-opacity hover:opacity-90"
+            className="rounded-[var(--radius)] bg-attn px-4 py-3 text-sm text-on-accent transition-opacity hover:opacity-90"
           >
-            open form <span className="opacity-60">o</span>
+            Open form <span className="opacity-60">o</span>
           </button>
           <button
             type="button"
             onClick={() => void copyAnswers()}
             disabled={!current.answers.length}
-            className="rounded-[var(--radius)] border border-rule px-4 py-3 font-mono text-sm text-ink-soft transition-colors hover:border-go hover:text-go disabled:opacity-40"
+            className="rounded-[var(--radius)] border border-rule px-4 py-3 text-sm text-ink-soft transition-colors hover:border-ink-soft hover:text-ink disabled:opacity-40"
           >
-            copy {current.answers.length} answers <span className="opacity-60">c</span>
+            Copy {(current.answers.length).toLocaleString("en-US")} Answers <span className="opacity-60">c</span>
           </button>
           <button
             type="button"
             onClick={downloadResume}
             disabled={!current.resume}
-            className="rounded-[var(--radius)] border border-rule px-4 py-3 font-mono text-sm text-ink-soft transition-colors hover:border-go hover:text-go disabled:opacity-40"
+            className="rounded-[var(--radius)] border border-rule px-4 py-3 text-sm text-ink-soft transition-colors hover:border-ink-soft hover:text-ink disabled:opacity-40"
           >
-            résumé <span className="opacity-60">r</span>
+            Résumé <span className="opacity-60">r</span>
           </button>
         </div>
 
@@ -189,35 +189,35 @@ export function FinishQueue({ initial }: { initial: ApplicationPacket[] }) {
         ) : null}
       </article>
 
-      {flash ? <p className="font-mono text-xs text-go">{flash}</p> : null}
-      {error ? <p className="font-mono text-xs text-stop">{error}</p> : null}
+      {flash ? <p className="text-xs text-attn-text">{flash}</p> : null}
+      {error ? <p className="text-xs text-stop">{error}</p> : null}
 
       <div className="flex gap-4">
         <button
           type="button"
           onClick={skip}
-          className="rounded-[var(--radius)] border border-rule px-6 py-3 font-mono text-sm text-ink-faint transition-colors hover:text-ink-soft"
+          className="rounded-[var(--radius)] border border-rule px-6 py-3 text-sm text-ink-faint transition-colors hover:text-ink-soft"
         >
-          skip <span className="opacity-60">s</span>
+          Skip <span className="opacity-60">s</span>
         </button>
         <button
           type="button"
           onClick={() => void submitted()}
           disabled={busy}
-          className="flex-1 rounded-[var(--radius)] border border-go bg-go/10 px-6 py-3 font-mono text-sm text-go transition-colors hover:bg-go hover:text-on-accent disabled:opacity-40"
+          className="flex-1 rounded-[var(--radius)] border border-attn bg-attn/10 px-6 py-3 text-sm text-attn-text transition-colors hover:bg-attn hover:text-on-accent disabled:opacity-40"
         >
           I submitted it <span className="opacity-60">↵</span>
         </button>
       </div>
 
-      <dl className="flex flex-wrap gap-x-6 gap-y-1 border-t border-rule-soft pt-4 font-mono text-xs text-ink-faint">
+      <dl className="flex flex-wrap gap-x-6 gap-y-1 border-t border-rule-soft pt-4 text-xs text-ink-faint">
         {KEYS.map(([key, label]) => (
           <div key={key} className="flex gap-2">
             <dt className="text-ink-soft">{key}</dt>
             <dd>{label}</dd>
           </div>
         ))}
-        <div className="ml-auto">{done} recorded</div>
+        <div className="ml-auto">{(done).toLocaleString("en-US")} recorded</div>
       </dl>
     </div>
   );

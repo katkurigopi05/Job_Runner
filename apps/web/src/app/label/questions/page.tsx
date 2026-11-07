@@ -35,7 +35,7 @@ export default async function JudgeQuestionsPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <header className="space-y-3">
-        <h1 className="font-display text-[length:var(--text-display)] leading-none">Grade</h1>
+        <h1 className="text-display leading-none">Grade</h1>
         <GradeTabs active="questions" />
         <p className="text-sm text-ink-soft">
           Each card is one posting the assistant&apos;s search returned for the question above it.
@@ -50,9 +50,9 @@ export default async function JudgeQuestionsPage() {
 
       <section
         aria-labelledby="judged"
-        className="rounded-[var(--radius-lg)] border border-rule-soft bg-paper-raised/50 p-6"
+        className="rounded-[var(--radius-lg)] border border-rule-soft bg-paper-raised/50 p-5"
       >
-        <h2 id="judged" className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+        <h2 id="judged" className="text-label text-ink-soft">
           The test set so far{summary.set_version ? ` · ${summary.set_version}` : ""}
         </h2>
 
@@ -68,25 +68,25 @@ export default async function JudgeQuestionsPage() {
         </div>
 
         <dl className="mt-4 grid gap-x-8 gap-y-2 sm:grid-cols-[auto_1fr]">
-          <dt className="font-mono text-xs text-ink-faint">Graded</dt>
+          <dt className="text-xs text-ink-faint">Graded</dt>
           <dd className="text-sm">
-            {summary.graded} of {summary.total}
-            <span className="ml-2 text-ink-faint">({progress}%)</span>
+            {(summary.graded).toLocaleString("en-US")} of {(summary.total).toLocaleString("en-US")}
+            <span className="ml-2 text-ink-faint">({(progress).toLocaleString("en-US")}%)</span>
           </dd>
 
-          <dt className="font-mono text-xs text-ink-faint">Questions done</dt>
+          <dt className="text-xs text-ink-faint">Questions done</dt>
           <dd className="text-sm">
-            {summary.questions_done} of {summary.questions}
+            {(summary.questions_done).toLocaleString("en-US")} of {(summary.questions).toLocaleString("en-US")}
           </dd>
 
-          <dt className="font-mono text-xs text-ink-faint">Dev / held out</dt>
-          <dd className="font-mono text-sm">
-            {summary.dev.graded}/{summary.dev.total} · {summary.held_out.graded}/
-            {summary.held_out.total}
+          <dt className="text-xs text-ink-faint">Dev / held out</dt>
+          <dd className="text-sm">
+            {(summary.dev.graded).toLocaleString("en-US")}/{(summary.dev.total).toLocaleString("en-US")} · {(summary.held_out.graded).toLocaleString("en-US")}/
+            {(summary.held_out.total).toLocaleString("en-US")}
           </dd>
 
-          <dt className="font-mono text-xs text-ink-faint">By grade</dt>
-          <dd className="font-mono text-sm">
+          <dt className="text-xs text-ink-faint">By grade</dt>
+          <dd className="text-sm">
             {[0, 1, 2].map((g) => `${g}:${summary.by_grade[String(g)] ?? 0}`).join("  ")}
           </dd>
         </dl>

@@ -58,7 +58,7 @@ export default async function ReviewPage() {
   return (
     <div className="space-y-10">
       <header>
-        <h1 className="font-display text-display leading-[1.05] tracking-tight">Review queue</h1>
+        <h1 className="text-display leading-[1.05] tracking-tight">Review queue</h1>
         <p className="mt-3 max-w-prose text-ink-soft">
           {waiting.length === 0
             ? "Nothing is waiting on you."

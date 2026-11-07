@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "@/components/icon";
 import { useEffect, useRef, useState } from "react";
 
 const STORAGE_KEY = "jobrunner-side-notes";
@@ -52,27 +53,17 @@ export function SideNotes() {
         aria-controls="side-notes-panel"
         title={open ? "Close notes" : "Open notes"}
         onClick={() => setOpen((current) => !current)}
-        className={`flex h-9 w-9 items-center justify-center rounded-[var(--radius)] border border-rule transition-colors hover:border-go hover:text-go focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn ${open ? "bg-paper-high text-ink" : "text-ink-soft"}`}
+        className={`flex h-8 w-8 items-center justify-center rounded-[var(--radius)] transition-colors hover:border-ink-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft ${open ? "bg-paper-high text-ink" : "text-ink-soft"}`}
       >
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          className="h-5 w-5"
-        >
-          <rect x="4" y="3" width="16" height="18" rx="2" />
-          <path d="M8 8h8M8 12h8M8 16h5" strokeLinecap="round" />
-        </svg>
+        <Icon name="notes" />
       </button>
       <aside
         id="side-notes-panel"
         hidden={!open}
         aria-labelledby="side-notes-title"
-        className="absolute right-0 top-full z-40 mt-3 w-80 max-w-[calc(100vw-3rem)] rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-5 shadow-lg"
+        className="absolute right-0 top-full z-40 mt-3 w-80 max-w-[calc(100vw-3rem)] rounded-[var(--radius-panel)] border border-rule bg-paper-raised p-5 shadow-lg"
       >
-        <h2 id="side-notes-title" className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+        <h2 id="side-notes-title" className="text-label text-ink-soft">
           Side notes
         </h2>
         <p id="side-notes-help" className="mt-3 text-xs leading-relaxed text-ink-soft">
@@ -91,13 +82,13 @@ export function SideNotes() {
           }}
           rows={6}
           placeholder="Follow up, prepare a question…"
-          className="mt-3 block w-full resize-y rounded-[var(--radius)] border border-rule bg-paper p-3 text-sm text-ink placeholder:text-ink-faint focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn disabled:opacity-50"
+          className="mt-3 block w-full resize-y rounded-[var(--radius)] border border-rule bg-paper p-3 text-sm text-ink placeholder:text-ink-faint focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft disabled:opacity-50"
         />
         <button
           type="button"
           disabled={!ready}
           onClick={save}
-          className="mt-3 rounded-[var(--radius)] border border-rule px-3 py-1.5 font-mono text-xs text-ink-soft hover:border-go hover:text-go focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-attn disabled:opacity-50"
+          className="mt-3 rounded-[var(--radius)] border border-rule px-3 py-1.5 text-xs text-ink-soft hover:border-ink-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft disabled:opacity-50"
         >
           Save notes
         </button>

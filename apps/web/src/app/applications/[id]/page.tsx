@@ -39,20 +39,20 @@ export default async function ApplicationPage({ params }: { params: Promise<{ id
   return (
     <div className="space-y-10">
       <header className="space-y-4">
-        <Link href="/applications" className="font-mono text-xs text-ink-faint hover:text-ink-soft">
+        <Link href="/applications" className="text-xs text-ink-faint hover:text-ink-soft">
           ← pipeline
         </Link>
-        <h1 className="font-display text-3xl leading-tight break-words">{application.url}</h1>
+        <h1 className="text-display leading-tight break-words">{application.url}</h1>
         <div className="flex flex-wrap items-center gap-5">
           <StatusPill status={application.status} reason={application.failure_reason} />
           <FillRate rate={review.fill_rate} />
-          <span className="font-mono text-xs text-ink-faint">{application.ats ?? "unknown ats"}</span>
+          <span className="text-xs text-ink-faint">{application.ats ?? "unknown ats"}</span>
         </div>
       </header>
 
       {review.unanswered?.length ? (
         <section aria-labelledby="unanswered">
-          <h2 id="unanswered" className="font-mono text-xs uppercase tracking-widest text-attn">
+          <h2 id="unanswered" className="text-label text-attn">
             Unanswered
           </h2>
           <ul className="mt-4 space-y-4">
@@ -74,7 +74,7 @@ export default async function ApplicationPage({ params }: { params: Promise<{ id
       {/* Append-only, and the reason an application's history is auditable at
           all. Newest last, so it reads as a story rather than a feed. */}
       <section aria-labelledby="history">
-        <h2 id="history" className="font-mono text-xs uppercase tracking-widest text-ink-faint">
+        <h2 id="history" className="text-label text-ink-soft">
           History
         </h2>
         <ol className="mt-5 space-y-0 border-l border-rule pl-6">
@@ -86,10 +86,10 @@ export default async function ApplicationPage({ params }: { params: Promise<{ id
               <li key={event.id} className="relative pb-6 last:pb-0">
                 <span
                   aria-hidden
-                  className="absolute top-2 -left-[1.8125rem] size-2 rounded-full bg-ink-faint"
+                  className="absolute top-2 -left-8 size-2 rounded-full bg-ink-faint"
                 />
-                <p className="font-mono text-xs text-ink-faint">
-                  {new Date(event.at).toLocaleString()}
+                <p className="text-xs text-ink-faint">
+                  {new Date(event.at).toLocaleString("en-US")}
                 </p>
                 <p className="mt-1">
                   {from && to ? (

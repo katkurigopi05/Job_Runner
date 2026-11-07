@@ -1,63 +1,44 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Icon, type IconName } from "@/components/icon";
 
 type Choice = "system" | "light" | "dark";
-
 const KEY = "jobrunner-theme";
 
-/**
- * Dark / light / system, the photo-editor's mechanism.
- *
- * An explicit choice sets [data-theme] on the root, which wins over the media
- * query. "system" removes the attribute and lets prefers-color-scheme decide.
- */
+/** An explicit [data-theme] wins; system removes it and uses the media query. */
 export function ThemeToggle() {
   const [choice, setChoice] = useState<Choice>("system");
-
   useEffect(() => {
-    const held = (localStorage.getItem(KEY) as Choice | null) ?? "system";
-    setChoice(held);
-    apply(held);
+    try {
+      const held = localStorage.getItem(KEY);
+      const next = held === "light" || held === "dark" ? held : "system";
+      setChoice(next);
+      apply(next);
+    } catch { /* The system preference remains usable without browser storage. */ }
   }, []);
-
   function apply(next: Choice) {
     const root = document.documentElement;
     if (next === "system") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", next);
   }
-
   function choose(next: Choice) {
     setChoice(next);
-    localStorage.setItem(KEY, next);
     apply(next);
+    try { localStorage.setItem(KEY, next); } catch { /* Keep this session's choice. */ }
   }
-
-  const options: { value: Choice; label: string }[] = [
-    { value: "light", label: "☀" },
-    { value: "dark", label: "☾" },
-    { value: "system", label: "auto" },
+  const options: { value: Choice; label: string; icon: IconName }[] = [
+    { value: "light", label: "Light", icon: "sun" },
+    { value: "dark", label: "Dark", icon: "moon" },
+    { value: "system", label: "System", icon: "monitor" },
   ];
-
   return (
-    <div
-      role="group"
-      aria-label="Theme"
-      className="flex items-center gap-0.5 rounded-[var(--radius)] border border-rule p-0.5"
-    >
+    <div role="group" aria-label="Theme" className="layout-switch">
       {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          onClick={() => choose(option.value)}
-          aria-pressed={choice === option.value}
-          className={`rounded-[calc(var(--radius)-3px)] px-2 py-0.5 font-mono text-xs transition-colors ${
-            choice === option.value
-              ? "bg-paper-high text-ink"
-              : "text-ink-faint hover:text-ink-soft"
-          }`}
-        >
-          {option.label}
+        <button key={option.value} type="button" onClick={() => choose(option.value)}
+          aria-pressed={choice === option.value} aria-label={option.label} title={option.label}
+          className="layout-choice">
+          <Icon name={option.icon} />
         </button>
       ))}
     </div>

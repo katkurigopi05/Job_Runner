@@ -47,12 +47,12 @@ export function ResumeDocumentView({
   const names = Object.keys(sections);
 
   return (
-    <div className="border border-rule bg-paper">
+    <div className="resume-sheet">
       <div className="border-b border-rule px-5 py-4">
         {contactBits.length > 0 ? (
           <>
-            <p className="font-display text-lg">{contactBits[0]}</p>
-            <p className="mt-1 font-mono text-xs text-ink-soft">{contactBits.slice(1).join("  ·  ")}</p>
+            <p className="font-sans text-lg">{contactBits[0]}</p>
+            <p className="mt-1 text-xs text-ink-soft">{contactBits.slice(1).join("  ·  ")}</p>
           </>
         ) : (
           <p className="text-xs text-stop">
@@ -72,10 +72,10 @@ export function ResumeDocumentView({
             const lines = sections[name] ?? [];
             return (
               <section key={name} className="px-5 py-4">
-                <h4 className="font-mono text-xs uppercase tracking-widest text-ink-faint">
-                  {name} <span className="tabular-nums">· {lines.length}</span>
+                <h4 className="text-label text-ink-soft">
+                  {name} <span className="tabular-nums">· {(lines.length).toLocaleString("en-US")}</span>
                 </h4>
-                <ul className="mt-3 space-y-1.5">
+                <ul className="mt-3 space-y-2">
                   {lines.map((line, index) => (
                     <li key={`${name}-${index}`} className="text-sm leading-relaxed">
                       {line}
@@ -92,8 +92,8 @@ export function ResumeDocumentView({
           stored or re-parsed yet. Showing a stale v-number over live text would
           claim the preview is something it is not. */}
       {version !== undefined ? (
-        <p className="border-t border-rule px-5 py-3 font-mono text-xs text-ink-faint">
-          v{version}
+        <p className="border-t border-rule px-5 py-3 text-xs text-ink-faint">
+          v{(version).toLocaleString("en-US")}
           {lineCount !== undefined ? ` · ${lineCount} lines parsed` : ""}
         </p>
       ) : null}

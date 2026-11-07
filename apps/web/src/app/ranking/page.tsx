@@ -27,11 +27,11 @@ function points(weight: number): string {
 function Interval({ label, value, interval }: { label: string; value: number | null; interval: number[] | null }) {
   return (
     <div>
-      <dt className="font-mono text-xs uppercase tracking-widest text-ink-faint">{label}</dt>
-      <dd className="mt-1 font-display text-2xl tabular-nums">
+      <dt className="text-label text-ink-soft">{label}</dt>
+      <dd className="mt-1 font-mono text-2xl tabular-nums">
         {value === null ? "—" : value.toFixed(3)}
         {interval ? (
-          <span className="ml-2 font-mono text-xs text-ink-faint">
+          <span className="ml-2 text-xs text-ink-faint">
             [{interval[0].toFixed(3)}, {interval[1].toFixed(3)}]
           </span>
         ) : null}
@@ -50,12 +50,12 @@ function Evaluation({ report }: { report: RankingEvaluation | null }) {
       <p className={`max-w-prose text-sm ${tone}`}>{report.message}</p>
       <dl className="grid grid-cols-2 gap-6 sm:grid-cols-4">
         <div>
-          <dt className="font-mono text-xs uppercase tracking-widest text-ink-faint">owner grades</dt>
-          <dd className="mt-1 font-display text-2xl tabular-nums">{report.owner_labels}</dd>
+          <dt className="text-label text-ink-soft">Owner grades</dt>
+          <dd className="mt-1 font-mono text-2xl tabular-nums">{(report.owner_labels).toLocaleString("en-US")}</dd>
         </div>
         <div>
-          <dt className="font-mono text-xs uppercase tracking-widest text-ink-faint">held out</dt>
-          <dd className="mt-1 font-display text-2xl tabular-nums">{report.held_out}</dd>
+          <dt className="text-label text-ink-soft">Held out</dt>
+          <dd className="mt-1 font-mono text-2xl tabular-nums">{(report.held_out).toLocaleString("en-US")}</dd>
         </div>
         <Interval label={`base ndcg@${report.k}`} value={report.base_ndcg} interval={report.base_interval} />
         <Interval
@@ -90,7 +90,7 @@ export default async function RankingPage() {
   return (
     <div className="space-y-12">
       <header>
-        <h1 className="font-display text-display leading-[1.05] tracking-tight">Ranking</h1>
+        <h1 className="text-display leading-[1.05] tracking-tight">Ranking</h1>
         <p className="mt-3 max-w-prose text-ink-soft">
           Nudge the order of your feed. Your fit score stays exactly as it is; choose “with my
           adjustments” on Matches to order by these, and each card shows what moved it.
@@ -98,7 +98,7 @@ export default async function RankingPage() {
       </header>
 
       <section aria-labelledby="adjustments" className="space-y-4">
-        <h2 id="adjustments" className="border-b border-rule pb-2 font-display text-2xl">
+        <h2 id="adjustments" className="border-b border-rule pb-2 text-2xl">
           Your adjustments
         </h2>
         {preferences.length === 0 ? (
@@ -110,7 +110,7 @@ export default async function RankingPage() {
                 <span className={`w-10 font-mono text-sm tabular-nums ${preference.weight >= 0 ? "text-go" : "text-stop"}`}>
                   {points(preference.weight)}
                 </span>
-                <span className="font-mono text-xs text-ink-faint">{preference.kind.replace("_", " ")}</span>
+                <span className="text-xs text-ink-faint">{preference.kind.replace("_", " ")}</span>
                 <span className="text-sm text-ink">{preference.value}</span>
                 {preference.source === "suggestion" ? (
                   <span className="text-xs text-ink-faint">from your skips</span>
@@ -126,7 +126,7 @@ export default async function RankingPage() {
       </section>
 
       <section aria-labelledby="suggestions" className="space-y-4">
-        <h2 id="suggestions" className="border-b border-rule pb-2 font-display text-2xl">
+        <h2 id="suggestions" className="border-b border-rule pb-2 text-2xl">
           Suggested by your skips
         </h2>
         {suggestions.length === 0 ? (
@@ -156,7 +156,7 @@ export default async function RankingPage() {
       </section>
 
       <section aria-labelledby="evaluation" className="space-y-4">
-        <h2 id="evaluation" className="border-b border-rule pb-2 font-display text-2xl">
+        <h2 id="evaluation" className="border-b border-rule pb-2 text-2xl">
           Is it better?
         </h2>
         <Evaluation report={evaluation} />
