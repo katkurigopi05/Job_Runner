@@ -136,7 +136,7 @@ export function LivePipeline({ initial, order }: { initial: StatusCounts; order:
       <div className="mb-3 flex h-2 gap-0.5 overflow-hidden rounded-full bg-rule" role="img"
         aria-label={total ? description : "No applications yet"}>
         {order.filter((status) => counts[status] > 0).map((status) => (
-          <span key={status} className={status === "failed" ? "bg-stop/55" : STATUS_DOT[status]}
+          <span key={status} className={status === "failed" ? "bg-ink-soft/45" : STATUS_DOT[status]}
             style={{ flex: counts[status] }} />
         ))}
       </div>

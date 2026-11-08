@@ -95,6 +95,7 @@ export function DashboardShell({ children, services, theme, notes, footer, initi
         <div className="sidebar-foot">
           <div className="sidebar-service space-y-2">{services}</div>
           {theme}
+          {notes}
           <div role="group" aria-label="Navigation layout" className="layout-switch">
             <button type="button" className="layout-choice" aria-label="Sidebar layout"
               aria-pressed={layout === "sidebar"} onClick={() => choose("sidebar")}>
@@ -108,7 +109,6 @@ export function DashboardShell({ children, services, theme, notes, footer, initi
         </div>
       </aside>
       <div className="content-column">
-        <div className="content-bar">{notes}</div>
         <main className="content-width">{children}</main>
         <footer className="content-width app-footer">{footer}</footer>
       </div>

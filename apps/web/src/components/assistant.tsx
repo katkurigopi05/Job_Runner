@@ -602,7 +602,7 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule px-3 py-2">
         {chosen.local ? (
           <p className="text-xs text-ink-faint">
-            recruiter mail: included — it never leaves this machine
+            Recruiter mail: included. It never leaves this machine.
           </p>
         ) : (
           <>

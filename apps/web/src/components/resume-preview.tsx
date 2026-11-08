@@ -1,3 +1,4 @@
+import { sentenceCase } from "@/lib/text";
 import type { ResumeParsed } from "@/lib/api";
 
 /**
@@ -73,7 +74,7 @@ export function ResumeDocumentView({
             return (
               <section key={name} className="px-5 py-4">
                 <h4 className="text-label text-ink-soft">
-                  {name} <span className="tabular-nums">· {(lines.length).toLocaleString("en-US")}</span>
+                  {sentenceCase(name)} <span className="tabular-nums">· {(lines.length).toLocaleString("en-US")}</span>
                 </h4>
                 <ul className="mt-3 space-y-2">
                   {lines.map((line, index) => (
