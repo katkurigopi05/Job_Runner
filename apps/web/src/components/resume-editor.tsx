@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { Icon } from "./icon";
 import { useFormStatus } from "react-dom";
 import type { ResumeParsed } from "@/lib/api";
+import { sentenceCase } from "@/lib/text";
 import { ResumePreview } from "@/components/resume-preview";
 import { saveResumeEdit } from "@/app/resumes/actions";
 import type { UploadResult } from "@/app/resumes/actions";
@@ -230,7 +231,7 @@ export function ResumeEditor({
         {Object.entries(sections).map(([section, lines]) => (
           <section key={section} className="px-5 py-4">
             <h4 className={legend}>
-              {section}{" "}
+              {sentenceCase(section)}{" "}
               <span className="tabular-nums">· {(lines.filter((l) => l.trim()).length).toLocaleString("en-US")}</span>
             </h4>
             <div className="mt-3 space-y-1">

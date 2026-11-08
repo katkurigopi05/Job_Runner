@@ -1,3 +1,4 @@
+import { deskDateTime } from "@/lib/text";
 import { api, ApiError, type DiscoveryStatus } from "@/lib/api";
 
 /**
@@ -50,9 +51,7 @@ export async function DiscoveryStrip() {
             ? `${status.postings_unembedded.toLocaleString("en-US")} fetched postings are not scored yet — a listing with no description never will be, and scoring happens on the next sweep. `
             : ""}
           {status.retrying > 0 && status.retrying_next_at
-            ? `${status.retrying.toLocaleString("en-US")} companies failed and will be retried from ${new Date(
-                status.retrying_next_at,
-              ).toLocaleString("en-US")}.`
+            ? `${status.retrying.toLocaleString("en-US")} companies failed and will be retried from ${deskDateTime(status.retrying_next_at)}.`
             : null}
         </p>
       ) : null}

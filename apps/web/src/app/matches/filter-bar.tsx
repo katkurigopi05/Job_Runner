@@ -144,12 +144,12 @@ export function FilterBar({
     <div className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-4">
       <div className="flex flex-wrap items-end gap-4">
         <label className="flex flex-col gap-1">
-          <span className={LABEL}>keywords</span>
+          <span className={LABEL}>Keywords</span>
           {text("keywords", "python, postgres", "w-48")}
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={LABEL}>role</span>
+          <span className={LABEL}>Role</span>
           <select
             value={value("role")}
             onChange={(event) => set("role", event.target.value)}
@@ -166,12 +166,12 @@ export function FilterBar({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={LABEL}>location</span>
+          <span className={LABEL}>Location</span>
           {text("locations", "austin, san jose", "w-44")}
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={LABEL}>remote</span>
+          <span className={LABEL}>Remote</span>
           <select value={value("remote")} onChange={(event) => set("remote", event.target.value)} className={FIELD}>
             <option value="">either</option>
             <option value="true">remote only</option>
@@ -180,7 +180,7 @@ export function FilterBar({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={LABEL}>at least</span>
+          <span className={LABEL}>At least</span>
           <select
             value={value("min_seniority")}
             onChange={(event) => set("min_seniority", event.target.value)}
@@ -196,7 +196,7 @@ export function FilterBar({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={LABEL}>seen within</span>
+          <span className={LABEL}>Seen within</span>
           <select
             value={value("posted_within_days")}
             onChange={(event) => set("posted_within_days", event.target.value)}
@@ -210,7 +210,7 @@ export function FilterBar({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={LABEL}>order</span>
+          <span className={LABEL}>Order</span>
           <select value={value("rank")} onChange={(event) => set("rank", event.target.value)} className={FIELD}>
             <option value="">by fit (base score)</option>
             <option value="personalized">with my adjustments</option>
@@ -224,7 +224,7 @@ export function FilterBar({
         <legend className="sr-only">Pay, skills, education and work authorization</legend>
         <div className="flex flex-wrap items-end gap-4">
           <div className="flex flex-col gap-1">
-            <span className={LABEL}>pay reaching</span>
+            <span className={LABEL}>Pay reaching</span>
             <div className="flex gap-1">
               <input
                 type="number"
@@ -266,17 +266,17 @@ export function FilterBar({
           </div>
 
           <label className="flex flex-col gap-1">
-            <span className={LABEL}>skills I lack</span>
+            <span className={LABEL}>Skills I lack</span>
             {text("lacking_skills", "java, kubernetes", "w-44")}
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className={LABEL}>must name</span>
+            <span className={LABEL}>Must name</span>
             {text("wanted_skills", "python", "w-36")}
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className={LABEL}>my education</span>
+            <span className={LABEL}>My education</span>
             <select
               value={value("max_education")}
               onChange={(event) => set("max_education", event.target.value)}
@@ -292,7 +292,7 @@ export function FilterBar({
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className={LABEL}>sponsorship</span>
+            <span className={LABEL}>Sponsorship</span>
             <select
               value={value("sponsorship")}
               onChange={(event) => set("sponsorship", event.target.value)}

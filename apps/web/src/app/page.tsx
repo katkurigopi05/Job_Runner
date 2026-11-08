@@ -93,7 +93,7 @@ export default async function DeskPage() {
                 ] as const).map(([label, value]) => (
                   <div key={label} className="flex justify-between gap-4">
                     <dt className="text-ink-soft">{label}</dt>
-                    <dd className="font-mono text-xs tabular-nums">{value.toLocaleString("en-US")}</dd>
+                    <dd className="font-sans text-sm tabular-nums">{value.toLocaleString("en-US")}</dd>
                   </div>
                 ))}
               </dl>

@@ -4,10 +4,10 @@ The dashboard uses the Claude warm reference tokens and typography. Sidebar navi
 
 ## Design passes
 
-1. Exact warm dark/light surfaces, clay owner-action accent, toned success/failure, neutral in-flight states; no page glow.
+1. Exact warm dark/light surfaces, clay owner-action accent, toned success, a crimson stop colour distinct from clay, neutral in-flight and failed-bar states; no page glow.
 2. Four-pixel spacing, 8px controls, 12px cards, 16px panels.
-3. Grouped 13-link navigation, live Review count, service indicators, Notes bar, persistent layout selection, mobile menu.
-4. Newsreader page titles, Instrument Sans interface, JetBrains Mono values, locale-formatted counts.
+3. Grouped 13-link navigation, live Review count, service indicators, a Notes toggle in the sidebar footer, persistent layout selection, mobile menu.
+4. Newsreader page titles, Instrument Sans interface and figures, JetBrains Mono for scores, ids and URLs, locale-formatted counts.
 5. Status dots and sentence-case text; failure details remain available.
 6. Inline Lucide paths with ISC attribution replace emoji controls; the drawn crawler remains.
 7. Approval/profile copy preserved, clearer assistant empty state and Send action.
@@ -33,7 +33,7 @@ The requested dataviz validator was unavailable in this session. Direct contrast
 | Package manifest and lockfile | Unchanged |
 | Source line limit / whitespace | Passed |
 | Browser interactions | Passed |
-| Screenshot matrix | 72 views: all HTTP 200, no overflow or client errors; Matches refreshed after fix |
+| Screenshot matrix | 72 views, rerun after the review fixes: all HTTP 200, no overflow or client errors |
 
 Browser interaction checks cover both layouts and persistence, unsent assistant draft survival when switching layout, explicit theme precedence over the system preference, system-mode changes, Notes focus/Escape/focus return and draft retention, mobile menu ordering/Escape/navigation close, and 390px overflow.
 
@@ -47,6 +47,16 @@ All local evidence is in `/private/tmp/jobrunner-unslop-artifacts/`; `index.html
 |---|---|---|---|---|
 | Sidebar | [View](../screenshots/warm-dashboard/desk-sidebar-dark-1440.png) | [View](../screenshots/warm-dashboard/desk-sidebar-light-1440.png) | [View](../screenshots/warm-dashboard/desk-sidebar-dark-390.png) | [View](../screenshots/warm-dashboard/desk-sidebar-light-390.png) |
 | Top nav | [View](../screenshots/warm-dashboard/desk-top-dark-1440.png) | [View](../screenshots/warm-dashboard/desk-top-light-1440.png) | [View](../screenshots/warm-dashboard/desk-top-dark-390.png) | [View](../screenshots/warm-dashboard/desk-top-light-390.png) |
+
+## Review fixes, 2026-11-07
+
+Five changes from review, with the required selection, build and 72-view matrix rerun afterwards.
+
+1. **Failure no longer reads as clay.** The failed segment of the Desk pipeline bar is a neutral ramp step (`ink-soft` at 45%) instead of a tinted red. `--color-stop` is a distinct crimson in both modes (dark `#f2557a`, light `#b3173f`; stop surfaces `#46262f` and `#fae6ec`), so it cannot be mistaken for clay (`#d97757` / `#b5532f`) beside the needs-review dot.
+2. **Figures in Instrument Sans.** Stat-card figures and This week values use Instrument Sans with `tabular-nums`. JetBrains Mono stays for scores, ids and URLs.
+3. **Sentence case.** The Matches filter labels (Keywords, Role, Location, Remote, At least, Seen within, Order, Pay reaching, Skills I lack, Must name, My education, Sponsorship), the résumé section headings on Review such as "Skills · 8", and "Recruiter mail: included. It never leaves this machine." on Assistant.
+4. **No empty top bar.** The 48px bar that held only the notes icon is gone. Notes is a labelled toggle in the sidebar footer, with the same focus-to-textarea, Escape-to-close and focus-return behaviour. The panel opens beside the sidebar, below the footer in Top nav, and inline in the mobile menu.
+5. **Retry time matches the Desk date.** The Matches retry time reads like "Sunday 8 November, 22:08", pinned to `America/Los_Angeles`.
 
 ## Matches hydration fix
 

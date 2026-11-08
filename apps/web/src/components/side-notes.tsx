@@ -44,7 +44,7 @@ export function SideNotes() {
   }
 
   return (
-    <div className="relative">
+    <div className="side-notes">
       <button
         ref={toggle}
         type="button"
@@ -53,15 +53,15 @@ export function SideNotes() {
         aria-controls="side-notes-panel"
         title={open ? "Close notes" : "Open notes"}
         onClick={() => setOpen((current) => !current)}
-        className={`flex h-8 w-8 items-center justify-center rounded-[var(--radius)] transition-colors hover:border-ink-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft ${open ? "bg-paper-high text-ink" : "text-ink-soft"}`}
+        className="side-notes-toggle"
       >
-        <Icon name="notes" />
+        <Icon name="notes" />Notes
       </button>
       <aside
         id="side-notes-panel"
         hidden={!open}
         aria-labelledby="side-notes-title"
-        className="absolute right-0 top-full z-40 mt-3 w-80 max-w-[calc(100vw-3rem)] rounded-[var(--radius-panel)] border border-rule bg-paper-raised p-5 shadow-lg"
+        className="side-notes-panel rounded-[var(--radius-panel)] border border-rule bg-paper-raised p-5 shadow-lg"
       >
         <h2 id="side-notes-title" className="text-label text-ink-soft">
           Side notes
