@@ -530,8 +530,12 @@ query-embedder-check:
 # refuse; without it the crawler's configured delay (5 to 60 s, §2.6) applies.
 # area=1 reads only listings that can be in the owner's area: a California office,
 # Workday's "2 Locations", or remote in the title or location.
+# it=1 reads only listings whose title is an IT role (packages/matching/it_titles.py);
+# it_include=product_program,tech_sales_consulting adds IT-adjacent groups (and
+# implies it=1). The owner's run of 2026-11-09:
+#   make backfill-descriptions area=1 it_include=product_program,tech_sales_consulting pace=5,10,15,20
 backfill-descriptions:
-	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit)) $(if $(hosts),--max-hosts $(hosts)) $(if $(no_retry),--no-retry) $(if $(pace),--pace $(pace)) $(if $(area),--owner-area)
+	$(PY)/python -m scripts.backfill_descriptions $(if $(dry),--dry-run) $(if $(limit),--limit $(limit)) $(if $(hosts),--max-hosts $(hosts)) $(if $(no_retry),--no-retry) $(if $(pace),--pace $(pace)) $(if $(area),--owner-area) $(if $(it),--it-roles) $(if $(it_include),--it-include $(it_include))
 
 # make audit-locations — how the search area reads every open posting's
 # location, read-only. Lists the places no rule recognized and the strings most
