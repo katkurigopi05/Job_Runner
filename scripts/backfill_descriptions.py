@@ -27,11 +27,14 @@ from packages.crawler.backfill import (
     ListingScope,
     Pace,
     PacedRateLimiter,
+    all_of,
     backfill,
     find_pending,
     in_owner_area,
+    it_roles,
 )
 from packages.crawler.fetch import PoliteFetcher, build_fetcher
+from packages.matching.it_titles import ADJACENT_GROUPS, check_adjacent
 
 #: Matching passes before giving up on a backlog that will not shrink.
 MAX_PASSES = 50
@@ -83,7 +86,36 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
         help="only postings that can be in the owner's area from their listing: a California "
         "office, Workday's '2 Locations', or remote in the title or location",
     )
+    parser.add_argument(
+        "--it-roles",
+        action="store_true",
+        help="only postings whose title is an IT role (packages/matching/it_titles.py)",
+    )
+    parser.add_argument(
+        "--it-include",
+        type=_adjacent_groups,
+        default=frozenset(),
+        help="IT-adjacent groups to read too, comma-separated: "
+        f"{', '.join(ADJACENT_GROUPS)}. Implies --it-roles",
+    )
     return parser.parse_args(argv)
+
+
+def _adjacent_groups(text: str) -> frozenset[str]:
+    try:
+        return check_adjacent(name.strip() for name in text.split(",") if name.strip())
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def _scope(args: argparse.Namespace) -> ListingScope | None:
+    """Every scope the command was given, all of which a listing must pass."""
+    scopes: list[ListingScope] = []
+    if args.owner_area:
+        scopes.append(in_owner_area)
+    if args.it_roles or args.it_include:
+        scopes.append(it_roles(include=args.it_include))
+    return all_of(*scopes)
 
 
 def _pace(text: str | None) -> Pace | None:
@@ -138,7 +170,7 @@ async def index() -> None:
 async def run(argv: list[str] | None = None) -> int:
     args = _args(argv)
     ats = [kind.strip() for kind in args.ats.split(",") if kind.strip()]
-    scope = in_owner_area if args.owner_area else None
+    scope = _scope(args)
     if args.dry_run:
         return await dry_run(ats, scope)
 

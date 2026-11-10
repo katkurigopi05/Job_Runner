@@ -291,6 +291,9 @@ async def _store(
     # Too old to keep, unless already held (`Settings.posting_max_age_days`).
     # Only a new row is filtered: one already held must still be stamped as
     # seen below, or `_close_missing` would close a posting that is listed.
+    # A listing at least as old as the limit is too old: Workday's "Posted 30+
+    # Days Ago" under a 30-day limit was stored without text, read by the
+    # backfill, deleted by the prune, and stored again by the next crawl.
     if max_age_days is None:
         from packages.core.config import get_settings
 
@@ -302,7 +305,7 @@ async def _store(
             for item in extracted
             if item.external_id in existing
             or (
-                (item.minimum_age_days is None or item.minimum_age_days <= max_age_days)
+                (item.minimum_age_days is None or item.minimum_age_days < max_age_days)
                 and (item.published_at is None or _aware(item.published_at) >= cutoff)
             )
         ]

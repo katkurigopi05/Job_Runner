@@ -300,3 +300,51 @@ async def test_read_only_probe_fetcher_does_not_write_metrics(monkeypatch):
     async with fetcher:
         await fetcher.fetch("https://acme.example/jobs")
     metric.assert_not_awaited()
+
+
+async def test_a_listing_as_old_as_the_limit_is_neither_read_nor_stored(db_session, monkeypatch):
+    """Workday says "Posted 30+ Days Ago" of every job 30 days old or more.
+
+    Under the owner's 30-day limit such a job is already too old. Storing it
+    without text only had the backfill read its page, the prune delete it, and
+    the next crawl store it again: 1,356 of 1,807 pages read on 2026-11-09.
+    """
+    from packages.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "posting_max_age_days", 30)
+    fetcher, calls = _reader(total=12, old_before=8)
+
+    result = await crawl_company(
+        db_session,
+        CompanySeed(name="Acme", slug=SLUG, ats="workday", poll_interval_s=0),
+        fetcher,
+        force=True,
+    )
+
+    assert result.error is None
+    rows = (await db_session.scalars(select(Posting))).all()
+    assert sorted(int(row.external_id.rsplit("-", 1)[-1]) for row in rows) == [8, 9, 10, 11]
+    pages = [path for method, path, _ in calls if method == "GET"]
+    assert pages and all(int(path.rsplit("-", 1)[-1]) >= 8 for path in pages)
+
+
+async def test_a_listing_younger_than_the_limit_is_kept(db_session):
+    fetcher, _ = _reader(total=1)
+    seed = CompanySeed(name="Acme", slug=SLUG, ats="workday", poll_interval_s=0)
+    await crawl_company(db_session, seed, fetcher, force=True)
+    company = await db_session.scalar(select(Company))
+    from packages.crawler.crawl import _store
+
+    young, _ = workday.parse_page(
+        json.dumps({"total": 1, "jobPostings": [_job(5) | {"postedOn": "Posted 29 Days Ago"}]}),
+        HOST,
+        "AcmeCareers",
+    )
+    old, _ = workday.parse_page(
+        json.dumps({"total": 1, "jobPostings": [_job(6) | {"postedOn": "Posted 30+ Days Ago"}]}),
+        HOST,
+        "AcmeCareers",
+    )
+
+    assert (await _store(db_session, company, young, max_age_days=30)).too_old == 0
+    assert (await _store(db_session, company, old, max_age_days=30)).too_old == 1

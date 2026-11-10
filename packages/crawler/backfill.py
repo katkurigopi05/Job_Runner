@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -43,6 +43,7 @@ from packages.crawler.details import ReadDetail
 from packages.crawler.extract import ExtractedPosting
 from packages.crawler.fetch import Blocked, PoliteFetcher
 from packages.crawler.ratelimit import HostRateLimiter, RateLimitTooLow
+from packages.matching.it_titles import check_adjacent, is_it_role
 from packages.matching.locality import california_or_us_remote
 
 log = structlog.get_logger(__name__)
@@ -212,6 +213,25 @@ def in_owner_area(title: str | None, location: str | None) -> bool:
     left without text, as before.
     """
     return california_or_us_remote(title=title, location=location, description=None)
+
+
+def it_roles(include: Collection[str] = ()) -> ListingScope:
+    """Only listings whose title is an IT role (`packages/matching/it_titles.py`).
+
+    The owner's focus of 2026-11-09: of 46,652 Workday pages without text, about
+    5,500 were IT by title, and the boards that decide a full run's length
+    (Dollar Tree, TJX, O'Reilly) held almost none. `include` adds IT-adjacent
+    groups, such as product management or hardware design, by name.
+    """
+    groups = check_adjacent(include)
+    return lambda title, location: is_it_role(title, include=groups)
+
+
+def all_of(*scopes: ListingScope) -> ListingScope | None:
+    """A listing every scope accepts; no scope when none is given."""
+    if not scopes:
+        return None
+    return lambda title, location: all(scope(title, location) for scope in scopes)
 
 
 async def find_pending(
