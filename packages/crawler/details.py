@@ -103,7 +103,7 @@ async def hydrate(
         elif prior is not None or not (
             max_age_days > 0
             and item.minimum_age_days is not None
-            and item.minimum_age_days > max_age_days
+            and item.minimum_age_days >= max_age_days
         ):
             pending.append(item)
         item.content_hash = posting_hash(item)

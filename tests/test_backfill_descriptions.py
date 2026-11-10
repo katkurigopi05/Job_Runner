@@ -7,20 +7,24 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 from sqlalchemy import select, update
 
 from packages.core.models import Posting
 from packages.crawler.backfill import (
     REFUSALS_BEFORE_STOP_SERVING,
+    all_of,
     backfill,
     fill_host,
     find_pending,
     in_owner_area,
+    it_roles,
 )
 from packages.crawler.crawl import crawl_company
 from packages.crawler.extract import CompanySeed
 from packages.crawler.fetch import PoliteFetcher
 from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter
+from scripts.backfill_descriptions import _args, _scope
 from tests.test_workday import HOST, SLUG, FakeClock, _job
 
 SEED = CompanySeed(name="Acme", slug=SLUG, ats="workday", poll_interval_s=0)
@@ -352,3 +356,107 @@ async def test_the_owner_area_reads_only_pages_that_can_be_in_it(db_session):
     assert report.filled == 3 and len(calls) == 3
     texas = next(key for key, location in places.items() if location == "Austin, TX")
     assert (await _descriptions(db_session))[texas] is None
+
+
+async def _place(db_session, values: dict[str, dict[str, str]]) -> None:
+    for external_id, fields in values.items():
+        await db_session.execute(
+            update(Posting).where(Posting.external_id == external_id).values(**fields)
+        )
+
+
+async def test_it_roles_reads_only_pages_whose_title_is_an_it_role(db_session):
+    # Arrange: of the four postings without text, one is a store job.
+    await _crawled(db_session)
+    missing = sorted(key for key, text in (await _descriptions(db_session)).items() if text is None)
+    titles = dict(
+        zip(
+            missing,
+            ("Software Engineer", "Data Scientist", "Assistant Store Manager", "Product Manager"),
+            strict=True,
+        )
+    )
+    await _place(db_session, {key: {"title": title} for key, title in titles.items()})
+
+    # Act
+    pending = await find_pending(db_session, scope=it_roles())
+    fetcher, calls = _board()
+    report = await backfill(fetcher, _sessions(db_session), scope=it_roles())
+
+    # Assert: the store job and the IT-adjacent product manager are left without text.
+    assert sum(len(items) for items in pending.values()) == 2
+    assert report.filled == 2 and len(calls) == 2
+    texts = await _descriptions(db_session)
+    left = {titles[key] for key in missing if texts[key] is None}
+    assert left == {"Assistant Store Manager", "Product Manager"}
+
+
+async def test_it_roles_can_add_an_it_adjacent_group(db_session):
+    await _crawled(db_session)
+    missing = sorted(key for key, text in (await _descriptions(db_session)).items() if text is None)
+    titles = ("Software Engineer", "Product Manager", "ASIC Design Engineer", "Cashier")
+    await _place(db_session, {key: {"title": t} for key, t in zip(missing, titles, strict=True)})
+
+    pending = await find_pending(db_session, scope=it_roles(include={"product_program"}))
+
+    assert sum(len(items) for items in pending.values()) == 2
+
+
+async def test_it_roles_and_the_owner_area_together_read_only_what_both_accept(db_session):
+    # Arrange: IT in California, IT in Texas, a store job in California, IT remote.
+    await _crawled(db_session)
+    missing = sorted(key for key, text in (await _descriptions(db_session)).items() if text is None)
+    rows = (
+        ("Software Engineer", "San Jose, CA"),
+        ("Software Engineer", "Austin, TX"),
+        ("Assistant Store Manager", "San Jose, CA"),
+        ("DevOps Engineer", "Remote"),
+    )
+    await _place(
+        db_session,
+        {key: {"title": t, "location": loc} for key, (t, loc) in zip(missing, rows, strict=True)},
+    )
+
+    # Act
+    pending = await find_pending(db_session, scope=all_of(it_roles(), in_owner_area))
+
+    # Assert
+    assert sorted(item.listing.title for items in pending.values() for item in items) == [
+        "DevOps Engineer",
+        "Software Engineer",
+    ]
+
+
+def test_an_unknown_it_adjacent_group_is_refused_before_anything_is_read():
+    with pytest.raises(ValueError, match="unknown IT-adjacent groups"):
+        it_roles(include={"pilots"})
+
+
+def test_no_scopes_means_no_scope():
+    assert all_of() is None
+
+
+def test_the_command_reads_every_page_without_a_scope():
+    assert _scope(_args([])) is None
+
+
+def test_the_command_can_read_only_it_roles_in_the_owner_area():
+    scope = _scope(_args(["--it-roles", "--owner-area"]))
+
+    assert scope("Software Engineer", "San Jose, CA")
+    assert not scope("Software Engineer", "Austin, TX")
+    assert not scope("Assistant Store Manager", "San Jose, CA")
+
+
+def test_naming_an_it_adjacent_group_reads_it_roles_and_that_group():
+    scope = _scope(_args(["--it-include", "hardware,product_program"]))
+
+    assert scope("ASIC Design Engineer", None)
+    assert scope("Product Manager", None)
+    assert scope("Software Engineer", None)
+    assert not scope("Cashier", None)
+
+
+def test_the_command_refuses_a_group_that_does_not_exist():
+    with pytest.raises(SystemExit):
+        _args(["--it-include", "pilots"])
