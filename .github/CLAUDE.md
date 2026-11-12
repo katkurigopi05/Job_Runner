@@ -82,6 +82,14 @@ Two things keep the lock from going stale unnoticed:
   two ways the lock stops agreeing with what it locks without anything else
   noticing.
 
+A pinned version does not hear about its own advisory. On 2026-11-11
+`pip-audit` found 65 in seven pins. The **`audit`** job reads `constraints.txt`
+and the dashboard's lockfile against the advisory databases, weekly and on
+demand, never on a pull request (`tests/test_ci_audits_dependencies.py`).
+`.github/dependabot.yml` proposes GitHub Actions and dashboard minor and patch
+updates; it leaves the Python lock to `make lock`, because it would edit
+single lines of a full resolution.
+
 SQLAlchemy is also capped below 2.1 in `pyproject.toml`. The suite passes under
 2.1.1, so lifting the cap means fixing three annotations, as a change of its
 own.
