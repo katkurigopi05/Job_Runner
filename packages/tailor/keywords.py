@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 # Aliased: this module has its own `_TOKEN_RE` with a different pattern, and
@@ -236,10 +237,20 @@ def _stands_in(form: str, text: str) -> bool:
 
 def analyze(job_description: str, corpus: SourceCorpus, *, limit: int = 40) -> TermReport:
     """Split a posting's terms by whether the source material backs them."""
+    return split_terms(job_terms(job_description, limit=limit), corpus)
+
+
+def split_terms(terms: Sequence[str], corpus: SourceCorpus) -> TermReport:
+    """Split terms someone else chose by whether the source material backs them.
+
+    `ats.score` builds its own list, which starts with the skills a posting
+    asks for by name. It asks the question here, of each term, so that there
+    is still one answer to "does the résumé support this".
+    """
     supported: list[str] = []
     missing: list[str] = []
 
-    for term in job_terms(job_description, limit=limit):
+    for term in terms:
         if _supported(term, corpus):
             supported.append(term)
         else:

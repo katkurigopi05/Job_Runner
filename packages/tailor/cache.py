@@ -48,7 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.enums import TailorMode
 from packages.core.models import Project, Resume
 from packages.llm.prompts import TAILOR_SYSTEM, TAILOR_TARGETED_SYSTEM
-from packages.tailor import practices
+from packages.tailor import ats, practices
 
 #: Separator that cannot occur in an id, a hash, or a model name, so two
 #: different component lists cannot flatten to the same string.
@@ -100,7 +100,14 @@ def tailoring_key(
     # miss. The ordinary key is built exactly as it was before there was a
     # second mode, so every row cached before then is still a hit.
     if TailorMode(mode) is TailorMode.TARGETED:
-        policy = [TAILOR_TARGETED_SYSTEM.digest, practices.practices_digest(), TailorMode.TARGETED]
+        policy = [
+            TAILOR_TARGETED_SYSTEM.digest,
+            practices.practices_digest(),
+            TailorMode.TARGETED,
+            # `targeted.classify` sorts `ats.requirement_terms`: a different
+            # list is a different plan for the same posting and résumé.
+            ats.TERMS_REVISION,
+        ]
     else:
         policy = [TAILOR_SYSTEM.digest]
     material = _SEP.join(

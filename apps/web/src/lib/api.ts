@@ -1034,6 +1034,9 @@ export interface PostingAts {
   scored_against_posting: boolean;
   supported: string[];
   missing: string[];
+  /** The terms above that are skills the posting requires or prefers by name. */
+  skills_supported: string[];
+  skills_missing: string[];
   findings: AtsFinding[];
 }
 

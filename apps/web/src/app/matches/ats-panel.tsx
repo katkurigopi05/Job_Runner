@@ -21,6 +21,7 @@ export function AtsPanel({ postingId, profileId }: { postingId: string; profileI
   const [report, setReport] = useState<PostingAts | null>(null);
   const [error, setError] = useState("");
   const [pending, startTransition] = useTransition();
+  const skillsAsked = report ? report.skills_supported.length + report.skills_missing.length : 0;
 
   function run() {
     startTransition(async () => {
@@ -81,6 +82,18 @@ export function AtsPanel({ postingId, profileId }: { postingId: string; profileI
             </dd>
           ) : null}
         </div>
+        {/* Only when the posting asks for a skill by name. "0 of 0" would read
+            as a résumé that matched nothing, about a posting that named
+            nothing. */}
+        {skillsAsked > 0 ? (
+          <div>
+            <dt className="text-xs text-ink-faint">Skills asked</dt>
+            <dd className="font-mono text-xl tabular-nums">
+              {(report.skills_supported.length).toLocaleString("en-US")} of{" "}
+              {(skillsAsked).toLocaleString("en-US")}
+            </dd>
+          </div>
+        ) : null}
       </dl>
 
       {report.findings.length > 0 ? (
@@ -100,6 +113,20 @@ export function AtsPanel({ postingId, profileId }: { postingId: string; profileI
         <p className="mt-3 text-xs text-ink-faint">
           backs {(report.supported.length).toLocaleString("en-US")} of{" "}
           {(report.supported.length + report.missing.length).toLocaleString("en-US")} terms this posting asks for
+        </p>
+      ) : null}
+
+      {/* What the résumé names first, as the feed does. The rest is what the
+          posting also asks for and is no list of things to write in: adding
+          one the résumé cannot back is the fabrication §2.1 forbids. */}
+      {report.skills_supported.length > 0 ? (
+        <p className="mt-2 text-xs text-ink-faint">
+          skills asked for that this résumé names: {report.skills_supported.join(", ")}
+        </p>
+      ) : null}
+      {report.skills_missing.length > 0 ? (
+        <p className="mt-1 text-xs text-ink-faint">
+          also asked for: {report.skills_missing.join(", ")}
         </p>
       ) : null}
     </div>
