@@ -42,10 +42,21 @@ log = structlog.get_logger(__name__)
 #: past postings without ever reporting a gap.
 PAGE_SIZE = 20
 
-#: Pages per board per cycle. At §2.6's 60s floor this is an hour of waiting
-#: for one company, which is already beyond generous; past it the board is
-#: reported truncated rather than quietly halved.
-MAX_PAGES = 60
+#: Where Workday stops counting. A tenant with more postings than this reports
+#: exactly this many: on 2026-11-09 Walmart, Accenture, Citi and eight other
+#: boards all said 2,000. So a total this large is "at least", never a count,
+#: and a walk that matches it has not seen the whole board.
+REPORTED_TOTAL_CEILING = 2000
+
+#: Pages per board per cycle: Workday's own window, 2,000 postings. Past it
+#: the board is reported truncated rather than quietly cut short.
+#:
+#: This was 60, sized when §2.6 made a tenant's host wait 60 s a request (an
+#: hour for one company). Since 2026-11-02 the default is 5 s, so 100 pages
+#: is about eight minutes, inside `crawl_company`'s 30-minute limit. At 60
+#: pages, 11 boards of 1,213 to 1,996 postings came back `suspect` on every
+#: crawl and nothing on them was ever closed.
+MAX_PAGES = REPORTED_TOTAL_CEILING // PAGE_SIZE
 
 _HOST_RE = re.compile(r"(?P<tenant>[a-z0-9-]+)\.wd[0-9]+\.myworkdayjobs\.com")
 _SITE_RE = re.compile(r"[A-Za-z0-9_-]+")
@@ -370,6 +381,13 @@ class WorkdayExtractor:
         if total is not None and len({p.external_id for p in pages.postings}) != total:
             pages.truncated = True
 
+        if total is not None and total >= REPORTED_TOTAL_CEILING and not pages.truncated:
+            # Every posting Workday would list was read, and the total is the
+            # ceiling: there may be more behind it. Closing what was not seen
+            # would be a bulk close on a guess.
+            log.warning("workday_total_at_ceiling", host=host, total=total)
+            pages.truncated = True
+
         log.info(
             "workday_board_read",
             host=host,
@@ -390,6 +408,7 @@ def slug_for(careers_url: str) -> str | None:
 __all__ = [
     "MAX_PAGES",
     "PAGE_SIZE",
+    "REPORTED_TOTAL_CEILING",
     "DETAIL_REQUESTS_PER_CRAWL",
     "Blocked",
     "BoardPages",

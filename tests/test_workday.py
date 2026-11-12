@@ -18,6 +18,7 @@ from packages.crawler.ratelimit import HostRateLimiter
 from packages.crawler.workday import (
     MAX_PAGES,
     PAGE_SIZE,
+    REPORTED_TOTAL_CEILING,
     WorkdayBoardError,
     WorkdayExtractor,
     parse_page,
@@ -260,10 +261,9 @@ async def test_robots_is_still_obeyed() -> None:
 async def test_a_board_longer_than_max_pages_is_marked_truncated() -> None:
     """Reported, never silently halved.
 
-    At §2.6's 60s floor a Workday tenant is its own host, so each page is a
-    minute of waiting. `MAX_PAGES` bounds one company at an hour — and says
-    so, because a board we know we did not finish reading must not be used to
-    decide what has closed.
+    `MAX_PAGES` is Workday's own window (2,000 postings). A board that says it
+    is longer is one we know we did not finish reading, and it must not be
+    used to decide what has closed.
     """
     fetcher, calls = _fetcher(total=PAGE_SIZE * (MAX_PAGES + 5))
 
@@ -272,6 +272,48 @@ async def test_a_board_longer_than_max_pages_is_marked_truncated() -> None:
     assert pages.truncated is True
     assert len(calls) == MAX_PAGES
     assert len(pages.postings) == PAGE_SIZE * MAX_PAGES
+
+
+async def test_a_board_past_the_old_sixty_page_cap_is_read_whole() -> None:
+    """1,500 postings is 75 pages, and the read is complete.
+
+    The cap was 60 pages, sized when a tenant's host waited 60 s a request. On
+    2026-11-09 it left 11 boards of 1,213 to 1,996 postings `suspect` on every
+    crawl, so nothing on them was ever closed.
+    """
+    total = PAGE_SIZE * 75
+    fetcher, calls = _fetcher(total=total)
+
+    pages = await WorkdayExtractor().collect(fetcher, SLUG)
+
+    assert pages.truncated is False
+    assert len(calls) == 75
+    assert len(pages.postings) == total
+
+
+async def test_a_total_at_workdays_ceiling_is_not_a_complete_read() -> None:
+    """2,000 is where Workday stops counting, not a count.
+
+    Walmart, Accenture and Citi each reported exactly 2,000 on 2026-11-09. A
+    walk that reads all 2,000 matches that total, and closing everything else
+    on the board would be the bulk close a truncated read exists to prevent.
+    """
+    fetcher, _ = _fetcher(total=REPORTED_TOTAL_CEILING)
+
+    pages = await WorkdayExtractor().collect(fetcher, SLUG)
+
+    assert len(pages.postings) == REPORTED_TOTAL_CEILING
+    assert pages.truncated is True
+
+
+async def test_a_total_just_under_the_ceiling_is_a_complete_read() -> None:
+    total = REPORTED_TOTAL_CEILING - PAGE_SIZE
+    fetcher, _ = _fetcher(total=total)
+
+    pages = await WorkdayExtractor().collect(fetcher, SLUG)
+
+    assert len(pages.postings) == total
+    assert pages.truncated is False
 
 
 # --------------------------------------------------------------------------
@@ -381,6 +423,33 @@ async def test_a_second_crawl_of_an_unchanged_workday_board_emits_nothing(db_ses
 
     assert again.emitted == 0
     assert again.unchanged is True
+
+
+async def test_a_board_near_the_ceiling_is_stored_and_closes_what_left(db_session) -> None:
+    """1,980 postings are stored in one crawl, and a later full read closes the rest.
+
+    One INSERT for the whole board bound about 34,000 parameters, past
+    asyncpg's 32,767, so the first complete read of a large board would have
+    failed the crawl. It is written in batches.
+    """
+    from packages.crawler.crawl import crawl_company
+    from packages.crawler.extract import CompanySeed
+
+    seed = CompanySeed(name="Acme", slug=SLUG, ats="workday", poll_interval_s=0)
+    total = REPORTED_TOTAL_CEILING - PAGE_SIZE
+    large, _ = _fetcher(total=total)
+
+    first = await crawl_company(db_session, seed, large, force=True)
+
+    assert first.error is None
+    assert first.suspect_parse is False
+    assert first.new_postings == total
+
+    smaller, _ = _fetcher(total=PAGE_SIZE * 50)
+    second = await crawl_company(db_session, seed, smaller, force=True)
+
+    assert second.suspect_parse is False
+    assert second.closed_postings == total - PAGE_SIZE * 50
 
 
 async def test_a_truncated_board_closes_nothing(db_session) -> None:
