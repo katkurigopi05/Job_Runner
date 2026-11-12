@@ -97,7 +97,7 @@ async def request_crawl(
     return CrawlRequest(queued=await enqueue(session, CRAWL_TASK_KIND, body), waiting=0)
 
 
-async def _schedule_next_tick(session: AsyncSession, payload: dict, seconds: int) -> None:
+async def _schedule_next_tick(session: AsyncSession, payload: dict[str, Any], seconds: int) -> None:
     """Enqueue the next sweep, unless one is already waiting.
 
     The dispatching cycle reschedules itself rather than being driven by a
@@ -162,15 +162,15 @@ async def handle_crawl(session: AsyncSession, claimed: ClaimedTask) -> None:
         # row is opened by the tick and closed by whichever company task
         # reports last — no process sees the whole cycle any more.
         settings = get_settings()
-        report = await tick(
+        dispatch_report = await tick(
             session,
             limit=int(payload.get("limit", settings.crawler_dispatch_batch)),
             max_backlog=int(payload.get("max_backlog", settings.crawler_max_backlog)),
             force=force,
             trigger=trigger,
         )
-        if report is not None:
-            log.info("crawl_dispatch_done", summary=report.summary())
+        if dispatch_report is not None:
+            log.info("crawl_dispatch_done", summary=dispatch_report.summary())
 
         # The sweep is where scoring happens under dispatch. A per-company
         # task cannot do it — scoring wants the corpus, and 3,500 of them
