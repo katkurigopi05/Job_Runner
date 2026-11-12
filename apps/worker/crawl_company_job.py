@@ -19,6 +19,7 @@ crawl state; the apply pipeline is reached only through the review queue and
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,7 +47,7 @@ class MalformedCrawlTask(ValueError):
     """The payload does not name a company this worker can crawl."""
 
 
-def _company_id(payload: dict) -> uuid.UUID:
+def _company_id(payload: dict[str, Any]) -> uuid.UUID:
     raw = payload.get("company_id")
     if not raw:
         raise MalformedCrawlTask("crawl_company task has no company_id")

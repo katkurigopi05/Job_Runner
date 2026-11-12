@@ -32,8 +32,11 @@ from packages.llm.provider import (
     DEFAULT_TEMPERATURE,
     LLMError,
     LLMProvider,
-    build_provider,
 )
+
+# Re-exported on purpose: callers reach `router.build_provider`, and tests
+# replace it there.
+from packages.llm.provider import build_provider as build_provider
 
 log = structlog.get_logger(__name__)
 
