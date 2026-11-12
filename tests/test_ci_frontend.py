@@ -24,7 +24,7 @@ def test_the_dashboard_job_runs_lint_types_and_build() -> None:
     commands = [step.get("run", "") for step in job["steps"]]
 
     assert job["defaults"]["run"]["working-directory"] == "apps/web"
-    for expected in ("npm ci", "npm run lint", "npm run typecheck", "npm run build"):
+    for expected in ("npm ci", "npm test", "npm run lint", "npm run typecheck", "npm run build"):
         assert expected in commands, expected
 
 
@@ -37,7 +37,7 @@ def test_every_script_the_job_calls_exists() -> None:
     import json
 
     scripts = json.loads((ROOT / "apps/web/package.json").read_text())["scripts"]
-    for name in ("lint", "typecheck", "build"):
+    for name in ("test", "lint", "typecheck", "build"):
         assert name in scripts, name
 
 

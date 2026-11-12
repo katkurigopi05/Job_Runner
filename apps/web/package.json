@@ -8,6 +8,7 @@
     "start": "next start -H ${JOBRUNNER_WEB_HOST:-127.0.0.1} -p ${JOBRUNNER_WEB_PORT:-3000}",
     "lint": "eslint",
     "test:dependencies": "node --test tooling/minimatch-compat.test.cjs",
+    "test": "node --test \"tests/**/*.test.mjs\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
