@@ -311,6 +311,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # It reads two lock files and nothing else, so the token is read-only.
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4

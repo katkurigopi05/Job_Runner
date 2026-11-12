@@ -43,6 +43,11 @@ def test_the_audit_never_runs_on_a_pull_request() -> None:
     assert "pull_request" not in condition
 
 
+def test_the_audit_token_can_only_read() -> None:
+    """CodeQL flagged the job for leaving the token's permissions at the default."""
+    assert _audit_job()["permissions"] == {"contents": "read"}
+
+
 def test_dependabot_leaves_the_python_lock_to_make_lock() -> None:
     config = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text(encoding="utf-8"))
     ecosystems = {update["package-ecosystem"] for update in config["updates"]}
