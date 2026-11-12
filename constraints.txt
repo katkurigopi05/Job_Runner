@@ -22,11 +22,11 @@ attrs==26.1.0
     # via
     #   jsonschema
     #   referencing
-brotli==1.2.0 ; platform_python_implementation == 'CPython'
+brotli==1.2.1 ; platform_python_implementation == 'CPython'
     # via fonttools
 brotlicffi==1.2.0.2 ; platform_python_implementation != 'CPython'
     # via fonttools
-certifi==2026.7.22
+certifi==2026.10.23
     # via
     #   httpcore
     #   httpx
@@ -53,7 +53,7 @@ cssselect2==0.10.1
     # via weasyprint
 defusedxml==0.7.1
     # via nltk
-dnspython==2.8.0
+dnspython==2.9.2
     # via email-validator
 email-validator==2.3.0
     # via pydantic
@@ -114,13 +114,13 @@ mypy==2.3.1
     # via jobrunner (pyproject.toml)
 mypy-extensions==1.1.0
     # via mypy
-nltk==3.10.3
+nltk==3.10.4
     # via jobrunner (pyproject.toml)
 numpy==2.5.4
     # via jobrunner (pyproject.toml)
 openpyxl==3.1.5
     # via jobrunner (pyproject.toml)
-opentelemetry-api==1.45.0
+opentelemetry-api==1.45.2
     # via
     #   fastapi
     #   mcp
@@ -130,7 +130,7 @@ pathspec==1.1.1
     # via mypy
 pgvector==0.5.0
     # via jobrunner (pyproject.toml)
-pillow==12.3.0
+pillow==13.0.0
     # via weasyprint
 playwright==1.56.0
     # via jobrunner (pyproject.toml)
@@ -157,7 +157,7 @@ pygments==2.21.0
     # via pytest
 pyjwt==2.15.1
     # via mcp
-pypdf==6.19.0
+pypdf==7.0.1
     # via jobrunner (pyproject.toml)
 pyphen==0.18.1
     # via weasyprint
