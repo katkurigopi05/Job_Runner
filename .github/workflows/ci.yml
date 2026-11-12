@@ -239,6 +239,12 @@ jobs:
       - name: Dependency compatibility
         run: npm run test:dependencies
 
+      # The pure helpers under src/lib, on Node's own test runner: the files
+      # import nothing, so Node runs them as they are and no test framework
+      # is installed.
+      - name: Unit tests
+        run: npm test
+
       - name: Lint
         run: npm run lint
 
