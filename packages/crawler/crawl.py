@@ -370,6 +370,69 @@ async def _store(
         for item in extracted
     ]
 
+    # What the edited postings said *before* this upsert, for a baseline
+    # version. Read first because the statement below overwrites it.
+    baselines = await _unversioned_baselines(
+        session,
+        [
+            previous.id
+            for item in extracted
+            if (previous := existing.get(item.external_id)) is not None
+            and previous.content_hash != item.content_hash
+        ],
+    )
+
+    # In batches: one statement binds every column of every row, and asyncpg
+    # refuses more than 32,767 parameters. A 2,000-posting Workday board is
+    # about 34,000.
+    rows_per_statement = max(1, ASYNCPG_PARAMETER_LIMIT // len(values[0]))
+    for first in range(0, len(values), rows_per_statement):
+        await session.execute(_upsert_statement(values[first : first + rows_per_statement]))
+
+    for item in extracted:
+        previous = existing.get(item.external_id)
+        if previous is None:
+            continue
+        if previous.content_hash != item.content_hash:
+            result.updated.append(previous.id)
+        elif previous.closed_at is not None:
+            result.reopened.append(previous.id)
+
+    # New rows have no id until the insert lands, so they are read back rather
+    # than guessed at.
+    new_ids: dict[str, uuid.UUID] = {}
+    if len(existing) < len(extracted):
+        inserted = await session.execute(
+            select(Posting.id, Posting.external_id).where(
+                Posting.company_id == company.id,
+                Posting.external_id.in_(
+                    [item.external_id for item in extracted if item.external_id not in existing]
+                ),
+            )
+        )
+        new_ids = {external_id: posting_id for posting_id, external_id in inserted.all()}
+        result.new = list(new_ids.values())
+
+    await _record_versions(session, values, existing, new_ids, baselines, current)
+
+    from packages.matching.canonical import assign
+
+    await assign(session, [*result.new, *result.updated])
+
+    await session.flush()
+    return result
+
+
+#: The most parameters asyncpg binds in one statement.
+ASYNCPG_PARAMETER_LIMIT = 32767
+
+
+def _upsert_statement(values: list[dict[str, object]]) -> Any:
+    """Insert these postings, or refresh the ones the board listed before.
+
+    `first_seen_at` is absent from the update set on purpose: it is when we
+    noticed the posting, and a posting we notice again was not born again.
+    """
     statement = pg_insert(Posting).values(values)
     changed = Posting.content_hash.is_distinct_from(statement.excluded.content_hash)
     statement = statement.on_conflict_do_update(
@@ -425,54 +488,7 @@ async def _store(
             },
         },
     )
-    # What the edited postings said *before* this upsert, for a baseline
-    # version. Read first because the statement below overwrites it.
-    baselines = await _unversioned_baselines(
-        session,
-        [
-            previous.id
-            for item in extracted
-            if (previous := existing.get(item.external_id)) is not None
-            and previous.content_hash != item.content_hash
-        ],
-    )
-
-    # `first_seen_at` is absent from the update set on purpose: it is when we
-    # noticed the posting, and a posting we notice again was not born again.
-    await session.execute(statement)
-
-    for item in extracted:
-        previous = existing.get(item.external_id)
-        if previous is None:
-            continue
-        if previous.content_hash != item.content_hash:
-            result.updated.append(previous.id)
-        elif previous.closed_at is not None:
-            result.reopened.append(previous.id)
-
-    # New rows have no id until the insert lands, so they are read back rather
-    # than guessed at.
-    new_ids: dict[str, uuid.UUID] = {}
-    if len(existing) < len(extracted):
-        inserted = await session.execute(
-            select(Posting.id, Posting.external_id).where(
-                Posting.company_id == company.id,
-                Posting.external_id.in_(
-                    [item.external_id for item in extracted if item.external_id not in existing]
-                ),
-            )
-        )
-        new_ids = {external_id: posting_id for posting_id, external_id in inserted.all()}
-        result.new = list(new_ids.values())
-
-    await _record_versions(session, values, existing, new_ids, baselines, current)
-
-    from packages.matching.canonical import assign
-
-    await assign(session, [*result.new, *result.updated])
-
-    await session.flush()
-    return result
+    return statement
 
 
 async def _unversioned_baselines(
