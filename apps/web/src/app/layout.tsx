@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Instrument_Sans, JetBrains_Mono, Newsreader } from "next/font/google";
+import localFont from "next/font/local";
 import { ApiHealth } from "@/components/api-health";
 import { CrawlerSpider } from "@/components/crawler-spider";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -11,9 +11,13 @@ import { STATUS_ORDER } from "@/components/status";
 import { api } from "@/lib/api";
 import "./globals.css";
 
-const interfaceFont = Instrument_Sans({ subsets: ["latin"], weight: ["400", "500", "600"], display: "swap", variable: "--font-instrument-sans" });
-const titleFont = Newsreader({ subsets: ["latin"], weight: "400", display: "swap", variable: "--font-newsreader" });
-const valueFont = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500"], display: "swap", variable: "--font-jetbrains-mono" });
+// The fonts are files in the repo (Latin subsets, SIL OFL 1.1, licences beside
+// them), so `next build` needs no network: `next/font/google` downloads at
+// build time, and a scheduled CI run failed there with no code change.
+// Instrument Sans and JetBrains Mono are variable in weight; Newsreader is 400.
+const interfaceFont = localFont({ src: "./fonts/InstrumentSans-latin.woff2", weight: "400 700", display: "swap", variable: "--font-instrument-sans" });
+const titleFont = localFont({ src: "./fonts/Newsreader-latin.woff2", weight: "400", display: "swap", variable: "--font-newsreader", adjustFontFallback: "Times New Roman" });
+const valueFont = localFont({ src: "./fonts/JetBrainsMono-latin.woff2", weight: "400 800", display: "swap", variable: "--font-jetbrains-mono" });
 
 export const metadata: Metadata = {
   title: "Jobrunner",
