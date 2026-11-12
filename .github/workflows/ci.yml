@@ -294,3 +294,38 @@ jobs:
 
       - name: Playwright Chromium is present in the image
         run: docker run --rm jobrunner:ci python -m playwright install --dry-run chromium
+
+  # Known advisories against what is pinned. Weekly and on demand only, for the
+  # reason the `latest` gates leg is: an advisory published overnight is not
+  # something a pull request caused, so it fails Monday's run rather than
+  # somebody's PR. On 2026-11-11 `pip-audit` found 65 advisories in seven pins
+  # of constraints.txt that nothing had been looking for.
+  #
+  # When the Python half fails, re-resolve only the named packages and open a
+  # PR, whose CI then tests exactly what it pins:
+  #   uv pip compile pyproject.toml --extra dev --universal \
+  #     --python-version 3.12 -o constraints.txt --upgrade-package <name>
+  # tests/test_ci_audits_dependencies.py holds the job.
+  audit:
+    name: dependency advisories (pip-audit, npm audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reads the lock file and asks the advisory database; installs nothing
+      # of ours. `--no-deps` because the lock already lists every package.
+      - name: Python advisories (constraints.txt)
+        run: pipx run pip-audit==2.10.1 -r constraints.txt --no-deps --disable-pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # From the lockfile alone. Dev tools are left out: they never run in the
+      # dashboard the owner opens.
+      - name: Dashboard advisories (package-lock.json)
+        working-directory: apps/web
+        run: npm audit --omit=dev
