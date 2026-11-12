@@ -13,7 +13,8 @@ because both make real outbound requests to employers' sites.
 from __future__ import annotations
 
 from fastapi import APIRouter
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.deps import SessionDep
 from packages.core.enums import QueueTaskStatus, SourceStatus
@@ -25,11 +26,11 @@ from packages.matching.idf import MIN_DOCUMENTS, open_document_count
 router = APIRouter(prefix="/companies", tags=["companies"])
 
 
-async def _count(session, *where) -> int:
+async def _count(session: AsyncSession, *where: ColumnElement[bool]) -> int:
     return int(await session.scalar(select(func.count()).select_from(Company).where(*where)) or 0)
 
 
-async def _queue_depth(session, kind: str) -> int:
+async def _queue_depth(session: AsyncSession, kind: str) -> int:
     return int(
         await session.scalar(
             select(func.count())
