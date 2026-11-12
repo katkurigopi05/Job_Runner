@@ -8,6 +8,29 @@ services:
       POSTGRES_USER: jobrunner
       POSTGRES_PASSWORD: jobrunner
       POSTGRES_DB: jobrunner
+    # Memory and query statistics. The image starts Postgres with its stock
+    # settings: 128 MB of shared buffers and 64 MB for index builds, for a
+    # database that reached 3.6 GB (2.5 GB of it chunk vectors) on 2026-11-11.
+    # These are modest on purpose: Docker has about 8 GB here and the Mac runs
+    # a local model beside it. pg_stat_statements records how long each query
+    # takes, so the next tuning change can be measured rather than guessed.
+    # The benefit of these values is not measured yet: this is what makes
+    # measuring possible. tests/test_database_settings.py holds the list.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=768MB
+      - -c
+      - effective_cache_size=3GB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+    # Parallel queries take their shared memory from /dev/shm, which Docker
+    # caps at 64 MB unless told otherwise.
+    shm_size: 256mb
     # Loopback only. A bare "5432:5432" publishes on every interface, and this
     # role is a superuser with the password above: anyone on the network could
     # read every record or queue an application for the worker to send.

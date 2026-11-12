@@ -17,6 +17,12 @@ COMMENT ON DATABASE jobrunner_test IS 'jobrunner:test';
 
 \connect jobrunner
 CREATE EXTENSION IF NOT EXISTS vector;
+-- Query timings, read with `SELECT … FROM pg_stat_statements`. The library is
+-- preloaded by docker-compose.yml. On a volume that already exists, run once:
+--   psql -h localhost -U jobrunner -d jobrunner \
+--     -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
+-- The main database only: the suite drops and recreates the test schema.
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 
 \connect jobrunner_test
 CREATE EXTENSION IF NOT EXISTS vector;
