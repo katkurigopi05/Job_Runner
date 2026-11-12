@@ -314,7 +314,9 @@ async def list_matches(
                 lag_hours=_lag_hours(posting),
                 closed=posting.closed_at is not None,
                 board_unanswered=posting.company_id in unanswered,
-                board_last_answered_at=unanswered.get(posting.company_id),
+                board_last_answered_at=(
+                    unanswered.get(posting.company_id) if posting.company_id else None
+                ),
                 title_similarity=float(reasons.get("title_similarity") or 0.0),
                 body_similarity=float(reasons.get("body_similarity") or 0.0),
                 matched_terms=list(reasons.get("matched_terms") or []),
