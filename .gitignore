@@ -88,3 +88,9 @@ sde_results.txt
 
 # Local backups: database dumps and résumé artifacts. PII, never committed or built.
 backups/
+
+# A notebook saved at the repo root is a scratch copy from a Kaggle or Colab
+# session; the project's notebooks live under scripts/. Ruff skips ignored
+# files, so this also keeps `make lint` and gate-0 from failing on this
+# machine alone for a file CI never sees (tests/test_root_notebooks_ignored.py).
+/*.ipynb
