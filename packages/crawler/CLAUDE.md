@@ -435,6 +435,17 @@ request, plus network time. Fetching 300 details in that cycle would mean
 
 - All list pages each crawl, up to 60; truncation or inconsistent/duplicate
   pagination closes nothing. A page failure abandons the read.
+- **Up to 100 since 2026-11-11, not 60.** Sixty pages was an hour at the old
+  60 s floor. It also meant no board over 1,200 postings was ever read whole:
+  28 boards holding 28,179 open postings (49% of the table) came back
+  `suspect` on every crawl, so nothing on them closed. 100 pages is Workday's
+  own window of 2,000 and about eight minutes at 5 s; it lets the 11 boards of
+  1,213 to 1,996 postings finish. A first-page total of 2,000 or more is
+  still marked truncated (`workday.REPORTED_TOTAL_CEILING`): Workday stops
+  counting there, so Walmart, Accenture and Citi each "have 2,000". Those 17
+  boards need the list split by a facet, which is not built. The first whole
+  read of a 2,000-posting board also bound 34,000 parameters in one INSERT,
+  past asyncpg's 32,767; `_store` writes in batches.
 - **Only the first page names the total.** Every later page says `total: 0`
   (read live on 2026-11-01: 94, then 0). Until then a later page's 0 counted
   as the board shifting mid-walk, so every board longer than one page came
