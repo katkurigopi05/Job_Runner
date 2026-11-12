@@ -74,9 +74,9 @@ jobs:
           --health-retries 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -143,7 +143,7 @@ jobs:
       # grading itself against the weaker guard. Same reasoning as
       # REQUIRE_DB above, and the same failure it prevents.
       - name: Cache the POS tagger data
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/nltk_data
           key: nltk-${{ hashFiles('scripts/fetch_nltk_data.py') }}
@@ -161,7 +161,7 @@ jobs:
 
       # The boundary tests execute the real TypeScript guard as well as the
       # ASGI middleware. Never silently skip the dashboard half of security CI.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -177,7 +177,7 @@ jobs:
 
       - name: Security regression evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: security-regressions-${{ matrix.deps }}
           path: ${{ runner.temp }}/security-regressions.xml
@@ -223,9 +223,9 @@ jobs:
         working-directory: apps/web
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -269,16 +269,16 @@ jobs:
     if: github.event_name != 'pull_request'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Built, never pushed. There is no registry and no deployment — CLAUDE.md
       # §1 says this runs on localhost. The image exists so that "it installs
       # from nothing" is checked on every commit, which is the failure mode a
       # developer machine cannot see.
       - name: Build the image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
@@ -322,14 +322,14 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Reads the lock file and asks the advisory database; installs nothing
       # of ours. `--no-deps` because the lock already lists every package.
       - name: Python advisories (constraints.txt)
         run: pipx run pip-audit==2.10.1 -r constraints.txt --no-deps --disable-pip
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
 
