@@ -154,8 +154,9 @@ async def _run_pipeline(
     adapter = adapter_for(application.url)
     application.ats = adapter.name
 
-    if getattr(application, "review_json", None):
-        cleaned = dict(application.review_json)
+    review = getattr(application, "review_json", None)
+    if review:
+        cleaned = dict(review)
         cleaned.pop("submission_uncertain", None)
         cleaned.pop("attempted_at", None)
         cleaned.pop("reason", None)

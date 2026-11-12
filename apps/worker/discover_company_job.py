@@ -261,7 +261,7 @@ async def _occupied_board(
     await session.flush()
 
 
-def _company_id(payload: dict) -> uuid.UUID:
+def _company_id(payload: dict[str, Any]) -> uuid.UUID:
     raw = payload.get("company_id")
     if not raw:
         raise MalformedDiscoveryTask("discover_company task has no company_id")

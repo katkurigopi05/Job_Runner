@@ -43,7 +43,8 @@ fmt:
 
 typecheck:
 	$(PY)/mypy packages/core packages/ats packages/github packages/tailor \
-		packages/crawler packages/matching packages/inbox
+		packages/crawler packages/matching packages/inbox packages/llm \
+		apps/api apps/worker
 
 # Schema drift: the migrations must fully describe the models.
 check-migrations:
