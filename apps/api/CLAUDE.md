@@ -249,11 +249,37 @@ mouth and sent back as history. `tests/test_assistant_copy_edit.py` holds the
 wiring; the behaviour was watched in a browser with the model stubbed, on
 `/chat` and in the dock, where Escape closes the editor and not the dock.
 
+**Conversations are kept, in the browser** (2026-11-12, at the owner's
+asking; `apps/web/src/lib/chat-recents.ts`, `assistant-recents.tsx`). "New
+conversation" and a reload both discarded the conversation and nothing could
+bring it back. Each settled conversation is now saved to `localStorage`, "New
+chat" leaves the last one in a Recents list, and one or all can be deleted
+after a second click. What must not be undone:
+
+- **Nothing is sent.** No request carries a kept conversation. A reopened one
+  goes to a model only as `ChatRequest.history`, by the three rules above,
+  because what is kept is the turns as they were on screen with their
+  `mailInContext` and `provider`.
+- **The model picker and the mail box are not kept.** Both are decided again
+  for each question.
+- **A dock keeps its own.** A conversation about one application is listed
+  only in that application's dock, and "delete all" says how many it removes
+  that the list does not show.
+- **Kept text is plain text in the browser's profile.** An answer that quoted
+  recruiter mail is kept with the quote. Fifty conversations at most, the
+  oldest dropped first; a store that is full or blocked is said in the status
+  line.
+
+`apps/web/tests/chat-recents.test.mjs` holds the rules and
+`tests/test_chat_recents.py` the wiring. Watched in a browser with the model
+stubbed, on `/chat` at 1280 and 390 pixels: keep, new chat, reload, reopen,
+delete one, delete the open one, delete all, a broken store. Not watched in
+the review dock.
+
 Not done:
 
-- **The memory is the open page's.** The conversation is in the dock's state
-  and is gone on a reload. Nothing is stored, in the browser or the database,
-  so nothing is remembered from one day to the next.
+- **The API stores no conversation.** It is in the dock's state, and since
+  2026-11-12 in the browser (below). The database holds none.
 - **A follow-up is still searched as it is written.** "which of those are
   remote?" is not a postings question to the search, so it was answered from
   the carried-over postings alone. "which of those use Python?" also runs a

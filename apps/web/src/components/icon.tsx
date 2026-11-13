@@ -21,6 +21,8 @@ const paths = {
   "menu": <><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></>,
   "arrow": <><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></>,
   "close": <><path d="m18 6-12 12M6 6l12 12"/></>,
+  "plus": <><path d="M5 12h14"/><path d="M12 5v14"/></>,
+  "history": <><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></>,
   "sidebar": <><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></>,
   "top": <><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></>,
   "mail": <><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></>,

@@ -10,8 +10,10 @@ import { AssistantChart, type Chart } from "@/components/assistant-chart";
 import { EditQuestion, TurnActions } from "@/components/assistant-turn-actions";
 import { KaggleConnection } from "@/components/kaggle-connection";
 import { AssistantPrompts } from "@/components/assistant-prompts";
+import { AssistantRecents, useRecents } from "@/components/assistant-recents";
 import { ReplyText } from "@/components/reply-text";
 import { historyFrom } from "@/lib/chat-history";
+import { newChatId } from "@/lib/chat-recents";
 import { readFrames } from "@/lib/chat-stream";
 import { POSTING_LINK } from "@/lib/external";
 
@@ -434,6 +436,9 @@ function answeredBy(body: Reply): string {
 
 export function Assistant({ applicationId }: { applicationId?: string }) {
   const [turns, setTurns] = useState<Turn[]>([]);
+  // The conversation on screen, by the id it is kept under in Recents.
+  const [chatId, setChatId] = useState(newChatId);
+  const recents = useRecents<Turn>(applicationId);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   // Defaults local, and resets to nothing else on reload. The choice belongs to
@@ -455,6 +460,21 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
   const asked = useRef<AbortController | null>(null);
 
   useEffect(() => () => asked.current?.abort(), []);
+
+  // Each settled conversation is kept, so a new chat or a reload loses nothing.
+  const { keep } = recents;
+  useEffect(() => {
+    if (busy || turns.length === 0 || keep(chatId, turns)) return;
+    setStatus("this chat could not be kept · the browser's storage is full or blocked");
+  }, [busy, turns, chatId, keep]);
+
+  /** Put a conversation on screen: a kept one, or none of it for a new chat. */
+  function show(id: string, kept: Turn[], said: string) {
+    setChatId(id);
+    setTurns(kept);
+    setEditing(null);
+    setStatus(said);
+  }
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -568,6 +588,20 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--radius-panel)] border border-rule bg-paper-raised">
+      <AssistantRecents
+        recents={recents}
+        openId={chatId}
+        busy={busy}
+        fresh={turns.length === 0}
+        onNew={() => show(newChatId(), [], "new chat · nothing carried over")}
+        onOpen={(kept) => show(kept.id, kept.turns, "reopened · remembered from here on")}
+        onDelete={(id) => {
+          recents.forget(id);
+          if (id === null || id === chatId) show(newChatId(), [], "deleted · new chat");
+          else setStatus("deleted one kept chat");
+        }}
+      />
+
       {/* Who answers. Above the prompts because it changes what they cost. */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-3 py-2">
         <label htmlFor="assistant-provider" className="text-xs text-ink-faint">
@@ -744,27 +778,12 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
         </button>
       </form>
 
-      {/* Status line, bottom-left — the photo-editor's. Beside it, the one
-          control memory needs: the conversation is remembered until this is
-          pressed or the page is left, and it is kept nowhere else. */}
+      {/* Status line, bottom-left — the photo-editor's. "New chat" and the
+          kept conversations are the first row (`assistant-recents.tsx`). */}
       <div className="flex items-center gap-3 border-t border-rule px-3 py-1.5">
         <p role="status" className="min-w-0 flex-1 text-left text-xs text-ink-faint">
           {status}
         </p>
-        {turns.length > 0 ? (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              setTurns([]);
-              setEditing(null);
-              setStatus("new conversation · nothing remembered");
-            }}
-            className="shrink-0 text-xs text-ink-soft underline decoration-rule underline-offset-4 transition-colors hover:text-ink hover:decoration-ink-soft disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
-          >
-            New conversation
-          </button>
-        ) : null}
       </div>
     </div>
   );
