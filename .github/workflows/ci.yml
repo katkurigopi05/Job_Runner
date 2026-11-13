@@ -53,7 +53,10 @@ jobs:
         deps: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["locked","latest"]' || '["locked"]') }}
     # The locked leg keeps the bare name, so the check a PR shows is unchanged.
     name: gates (lint, types, migrations, tests)${{ matrix.deps == 'latest' && ' on latest dependencies' || '' }}
-    runs-on: ubuntu-latest
+    # Named, not `ubuntu-latest`. This job installs system packages for the
+    # pinned Playwright, and `latest` began resolving to 26.04, which that
+    # Playwright refuses. See `.github/CLAUDE.md`, "The gates runner is named".
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
 
     services:

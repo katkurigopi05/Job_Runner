@@ -49,6 +49,17 @@ and a developer typing `make gate-3` should still get the full suite first.
 `tests/test_ci_runs_every_gate.py` holds both properties: every gate is named
 in CI, and no CI step spells out its own file list again.
 
+**The gates runner is named.** `gates` runs on `ubuntu-24.04`, not
+`ubuntu-latest`. On 2026-11-12 `ubuntu-latest` began handing out Ubuntu 26.04
+runners: the push to `main` at 09:47 UTC ran on 24.04.5 and passed, and a pull
+request at 23:58 UTC ran on 26.04.1 and failed at "Install Playwright
+Chromium" with "Playwright does not support chromium on ubuntu26.04-x64",
+before any test ran. The job installs system packages for the Playwright that
+`constraints.txt` pins, so its operating system is part of the dependency set
+and moves when that pin moves: raise the two together, and check the `image`
+job with `workflow_dispatch` as for any dependency change. The other jobs
+install nothing through Playwright and stay on `ubuntu-latest`.
+
 **`image`** — builds the `Dockerfile`, imports every entry point inside it, and
 checks Chromium is present. Nothing is pushed anywhere.
 
