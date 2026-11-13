@@ -184,3 +184,19 @@ async def test_a_profile_with_no_resume_says_so_rather_than_scoring_nothing(
 
     assert response.status_code == 400
     assert "base résumé" in response.json()["error"]["message"]
+
+
+async def test_it_reports_the_skills_the_posting_asks_for_by_name(
+    client: AsyncClient, complete_candidate, posting: Posting
+) -> None:
+    """Each asked skill is in exactly one of the two lists, and both are terms."""
+    response = await client.get(
+        f"/postings/{posting.id}/ats",
+        params={"profile_id": complete_candidate["profile_id"]},
+    )
+
+    body = response.json()
+    asked = {term.lower() for term in body["skills_supported"] + body["skills_missing"]}
+    assert asked == {"python", "postgresql", "kubernetes"}
+    assert set(body["skills_supported"]) <= set(body["supported"])
+    assert set(body["skills_missing"]) <= set(body["missing"])

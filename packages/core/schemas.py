@@ -564,6 +564,13 @@ class PostingAtsOut(BaseModel):
     #: What the posting asks for and the résumé does not evidence. Not a
     #: to-do list: writing one of these in would be fabrication (§2.1).
     missing: list[str] = Field(default_factory=list)
+    #: The terms above that are skills the posting requires or prefers by
+    #: name, required first. Each is in `supported` or `missing` too, with the
+    #: same verdict. Both empty when the posting names no skill it asks for,
+    #: which is "not stated" and not "none matched".
+    skills_supported: list[str] = Field(default_factory=list)
+    #: As `missing`: what the résumé does not evidence, never a to-do list.
+    skills_missing: list[str] = Field(default_factory=list)
     findings: list[AtsFindingOut] = Field(default_factory=list)
 
 

@@ -63,10 +63,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from packages.tailor.ats import Finding, _requirements, _requirements_text
+from packages.tailor.ats import Finding, requirement_terms
 from packages.tailor.bullets import LineKind, classify
 from packages.tailor.guard import SourceCorpus, normalize
-from packages.tailor.keywords import analyze
 from packages.tailor.parse import ParsedResume
 
 __all__ = ["RecruiterReport", "Shortlist", "score"]
@@ -425,12 +424,7 @@ def score(resume: ParsedResume, job_description: str = "") -> RecruiterReport:
 
     # The same requirements view the ATS scorer uses, for the same reason: the
     # posting's narrative is not what the candidate is being measured against.
-    terms = analyze(_requirements_text(job_description), corpus)
-    wanted = {
-        normalize(term)
-        for term in _requirements([*terms.supported, *terms.missing])
-        if normalize(term)
-    }
+    wanted = {normalize(term) for term in requirement_terms(job_description) if normalize(term)}
 
     return RecruiterReport(
         scan=_ten_second_scan(lines, wanted, findings),

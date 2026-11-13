@@ -13,6 +13,24 @@ single averaged number hides which one broke:
   implementations of "does the résumé support this term" is how the tailorer
   and the guard end up disagreeing.
 
+## The skills a posting names come first
+
+The term list was the forty most repeated words of the requirements, and a
+posting names its stack once. Over the owner's 300 best-scored open matches on
+2026-11-12, a median of 3% of the scored terms were skills and a median of 17%
+of the skills a posting required or preferred were scored at all: Python was
+required by 85 postings whose list never showed it. `matching/requirements.py`
+already reads which skills a posting requires, prefers or only mentions, so
+the list now starts with the first two kinds (`posting_skills`), written as
+the posting writes them, and the repeated words fill what is left of the
+forty.
+
+On those postings that moved the keyword half from a median of 23% to 25%,
+because most of the list is still words like "systems" and "teams". So the
+skills are also reported on their own, `skills_supported` and
+`skills_missing`: the part of the list an applicant can act on. They are a
+subset of the terms and carry the same verdicts, never a second opinion.
+
 ## What this is not
 
 It is not a real ATS. Greenhouse, Lever, Workday and Taleo each parse
@@ -43,10 +61,18 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from packages.matching.requirements import Requirement, extract
+from packages.matching.skill_vocab import BY_KEY, find_skills
+from packages.tailor.aliases import equivalents
 from packages.tailor.dates import contains_date, is_open_ended
-from packages.tailor.guard import SourceCorpus, normalize
-from packages.tailor.keywords import analyze, job_terms
+from packages.tailor.guard import SourceCorpus, normalize, singular
+from packages.tailor.keywords import job_terms, split_terms
 from packages.tailor.parse import ParsedResume, _match_section
+
+#: How `requirement_terms` builds its list. `targeted.classify` writes a
+#: document from that list, so the targeted cache key carries this
+#: (`cache.tailoring_key`): change the list, change the string.
+TERMS_REVISION = "asked-skills-first-v1"
 
 #: A bullet this long is one an ATS keeps and a human skips. Not a parse
 #: failure, so it costs little — but the owner's own résumé has one of 431
@@ -277,14 +303,121 @@ def requirements_text(job_description: str) -> str:
     return _requirements_text(job_description)
 
 
+@dataclass(frozen=True)
+class SkillAsk:
+    """One skill a posting requires or prefers by name."""
+
+    #: The key in `matching.skill_vocab`.
+    key: str
+    #: As the posting writes it: "Postgres", "K8s". That spelling is what an
+    #: ATS scans for, and what a revision may write where the résumé backs it.
+    term: str
+    required: bool
+
+
+def _repeated(job_description: str, limit: int) -> list[str]:
+    """The most repeated words of the requirements: the whole list, until 2026-11-12."""
+    return _requirements(job_terms(_requirements_text(job_description), limit=limit))
+
+
+def _names_one_of(term: str, keys: frozenset[str]) -> bool:
+    """Whether `term` is one of these skills, in any spelling the alias table knows."""
+    forms = {term, *equivalents(" ".join(term.lower().split()))}
+    return any(skill.key in keys for form in forms for skill in find_skills(form))
+
+
+def _as_written(found: str) -> str:
+    """A skill as the posting spells it, without a capital that only opens a line.
+
+    "Machine learning experience is required" spells the skill "machine
+    learning". Kept as found, a targeted revision would write the capital
+    into the middle of a bullet. A name is left alone: "Hugging Face" has a
+    second capital, and one word ("Python", "Docker") is a name already.
+    """
+    opens_a_line = " " in found and found[0].isupper() and found[1:] == found[1:].lower()
+    return found.lower() if opens_a_line else found
+
+
+def _asked(job_description: str, repeated: list[str]) -> list[SkillAsk]:
+    asked: list[SkillAsk] = []
+    for mention in extract(job_description).skills:
+        if mention.requirement is Requirement.UNCLASSIFIED:
+            continue
+        key = frozenset({mention.skill})
+        # The repeated words name it already, more often than not, and that
+        # spelling is the one every caller of this list has been handed.
+        listed = next((term for term in repeated if _names_one_of(term, key)), None)
+        if listed is None:
+            pattern = BY_KEY[mention.skill].pattern
+            # The clause that made it a demand first; a quote is cut at a length.
+            found = pattern.search(mention.quote) or pattern.search(job_description)
+            listed = _as_written(found.group(0)) if found else mention.label
+        asked.append(
+            SkillAsk(
+                key=mention.skill,
+                term=listed,
+                required=mention.requirement is Requirement.REQUIRED,
+            )
+        )
+    return asked
+
+
+def posting_skills(job_description: str, *, limit: int = 40) -> list[SkillAsk]:
+    """The skills a posting requires or prefers by name, required first.
+
+    Read by `matching.requirements.extract`, which is what fills
+    `Posting.requirements_json` at ingestion, so the feed, the gap report and
+    this score cannot disagree about what a posting asks for. A skill it files
+    as unclassified is one the posting names under no requirement: "we build
+    with Go" in a company's description of itself. `gaps.py` does not count
+    that as a demand and neither does this.
+    """
+    return _asked(job_description, _repeated(job_description, limit))
+
+
+def _posting_terms(job_description: str, limit: int) -> tuple[list[str], frozenset[str]]:
+    """The scored terms, and which of them are skills the posting asks for.
+
+    Asked skills first, then the repeated words of the requirements, `limit`
+    in all. A word of an asked skill is left out: with "deep learning" asked
+    for, "deep" and "learning" are not two more requirements.
+    `keywords.job_terms` makes the same trade for the phrases it knows.
+
+    A second spelling of an asked skill stays, as it always was in this list:
+    a posting that writes both "CI/CD" and "continuous integration" is
+    scanned for both, and a résumé that says "CI" may be revised to say the
+    longer one.
+    """
+    repeated = _repeated(job_description, limit)
+    asked = _asked(job_description, repeated)
+    used = {
+        form
+        for ask in asked
+        if " " in ask.term
+        for word in ask.term.lower().split()
+        for form in (word, singular(word))
+    }
+    rest = [term for term in repeated if term.lower() not in used]
+    terms: list[str] = []
+    seen: set[str] = set()
+    for term in [*(ask.term for ask in asked), *rest]:
+        folded = term.lower()
+        if folded not in seen:
+            seen.add(folded)
+            terms.append(term)
+    terms = terms[:limit]
+    return terms, frozenset(ask.term for ask in asked) & frozenset(terms)
+
+
 def requirement_terms(job_description: str, *, limit: int = 40) -> list[str]:
     """The terms `score` holds a résumé to, before any résumé is read.
 
     The same list, so that whoever classifies a posting's terms
-    (`targeted.classify`) and whoever counts them here cannot be reading two
+    (`targeted.classify`), whoever reads the résumé as a recruiter would
+    (`recruiter.score`) and whoever counts them here cannot be reading two
     postings.
     """
-    return _requirements(job_terms(_requirements_text(job_description), limit=limit))
+    return _posting_terms(job_description, limit)[0]
 
 
 def _without_footer(text: str) -> str:
@@ -336,6 +469,25 @@ class AtsReport:
     missing: list[str] = field(default_factory=list)
     #: False when no posting was supplied, so `keywords` must not be read.
     scored_against_posting: bool = False
+    #: The terms above that are skills the posting requires or prefers by
+    #: name, required first. Both empty when it states none.
+    skills_supported: list[str] = field(default_factory=list)
+    skills_missing: list[str] = field(default_factory=list)
+
+    @property
+    def states_skills(self) -> bool:
+        """False when the posting asked for no skill by name, so `skills` must not be read."""
+        return bool(self.skills_supported or self.skills_missing)
+
+    @property
+    def skills(self) -> float:
+        """Share of the skills the posting asks for by name that the résumé backs.
+
+        0.0 when it asks for none, which `states_skills` tells apart from
+        backing none of them.
+        """
+        total = len(self.skills_supported) + len(self.skills_missing)
+        return round(len(self.skills_supported) / total, 3) if total else 0.0
 
     @property
     def overall(self) -> float:
@@ -354,6 +506,9 @@ class AtsReport:
         parts = [f"parse {self.parse:.0%}"]
         if self.scored_against_posting:
             parts.append(f"keywords {self.keywords:.0%}")
+        if self.states_skills:
+            asked = len(self.skills_supported) + len(self.skills_missing)
+            parts.append(f"skills {len(self.skills_supported)} of {asked}")
         parts.append(f"{len(self.findings)} finding{'s' if len(self.findings) != 1 else ''}")
         return ", ".join(parts)
 
@@ -674,18 +829,18 @@ def score(resume: ParsedResume, job_description: str = "") -> AtsReport:
     if not job_description.strip():
         return AtsReport(parse=round(parse, 3), keywords=0.0, findings=findings)
 
-    terms = analyze(_requirements_text(job_description), SourceCorpus.from_resume(resume))
-    supported = _requirements(terms.supported)
-    missing = _requirements(terms.missing)
-    total = len(supported) + len(missing)
+    terms, asked = _posting_terms(job_description, limit=40)
+    split = split_terms(terms, SourceCorpus.from_resume(resume))
 
     return AtsReport(
         parse=round(parse, 3),
-        keywords=round(len(supported) / total, 3) if total else 0.0,
+        keywords=round(len(split.supported) / len(terms), 3) if terms else 0.0,
         findings=findings,
-        supported=supported,
-        missing=missing,
+        supported=split.supported,
+        missing=split.missing,
         scored_against_posting=True,
+        skills_supported=[term for term in split.supported if term in asked],
+        skills_missing=[term for term in split.missing if term in asked],
     )
 
 
@@ -761,7 +916,10 @@ __all__ = [
     "AtsDelta",
     "AtsReport",
     "Finding",
+    "SkillAsk",
+    "TERMS_REVISION",
     "compare",
+    "posting_skills",
     "requirement_terms",
     "requirements_text",
     "score",

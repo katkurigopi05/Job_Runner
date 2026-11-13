@@ -276,3 +276,18 @@ def test_targeted_prompt_change_invalidates_targeted_key_only(monkeypatch) -> No
 
     assert _key(mode="rewrite") == rewrite_before
     assert _key(mode="targeted") != targeted_before
+
+
+def test_term_list_change_invalidates_targeted_key_only(monkeypatch) -> None:
+    """A targeted document is written from `ats.requirement_terms`.
+
+    The ordinary rewrite reads the posting through `keywords.analyze` and never
+    sees that list, so its key is exactly what it was.
+    """
+    targeted = _key(mode="targeted")
+    rewrite = _key(mode="rewrite")
+
+    monkeypatch.setattr("packages.tailor.ats.TERMS_REVISION", "some-later-list")
+
+    assert _key(mode="targeted") != targeted
+    assert _key(mode="rewrite") == rewrite

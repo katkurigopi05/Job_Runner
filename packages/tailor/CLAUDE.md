@@ -740,3 +740,47 @@ that the hybrid retrieval is LlamaIndex's. That is correct. A team project's
 dependencies include teammates' parts, which the dashboard says beside the
 control; the link is the owner's statement that the code is theirs. A
 notebook-only repository declares nothing, so it backs nothing.
+
+## The score reads the skills a posting asks for by name (2026-11-12)
+
+The term list `ats.score`, `recruiter.score` and `targeted.classify` share
+was the forty most repeated words of a posting's requirements, and a posting
+names its stack once. Over the owner's 300 best-scored open matches, against
+base résumé v14:
+
+| Per posting, median | Before | After |
+|---|---|---|
+| Scored terms that are vocabulary skills | 3% | 8% |
+| Asked skills that are among the scored terms | 17% | 100% |
+| Keyword score | 23% | 25% |
+
+Python was required by 85 of those postings and scored in none of them.
+
+`ats.posting_skills` reads the skills a posting requires or prefers with
+`matching.requirements.extract`, the reader that fills
+`Posting.requirements_json`, and `ats.requirement_terms` starts with them.
+The repeated words fill the rest of the forty. What must not be undone:
+
+- **Only demands.** A skill named under no requirement ("we build with Go")
+  is not added, as in `matching/gaps.py`.
+- **One verdict per term.** `AtsReport.skills_supported` and `skills_missing`
+  are the asked skills among `supported` and `missing`, split by the same
+  `keywords.split_terms`. They are not a second reading of the résumé.
+- **The guard's list is not this list.** The ordinary rewrite reads a posting
+  through `keywords.analyze`, which is unchanged, so what a rewrite may not
+  take from a posting is what it was.
+- **Nothing new may be written.** An asked skill is a term like any other in
+  `targeted.classify`: stated, an alias, backed by a linked repository, or a
+  gap. On the 300 postings the plan adds the same terms to the same number
+  of postings before and after.
+- **The targeted cache key carries `ats.TERMS_REVISION`.** Change how the
+  list is built, change the string.
+
+The keyword score barely moved because most of the list is still words like
+"systems" (148 of the 300 postings), "technical" (118) and "teams" (103), so
+the dashboard's panel on `/matches` also shows the skills on their own: a
+median of 67% of asked skills backed, over the 192 postings that state any.
+
+Found on the way and left alone: 15 of the 300 stored `requirements_json`
+rows were read by extractor version 2 and name a skill that version 4 no
+longer reads as asked. The score reads the description, not the stored row.

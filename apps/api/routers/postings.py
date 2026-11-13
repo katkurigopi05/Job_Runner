@@ -279,6 +279,8 @@ async def posting_ats(
         scored_against_posting=report.scored_against_posting,
         supported=report.supported,
         missing=report.missing,
+        skills_supported=report.skills_supported,
+        skills_missing=report.skills_missing,
         findings=[
             AtsFindingOut(code=f.code, detail=f.detail, cost=f.cost, line=f.line)
             for f in report.findings

@@ -70,7 +70,14 @@ def test_the_words_beside_it_still_are() -> None:
 
 
 def test_technical_terms_identifiers_and_phrases_are_untouched() -> None:
-    """The list as it was before either change, to the term and in order."""
+    """Every term the grammar list left alone is still here, to the term.
+
+    The order changed on 2026-11-12, and one term was gained. The skills a
+    posting asks for by name now lead the list (`ats.posting_skills`), in the
+    vocabulary's order, spelled as they were. `C#` is among
+    them: it is two characters, and the rule that drops a word that short had
+    been dropping it.
+    """
     posting = (
         "Requirements:\n"
         "C++ and C# services, Node.js tooling, gRPC and GraphQL APIs.\n"
@@ -79,22 +86,23 @@ def test_technical_terms_identifiers_and_phrases_are_untouched() -> None:
     )
 
     assert ats.requirement_terms(posting) == [
-        "machine learning",
         "C++",
-        "services",
+        "C#",
         "Node.js",
-        "tooling",
-        "gRPC",
         "GraphQL",
-        "APIs",
+        "gRPC",
         "PostgreSQL",
         "Redis",
         "Kafka",
-        "production",
-        "Terraform",
+        "machine learning",
         "AWS",
-        "pipelines",
+        "Terraform",
         "CI/CD",
+        "services",
+        "tooling",
+        "APIs",
+        "production",
+        "pipelines",
         "OAuth2",
         "test-driven",
     ]
