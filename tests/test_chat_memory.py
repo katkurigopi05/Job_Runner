@@ -363,9 +363,13 @@ WEB = Path(__file__).resolve().parents[1] / "apps" / "web" / "src"
 
 def test_the_dock_sends_what_it_remembers_and_can_forget() -> None:
     dock = (WEB / "components" / "assistant.tsx").read_text()
+    recents = (WEB / "components" / "assistant-recents.tsx").read_text()
 
     assert "history: historyFrom(" in dock
-    assert "New conversation" in dock
+    # "New conversation" until 2026-11-12, when the owner asked for "New chat"
+    # and for the conversation it leaves to be kept (`test_chat_recents.py`).
+    assert "New chat" in recents
+    assert "onNew={() => show(newChatId(), [], " in dock
 
 
 def test_the_dock_sends_only_finished_answers() -> None:

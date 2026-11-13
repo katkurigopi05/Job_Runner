@@ -80,8 +80,10 @@ def test_the_copy_is_announced_where_a_screen_reader_hears_it() -> None:
 
 def test_a_new_conversation_closes_an_open_editor() -> None:
     """Its index would point into a conversation that is no longer there."""
-    cleared = ASSISTANT.index("setTurns([]);")
-    assert "setEditing(null);" in ASSISTANT[cleared : cleared + 80]
+    # A new chat, a reopened one and a deleted one all go through `show`.
+    shown = ASSISTANT.index("setTurns(kept);")
+    assert "setEditing(null);" in ASSISTANT[shown : shown + 80]
+    assert "setTurns([" not in ASSISTANT.replace("setTurns([...", "")
 
 
 def test_the_assistant_stays_within_the_size_a_file_is_kept_to() -> None:
