@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Company, Posting
 from packages.crawler.aggregators import SOURCES, AggregatorSource, SourceResult, fetch_all
+from packages.crawler.crawl import _store
 from packages.crawler.extract import CompanySeed, load_seed
 from packages.crawler.fetch import PoliteFetcher
 from packages.crawler.liveness import check
@@ -62,6 +63,7 @@ class DiscoveryReport:
     #: Aggregator postings re-checked, and how many turned out to be gone.
     verified: int = 0
     closed_stale: int = 0
+    abroad: int = 0
 
     @property
     def seen(self) -> int:
@@ -79,6 +81,8 @@ class DiscoveryReport:
         )
         if self.verified:
             text += f", {self.verified} re-checked ({self.closed_stale} closed)"
+        if self.abroad:
+            text += f", {self.abroad} foreign postings not stored"
         failures = [f"{r.source}: {r.failure}" for r in self.sources if not r.ok]
         return f"{text} [{'; '.join(failures)}]" if failures else text
 
@@ -126,21 +130,24 @@ async def ingest(
             if resolve_ats:
                 resolution = await resolve(item.posting.url, fetcher, company_url=item.company_url)
 
-            session.add(
-                Posting(
-                    company_id=company.id,
-                    # Unresolved stays "unknown" — a lead, not a lie about
-                    # what the apply pipeline can finish.
-                    ats_type=resolution.ats or "unknown",
-                    external_id=item.posting.external_id,
-                    url=resolution.url,
-                    title=item.posting.title,
-                    location=item.posting.location,
-                    description_raw=item.posting.description_raw,
-                    content_hash=item.posting.content_hash,
-                )
+            # Discovery follows the board writer's location/age policy too.
+            # Unresolved ATS identities stay unknown until resolution proves one.
+            stored = await _store(
+                session,
+                company,
+                [
+                    item.posting.model_copy(
+                        update={
+                            "ats_type": resolution.ats or "unknown",
+                            "url": resolution.url,
+                        }
+                    )
+                ],
             )
-            report.new_postings += 1
+            report.new_postings += len(stored.new)
+            report.abroad += stored.abroad
+            if not stored.new:
+                continue
 
             if not resolution.applyable:
                 continue

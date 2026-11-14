@@ -90,15 +90,25 @@ async def hydrate(
     cached: list[ExtractedPosting] = []
     for item in pages.postings:
         prior = previous.get(item.external_id)
-        same = prior is not None and (prior.title, prior.location, prior.url) == (
+        previous_location = (
+            prior.listed_location
+            if prior is not None and prior.listed_location is not None
+            else prior.location
+            if prior is not None
+            else None
+        )
+        same = prior is not None and (prior.title, previous_location or "", prior.url) == (
             item.title,
-            item.location,
+            item.location or "",
             item.url,
         )
         if prior is not None and item.published_at is None:
             item.published_at = prior.published_at
         if same and prior is not None and prior.description_raw:
             item.description_raw = prior.description_raw
+            item.location = prior.location
+            item.listed_location = prior.listed_location
+            item.source_locations = prior.source_locations
             cached.append(item)
         elif prior is not None or not (
             max_age_days > 0
@@ -133,6 +143,9 @@ async def hydrate(
                 raise
             log.warning("detail_unreadable", posting=item.external_id, error=type(exc).__name__)
         if hydrated is not None:
+            item.location = hydrated.location
+            item.listed_location = hydrated.listed_location
+            item.source_locations = hydrated.source_locations
             item.description_raw = hydrated.description_raw
             item.published_at = hydrated.published_at
             item.content_hash = hydrated.content_hash

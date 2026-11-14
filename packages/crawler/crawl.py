@@ -325,17 +325,26 @@ async def _store(
     # search area hides these from the feed anyway; storing them cost an
     # embedding each and, on a worldwide board, most of the table. The same
     # exception as the age rule: a held posting is still stamped as seen.
+    from packages.matching.location_fields import normalize, wholly_foreign
+
+    location_fields = {
+        item.external_id: normalize(
+            item.location,
+            title=item.title,
+            description=item.description_raw,
+            source_locations=item.source_locations,
+        )
+        for item in extracted
+    }
     if us_only is None:
         from packages.core.config import get_settings
 
         us_only = get_settings().search_us_only
     if us_only:
-        from packages.matching.locality import wholly_abroad
-
         domestic = [
             item
             for item in extracted
-            if item.external_id in existing or not wholly_abroad(item.location)
+            if item.external_id in existing or not wholly_foreign(location_fields[item.external_id])
         ]
         result.abroad = len(extracted) - len(domestic)
         if result.abroad:
@@ -352,6 +361,8 @@ async def _store(
             "url": item.url,
             "title": item.title,
             "location": item.location,
+            "listed_location": item.listed_location,
+            **location_fields[item.external_id],
             "description_raw": item.description_raw,
             "published_at": item.published_at,
             "content_hash": item.content_hash,
@@ -450,6 +461,17 @@ def _upsert_statement(values: list[dict[str, object]]) -> Any:
             "url": statement.excluded.url,
             "title": statement.excluded.title,
             "location": statement.excluded.location,
+            "listed_location": statement.excluded.listed_location,
+            **{
+                column: getattr(statement.excluded, column)
+                for column in (
+                    "country_code",
+                    "state_code",
+                    "is_remote",
+                    "locations_json",
+                    "location_version",
+                )
+            },
             "content_hash": statement.excluded.content_hash,
             # A board that stops reporting a date must not erase the one we
             # already have; `published_at` is the only evidence that
@@ -753,6 +775,8 @@ async def _poll_paged(
                         Posting.url,
                         Posting.title,
                         Posting.location,
+                        Posting.listed_location,
+                        Posting.locations_json,
                         Posting.description_raw,
                         Posting.published_at,
                     ).where(Posting.company_id == company.id)
@@ -764,6 +788,8 @@ async def _poll_paged(
                     url=row.url,
                     title=row.title,
                     location=row.location,
+                    listed_location=row.listed_location,
+                    source_locations=row.locations_json if row.listed_location is not None else [],
                     description_raw=row.description_raw,
                     published_at=row.published_at,
                     ats_type=seed.ats,

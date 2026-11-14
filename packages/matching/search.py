@@ -31,6 +31,7 @@ from packages.matching.locality import (
     location_aliases,
     reads_as_remote,
 )
+from packages.matching.location_fields import office_facts
 from packages.matching.roles import ROLE_ALIASES, canonical, display_name
 
 #: What `SearchFilters.role` may ask for: the alias table's own keys, not a
@@ -324,6 +325,8 @@ def is_remote(posting: Posting) -> bool:
     rule that disagreement decides whether a posting is kept, so the two
     cannot be allowed to drift.
     """
+    if posting.is_remote is not None:
+        return posting.is_remote
     return reads_as_remote(
         title=posting.title, location=posting.location, description=posting.description_raw
     )
@@ -369,6 +372,10 @@ def matches(posting: Posting, filters: SearchFilters) -> FilterVerdict:
             description=posting.description_raw,
             remote_outside_california=filters.remote_outside_california,
             allow_unknown_location=filters.allow_unknown_location,
+            country_code=posting.country_code,
+            state_code=posting.state_code,
+            is_remote=posting.is_remote,
+            offices=office_facts(posting.locations_json),
         )
     ):
         reasons.append(reason)

@@ -77,33 +77,38 @@ def apply_rewrites(
     # The same two functions the extractor used, so the bullets cannot be taken
     # from one section and written back into another, and cannot be written back
     # onto lines that were never sent.
-    from packages.tailor.bullets import rewritable_indices, tailorable_section
+    from packages.tailor.bullets import rewritable_indices, tailorable_sections
 
-    section = tailorable_section(parsed)
-    lines = parsed.section(section) if section else []
-    if not lines:
+    sections = tailorable_sections(parsed)
+    if not sections:
         return _with_ordered_skills(parsed.model_copy(deep=True), posting_text)
-    assert section is not None  # non-empty lines only come from a named section
 
-    # A project title and its technology line are in this section and are not
-    # bullets; `tailorable_bullets` does not send them, so consuming a result
-    # for them here would put every rewrite one line off its own bullet.
-    targets = set(rewritable_indices(lines))
-
-    pending = iter(result.bullets)
-    rewritten: list[str] = []
-    for index, line in enumerate(lines):
-        if index not in targets:
-            rewritten.append(line)
-            continue
-        bullet = next(pending, None)
-        # Falling back to the source line covers the case where the result is
-        # shorter than the section — a truncated result must never shift every
-        # later bullet onto the wrong employer.
-        rewritten.append(bullet.tailored if bullet is not None else line)
-
+    # Walk every populated tailorable section in the same deterministic order
+    # as `tailorable_bullets`. Each rewrite matches its original position so
+    # headings, stack lines, and remaining bullets stay aligned.
     tailored = parsed.model_copy(deep=True)
-    tailored.sections[section] = rewritten
+    pending = iter(result.bullets)
+    wrote = False
+    for section in sections:
+        lines = parsed.section(section)
+        targets = set(rewritable_indices(lines))
+        if not targets:
+            continue
+        rewritten: list[str] = []
+        for index, line in enumerate(lines):
+            if index not in targets:
+                rewritten.append(line)
+                continue
+            bullet = next(pending, None)
+            # Falling back to the source line covers the case where the result is
+            # shorter than the section — a truncated result must never shift every
+            # later bullet onto the wrong employer or project.
+            rewritten.append(bullet.tailored if bullet is not None else line)
+        tailored.sections[section] = rewritten
+        wrote = True
+
+    if not wrote:
+        return _with_ordered_skills(parsed.model_copy(deep=True), posting_text)
     return _with_ordered_skills(tailored, posting_text)
 
 
@@ -159,15 +164,18 @@ def assembly_options(
     comparison (`scripts/tailor_targeted.py`) gets the same template.
     Options a caller passes are used as given.
     """
-    from packages.tailor.bullets import tailorable_section
+    from packages.tailor.bullets import tailorable_sections
 
     if options is not None:
         return options
     house = house_options(settings)
-    if tailorable_section(parsed) == "projects":
+    sections = tailorable_sections(parsed)
+    if sections == ("projects",):
         return house.model_copy(
             update={"include_projects": False, "replace_source_projects": False}
         )
+    if "projects" in sections:
+        return house.model_copy(update={"replace_source_projects": False})
     return house
 
 

@@ -50,6 +50,11 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--limit", type=int, default=None, help="at most N pages per host")
     parser.add_argument(
+        "--locations",
+        action="store_true",
+        help="also resolve Workday locations whose descriptions are already stored",
+    )
+    parser.add_argument(
         "--max-hosts",
         type=int,
         default=MAX_HOSTS,
@@ -137,12 +142,13 @@ def _paced_fetcher(pace: Pace) -> PoliteFetcher:
     )
 
 
-async def dry_run(ats: list[str], scope: ListingScope | None) -> int:
+async def dry_run(ats: list[str], scope: ListingScope | None, *, locations: bool = False) -> int:
     async with core_db.get_sessionmaker()() as session:
-        pending = await find_pending(session, ats=ats, scope=scope)
+        pending = await find_pending(session, ats=ats, scope=scope, locations=locations)
     sizes = sorted(((len(items), host) for host, items in pending.items()), reverse=True)
     total = sum(n for n, _ in sizes)
-    print(f"{total} open postings with no description, on {len(sizes)} hosts")
+    what = "missing descriptions or unresolved Workday locations" if locations else "no description"
+    print(f"{total} open postings with {what}, on {len(sizes)} hosts")
     for n, host in sizes[:15]:
         print(f"  {n:6d}  {host}")
     if sizes:
@@ -172,7 +178,7 @@ async def run(argv: list[str] | None = None) -> int:
     ats = [kind.strip() for kind in args.ats.split(",") if kind.strip()]
     scope = _scope(args)
     if args.dry_run:
-        return await dry_run(ats, scope)
+        return await dry_run(ats, scope, locations=args.locations)
 
     started = time.monotonic()
     seen: dict[str, HostReport] = {}
@@ -218,6 +224,7 @@ async def run(argv: list[str] | None = None) -> int:
                 on_left_waiting=left_waiting,
                 pace=pace,
                 scope=scope,
+                locations=args.locations,
             )
     minutes = (time.monotonic() - started) / 60
     print(
