@@ -7,7 +7,7 @@ These are **ranking-fusion weights**, not neural-network parameters. The `.npy` 
 
 ## File and dataset
 
-- File: `/Users/gopikrishnareddykatkuri/Desktop/Job_Runner/storage/embed_rank_bench/whole_index_2026-11-02/vectors.nosync/qwen4b_full_f16.npy`.
+- File: `./storage/embed_rank_bench/whole_index_2026-11-02/vectors.nosync/qwen4b_full_f16.npy`.
 - Shape: **224,361 × 2,560**, float16, **1,148,728,448 bytes** (1.15 GB decimal).
 - Matching export: `whole_index.json.gz`, dated 2026-11-02; **16,306 postings**, including **55 benchmark-only postings** that were closed when exported. This is a fixed public-text snapshot, not today’s live corpus.
 - All 56 known targets are present; 112 questions comprise 56 natural and 56 paraphrased forms.

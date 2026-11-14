@@ -24,7 +24,7 @@ These are **model judgments**, not the owner's grades. They are stored apart fro
 |---|---|
 | Model | `unsloth/Qwen3.8-27B-GGUF:UD-Q6_K`, SHA-256 `c9c206812fbe4ac7b76a729e25928b63f2ae89d37f69da7a71c20aec763cd436` |
 | Where | The owner's Kaggle session, two Tesla T4s, 4,096-token context, thinking off, temperature 0 |
-| Loaded from | Private dataset `spark0505/qwen38-27b-q6-private/versions/1`, startup script SHA-256 `cce702da…4fc1`; Qwen3 8B unloaded first |
+| Loaded from | Private dataset `example-dev/qwen38-27b-q6-private/versions/1`, startup script SHA-256 `cce702da…4fc1`; Qwen3 8B unloaded first |
 | Rubric | 0 irrelevant or contradicts the question, 1 plausible partial, 2 directly meets it; SHA-256 `b5b13e8b…39c6` |
 | Prompt | The question and full public posting text (title, company, description), blind: no weight, rank or target. One or two candidates a call, never compared |
 | Calls | 1,286 (4 pilot), median 8.6 s, about 3.3 hours |
