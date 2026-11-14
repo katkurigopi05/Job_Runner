@@ -257,6 +257,14 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - name: Install dashboard test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Dashboard browser regressions (isolated API)
+        run: npm run test:e2e
+        env:
+          E2E_MODE: start
+
   image:
     name: docker image builds and runs
     runs-on: ubuntu-latest
