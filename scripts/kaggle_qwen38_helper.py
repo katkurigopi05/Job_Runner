@@ -2,7 +2,7 @@
 
 Run ``jobrunner_qwen38_complete = install(engine, tokenizer, identity)`` in
 the model's kernel. This neither loads weights nor creates a public endpoint.
-Identity must come from the SHA-verified two-GPU loader; context is 4096 and
+Identity must come from the SHA-verified two-GPU loader; context is 16384 and
 thinking is disabled. The 8B helper remains a separate supported protocol.
 """
 
@@ -13,7 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 MODEL = "unsloth/Qwen3.8-27B-GGUF:UD-Q6_K"
-CONTEXT_TOKENS = 4096
+CONTEXT_TOKENS = 16384
 MODEL_SHA256 = "c9c206812fbe4ac7b76a729e25928b63f2ae89d37f69da7a71c20aec763cd436"
 
 
@@ -27,7 +27,9 @@ def install(engine: Any, tokenizer: Any, identity: dict[str, Any]) -> Callable[[
         or engine.metadata.get("general.name") != "Qwen3.8-27B"
         or not callable(getattr(tokenizer, "apply_chat_template", None))
     ):
-        raise ValueError("Expected the pinned Q6 model on two GPUs with a 4096-token context")
+        raise ValueError(
+            f"Expected the pinned Q6 model on two GPUs with a {CONTEXT_TOKENS}-token context"
+        )
 
     def complete(payload_json: str) -> str:
         result: dict[str, Any] = {"model": MODEL, "status": "error"}

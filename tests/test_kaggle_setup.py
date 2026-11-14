@@ -112,7 +112,10 @@ def serve(monkeypatch, session: FakeSession) -> None:
                             "model": kaggle.QWEN38_MODEL
                             if kernel.get("qwen38_helper")
                             else kaggle.MODEL,
-                            "context_tokens": 4096,
+                            # A faithful helper reports the context it was loaded with.
+                            "context_tokens": kaggle.CONTEXT_TOKENS[
+                                kaggle.QWEN38_MODEL if kernel.get("qwen38_helper") else kaggle.MODEL
+                            ],
                             **(
                                 {
                                     "helper": "jobrunner_qwen38_complete",
@@ -172,10 +175,14 @@ def saved_file(tmp_path: Path) -> Path:
     return path
 
 
-async def run(session: FakeSession, path: Path, *, fresh: bool = False) -> tuple[str, str]:
+async def run(
+    session: FakeSession, path: Path, *, fresh: bool = False, model: str = kaggle.MODEL
+) -> tuple[str, str]:
     said: list[str] = []
     saved = kaggle.read_connection(path)
-    state = await kaggle_setup.setup(session, saved, path, fresh=fresh, say=said.append)
+    state = await kaggle_setup.setup(
+        session, saved, path, fresh=fresh, say=said.append, model=model
+    )
     return state, "\n".join(said)
 
 
@@ -199,7 +206,7 @@ async def test_a_ready_saved_kernel_is_left_alone(saved_file, monkeypatch):
 async def test_auto_keeps_ready_27b_without_loading_8b(saved_file, monkeypatch):
     session = FakeSession({SAVED: {"qwen38_model": True, "qwen38_helper": True, "clients": 1}})
     serve(monkeypatch, session)
-    state, said = await run(session, saved_file)
+    state, said = await run(session, saved_file, model=kaggle.QWEN38_MODEL)
     assert state == "ready"
     assert session.started == session.deleted == session.cells == []
     assert "Qwen3.8 27B" in said
@@ -209,7 +216,7 @@ async def test_auto_keeps_ready_27b_without_loading_8b(saved_file, monkeypatch):
 async def test_loaded_27b_gets_only_its_helper(saved_file, monkeypatch):
     session = FakeSession({SAVED: {"qwen38_model": True}})
     serve(monkeypatch, session)
-    state, said = await run(session, saved_file)
+    state, said = await run(session, saved_file, model=kaggle.QWEN38_MODEL)
     assert state == "ready" and session.started == []
     assert [code for _, code in session.cells] == [kaggle_setup.helper_cell(qwen38=True)]
     assert "Loading the model" not in said
@@ -224,6 +231,27 @@ async def test_a_kernel_holding_the_model_gets_only_the_helper(saved_file, monke
     assert session.started == []
     assert [code for _, code in session.cells] == [kaggle_setup.helper_cell()]
     assert "installing the helper" in said
+
+
+async def test_an_outdated_helper_is_reinstalled_without_reloading_model(saved_file, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    session = FakeSession({SAVED: {"model": True, "helper": True}})
+    serve(monkeypatch, session)
+    monkeypatch.setattr(
+        kaggle.KaggleProvider,
+        "health",
+        AsyncMock(
+            side_effect=[
+                kaggle.KaggleStatus(state="helper_outdated", detail="Update helper"),
+                kaggle.KaggleStatus(state="ready", detail="Ready"),
+            ]
+        ),
+    )
+    state, _ = await run(session, saved_file)
+    assert state == "ready"
+    assert session.started == []
+    assert [code for _, code in session.cells] == [kaggle_setup.helper_cell()]
 
 
 async def test_otherwise_a_new_kernel_is_set_up_saved_and_the_unused_one_deleted(
@@ -280,7 +308,11 @@ async def test_a_failed_load_deletes_the_new_kernel_and_keeps_the_saved_link(
     said: list[str] = []
     with pytest.raises(LLMError, match="Loading the model") as raised:
         await kaggle_setup.setup(
-            session, kaggle.read_connection(saved_file), saved_file, say=said.append
+            session,
+            kaggle.read_connection(saved_file),
+            saved_file,
+            say=said.append,
+            model=kaggle.MODEL,
         )
     [fresh] = session.started
     assert fresh in session.deleted
@@ -483,24 +515,3 @@ def test_a_pasted_link_on_another_host_is_refused(tmp_path, monkeypatch, capsys)
     assert fakes.command.main() == 1
     assert fakes.setup_calls == []
     assert "example.net" not in capsys.readouterr().out
-
-
-async def test_an_outdated_helper_is_reinstalled_without_reloading_model(saved_file, monkeypatch):
-    from unittest.mock import AsyncMock
-
-    session = FakeSession({SAVED: {"model": True, "helper": True}})
-    serve(monkeypatch, session)
-    monkeypatch.setattr(
-        kaggle.KaggleProvider,
-        "health",
-        AsyncMock(
-            side_effect=[
-                kaggle.KaggleStatus(state="helper_outdated", detail="Update helper"),
-                kaggle.KaggleStatus(state="ready", detail="Ready"),
-            ]
-        ),
-    )
-    state, _ = await run(session, saved_file)
-    assert state == "ready"
-    assert session.started == []
-    assert [code for _, code in session.cells] == [kaggle_setup.helper_cell()]

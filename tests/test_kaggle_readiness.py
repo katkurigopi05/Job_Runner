@@ -38,7 +38,7 @@ async def test_private_prompt_is_not_sent_until_model_is_ready(tmp_path, monkeyp
 
 
 async def test_ready_preflight_precedes_generation(tmp_path, monkeypatch):
-    provider = kaggle.KaggleProvider(connection_file=connection(tmp_path))
+    provider = kaggle.KaggleProvider(connection_file=connection(tmp_path), model=kaggle.MODEL)
     exchange = AsyncMock(
         side_effect=[
             {"state": "ready", "model": kaggle.MODEL, "protocol": 1, "context_tokens": 4096},
@@ -179,64 +179,15 @@ async def test_reconnect_never_guesses_between_multiple_kernels(tmp_path, monkey
     monkeypatch.setattr(manager, "connection_path", lambda: path)
     other = UUID(int=9)
     monkeypatch.setattr(manager, "discover_kernels", lambda _: [KERNEL, other])
-    health = AsyncMock(return_value=kaggle.KaggleStatus(state="helper_missing", detail="Missing"))
+    health = AsyncMock(
+        return_value=kaggle.KaggleStatus(state="helper_missing", detail="No helper loaded")
+    )
     monkeypatch.setattr(kaggle.KaggleProvider, "health", health)
     status = await manager.connect_session(SecretStr(SERVER))
     assert status.state == "select_kernel"
     assert status.kernels == [KERNEL, other]
     assert not path.exists()
-    assert health.await_count == 2
-    assert [option.label for option in status.kernel_options] == [
-        "Notebook 1 — no model helper loaded",
-        "Notebook 2 — no model helper loaded",
-    ]
-
-
-async def test_reconnect_auto_selects_only_ready_notebook(tmp_path, monkeypatch):
-    from packages.llm import kaggle_connection as manager
-
-    path = tmp_path / "connection.json"
-    other = UUID(int=9)
-    monkeypatch.setattr(manager, "connection_path", lambda: path)
-    monkeypatch.setattr(manager, "discover_kernels", lambda _: [KERNEL, other])
-
-    async def health(provider):
-        ready = provider.connection.kernel_id == other
-        return kaggle.KaggleStatus(
-            state="ready" if ready else "helper_missing",
-            detail="Checked",
-            model=kaggle.QWEN38_MODEL if ready else None,
-        )
-
-    monkeypatch.setattr(kaggle.KaggleProvider, "health", health)
-    status = await manager.connect_session(SecretStr(SERVER))
-    assert status.state == "ready" and status.model == kaggle.QWEN38_MODEL
-    assert kaggle.read_connection(path).kernel_id == other
-    assert status.kernels == [other]
-    assert status.kernel_options[0].label == "Current notebook — Qwen3.8 27B Q6_K"
-
-
-async def test_two_ready_notebooks_show_models_without_guessing(tmp_path, monkeypatch):
-    from packages.llm import kaggle_connection as manager
-
-    path = tmp_path / "connection.json"
-    monkeypatch.setattr(manager, "connection_path", lambda: path)
-    monkeypatch.setattr(manager, "discover_kernels", lambda _: [KERNEL, UUID(int=9)])
-    monkeypatch.setattr(
-        kaggle.KaggleProvider,
-        "health",
-        AsyncMock(
-            return_value=kaggle.KaggleStatus(
-                state="ready",
-                detail="Ready",
-                model=kaggle.QWEN38_MODEL,
-            )
-        ),
-    )
-    status = await manager.connect_session(SecretStr(SERVER))
-    assert status.state == "select_kernel" and not path.exists()
-    assert all("Qwen3.8 27B" in option.label for option in status.kernel_options)
-    assert all(str(option.id) not in option.label for option in status.kernel_options)
+    assert health.await_count == 2  # Readiness probes do not generate or guess.
 
 
 async def test_saving_rejects_foreign_kernel_and_failed_health(tmp_path, monkeypatch):
@@ -361,3 +312,50 @@ def test_default_connection_path_is_stable_across_launch_directories(tmp_path, m
     assert kaggle.connection_path() == expected
     monkeypatch.chdir(tmp_path)
     assert kaggle.connection_path() == expected
+
+
+async def test_reconnect_auto_selects_only_ready_notebook(tmp_path, monkeypatch):
+    from packages.llm import kaggle_connection as manager
+
+    path = tmp_path / "connection.json"
+    other = UUID(int=9)
+    monkeypatch.setattr(manager, "connection_path", lambda: path)
+    monkeypatch.setattr(manager, "discover_kernels", lambda _: [KERNEL, other])
+
+    async def health(provider):
+        ready = provider.connection.kernel_id == other
+        return kaggle.KaggleStatus(
+            state="ready" if ready else "helper_missing",
+            detail="Checked",
+            model=kaggle.QWEN38_MODEL if ready else None,
+        )
+
+    monkeypatch.setattr(kaggle.KaggleProvider, "health", health)
+    status = await manager.connect_session(SecretStr(SERVER))
+    assert status.state == "ready" and status.model == kaggle.QWEN38_MODEL
+    assert kaggle.read_connection(path).kernel_id == other
+    assert status.kernels == [other]
+    assert status.kernel_options[0].label == "Current notebook — Qwen3.8 27B Q6_K"
+
+
+async def test_two_ready_notebooks_show_models_without_guessing(tmp_path, monkeypatch):
+    from packages.llm import kaggle_connection as manager
+
+    path = tmp_path / "connection.json"
+    monkeypatch.setattr(manager, "connection_path", lambda: path)
+    monkeypatch.setattr(manager, "discover_kernels", lambda _: [KERNEL, UUID(int=9)])
+    monkeypatch.setattr(
+        kaggle.KaggleProvider,
+        "health",
+        AsyncMock(
+            return_value=kaggle.KaggleStatus(
+                state="ready",
+                detail="Ready",
+                model=kaggle.QWEN38_MODEL,
+            )
+        ),
+    )
+    status = await manager.connect_session(SecretStr(SERVER))
+    assert status.state == "select_kernel" and not path.exists()
+    assert all("Qwen3.8 27B" in option.label for option in status.kernel_options)
+    assert all(str(option.id) not in option.label for option in status.kernel_options)

@@ -12,7 +12,7 @@ from packages.llm import kaggle, router
 from packages.llm.audit import is_local, read_trail
 from packages.llm.provider import LLMError, PromptTooLong, StubProvider, build_provider
 
-MODEL = "unsloth/Qwen3-8B-bnb-4bit"
+MODEL = kaggle.QWEN38_MODEL
 SECRET = "synthetic-session-credential"
 SERVER = f"https://kkb-production.jupyter-proxy.kaggle.net/k/123/{SECRET}/proxy"
 KERNEL = "00000000-0000-4000-8000-000000000001"
@@ -74,7 +74,16 @@ class Kernel:
         if self.failure:
             raise OSError(self.failure)
         result = (
-            {"state": "ready", "model": MODEL, "protocol": 1, "context_tokens": 4096}
+            {
+                "state": "ready",
+                "model": MODEL,
+                "protocol": 1,
+                "context_tokens": kaggle.CONTEXT_TOKENS[MODEL],
+                "helper": "jobrunner_qwen38_complete",
+                "gpu_count": 2,
+                "thinking": False,
+                "model_sha256": kaggle.QWEN38_SHA256,
+            }
             if "jobrunner_health" in self.sent["content"]["user_expressions"]["jobrunner"]
             else self.result
         )
@@ -125,7 +134,8 @@ async def test_prompt_is_data_not_executable_code_and_history_is_off(
     assert content["silent"] and not content["store_history"] and not content["allow_stdin"]
     expression = ast.parse(content["user_expressions"]["jobrunner"], mode="eval").body
     assert isinstance(expression, ast.Call)
-    assert isinstance(expression.func, ast.Name) and expression.func.id == "jobrunner_complete"
+    assert isinstance(expression.func, ast.Name)
+    assert expression.func.id == "jobrunner_qwen38_complete"
     payload = json.loads(ast.literal_eval(expression.args[0]))
     assert payload == {
         "model": MODEL,
@@ -176,7 +186,7 @@ def test_factory_uses_explicit_configuration(connection: Path, monkeypatch) -> N
     get_settings.cache_clear()
     try:
         provider = build_provider("kaggle")
-        assert provider.name == "kaggle" and provider.model is None  # resolved by live readiness
+        assert provider.name == "kaggle" and provider.model is None
         assert str(provider.connection.kernel_id) == KERNEL
     finally:
         get_settings.cache_clear()
@@ -279,7 +289,7 @@ def test_notebook_helper_refuses_an_overlong_prompt_before_generating(monkeypatc
         helper(
             json.dumps(
                 {
-                    "model": MODEL,
+                    "model": kaggle.MODEL,
                     "system": "system",
                     "user": "user",
                     "max_tokens": 600,
@@ -288,4 +298,4 @@ def test_notebook_helper_refuses_an_overlong_prompt_before_generating(monkeypatc
             )
         )
     )
-    assert result == {"model": MODEL, "status": "too_long"}
+    assert result == {"model": kaggle.MODEL, "status": "too_long"}

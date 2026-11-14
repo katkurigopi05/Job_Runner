@@ -66,8 +66,8 @@ async def _load_helper(saved: Connection) -> None:
     except Exception:
         # Transport and validation exceptions may contain the saved credential.
         _setup_status = SetupStatus(
-            error="Could not load the Kaggle helper. Check that GPU is enabled and the "
-            "model is available in the notebook, then retry."
+            error="Could not load Qwen3.8 27B. Check that two T4 GPUs are enabled and the "
+            "saved 27B model dataset is available, then retry. Auto does not use 8B."
         )
 
 
