@@ -56,6 +56,9 @@ class ProjectEntry(BaseModel):
     slug: str
     language: str | None
     topics: list[str]
+    #: A private repository's address is never printed: it opens for nobody
+    #: who receives the résumé, and it names an account's private work.
+    is_private: bool = False
 
     @property
     def stack(self) -> list[str]:
@@ -82,6 +85,7 @@ class ProjectEntry(BaseModel):
             slug=compact_slug(project.url),
             language=project.language,
             topics=list(project.topics_json or []),
+            is_private=bool(project.is_private),
         )
 
 
@@ -104,7 +108,9 @@ def compact_slug(url: str) -> str:
 
 
 def link_text(entry: ProjectEntry, style: LinkStyle) -> str:
-    """The visible text of the anchor, per style."""
+    """The visible text of the anchor, per style. Empty for a private repository."""
+    if entry.is_private:
+        return ""
     match style:
         case LinkStyle.ICON_ONLY:
             return LINK_ICON
@@ -125,11 +131,12 @@ def render_entry_html(entry: ProjectEntry, style: LinkStyle = LinkStyle.ICON_SLU
         stack = " · ".join(html.escape(value) for value in entry.stack)
         parts.append(f'<span class="project-stack">{stack}</span>')
 
-    anchor = (
-        f'<a class="project-link" href="{html.escape(entry.url, quote=True)}">'
-        f"{html.escape(link_text(entry, style))}</a>"
-    )
-    parts.append(anchor)
+    if not entry.is_private:
+        anchor = (
+            f'<a class="project-link" href="{html.escape(entry.url, quote=True)}">'
+            f"{html.escape(link_text(entry, style))}</a>"
+        )
+        parts.append(anchor)
 
     return "<li>" + " ".join(parts) + "</li>"
 

@@ -86,7 +86,7 @@ def test_the_summary_is_a_paragraph_not_a_bullet(rendered: str) -> None:
 def test_the_name_does_not_fuse_into_the_contact_line(rendered: str) -> None:
     """Our own output had the defect the DOCX reader was just fixed for.
 
-    `pypdf` returned `Gopi Krishna Reddy Katkurigkatkuri@horizon…` — the name
+    `pypdf` returned `Alex Riveraalex@horizon…` — the name
     and the email as one token, because `h1` had 2pt of margin under it.
     """
     assert "Jane Doe" in rendered

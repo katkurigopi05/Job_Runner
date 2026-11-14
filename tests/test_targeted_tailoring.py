@@ -275,31 +275,37 @@ LEDGER = "Verified 1,000 ledger rows with pytest checks."
 
 
 async def test_another_projects_tool_does_not_become_an_employers_claim() -> None:
-    """pytest is in a side project. The bullets being tailored are the
-    employer's, so the term is recorded with its source and no bullet is
-    revised for it."""
+    """pytest is in a side project. Only that project's own bullet may target
+    it; the employer's bullets cannot claim it."""
     parsed = resume(
         [EXPORTS, HANDBOOK],
         projects=["Ledger Checker — Side Project   [GitHub]", "Python, pytest", LEDGER],
     )
-    provider = Scripted("Built billing exports in Python with automated testing.")
-
     plan = classify(parsed, POSTING)
     testing = by_term(plan)["automated testing"]
-    revision = await revise(provider, parsed, POSTING)
 
     assert testing.status is Status.SUPPORTED and testing.via == "pytest"
     assert testing.sources and all(ref.startswith("projects:") for ref in testing.sources)
-    assert testing.bullet is None and plan.targets == {}
-    assert provider.calls == [] and revision.message == NO_GAIN
+    # Assigned to the project's own bullet (index 2), never to employer bullets (0, 1).
+    assert testing.bullet == 2
+    assert set(plan.targets) == {2}
+
+    revision = await revise(
+        Scripted("Verified 1,000 ledger rows with automated testing via pytest checks."),
+        parsed,
+        POSTING,
+    )
+    assert revision.result.bullets[0].tailored == EXPORTS
+    assert revision.result.bullets[1].tailored == HANDBOOK
+    assert "automated testing" in revision.result.bullets[2].tailored.lower()
 
 
 async def test_a_bullet_revised_for_one_term_cannot_pick_up_anothers() -> None:
     """The employer's bullet is revised to say what its ETL jobs are: data
     pipelines. The model also adds the practice a side project is evidence
-    of. That term is off limits to this bullet, whatever else the revision got
-    right. (ETL is an alias of data pipelines, not its abbreviation, so this
-    one is the model's to write; an acronym is written out by code.)"""
+    of. That term is off limits to the employer's bullet, whatever else the
+    revision got right — while the side project's own bullet may still be
+    targeted for its own pytest evidence."""
     parsed = resume(
         [PIPELINE, HANDBOOK],
         projects=["Ledger Checker — Side Project   [GitHub]", "Python, pytest", LEDGER],
@@ -310,8 +316,9 @@ async def test_a_bullet_revised_for_one_term_cannot_pick_up_anothers() -> None:
     plan = classify(parsed, posting)
     revision = await revise(Scripted(greedy), parsed, posting)
 
-    assert set(plan.targets) == {0}
+    assert set(plan.targets) == {0, 2}
     assert [target.term for target in plan.targets[0]] == ["data pipelines"]
+    assert [target.term for target in plan.targets[2]] == ["automated testing"]
     pipeline = revision.result.bullets[0]
     assert pipeline.tailored == PIPELINE and pipeline.guard_refused
     assert pipeline.rejected_reason is not None

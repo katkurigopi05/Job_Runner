@@ -1132,6 +1132,7 @@ class QueueTask(Base):
 # Tables defined in feature modules register on this same metadata. Imported
 # last, because those modules import `Base` from here.
 from packages.core import models_chunks as _models_chunks  # noqa: E402, F401
+from packages.core import models_evidence as _models_evidence  # noqa: E402, F401
 from packages.core import models_issues as _models_issues  # noqa: E402, F401
 from packages.core import models_jobs as _models_jobs  # noqa: E402, F401
 from packages.core import models_judgments as _models_judgments  # noqa: E402, F401
