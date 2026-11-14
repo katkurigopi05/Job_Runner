@@ -57,6 +57,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+redis = ["redis==5.2.1"]
 # Real embeddings. Optional on purpose: this pulls torch, and
 # packages/matching/embed.py already falls back to lexical scoring and logs
 # `sentence_transformers_unavailable_using_lexical` when it is absent. Install
