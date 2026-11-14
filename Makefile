@@ -640,7 +640,12 @@ import-portals:
 nltk-data:
 	$(PY)/python -m scripts.fetch_nltk_data
 
-.PHONY: sync-vectors benchmark-vectors
+# make demo — a separate, seeded demo database and the API and dashboard on it.
+# Synthetic data only (demo.invalid); see README "Quickstart".
+.PHONY: demo sync-vectors benchmark-vectors
+demo:
+	bash scripts/demo.sh
+
 # Optional derived Redis index; install .[redis] and start the redis profile first.
 sync-vectors:
 	$(PY)/python -m scripts.sync_vectors $(ARGS)
