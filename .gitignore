@@ -52,6 +52,7 @@ venv/
 # Node / Next.js
 node_modules/
 .next/
+.next-dev/
 out/
 
 # Playwright
@@ -68,6 +69,7 @@ test-results/
 
 # Next.js build artifacts
 apps/web/.next/
+apps/web/.next-dev/
 apps/web/tsconfig.tsbuildinfo
 apps/web/next-env.d.ts
 
@@ -94,3 +96,13 @@ backups/
 # files, so this also keeps `make lint` and gate-0 from failing on this
 # machine alone for a file CI never sees (tests/test_root_notebooks_ignored.py).
 /*.ipynb
+
+# Host-specific ports and private operational/research scratchpads
+docker-compose.override.yml
+/technicalskills.md
+/ordinarywords.md
+/ragimprovements.md
+
+# Frontend Playwright artifacts under apps/web/
+apps/web/playwright-report/
+apps/web/test-results/
