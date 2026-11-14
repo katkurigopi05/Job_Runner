@@ -33,7 +33,7 @@ from typing import Literal
 from urllib.parse import urlparse
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Company, Posting
@@ -157,6 +157,7 @@ class Pending:
     company_slug: str
     url: str
     listing: ExtractedPosting
+    refresh_location: bool = False
 
 
 @dataclass
@@ -239,6 +240,7 @@ async def find_pending(
     *,
     ats: Iterable[str] = tuple(READERS),
     scope: ListingScope | None = None,
+    locations: bool = False,
 ) -> dict[str, list[Pending]]:
     """Open postings with no description, grouped by the host their pages are on.
 
@@ -247,6 +249,20 @@ async def find_pending(
     accepts (`in_owner_area`).
     """
     kinds = [kind for kind in ats if kind in READERS]
+    missing: ColumnElement[bool] = Posting.description_raw.is_(None)
+    if locations:
+        missing = or_(
+            missing,
+            and_(
+                Posting.ats_type == "workday",
+                Posting.listed_location.is_(None),
+                or_(
+                    Posting.country_code.is_(None),
+                    Posting.location.is_(None),
+                    Posting.location.op("~*")(r"^\d+ locations$"),
+                ),
+            ),
+        )
     rows = (
         await session.execute(
             select(
@@ -254,6 +270,10 @@ async def find_pending(
                 Posting.url,
                 Posting.title,
                 Posting.location,
+                Posting.listed_location,
+                Posting.locations_json,
+                Posting.description_raw,
+                Posting.content_hash,
                 Posting.published_at,
                 Posting.ats_type,
                 Company.id.label("company_id"),
@@ -262,7 +282,7 @@ async def find_pending(
             .join(Company, Company.id == Posting.company_id)
             .where(
                 Posting.closed_at.is_(None),
-                Posting.description_raw.is_(None),
+                missing,
                 Posting.external_id.is_not(None),
                 Posting.ats_type.in_(kinds),
                 Company.slug.is_not(None),
@@ -280,6 +300,10 @@ async def find_pending(
             url=row.url,
             title=row.title,
             location=row.location,
+            listed_location=row.listed_location,
+            source_locations=row.locations_json if row.listed_location is not None else [],
+            description_raw=row.description_raw,
+            content_hash=row.content_hash or "",
             published_at=row.published_at,
             ats_type=row.ats_type,
         )
@@ -290,7 +314,15 @@ async def find_pending(
             log.warning("backfill_unplaceable", posting=row.external_id, error=type(exc).__name__)
             continue
         host = urlparse(url).hostname or ""
-        grouped.setdefault(host, []).append(Pending(row.company_id, row.slug, url, listing))
+        grouped.setdefault(host, []).append(
+            Pending(
+                row.company_id,
+                row.slug,
+                url,
+                listing,
+                refresh_location=bool(row.description_raw),
+            )
+        )
     return grouped
 
 
@@ -353,6 +385,7 @@ async def _fill_one(
 ) -> Outcome:
     """Read and store one page; anything short of stored leaves the posting waiting."""
     listing = item.listing
+    before_hash = listing.content_hash
     _, read_detail = READERS[listing.ats_type or ""]
     try:
         response = await fetcher.fetch(item.url)
@@ -375,6 +408,9 @@ async def _fill_one(
         return "waiting"
 
     listing.description_raw = hydrated.description_raw
+    listing.location = hydrated.location
+    listing.listed_location = hydrated.listed_location
+    listing.source_locations = hydrated.source_locations
     listing.published_at = hydrated.published_at or listing.published_at
     listing.content_hash = hydrated.content_hash
     try:
@@ -383,13 +419,21 @@ async def _fill_one(
         # and one a crawl has filled would be written over. Look again first.
         now = (
             await session.execute(
-                select(Posting.closed_at, Posting.description_raw).where(
+                select(Posting.closed_at, Posting.description_raw, Posting.content_hash).where(
                     Posting.company_id == item.company_id,
                     Posting.external_id == listing.external_id,
                 )
             )
         ).one_or_none()
-        if now is None or now.closed_at is not None or now.description_raw:
+        if (
+            now is None
+            or now.closed_at is not None
+            or (
+                now.content_hash != before_hash
+                if item.refresh_location
+                else bool(now.description_raw)
+            )
+        ):
             await session.commit()  # ends the read; commit keeps the cache usable
             return "skipped"
         company = companies.get(item.company_id) or await session.get(Company, item.company_id)
@@ -421,6 +465,7 @@ async def backfill(
     on_left_waiting: Callable[[str], None] | None = None,
     pace: Pace | None = None,
     scope: ListingScope | None = None,
+    locations: bool = False,
 ) -> BackfillReport:
     """Fill every missing description on the given boards, hosts side by side.
 
@@ -432,7 +477,7 @@ async def backfill(
     nothing is written in their place, since an unknown stays NULL.
     """
     async with sessions() as session:
-        pending = await find_pending(session, ats=ats, scope=scope)
+        pending = await find_pending(session, ats=ats, scope=scope, locations=locations)
     semaphore = asyncio.Semaphore(max_hosts)
 
     async def one(host: str, items: list[Pending]) -> HostReport:

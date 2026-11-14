@@ -37,6 +37,8 @@ class ExtractedPosting(BaseModel):
     url: str
     title: str | None = None
     location: str | None = None
+    listed_location: str | None = None
+    source_locations: list[dict[str, Any]] = Field(default_factory=list)
     description_raw: str | None = None
     ats_type: str | None = None
     #: When the source says the posting went up. None when the board does not
@@ -184,6 +186,10 @@ def parse_timestamp(value: Any) -> datetime | None:
 def posting_hash(posting: ExtractedPosting) -> str:
     from packages.crawler.fetch import content_hash
 
+    source_location_facts = [
+        (office.get("raw"), office.get("country_code"), office.get("source_remote"))
+        for office in posting.source_locations
+    ]
     return content_hash(
         "\x1f".join(
             [
@@ -191,6 +197,11 @@ def posting_hash(posting: ExtractedPosting) -> str:
                 posting.title or "",
                 posting.location or "",
                 posting.description_raw or "",
+                *(
+                    [json.dumps(source_location_facts, sort_keys=True)]
+                    if source_location_facts
+                    else []
+                ),
             ]
         )
     )

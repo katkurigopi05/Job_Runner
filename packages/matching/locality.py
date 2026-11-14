@@ -645,6 +645,10 @@ _NON_US_MARKERS = (
     r"azerbaijan",
     r"kazakhstan",
     r"uzbekistan",
+    r"el salvador",
+    r"venezuela",
+    r"libya",
+    r"deutschland",
     # Canadian provinces by name. Bare `Ontario` is also a Californian city,
     # and an address says which: `Ontario, CA` carries a state code, and an
     # explicit US signal outranks a name here. Read alone, the province is far
@@ -713,7 +717,9 @@ _NON_US_CITIES_RE = re.compile(
     r"frankfurt|heidelberg|cologne|koln|dusseldorf|stuttgart|leipzig|dresden|"
     r"malmo|gothenburg|tampere|espoo|lviv|kharkiv|odesa|canberra|adelaide|"
     r"reykjavik|reykjanesbaer|brussel|antwerp|ghent|basel|lausanne|"
-    r"cdmx\d*|monterrey|sao jose dos campos|one[- ]north)\b",
+    r"cdmx\d*|monterrey|sao jose dos campos|one[- ]north|"
+    r"wuxi|rungis|limonest|penang|manaus|toulouse|ho chi minh city|vadodara|hangzhou|"
+    r"bandung|kaohsiung|hsinchu|yokohama|suzhou|ahmedabad)\b",
     re.I,
 )
 
@@ -1147,8 +1153,23 @@ _COLLIDING_COUNTRY_RE = re.compile(
 
 #: A foreign ISO alpha-3 code leading the field: `CRI - Remote` is Costa Rica.
 _FOREIGN_ALPHA3_RE = re.compile(
-    r"^(?:CAN|MEX|CRI|BRA|ARG|COL|CHL|PER|GBR|IRL|DEU|FRA|ESP|PRT|NLD|BEL|POL|"
-    r"SWE|NOR|DNK|FIN|CHE|AUT|ITA|IND|SGP|JPN|KOR|CHN|AUS|NZL|ISR|ARE|ZAF)\b"
+    r"^\(?(?:CAN|MEX|CRI|BRA|ARG|COL|CHL|PER|GBR|IRL|DEU|FRA|ESP|PRT|NLD|BEL|POL|"
+    r"SWE|NOR|DNK|FIN|CHE|AUT|ITA|IND|SGP|JPN|KOR|CHN|AUS|NZL|ISR|ARE|ZAF|"
+    r"MYS|ROU|PHL|TWN|LUX)\b"
+)
+
+#: Source country codes in Workday location fields: `Glasgow (GB) - Zonda`,
+#: `GB Chester`, `PH, Taguig`, and `Uxbridge - GB`. Only uppercase codes in
+#: address positions, and no code shared with a US state (CA/DE/ID/IN/etc.).
+#: An explicit American office still wins, as with country names below.
+_FOREIGN_LOCATION_CODES = (
+    "AE|AU|AT|BE|BG|BR|CH|CL|CN|CR|CZ|DK|ES|FI|FR|GB|GR|HK|HU|IE|IT|JP|KR|"
+    "MX|MY|NG|NL|NO|NZ|PE|PH|PK|PL|PT|RO|RU|SA|SE|SG|TH|TR|TW|UA|VN|ZA|LY|VE|GY"
+)
+_FOREIGN_LOCATION_CODE_RE = re.compile(
+    rf"^(?:{_FOREIGN_LOCATION_CODES})\s*[,\-–—]\s*\S|^GB\s+\S"
+    rf"|\((?:{_FOREIGN_LOCATION_CODES})\)"
+    rf"|(?:,|\s[-–—])\s*(?:{_FOREIGN_LOCATION_CODES}|GBR)\s*$"
 )
 
 #: "St. Louis" is "st louis" in the city list.
@@ -1205,7 +1226,7 @@ def locality_of(location: str | None) -> Locality:
     # "Remote - US or Canada" is a job the owner can take — so that yields to
     # an explicit US signal. A bare "CA" is not one of those signals here:
     # inside a Canadian address it is the country, not the state.
-    if _NON_US_RE.search(text) and not (
+    if (_NON_US_RE.search(text) or _FOREIGN_LOCATION_CODE_RE.search(original)) and not (
         _us_state_codes(original) or _CALIFORNIA_RE.search(text) or _US_COUNTRY_RE.search(text)
     ):
         return Locality.ELSEWHERE
@@ -1468,6 +1489,10 @@ def area_exclusion(
     description: str | None,
     remote_outside_california: bool,
     allow_unknown_location: bool = True,
+    country_code: str | None = None,
+    state_code: str | None = None,
+    is_remote: bool | None = None,
+    offices: tuple[tuple[str, str | None, str | None, bool | None], ...] = (),
 ) -> str | None:
     """Why the owner's search area leaves a posting out, or None to keep it.
 
@@ -1486,6 +1511,50 @@ def area_exclusion(
       neither is a field that names no place. `allow_unknown_location=False`
       is the strict reading, and drops both.
     """
+    if offices:
+        remote_option = any(
+            names_no_place(raw) and reads_as_remote(title=None, location=raw)
+            for raw, _, _, _ in offices
+        )
+        reasons = []
+        for raw, country, state, remote in offices:
+            if country is None and locality_of(raw) in {Locality.UNKNOWN, Locality.UNPLACED}:
+                continue
+            reason = area_exclusion(
+                raw,
+                title=title,
+                description=description,
+                remote_outside_california=remote_outside_california,
+                allow_unknown_location=allow_unknown_location,
+                country_code=country,
+                state_code=state,
+                is_remote=True if remote_option and country == "US" else remote,
+            )
+            if reason is None:
+                return None
+            reasons.append(reason)
+        if reasons:
+            return next(
+                (reason for reason in reasons if reason.endswith(" is on-site outside California")),
+                reasons[0],
+            )
+    if country_code is not None:
+        if country_code != "US":
+            return f"location {location!r} is outside the United States"
+        if state_code is not None:
+            remote = (
+                is_remote
+                if is_remote is not None
+                else reads_as_remote(title=title, location=location, description=description)
+            )
+            if state_code != "CA" and remote_outside_california and not remote:
+                return f"location {location!r} is on-site outside California"
+            return None
+        # The source names the country but does not settle its region. Use
+        # recognizable US geography for the region; do not let an ambiguous
+        # foreign city vocabulary overrule that explicit country.
+        if locality_of(location) is Locality.ELSEWHERE:
+            return None
     parts = locations_in(location)
     if _canada_by_its_parts(parts):
         return f"location {location!r} is outside the United States"
@@ -1510,7 +1579,11 @@ def area_exclusion(
             not remote_outside_california
             or not names_us_region(part)
             or remote_option
-            or reads_as_remote(title=title, location=part, description=description)
+            or (
+                is_remote
+                if is_remote is not None
+                else reads_as_remote(title=title, location=part, description=description)
+            )
         )
         if reachable(where, remote=remote):
             return None

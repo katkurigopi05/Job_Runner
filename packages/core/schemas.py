@@ -513,6 +513,10 @@ class PostingOut(BaseModel):
     url: str
     title: str | None
     location: str | None
+    country_code: str | None = None
+    state_code: str | None = None
+    is_remote: bool | None = None
+    locations_json: list[dict[str, Any]] | None = None
     ats_type: str | None
     external_id: str | None
     #: When the source says it went up. None when the board does not say.

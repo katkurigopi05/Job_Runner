@@ -122,6 +122,7 @@ from packages.matching.locality import (
     names_city_office,
     reads_as_remote,
 )
+from packages.matching.location_fields import OfficeFacts, office_facts
 from packages.matching.required_skills import (
     RequiredSkillCount,
     demand_class,
@@ -559,6 +560,16 @@ class _Hit(NamedTuple):
     url: str
     description: str | None
     company: str | None
+    country_code: str | None = None
+    state_code: str | None = None
+    is_remote: bool | None = None
+    locations_json: list[dict[str, Any]] | None = None
+
+
+def _hit_remote(hit: _Hit) -> bool:
+    if hit.is_remote is not None:
+        return hit.is_remote
+    return reads_as_remote(title=hit.title, location=hit.location, description=hit.description)
 
 
 _sentence_transformer: SentenceTransformerEmbedder | None = None
@@ -923,6 +934,10 @@ def _outside_area(hit: _Hit) -> bool:
             title=hit.title,
             description=hit.description,
             remote_outside_california=get_settings().search_remote_outside_california,
+            country_code=hit.country_code,
+            state_code=hit.state_code,
+            is_remote=hit.is_remote,
+            offices=office_facts(hit.locations_json),
         )
         is not None
     )
@@ -1668,13 +1683,23 @@ async def _read_until(
 # parse. Keep it bounded, but large enough for an ordinary full-corpus scan.
 @lru_cache(maxsize=32768)
 def _metadata_area_exclusion(
-    title: str | None, location: str | None, remote_outside: bool
+    title: str | None,
+    location: str | None,
+    remote_outside: bool,
+    country_code: str | None = None,
+    state_code: str | None = None,
+    is_remote: bool | None = None,
+    offices: OfficeFacts = (),
 ) -> str | None:
     return area_exclusion(
         location,
         title=title,
         description=None,
         remote_outside_california=remote_outside,
+        country_code=country_code,
+        state_code=state_code,
+        is_remote=is_remote,
+        offices=offices,
     )
 
 
@@ -1684,6 +1709,10 @@ class _Totals(NamedTuple):
     outside: int
     #: The postings counted, so the reply can list every one.
     kept: frozenset[uuid.UUID] = frozenset()
+
+
+type LocationMetadata = tuple[str | None, str | None, bool | None, OfficeFacts]
+type MetadataKey = tuple[str | None, str | None, str | None, str | None, bool | None, OfficeFacts]
 
 
 @stage("metadata_totals")
@@ -1714,6 +1743,10 @@ async def _matching_totals(
         Posting.title,
         Posting.location,
         Posting.company_id,
+        Posting.country_code,
+        Posting.state_code,
+        Posting.is_remote,
+        Posting.locations_json,
     ).where(Posting.closed_at.is_(None))
     if posting_ids is not None:
         query = query.where(Posting.id.in_(posting_ids))
@@ -1721,7 +1754,8 @@ async def _matching_totals(
     employers: set[uuid.UUID] = set()
     kept: set[uuid.UUID] = set()
     remote_outside = get_settings().search_remote_outside_california
-    eligibility: dict[tuple[str | None, str | None], tuple[str | None, bool]] = {}
+    eligibility: dict[MetadataKey, tuple[str | None, bool]] = {}
+    structured: dict[uuid.UUID, LocationMetadata] = {}
     recheck: dict[uuid.UUID, tuple[str | None, str | None, uuid.UUID | None, bool]] = {}
     remote_recheck: dict[uuid.UUID, tuple[str | None, str | None]] = {}
     mode_recheck: dict[uuid.UUID, tuple[str | None, str | None, uuid.UUID | None]] = {}
@@ -1734,10 +1768,13 @@ async def _matching_totals(
         description: str | None = None,
     ) -> None:
         nonlocal total
-        if remote_only and not reads_as_remote(
-            title=title, location=location, description=description
+        remote = structured[ident][2]
+        if remote_only and not (
+            remote
+            if remote is not None
+            else reads_as_remote(title=title, location=location, description=description)
         ):
-            if description is None:
+            if description is None and remote is None:
                 mode_recheck[ident] = (title, location, company_id)
             return
         if place_filter is not None and not place_filter.record(
@@ -1752,10 +1789,17 @@ async def _matching_totals(
         if company_id is not None:
             employers.add(company_id)
 
-    for ident, title, location, company_id in (await session.execute(query)).all():
-        key = (title, location)
+    for ident, title, location, company_id, country, state, remote, offices in (
+        await session.execute(query)
+    ).all():
+        structured[ident] = (country, state, remote, office_facts(offices))
+        key = (title, location, *structured[ident])
         if key not in eligibility:
-            reason = _metadata_area_exclusion(title, location, remote_outside) if area else None
+            reason = (
+                _metadata_area_exclusion(title, location, remote_outside, *structured[ident])
+                if area
+                else None
+            )
             place = standing(title, level) if level is not None else 0
             eligibility[key] = (reason, place < 2 or (allow_unknown and place == 2))
         reason, at_level = eligibility[key]
@@ -1774,7 +1818,9 @@ async def _matching_totals(
             title, location, company_id, at_level = recheck[ident]
             # Without remote-work prose, this metadata exclusion cannot
             # change. Avoid re-parsing its geography in that common case.
-            if not reads_as_remote(title=None, location=None, description=description):
+            if structured[ident][2] is False or not reads_as_remote(
+                title=None, location=None, description=description
+            ):
                 outside += 1
                 continue
             reason = area_exclusion(
@@ -1782,6 +1828,10 @@ async def _matching_totals(
                 title=title,
                 description=description,
                 remote_outside_california=remote_outside,
+                country_code=structured[ident][0],
+                state_code=structured[ident][1],
+                is_remote=structured[ident][2],
+                offices=structured[ident][3],
             )
             if reason is not None:
                 outside += 1
@@ -1864,35 +1914,39 @@ async def _open_area_total(session: AsyncSession, *, area: bool) -> int:
         return int(
             await session.scalar(select(func.count()).where(Posting.closed_at.is_(None))) or 0
         )
+    columns = (
+        Posting.title,
+        Posting.location,
+        Posting.country_code,
+        Posting.state_code,
+        Posting.is_remote,
+        Posting.locations_json,
+    )
     rows = await session.execute(
-        select(Posting.title, Posting.location, func.count())
-        .where(Posting.closed_at.is_(None))
-        .group_by(Posting.title, Posting.location)
+        select(*columns, func.count()).where(Posting.closed_at.is_(None)).group_by(*columns)
     )
     remote_outside = get_settings().search_remote_outside_california
     total = 0
-    pending: set[tuple[str | None, str | None]] = set()
-    for title, location, count in rows.all():
-        reason = _metadata_area_exclusion(title, location, remote_outside)
+    pending: set[MetadataKey] = set()
+    for title, location, country, state, remote, offices, count in rows.all():
+        facts = (country, state, remote, office_facts(offices))
+        reason = _metadata_area_exclusion(title, location, remote_outside, *facts)
         if reason is None:
             total += count
-        elif reason.endswith(" is on-site outside California"):
-            pending.add((title, location))
+        elif reason.endswith(" is on-site outside California") and remote is not False:
+            pending.add((title, location, *facts))
     if not pending:
         return total
-    # A short location prefilter avoids a large tuple-IN disjunction. Check
-    # the exact title/location key in Python before considering its prose.
-    locations = {location for _, location in pending if location is not None}
+    locations = {key[1] for key in pending if key[1] is not None}
     clauses: list[ColumnElement[bool]] = [Posting.location.in_(locations)]
-    if any(location is None for _, location in pending):
+    if any(key[1] is None for key in pending):
         clauses.append(Posting.location.is_(None))
     descriptions = await session.execute(
-        select(Posting.title, Posting.location, Posting.description_raw).where(
-            Posting.closed_at.is_(None), or_(*clauses)
-        )
+        select(*columns, Posting.description_raw).where(Posting.closed_at.is_(None), or_(*clauses))
     )
-    for title, location, description in descriptions.all():
-        if (title, location) not in pending:
+    for title, location, country, state, remote, offices, description in descriptions.all():
+        office_data = office_facts(offices)
+        if (title, location, country, state, remote, office_data) not in pending:
             continue
         if not reads_as_remote(title=None, location=None, description=description):
             continue
@@ -1902,6 +1956,10 @@ async def _open_area_total(session: AsyncSession, *, area: bool) -> int:
                 title=title,
                 description=description,
                 remote_outside_california=remote_outside,
+                country_code=country,
+                state_code=state,
+                is_remote=remote,
+                offices=office_data,
             )
             is None
         ):
@@ -2016,6 +2074,10 @@ async def _nearest(
                 Posting.url,
                 Posting.description_raw,
                 Company.name,
+                Posting.country_code,
+                Posting.state_code,
+                Posting.is_remote,
+                Posting.locations_json,
             )
             .outerjoin(Company, Company.id == Posting.company_id)
             .where(*_space_filter(*space), distance < _NO_OVERLAP)
@@ -2150,6 +2212,10 @@ async def _hits_for(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UU
             Posting.url,
             Posting.description_raw,
             Company.name,
+            Posting.country_code,
+            Posting.state_code,
+            Posting.is_remote,
+            Posting.locations_json,
         )
         .outerjoin(Company, Company.id == Posting.company_id)
         .where(Posting.id.in_(ids))
@@ -2501,6 +2567,10 @@ async def _stating_sponsorship(
                 Posting.url,
                 Posting.description_raw,
                 Company.name,
+                Posting.country_code,
+                Posting.state_code,
+                Posting.is_remote,
+                Posting.locations_json,
             )
             .outerjoin(Company, Company.id == Posting.company_id)
             .where(
@@ -2517,11 +2587,7 @@ async def _stating_sponsorship(
     inside = [hit for hit in pool if not (area and _outside_area(hit))]
     outside = len(pool) - len(inside)
     if remote_only:
-        inside = [
-            hit
-            for hit in inside
-            if reads_as_remote(title=hit.title, location=hit.location, description=hit.description)
-        ]
+        inside = [hit for hit in inside if _hit_remote(hit)]
     if place_filter is not None:
         inside = place_filter.narrow(inside)
     over += " in the search area" if area else ""
@@ -2628,11 +2694,7 @@ async def _requiring_skill(
     inside = [hit for hit in hits if not (area and _outside_area(hit))]
     outside = len(hits) - len(inside)
     if remote_only:
-        inside = [
-            hit
-            for hit in inside
-            if reads_as_remote(title=hit.title, location=hit.location, description=hit.description)
-        ]
+        inside = [hit for hit in inside if _hit_remote(hit)]
     inside, level_count = _at_level(inside, level, place_filter=place_filter)
     counts = dict.fromkeys(("required", "options", "preferred", "named", "unread"), 0)
     required: list[_Hit] = []
@@ -2792,9 +2854,7 @@ async def _retrieve(
         return in_work_mode(hit) and (place_filter is None or place_filter.keeps(hit))
 
     def in_work_mode(hit: _Hit) -> bool:
-        return not remote_only or reads_as_remote(
-            title=hit.title, location=hit.location, description=hit.description
-        )
+        return not remote_only or _hit_remote(hit)
 
     def prefer_place(hits: list[_Hit]) -> list[_Hit]:
         """Prefer the named city within the region, preserving all other ties."""

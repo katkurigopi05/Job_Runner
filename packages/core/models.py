@@ -28,6 +28,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from packages.core.location_constraints import LOCATION_CONSTRAINTS
+
 #: Dimension of BAAI/bge-small-en-v1.5 embeddings.
 EMBEDDING_DIM = 384
 
@@ -355,6 +357,15 @@ class Posting(Base):
     #: There is no correct maximum here, so there is no maximum.
     title: Mapped[str | None] = mapped_column(Text)
     location: Mapped[str | None] = mapped_column(Text)
+    #: Common values across all offices. Mixed/unknown values remain NULL;
+    #: locations_json preserves each office rather than choosing one country.
+    country_code: Mapped[str | None] = mapped_column(String(2))
+    state_code: Mapped[str | None] = mapped_column(String(2))
+    is_remote: Mapped[bool | None] = mapped_column(Boolean)
+    locations_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    location_version: Mapped[int | None] = mapped_column(Integer)
+    #: Original list label, such as "6 Locations", when details resolve it.
+    listed_location: Mapped[str | None] = mapped_column(Text)
     description_raw: Mapped[str | None] = mapped_column(Text)
     description_embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
     #: Which embedder produced the vector above, and which corpus statistics
@@ -428,6 +439,7 @@ class Posting(Base):
         Index("ix_postings_first_seen_at", text("first_seen_at DESC")),
         Index("ix_postings_published_at", text("published_at DESC")),
         Index("ix_postings_content_hash", "content_hash"),
+        Index("ix_postings_location", "country_code", "state_code", "is_remote"),
         # Every crawl of every company runs two queries keyed on this column
         # — load the existing set, then load the open set — and neither had an
         # index. That is twice per cycle per company: 58 sequential scans of
@@ -452,6 +464,7 @@ class Posting(Base):
         ),
         Index("ix_postings_requirements_version", "requirements_version"),
         Index("ix_postings_canonical_job_id", "canonical_job_id"),
+        *(CheckConstraint(sql, name=name) for name, sql in LOCATION_CONSTRAINTS),
     )
 
 
