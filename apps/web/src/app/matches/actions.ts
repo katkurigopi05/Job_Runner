@@ -1,11 +1,82 @@
 "use server";
 
-import { ApiError, api, type PostingAts } from "@/lib/api";
+import { revalidatePath } from "next/cache";
+import { ApiError, api, type Application, type PostingAts } from "@/lib/api";
 
 export interface AtsResult {
   ok: boolean;
   message: string;
   report: PostingAts | null;
+}
+
+export interface QueueApplicationResult {
+  ok: boolean;
+  duplicate?: boolean;
+  message: string;
+  application: Application | null;
+}
+
+/**
+ * Queue a matched posting for tailoring and pre-submit form fill.
+ *
+ * Respects §2.3 (`AUTO_SUBMIT=false`): this only creates a `queued` application
+ * so the worker tailors the résumé and parks it in `/review` for approval.
+ */
+export async function queueApplication(input: {
+  candidateId?: string;
+  profileId: string;
+  url: string;
+  ats?: string | null;
+}): Promise<QueueApplicationResult> {
+  try {
+    let candidateId = input.candidateId;
+    if (!candidateId) {
+      const profiles = await api.profiles();
+      const matched = profiles.find((p) => p.id === input.profileId) ?? profiles[0];
+      candidateId = matched?.candidate_id;
+    }
+    if (!candidateId) {
+      const candidates = await api.candidates();
+      candidateId = candidates[0]?.id;
+    }
+    if (!candidateId) {
+      return {
+        ok: false,
+        message: "No candidate profile found yet — complete /profile first.",
+        application: null,
+      };
+    }
+
+    const application = await api.createApplication({
+      candidate_id: candidateId,
+      profile_id: input.profileId,
+      url: input.url,
+      ats: input.ats ?? null,
+    });
+    revalidatePath("/matches");
+    revalidatePath("/applications");
+    revalidatePath("/review");
+    return {
+      ok: true,
+      message: "Queued for tailoring & review",
+      application,
+    };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      const duplicate = error.code === "duplicate_application" || error.status === 409;
+      return {
+        ok: false,
+        duplicate,
+        message: error.message,
+        application: null,
+      };
+    }
+    return {
+      ok: false,
+      message: "could not reach the API to queue this application",
+      application: null,
+    };
+  }
 }
 
 /**

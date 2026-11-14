@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { Sparkles } from "lucide-react";
 import {
   ApiError,
   api,
@@ -9,6 +11,7 @@ import {
 } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
 import { ProjectLinks } from "@/components/project-links";
+import { RefreshButton } from "@/components/refresh-button";
 import { ResumeUpload } from "@/components/resume-upload";
 import { ResumeEditor } from "@/components/resume-editor";
 
@@ -78,12 +81,24 @@ export default async function ResumesPage() {
 
   return (
     <div className="space-y-10">
-      <header>
-        <h1 className="text-display leading-[1.05] tracking-tight">Résumés</h1>
-        <p className="mt-3 max-w-prose text-ink-soft">
-          Shown as the parser reads them, which is what an ATS gets. A section missing here is
-          missing from every application that sends this file.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-display leading-[1.05] tracking-tight">Résumés</h1>
+          <p className="mt-3 max-w-prose text-ink-soft">
+            Shown as the parser reads them, which is what an ATS gets. A section missing here is
+            missing from every application that sends this file.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/resumes/studio"
+            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-brand bg-brand px-3.5 font-mono text-[11px] font-medium text-on-accent shadow-xs transition-opacity hover:opacity-90"
+          >
+            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Open Studio</span>
+          </Link>
+          <RefreshButton />
+        </div>
       </header>
 
       {candidateId ? (
@@ -127,12 +142,20 @@ export default async function ResumesPage() {
                         base for {usedBy.join(", ")}
                       </span>
                     ) : null}
-                    <a
-                      href={`/api/resumes/${resume.id}/file`}
-                      className="ml-auto text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline"
-                    >
-                      original file
-                    </a>
+                    <div className="ml-auto flex items-center gap-4">
+                      <a
+                        href={`/api/resumes/${resume.id}/docx`}
+                        className="text-xs text-ink underline-offset-4 hover:underline"
+                      >
+                        download .docx
+                      </a>
+                      <a
+                        href={`/api/resumes/${resume.id}/file`}
+                        className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline"
+                      >
+                        original file
+                      </a>
+                    </div>
                   </div>
 
                   <div className="mt-5">

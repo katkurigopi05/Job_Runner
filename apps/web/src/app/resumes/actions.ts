@@ -146,6 +146,20 @@ export async function linkProject(
   return { ok: true, message: entry ? `linked to ${entry}` : "unlinked" };
 }
 
+export async function curateProject(
+  projectId: string,
+  patch: { include?: boolean | null; pinned?: boolean },
+): Promise<ProjectActionResult> {
+  try {
+    await api.updateProject(projectId, patch);
+  } catch (error) {
+    return { ok: false, message: error instanceof ApiError ? error.message : "Update failed." };
+  }
+  revalidatePath("/resumes");
+  revalidatePath("/resumes/studio");
+  return { ok: true, message: "Updated repository curation." };
+}
+
 /** Re-read the owner's repositories, and the dependency files of any pushed to since. */
 export async function syncProjects(
   _prev: ProjectActionResult | null,
@@ -153,10 +167,13 @@ export async function syncProjects(
 ): Promise<ProjectActionResult> {
   const candidateId = String(form.get("candidate_id") ?? "");
   const username = String(form.get("username") ?? "").trim();
+  const includePrivate = form.get("include_private") === "on";
+  const token = String(form.get("token") ?? "").trim() || null;
   if (!candidateId || !username) return { ok: false, message: "A GitHub username is needed." };
   try {
-    const result = await api.syncProjects(candidateId, username);
+    const result = await api.syncProjects(candidateId, username, { includePrivate, token });
     revalidatePath("/resumes");
+    revalidatePath("/resumes/studio");
     const skipped = result.dependencies_skipped
       ? `; ${result.dependencies_skipped} left for the next sync (GitHub rate limit)`
       : "";

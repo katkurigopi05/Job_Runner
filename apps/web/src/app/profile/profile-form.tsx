@@ -11,12 +11,16 @@ function Field({
   hint,
   defaultValue,
   type = "text",
+  min, max, step,
 }: {
   name: string;
   label: string;
   hint?: string;
   defaultValue?: string | null;
   type?: string;
+  min?: number;
+  max?: number;
+  step?: number;
 }) {
   return (
     <div>
@@ -31,6 +35,7 @@ function Field({
         id={name}
         name={name}
         type={type}
+        min={min} max={max} step={step}
         defaultValue={defaultValue ?? ""}
         className="mt-2 w-full rounded-lg border border-rule bg-paper px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink-soft"
       />
@@ -235,7 +240,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
             name="min_match_score"
             label="Minimum match score"
             hint="0 to 1. Nothing below this is ever auto-submitted."
-            type="number"
+            type="number" min={0} max={1} step={0.01}
             defaultValue={String(profile.min_match_score)}
           />
         </div>

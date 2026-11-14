@@ -1,4 +1,4 @@
-"""Match routes — the read side of scoring.
+"""Match feed and an explicit queue trigger for rescoring.
 
 `packages/matching/` scores postings and writes Match rows during a crawl, and
 nothing could read them back, so §9 Phase 5's "match feed in the dashboard" had
@@ -16,17 +16,22 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import defer
 from starlette.concurrency import run_in_threadpool
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
+from apps.worker.rescore_job import RESCORE_TASK_KIND, request_rescore
+from packages.core import heartbeat
 from packages.core.config import get_settings
-from packages.core.enums import ErrorCode
-from packages.core.models import Application, CompanyCrawlState, Match, Posting, Profile
+from packages.core.enums import ErrorCode, QueueTaskStatus
+from packages.core.heartbeat import WorkerState
+from packages.core.models import Application, CompanyCrawlState, Match, Posting, Profile, QueueTask
 from packages.core.schemas import (
     CalibrationOut,
+    CrawlStartOut,
     KeywordHitOut,
     MatchDecision,
     MatchDecisionOut,
@@ -50,6 +55,75 @@ from packages.matching.search import matches as filter_matches
 from packages.matching.skill_vocab import normalize_skill
 
 router = APIRouter(prefix="/matches", tags=["matches"])
+
+
+class RescoreStatusOut(BaseModel):
+    pending: int
+    running: bool
+    worker_alive: bool
+    last_status: str | None
+    last_finished_at: datetime | None
+
+
+@router.post("/rescore", response_model=CrawlStartOut, status_code=202)
+async def start_rescore(session: SessionDep) -> CrawlStartOut:
+    """Deliberately queue all-profile scoring; the loopback middleware applies."""
+    queued = await request_rescore(session)
+    await session.commit()
+    return CrawlStartOut(
+        queued=queued,
+        already_waiting=0 if queued else 1,
+        worker_alive=any(
+            worker.state is WorkerState.ALIVE for worker in await heartbeat.workers(session)
+        ),
+    )
+
+
+@router.get("/rescore", response_model=RescoreStatusOut)
+async def rescore_status(session: SessionDep) -> RescoreStatusOut:
+    tasks = list(
+        (
+            await session.scalars(
+                select(QueueTask).where(
+                    QueueTask.kind == RESCORE_TASK_KIND,
+                    QueueTask.status.in_(
+                        (QueueTaskStatus.PENDING.value, QueueTaskStatus.RUNNING.value)
+                    ),
+                )
+            )
+        ).all()
+    )
+    last = await session.scalar(
+        select(QueueTask)
+        .where(
+            QueueTask.kind == RESCORE_TASK_KIND,
+            QueueTask.status.in_(
+                (
+                    QueueTaskStatus.DONE.value,
+                    QueueTaskStatus.FAILED.value,
+                    QueueTaskStatus.CANCELLED.value,
+                )
+            ),
+        )
+        .order_by(QueueTask.finished_at.desc().nulls_last())
+        .limit(1)
+    )
+    now = datetime.now(UTC)
+    running = any(
+        task.status == QueueTaskStatus.RUNNING.value
+        and task.lease_expires_at is not None
+        and task.lease_expires_at > now
+        for task in tasks
+    )
+    return RescoreStatusOut(
+        pending=len(tasks),
+        running=running,
+        worker_alive=any(
+            worker.state is WorkerState.ALIVE for worker in await heartbeat.workers(session)
+        ),
+        last_status=last.status if last else None,
+        last_finished_at=last.finished_at if last else None,
+    )
 
 
 def _lag_hours(posting: Posting) -> float | None:
