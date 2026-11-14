@@ -277,8 +277,11 @@ class SyncGitHubRequest(BaseModel):
     candidate_id: uuid.UUID
     username: str = Field(min_length=1, max_length=100)
     #: Overrides GITHUB_TOKEN for this call. Never stored, never logged.
-    token: str | None = None
+    token: str | None = Field(default=None, max_length=300, repr=False)
     include_private: bool = False
+    #: Read every repository's files again, not only those pushed to since the
+    #: last read: how a repository picks up a kind of file read since.
+    force_evidence: bool = False
 
 
 class SyncResultOut(BaseModel):
@@ -292,6 +295,10 @@ class SyncResultOut(BaseModel):
     #: Repositories due a read that did not get one (a rate limit). The next
     #: sync tries them again.
     dependencies_skipped: int = 0
+    #: Whether private repositories were listed: False when they were asked
+    #: for with no token, so a short list is not read as "none exist".
+    private_included: bool = False
+    private: int = 0
 
 
 class ProjectOut(BaseModel):
@@ -314,6 +321,9 @@ class ProjectOut(BaseModel):
     pushed_at: datetime | None
     include: bool | None
     pinned: bool
+    #: Printed as a résumé project (True), or evidence only: a private
+    #: repository the owner has not included or pinned (`Project.resume_listed`).
+    resume_listed: bool = True
     #: What the repository's own dependency files declare, by résumé name.
     dependency_technologies: list[str] = Field(default_factory=list)
     #: The résumé Projects entry this repository backs, as the owner linked it.
@@ -497,87 +507,6 @@ class ResumeParsedOut(BaseModel):
     #: None when the file is not a PDF or could not be read. That is "not
     #: measured", which a screen must not show as "nothing found".
     layout: ResumeLayoutOut | None = None
-
-
-RoleTrackLiteral = Literal[
-    "swe",
-    "fullstack",
-    "data_ml",
-    "ai_agentic",
-    "cloud_devops",
-    "fde_harness",
-]
-
-
-class StudioInternshipIn(BaseModel):
-    """Verified internship or co-op entry included during Resume Studio synthesis."""
-
-    company: str = Field(min_length=1, max_length=200)
-    role: str = Field(min_length=1, max_length=200)
-    dates: str = Field(default="", max_length=100)
-    location: str = Field(default="", max_length=120)
-    stack: list[str] = Field(default_factory=list)
-    bullets: list[str] = Field(default_factory=list)
-
-
-class StudioCertificationIn(BaseModel):
-    """Verified certification entry included during Resume Studio synthesis."""
-
-    name: str = Field(min_length=1, max_length=240)
-    issuer: str = Field(default="", max_length=160)
-    date: str = Field(default="", max_length=80)
-    credential_id: str = Field(default="", max_length=120)
-    skills: list[str] = Field(default_factory=list)
-
-
-class StudioEvidenceOut(BaseModel):
-    """Saved internships & certifications stored on a profile for Resume Studio."""
-
-    profile_id: uuid.UUID
-    internships: list[StudioInternshipIn] = Field(default_factory=list)
-    certifications: list[StudioCertificationIn] = Field(default_factory=list)
-
-
-class StudioEvidenceSave(BaseModel):
-    """Save verified internships and certifications onto a profile."""
-
-    profile_id: uuid.UUID
-    internships: list[StudioInternshipIn] = Field(default_factory=list)
-    certifications: list[StudioCertificationIn] = Field(default_factory=list)
-
-
-class ResumeSynthesizeRequest(BaseModel):
-    """Synthesize a role-targeted résumé from repos, internships, certs, and base résumé."""
-
-    candidate_id: uuid.UUID
-    profile_id: uuid.UUID | None = None
-    base_resume_id: uuid.UUID | None = None
-    role_track: RoleTrackLiteral = "swe"
-    job_description: str = Field(default="", max_length=25_000)
-    project_ids: list[uuid.UUID] | None = None
-    project_limit: int = Field(default=4, ge=1, le=8)
-    internships: list[StudioInternshipIn] = Field(default_factory=list)
-    certifications: list[StudioCertificationIn] = Field(default_factory=list)
-    use_llm: bool = False
-    save_version: bool = False
-    adopt: bool = True
-
-
-class ResumeSynthesizeOut(BaseModel):
-    """Preview + ATS readout + optional saved résumé version from Resume Studio."""
-
-    role_track: RoleTrackLiteral
-    matched_terms: list[str]
-    missing_terms: list[str]
-    ats_parse_score: float
-    ats_keyword_score: float
-    ats_findings: list[str]
-    selected_projects: list[str]
-    bullets_rewritten: int
-    bullets_refused: int
-    html_preview: str
-    parsed: dict[str, Any]
-    saved_resume: ResumeOut | None = None
 
 
 # --------------------------------------------------------------------------

@@ -27,7 +27,8 @@ const match = {
 };
 const parsed = { contact: { name: "Alex Rivera", email: "alex@example.com" }, sections: { skills: ["Python"] }, raw_lines: ["Alex Rivera", "Skills", "Python"] };
 let applications = [];
-let evidence = { profile_id: profileId, internships: [], certifications: [] };
+const emptyEvidence = () => ({ candidate_id: candidateId, internships: [], certifications: [] });
+let evidence = emptyEvidence();
 let rescorePending = false;
 let crawlPending = false;
 let calls = [];
@@ -42,7 +43,7 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify(value));
   };
   if (key === "POST /__reset") {
-    applications = []; evidence = { profile_id: profileId, internships: [], certifications: [] };
+    applications = []; evidence = emptyEvidence();
     rescorePending = false; crawlPending = false; calls = [];
     return json({ ok: true });
   }
@@ -81,14 +82,37 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     res.end(': deterministic offline stream\n\n'); return;
   }
-  if (key === "GET /resumes/studio-evidence") return json(evidence);
-  if (key === "PUT /resumes/studio-evidence") { evidence = body; return json(evidence); }
-  if (key === "POST /resumes/synthesize") return json({
-    role_track: body.role_track, matched_terms: ["Python"], missing_terms: [], ats_parse_score: 1,
-    ats_keyword_score: 1, ats_findings: [], selected_projects: [], bullets_rewritten: 0, bullets_refused: 0,
-    html_preview: "<!doctype html><html lang='en'><title>Preview</title><body><h1>Alex Rivera</h1><p>Python</p></body></html>",
-    parsed, saved_resume: body.save_version ? { ...resume, version: 2 } : null,
-  });
+  if (key === `GET /profiles/${profileId}/evidence`) return json(evidence);
+  if (key === `PUT /profiles/${profileId}/evidence`) {
+    const withIds = (list, prefix) => list.map((item, index) => ({ ...item, id: `${prefix}-${index}` }));
+    evidence = {
+      candidate_id: candidateId,
+      internships: withIds(body.internships, "internship"),
+      certifications: withIds(body.certifications, "certification"),
+    };
+    return json(evidence);
+  }
+  if (key === "POST /resumes/synthesize") {
+    const added = evidence.internships.filter((item) => item.verified);
+    const experience = added.flatMap((item) => [`${item.role}, ${item.company}  ${item.started}`, ...item.bullets]);
+    const ats = { parse: 1, keywords: 0.5, overall: 0.8, supported: ["Python"], missing: ["Kubernetes"], findings: [] };
+    return json({
+      role_track: body.role_track, role_label: "Software Engineer", base_resume_id: resumeId, base_version: 1,
+      contact: { ...parsed.contact, phone: null, links: [] },
+      sections: { experience, skills: ["Python"] },
+      lines: {
+        experience: experience.map((text) => ({ text, origin: "internship", label: "Example Labs", original: null })),
+        skills: [{ text: "Python", origin: "resume", label: "", original: null }],
+      },
+      html: "<h1>Alex Rivera</h1><p>Python</p>",
+      bullets: [], terms: [{ term: "Python", status: "covered", sources: ["shared"] }, { term: "Kubernetes", status: "gap", sources: [] }],
+      projects: [], ats_before: { ...ats, keywords: 0.5 }, ats_after: ats,
+      added: added.map((item) => `${item.role}, ${item.company}`), skipped: [], tailored_by: null, calls: 0,
+    });
+  }
+  if (key === "POST /resumes/synthesize/save") {
+    return json({ resume: { ...resume, id: "00000000-0000-4000-8000-000000000004", version: 2, is_default: false }, adopted: body.adopt }, 201);
+  }
   console.error(`Unexpected mock API request: ${key}`);
   json({ error: { code: "not_found", message: `No synthetic fixture for ${key}` } }, 404);
 });

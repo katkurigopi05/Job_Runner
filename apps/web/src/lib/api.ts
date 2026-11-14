@@ -374,67 +374,6 @@ export interface Resume {
   created_at: string;
 }
 
-export type RoleTrack =
-  | "swe"
-  | "fullstack"
-  | "data_ml"
-  | "ai_agentic"
-  | "cloud_devops"
-  | "fde_harness";
-
-export interface InternshipRecord {
-  company: string;
-  role: string;
-  dates: string;
-  location: string;
-  stack: string[];
-  bullets: string[];
-}
-
-export interface CertificationRecord {
-  name: string;
-  issuer: string;
-  date: string;
-  credential_id: string;
-  skills: string[];
-}
-
-export interface StudioEvidence {
-  profile_id: string;
-  internships: InternshipRecord[];
-  certifications: CertificationRecord[];
-}
-
-export interface ResumeSynthesizeRequest {
-  candidate_id: string;
-  profile_id?: string | null;
-  base_resume_id?: string | null;
-  role_track: RoleTrack;
-  job_description: string;
-  project_ids?: string[] | null;
-  project_limit?: number;
-  internships: InternshipRecord[];
-  certifications: CertificationRecord[];
-  use_llm?: boolean;
-  save_version?: boolean;
-  adopt?: boolean;
-}
-
-export interface ResumeSynthesizeOut {
-  role_track: RoleTrack;
-  matched_terms: string[];
-  missing_terms: string[];
-  ats_parse_score: number;
-  ats_keyword_score: number;
-  ats_findings: string[];
-  selected_projects: string[];
-  bullets_rewritten: number;
-  bullets_refused: number;
-  html_preview: string;
-  parsed: Record<string, unknown>;
-  saved_resume: Resume | null;
-}
-
 /** One thing about a document's pages worth seeing before it is sent. */
 export interface LayoutFinding {
   code: string;
@@ -982,6 +921,8 @@ export interface Project {
   dependency_technologies: string[];
   /** The résumé Projects entry this repository backs, as the owner linked it. */
   resume_entry: string | null;
+  /** Printed as a résumé project; false for a private one not yet included or pinned. */
+  resume_listed?: boolean;
 }
 
 /** A résumé's Projects entries, and which repository plainly is which. */
@@ -1115,7 +1056,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${typeof window === "undefined" ? API : "/api"}${path}`, {
@@ -1595,18 +1536,6 @@ export const api = {
       body: JSON.stringify({ resume_id: resumeId }),
     }),
 
-  studioEvidence: (profileId: string) =>
-    request<StudioEvidence>(`/resumes/studio-evidence?profile_id=${encodeURIComponent(profileId)}`),
-  saveStudioEvidence: (body: StudioEvidence) =>
-    request<StudioEvidence>("/resumes/studio-evidence", {
-      method: "PUT",
-      body: JSON.stringify(body),
-    }),
-  synthesizeResume: (body: ResumeSynthesizeRequest) =>
-    request<ResumeSynthesizeOut>("/resumes/synthesize", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
 };
 
 /** Statuses that are waiting on the owner rather than on the machine. */
