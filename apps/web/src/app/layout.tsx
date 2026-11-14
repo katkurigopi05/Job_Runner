@@ -6,6 +6,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { SideNotes } from "@/components/side-notes";
 import { ReleaseWindowName } from "@/components/release-window-name";
 import { DashboardShell } from "@/components/dashboard-shell";
+import { QueryProvider } from "@/components/query-provider";
 import { StatusStreamProvider, type StatusCounts } from "@/components/status-stream";
 import { STATUS_ORDER } from "@/components/status";
 import { api } from "@/lib/api";
@@ -37,14 +38,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <ReleaseWindowName />
         {/* The Desk keeps its nested provider so a fresh page read remains its
             fallback when the stream is disconnected. The API shares one watcher. */}
-        <StatusStreamProvider initial={counts}>
-          <DashboardShell initial={counts} countsKnown={applications !== null}
-            services={<><CrawlerSpider /><ApiHealth /></>}
-            theme={<ThemeToggle />} notes={<SideNotes />}
-            footer={<p>You approve every application before it is sent. Work-authorization answers are copied from your profile word for word, never generated.</p>}>
-            {children}
-          </DashboardShell>
-        </StatusStreamProvider>
+        <QueryProvider>
+          <StatusStreamProvider initial={counts}>
+            <DashboardShell initial={counts} countsKnown={applications !== null}
+              services={<><CrawlerSpider /><ApiHealth /></>}
+              theme={<ThemeToggle />} notes={<SideNotes />}
+              footer={<p>You approve every application before it is sent. Work-authorization answers are copied from your profile word for word, never generated.</p>}>
+              {children}
+            </DashboardShell>
+          </StatusStreamProvider>
+        </QueryProvider>
       </body>
     </html>
   );

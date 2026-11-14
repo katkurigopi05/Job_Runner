@@ -46,12 +46,18 @@ def importers(package: str) -> list[str]:
 
 
 def test_the_dashboard_depends_on_exactly_these_five() -> None:
-    """A third effect library is a decision, not something an install leaves behind."""
+    """Approved runtime packages: adding a UI/effect dependency is an explicit decision."""
     assert set(PACKAGE["dependencies"]) == {
+        "@radix-ui/react-slot",
+        "@tanstack/react-query",
+        "border-beam",
+        "class-variance-authority",
+        "clsx",
+        "lucide-react",
         "next",
         "react",
         "react-dom",
-        "border-beam",
+        "tailwind-merge",
         "thinking-orbs",
     }
 

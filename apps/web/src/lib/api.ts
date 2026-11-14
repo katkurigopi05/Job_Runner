@@ -1,9 +1,8 @@
 /**
- * Server-side client for the FastAPI app.
+ * Shared client for the FastAPI app.
  *
- * Everything here runs on the Next server, never in the browser. That is not
- * an optimization: the API has no authentication and refuses non-loopback
- * callers, so the request has to originate from this process over loopback.
+ * Server calls use the loopback API; browser calls use the same-origin Next
+ * proxy. The API refuses non-loopback callers.
  */
 
 const API = process.env.JOBRUNNER_API ?? "http://127.0.0.1:8000";
@@ -373,6 +372,67 @@ export interface Resume {
   storage_ref: string;
   is_default: boolean;
   created_at: string;
+}
+
+export type RoleTrack =
+  | "swe"
+  | "fullstack"
+  | "data_ml"
+  | "ai_agentic"
+  | "cloud_devops"
+  | "fde_harness";
+
+export interface InternshipRecord {
+  company: string;
+  role: string;
+  dates: string;
+  location: string;
+  stack: string[];
+  bullets: string[];
+}
+
+export interface CertificationRecord {
+  name: string;
+  issuer: string;
+  date: string;
+  credential_id: string;
+  skills: string[];
+}
+
+export interface StudioEvidence {
+  profile_id: string;
+  internships: InternshipRecord[];
+  certifications: CertificationRecord[];
+}
+
+export interface ResumeSynthesizeRequest {
+  candidate_id: string;
+  profile_id?: string | null;
+  base_resume_id?: string | null;
+  role_track: RoleTrack;
+  job_description: string;
+  project_ids?: string[] | null;
+  project_limit?: number;
+  internships: InternshipRecord[];
+  certifications: CertificationRecord[];
+  use_llm?: boolean;
+  save_version?: boolean;
+  adopt?: boolean;
+}
+
+export interface ResumeSynthesizeOut {
+  role_track: RoleTrack;
+  matched_terms: string[];
+  missing_terms: string[];
+  ats_parse_score: number;
+  ats_keyword_score: number;
+  ats_findings: string[];
+  selected_projects: string[];
+  bullets_rewritten: number;
+  bullets_refused: number;
+  html_preview: string;
+  parsed: Record<string, unknown>;
+  saved_resume: Resume | null;
 }
 
 /** One thing about a document's pages worth seeing before it is sent. */
@@ -910,8 +970,13 @@ export interface Project {
   url: string;
   description: string | null;
   language: string | null;
+  topics?: string[];
+  stars?: number;
   is_fork: boolean;
+  is_archived: boolean;
   is_private: boolean;
+  include: boolean | null;
+  pinned: boolean;
   pushed_at: string | null;
   /** What the repository's own dependency files declare, by résumé name. */
   dependency_technologies: string[];
@@ -1053,7 +1118,7 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API}${path}`, {
+    response = await fetch(`${typeof window === "undefined" ? API : "/api"}${path}`, {
       ...init,
       headers: { "content-type": "application/json", ...init?.headers },
       cache: "no-store",
@@ -1190,7 +1255,24 @@ export interface DiscoveryStatus {
   weighting_reason: string;
 }
 
+export interface QueueStart {
+  queued: boolean;
+  already_waiting: number;
+  worker_alive: boolean;
+}
+
+export interface RescoreStatus {
+  pending: number;
+  running: boolean;
+  worker_alive: boolean;
+  last_status: string | null;
+  last_finished_at: string | null;
+}
+
 export const api = {
+  startCrawl: () => request<QueueStart>("/crawl", { method: "POST" }),
+  rescoreMatches: () => request<QueueStart>("/matches/rescore", { method: "POST" }),
+  rescoreStatus: () => request<RescoreStatus>("/matches/rescore"),
   health: () => request<Health>("/health"),
   crawlStatus: () => request<CrawlStatus>("/crawl/status"),
   discoveryStatus: () => request<DiscoveryStatus>("/companies/status"),
@@ -1202,6 +1284,16 @@ export const api = {
     }),
 
   applications: () => request<Application[]>("/applications"),
+  createApplication: (body: {
+    candidate_id: string;
+    profile_id: string;
+    url: string;
+    ats?: string | null;
+  }) =>
+    request<Application>("/applications", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   application: (id: string) => request<Application>(`/applications/${id}`),
   events: (id: string) =>
     request<ApplicationEvent[]>(`/applications/${id}/events`),
@@ -1235,16 +1327,34 @@ export const api = {
     request<Project[]>(`/projects?candidate_id=${encodeURIComponent(candidateId)}`),
   projectEntries: (resumeId: string) =>
     request<ProjectEntries>(`/projects/entries?resume_id=${encodeURIComponent(resumeId)}`),
+  /** Curate a repository (`include`, `pinned`, or linked résumé project). */
+  updateProject: (
+    projectId: string,
+    body: { include?: boolean | null; pinned?: boolean | null; resume_entry?: string | null },
+  ) =>
+    request<Project>(`/projects/${projectId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   /** Link a repository to the résumé project it backs, or unlink it (null). */
   linkProject: (projectId: string, resumeEntry: string | null) =>
     request<Project>(`/projects/${projectId}`, {
       method: "PATCH",
       body: JSON.stringify({ resume_entry: resumeEntry }),
     }),
-  syncProjects: (candidateId: string, username: string) =>
+  syncProjects: (
+    candidateId: string,
+    username: string,
+    options?: { includePrivate?: boolean; token?: string | null },
+  ) =>
     request<ProjectSyncResult>("/projects/sync/github", {
       method: "POST",
-      body: JSON.stringify({ candidate_id: candidateId, username }),
+      body: JSON.stringify({
+        candidate_id: candidateId,
+        username,
+        include_private: options?.includePrivate ?? false,
+        token: options?.token || null,
+      }),
     }),
 
   /** How an ATS reads this profile's résumé against one posting. */
@@ -1483,6 +1593,19 @@ export const api = {
     request<Application>(`/applications/${id}/tailoring/select`, {
       method: "POST",
       body: JSON.stringify({ resume_id: resumeId }),
+    }),
+
+  studioEvidence: (profileId: string) =>
+    request<StudioEvidence>(`/resumes/studio-evidence?profile_id=${encodeURIComponent(profileId)}`),
+  saveStudioEvidence: (body: StudioEvidence) =>
+    request<StudioEvidence>("/resumes/studio-evidence", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  synthesizeResume: (body: ResumeSynthesizeRequest) =>
+    request<ResumeSynthesizeOut>("/resumes/synthesize", {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
 };
 

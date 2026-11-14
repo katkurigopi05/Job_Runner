@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ApiError, api, type PostingHistory, type VersionChange } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
+import { RefreshButton } from "@/components/refresh-button";
 import { SplitButton } from "./split-button";
 import { POSTING_LINK } from "@/lib/external";
 
@@ -78,20 +79,23 @@ export default async function PostingPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="space-y-12">
-      <header>
-        <Link href="/matches" className="text-xs text-ink-faint hover:text-ink">
-          ← matches
-        </Link>
-        <h1 className="mt-3 text-display leading-tight tracking-tight">
-          {history.title ?? "Untitled posting"}
-        </h1>
-        <p className="mt-3 max-w-prose text-sm text-ink-soft">
-          {grouped
-            ? `Listed in ${history.sources.length} places, grouped because the evidence below says they are one requisition.`
-            : history.locked
-              ? "Kept separate: you split this listing out of a group, and it will not be grouped again."
-              : "Listed in one place."}
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <Link href="/matches" className="text-xs text-ink-faint hover:text-ink">
+            ← matches
+          </Link>
+          <h1 className="mt-3 text-display leading-tight tracking-tight">
+            {history.title ?? "Untitled posting"}
+          </h1>
+          <p className="mt-3 max-w-prose text-sm text-ink-soft">
+            {grouped
+              ? `Listed in ${history.sources.length} places, grouped because the evidence below says they are one requisition.`
+              : history.locked
+                ? "Kept separate: you split this listing out of a group, and it will not be grouped again."
+                : "Listed in one place."}
+          </p>
+        </div>
+        <RefreshButton />
       </header>
 
       <section aria-labelledby="sources">

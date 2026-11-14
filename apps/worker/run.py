@@ -30,6 +30,7 @@ from apps.worker.discover_company_job import (
 )
 from apps.worker.discover_job import DISCOVER_TASK_KIND, handle_discover
 from apps.worker.inbox_job import INBOX_TASK_KIND, ensure_inbox_poll, handle_inbox
+from apps.worker.rescore_job import RESCORE_TASK_KIND, handle_rescore
 from packages.core import db as core_db
 from packages.core.config import get_settings
 from packages.core.enums import FailureReason
@@ -60,9 +61,11 @@ IDLE_SLEEP_SECONDS = 1.0
 #: pass for startup and exhausted retries, so once a minute is enough.
 INBOX_SCHEDULE_TICK_SECONDS = 60.0
 
+
 APPLY_TASK_KIND = "apply"
 
 HANDLERS = {
+    RESCORE_TASK_KIND: handle_rescore,
     APPLY_TASK_KIND: handle_apply,
     CRAWL_TASK_KIND: handle_crawl,
     CRAWL_COMPANY_TASK_KIND: handle_crawl_company,
@@ -98,6 +101,7 @@ def retry_policy(kind: str) -> RetryPolicy:
 #: Every request already has a network timeout; this is the backstop for
 #: whatever does not.
 TIME_LIMITS: dict[str, float] = {
+    RESCORE_TASK_KIND: 1800,
     APPLY_TASK_KIND: 3600,
     CRAWL_TASK_KIND: 1800,
     CRAWL_COMPANY_TASK_KIND: 1800,

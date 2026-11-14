@@ -9,6 +9,7 @@ import {
   type UpcomingTask,
 } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
+import { RefreshButton } from "@/components/refresh-button";
 
 export const dynamic = "force-dynamic";
 
@@ -154,13 +155,16 @@ export default async function TrackerPage() {
 
   return (
     <div className="space-y-12">
-      <header>
-        <h1 className="text-display leading-[1.05] tracking-tight">Tracker</h1>
-        <p className="mt-3 max-w-prose text-ink-soft">
-          What came back. Grouped by what the employer said, not by what we did — an application
-          stays <span className="text-sm">submitted</span> whether the answer is an offer
-          or silence.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-display leading-[1.05] tracking-tight">Tracker</h1>
+          <p className="mt-3 max-w-prose text-ink-soft">
+            What came back. Grouped by what the employer said, not by what we did — an application
+            stays <span className="text-sm">submitted</span> whether the answer is an offer
+            or silence.
+          </p>
+        </div>
+        <RefreshButton />
       </header>
 
       {/* Deadlines first: an interview or assessment window closes while the

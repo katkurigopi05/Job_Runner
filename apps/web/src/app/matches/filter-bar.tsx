@@ -64,17 +64,24 @@ export function FilterBar({
 }) {
   const router = useRouter();
   const params = useSearchParams();
+  const [filterNote, setFilterNote] = useState<string | null>(null);
+  const [filtering, startFiltering] = useTransition();
   const [saving, startSaving] = useTransition();
   const [saveNote, setSaveNote] = useState<string | null>(null);
 
   const replace = useCallback(
     (next: URLSearchParams) =>
-      router.replace(next.toString() ? `/matches?${next}` : "/matches", { scroll: false }),
+      startFiltering(() => router.replace(next.toString() ? `/matches?${next}` : "/matches", { scroll: false })),
     [router],
   );
 
   const set = useCallback(
     (key: string, value: string) => {
+      if (key === "min_salary" && value && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+        setFilterNote("Minimum pay must be zero or a positive number.");
+        return;
+      }
+      setFilterNote(null);
       const next = new URLSearchParams(params.toString());
       if (value) next.set(key, value);
       else next.delete(key);
@@ -141,7 +148,9 @@ export function FilterBar({
   ].filter(Boolean);
 
   return (
-    <div className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-4">
+    <div aria-busy={filtering} className="rounded-[var(--radius-lg)] border border-rule bg-paper-raised p-4">
+      {filtering ? <p role="status" className="mb-2 text-xs text-ink-soft">Updating matches…</p> : null}
+      {filterNote ? <p role="alert" className="mb-2 text-xs text-stop">{filterNote}</p> : null}
       <div className="flex flex-wrap items-end gap-4">
         <label className="flex flex-col gap-1">
           <span className={LABEL}>Keywords</span>
