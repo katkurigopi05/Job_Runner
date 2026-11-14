@@ -1,23 +1,10 @@
-"""Prepare the saved Kaggle session for Jobrunner: one kernel, the model, the helper.
+"""Prepare saved Qwen3.8 27B Q6_K; never silently substitute 8B.
 
-`make kaggle-setup`. After a new Kaggle session the only manual step is saving
-its link (Reconnect in the assistant, or `scripts.configure_kaggle`). This does
-the rest, reusing what is already there before loading anything:
-
-1. A saved kernel that already reports ready is left alone.
-2. A kernel that already holds the 4-bit model gets the helper installed.
-3. Otherwise a new kernel is started; the libraries are installed, the model is
-   found among the session's attached inputs by its config (no path is written
-   in this repository), copied to working disk and loaded on the GPU; and the
-   helper is sent from this checkout's `scripts/kaggle_helper.py` over the
-   authenticated kernel channel, so there is no download and no hash to pin.
-
-Jobrunner is then pointed at that kernel, and kernels nobody uses (idle, no
-client attached) are deleted, which frees the GPU memory a second copy of the
-model would hold. `fresh=True` deletes every kernel first. A kernel that is
-running a cell, or that has a client such as VS Code attached, is never
-deleted unless `fresh` asks for it. Nothing here prints the session link or a
-kernel id.
+Dashboard setup and `make kaggle-setup` reuse verified 27B or load the pinned
+private Kaggle bundle. Idle 8B engines are unloaded first, preserving their
+files and kernels. Busy kernels block the switch. The connection changes only
+after 27B readiness passes. Explicit `model=kaggle.MODEL` retains legacy 8B
+setup for deliberate callers. No session link or kernel id is printed.
 """
 
 from __future__ import annotations
@@ -291,6 +278,67 @@ async def setup(
     *,
     fresh: bool = False,
     say: Say = print,
+    model: str = kaggle.QWEN38_MODEL,
+) -> str:
+    """Reuse or load verified 27B, releasing idle 8B memory first."""
+    from packages.llm.kaggle_qwen27 import UNLOAD_8B, load_27b
+
+    if model == kaggle.MODEL:
+        return await _setup_8b(session, saved, destination, fresh=fresh, say=say)
+    if model != kaggle.QWEN38_MODEL:
+        raise LLMError("Unsupported Kaggle startup model.")
+    kernels = session.kernels()
+    if fresh:
+        for kernel in kernels:
+            session.delete(kernel.id)
+        kernels = []
+    if any(kernel.busy for kernel in kernels):
+        raise LLMError("A Kaggle kernel is running a cell; wait before loading Qwen 27B.")
+
+    facts = {k.id: await probe(session.connection(k.id)) for k in kernels}
+    for kernel in kernels:
+        if facts[kernel.id].get("model"):
+            await _step(session.connection(kernel.id), UNLOAD_8B, "Unloading Qwen 8B", 120, say)
+            facts[kernel.id]["model"] = False
+
+    loaded = [k for k in kernels if facts[k.id].get("qwen38_model")]
+    saved_kernel = next((k for k in kernels if k.id == saved.kernel_id), None)
+    pick = next((k for k in loaded if k.id == saved.kernel_id), None)
+    pick = pick or (loaded[0] if loaded else saved_kernel)
+    created = pick is None
+    chosen = session.start() if pick is None else pick.id
+    connection = session.connection(chosen)
+    provider = KaggleProvider(connection=connection)
+    try:
+        if not facts.get(chosen, {}).get("qwen38_model"):
+            cell = load_27b(QWEN38_HELPER_FILE.read_text(encoding="utf-8"))
+            await _step(connection, cell, "Loading saved Qwen 27B", 1800, say)
+        status = await provider.health()
+        if status.state != "ready":
+            await _step(connection, helper_cell(qwen38=True), "Installing 27B helper", 180, say)
+            status = await provider.health()
+        if status.state != "ready" or status.model != model:
+            raise LLMError("Qwen 27B did not become ready; no other model was selected.")
+    except BaseException:
+        if created:
+            try:
+                session.delete(chosen)
+            except Exception:
+                say("Could not delete the new kernel; check the notebook before retrying.")
+        raise
+    if chosen != saved.kernel_id:
+        save_connection(connection, destination)
+    say(status.detail)
+    return status.state
+
+
+async def _setup_8b(
+    session: Session,
+    saved: Connection,
+    destination: Path,
+    *,
+    fresh: bool = False,
+    say: Say = print,
 ) -> str:
     """Make one kernel ready, point Jobrunner at it, delete unused ones; returns the state."""
     kernels = session.kernels()
@@ -311,7 +359,9 @@ async def setup(
     ready = []
     for kernel in kernels:
         if facts.get(kernel.id, {}).get("helper"):
-            health = await KaggleProvider(connection=session.connection(kernel.id)).health()
+            health = await KaggleProvider(
+                connection=session.connection(kernel.id), model=kaggle.MODEL
+            ).health()
             if health.state == "ready":
                 ready.append(kernel)
     loaded = [
@@ -361,7 +411,7 @@ async def setup(
     if chosen != saved.kernel_id:
         save_connection(connection, destination)
         say("Jobrunner now uses that kernel.")
-    status = await KaggleProvider(connection=connection).health()
+    status = await KaggleProvider(connection=connection, model=kaggle.MODEL).health()
 
     unused = [k for k in kernels if k.id != chosen and not k.busy and k.clients == 0]
     for kernel in unused:

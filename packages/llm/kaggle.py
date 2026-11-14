@@ -29,9 +29,15 @@ from packages.llm.provider import DEFAULT_TEMPERATURE, LLMError, PromptTooLong
 MODEL = "unsloth/Qwen3-8B-bnb-4bit"
 QWEN38_MODEL = "unsloth/Qwen3.8-27B-GGUF:UD-Q6_K"
 QWEN38_SHA256 = "c9c206812fbe4ac7b76a729e25928b63f2ae89d37f69da7a71c20aec763cd436"
-# Auto chooses the first ready supported model, then pins it for this request.
+# Auto requires 27B. The legacy 8B protocol is available only by explicit selection.
 HELPERS = {QWEN38_MODEL: "jobrunner_qwen38_complete", MODEL: "jobrunner_complete"}
 MODEL_LABELS = {QWEN38_MODEL: "Qwen3.8 27B Q6_K", MODEL: "Qwen3 8B 4-bit"}
+#: What each helper loads its model with; prompt and answer share it. 27B was
+#: 4,096 until 2026-11-12, when the two T4s were measured with it loaded at
+#: both sizes: 16,384 took 368 and 462 MiB more and left 5.7 and 2.6 GiB free,
+#: and a 15,271-token prompt was answered in 42 s. A helper reporting another
+#: size is not ready.
+CONTEXT_TOKENS = {QWEN38_MODEL: 16384, MODEL: 4096}
 T = TypeVar("T", bound=BaseModel)
 
 # WebSocket debug logs include the credential-bearing request path. This
@@ -121,8 +127,9 @@ DETAILS: dict[str, str] = {
         "current Jobrunner helper cell again, or run `make kaggle-setup`."
     ),
     "model_not_ready": (
-        "Kaggle is connected, but no supported loaded GPU model is ready for this request. "
-        "Run the helper for your loaded model, then check the connection."
+        "Kaggle is connected, but the verified Qwen3.8 27B Q6_K model is not ready. "
+        "Click Load Kaggle helper or run `make kaggle-setup` to load 27B. "
+        "Auto never falls back to 8B."
     ),
     "ready": "A supported Kaggle GPU model and its Jobrunner helper are ready.",
     "select_kernel": (
@@ -188,10 +195,17 @@ class KaggleProvider:
     REQUEST_TIMEOUT_S = 300.0
 
     def __init__(
-        self, *, connection_file: Path | None = None, connection: Connection | None = None
+        self,
+        *,
+        connection_file: Path | None = None,
+        connection: Connection | None = None,
+        model: str = QWEN38_MODEL,
     ) -> None:
+        if model not in HELPERS:
+            raise LLMError("Unsupported Kaggle model.")
         self.connection = connection or read_connection(connection_file or connection_path())
         self.connection.socket_url()
+        self._preferred_model = model
         self._helper: str | None = None
 
     async def _exchange(self, expression: str, *, timeout: float) -> dict[str, Any]:
@@ -277,7 +291,7 @@ class KaggleProvider:
                 and type(row.get("protocol")) is int
                 and row["protocol"] == 1
                 and type(row.get("context_tokens")) is int
-                and row["context_tokens"] == 4096
+                and row["context_tokens"] == CONTEXT_TOKENS[model]
                 and (
                     model != QWEN38_MODEL
                     or (
@@ -289,11 +303,7 @@ class KaggleProvider:
                 )
             ):
                 ready[model] = row
-        chosen = (
-            self.model
-            if self.model is not None
-            else next((model for model in HELPERS if model in ready), None)
-        )
+        chosen = self.model if self.model is not None else self._preferred_model
         if chosen is not None and chosen in ready:
             self.model = chosen
             self._helper = HELPERS[chosen]
@@ -302,7 +312,7 @@ class KaggleProvider:
                 detail=f"Auto selected {MODEL_LABELS[chosen]} on Kaggle GPU. The helper is ready.",
                 kernel_id=self.connection.kernel_id,
                 model=chosen,
-                context_tokens=4096,
+                context_tokens=CONTEXT_TOKENS[chosen],
             )
         states = {row.get("state") for row in reports if isinstance(row.get("state"), str)}
         state: State = (
@@ -348,7 +358,10 @@ class KaggleProvider:
         if result.get("model") != self.model:
             raise LLMError("The Kaggle model changed during this request. Check the connection.")
         if result.get("status") == "too_long":
-            raise PromptTooLong("Kaggle's 4096-token context cannot fit the prompt and answer.")
+            raise PromptTooLong(
+                f"Kaggle's {CONTEXT_TOKENS[self.model]}-token context cannot fit the prompt "
+                "and answer."
+            )
         text = result.get("text")
         if result.get("status") != "ok" or not isinstance(text, str) or not text.strip():
             raise LLMError(
