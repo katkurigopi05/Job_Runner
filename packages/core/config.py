@@ -413,6 +413,12 @@ class Settings(BaseSettings):
     #: still wins.
     embedding_backend: str = "lexical"
 
+    # Optional acceleration for 384-dimensional posting chunks. PostgreSQL
+    # remains authoritative; bounded keyword re-ranking stays exact.
+    vector_backend: Literal["pgvector", "pgvector_hnsw", "redis_hnsw"] = "pgvector"
+    redis_url: str = "redis://127.0.0.1:6379/0"
+    vector_ef_search: int = Field(default=100, ge=10, le=10000)
+
     #: A second model that re-orders the assistant's top search results
     #: (`matching/rerank.py`): an embedding model or a cross-encoder, and the
     #: model named says which. Empty, as shipped, means none: a fresh

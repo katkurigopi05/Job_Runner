@@ -19,6 +19,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from packages.core.config import get_settings
 from packages.core.models import Posting
 from packages.core.models_chunks import PostingChunk, PostingChunkVector
 from packages.matching import query_vectors
@@ -222,6 +223,36 @@ async def chunk_ranking(
     if isinstance(model, ChunkSpace) and is_qwen(model) and model.ranking is not None:
         # The question's shortlist, shared by its stages and widened on demand.
         return await model.ranking.read(session, among=among, companies=companies, limit=limit)
+    backend = get_settings().vector_backend
+    if backend != "pgvector" and among is None and not is_qwen(model):
+        from packages.matching.vector_search import Filters, search
+
+        name = model.model if isinstance(model, ChunkSpace) else model
+        hits = await search(
+            session,
+            vector,
+            name,
+            backend=backend,
+            k=limit,
+            filters=Filters(companies=tuple(companies or ())),
+        )
+        pool_size = len(hits)
+        if isinstance(model, ChunkSpace) and model.without_qwen and hits:
+            uncovered = set(
+                (
+                    await session.scalars(
+                        select(Posting.id).where(
+                            Posting.id.in_([hit.posting_id for hit in hits]), ~has_qwen()
+                        )
+                    )
+                ).all()
+            )
+            hits = [hit for hit in hits if hit.posting_id in uncovered]
+        accelerated: dict[uuid.UUID, tuple[uuid.UUID, int, int]] = {}
+        for hit in hits:
+            if hit.distance < 1.0 and hit.posting_id not in accelerated:
+                accelerated[hit.posting_id] = (hit.posting_id, hit.start, hit.length)
+        return list(accelerated.values()), pool_size < limit
     column = PostingChunkVector.embedding if is_qwen(model) else PostingChunk.embedding
     distance = column.cosine_distance(vector)
     query = select(PostingChunk.posting_id, PostingChunk.start, PostingChunk.length, distance).join(
@@ -235,7 +266,7 @@ async def chunk_ranking(
     else:
         query = (
             query.where(distance < 1.0)
-            .order_by(distance, PostingChunk.posting_id, PostingChunk.ordinal)
+            .order_by(distance + 0.0, PostingChunk.posting_id, PostingChunk.ordinal)
             .limit(limit)
         )
     if companies:

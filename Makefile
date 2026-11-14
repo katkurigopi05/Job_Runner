@@ -639,3 +639,11 @@ import-portals:
 # guard falls back to capitalization and says so on every GuardReport.
 nltk-data:
 	$(PY)/python -m scripts.fetch_nltk_data
+
+.PHONY: sync-vectors benchmark-vectors
+# Optional derived Redis index; install .[redis] and start the redis profile first.
+sync-vectors:
+	$(PY)/python -m scripts.sync_vectors $(ARGS)
+
+benchmark-vectors:
+	$(PY)/python -m scripts.benchmark_vectors $(ARGS)
