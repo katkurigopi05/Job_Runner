@@ -5,13 +5,20 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
 from packages.core.enums import ErrorCode
 from packages.core.models import Candidate, Profile
+from packages.core.models_evidence import Certification, Internship
 from packages.core.schemas import ProfileCreate, ProfileOut, ProfileUpdate
+from packages.core.schemas_studio import (
+    CertificationOut,
+    EvidenceOut,
+    EvidenceSave,
+    InternshipOut,
+)
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
@@ -98,3 +105,59 @@ async def update_profile(
     await session.commit()
     await session.refresh(profile)
     return profile
+
+
+async def _evidence(session: SessionDep, candidate_id: uuid.UUID) -> EvidenceOut:
+    internships = await session.scalars(
+        select(Internship)
+        .where(Internship.candidate_id == candidate_id)
+        .order_by(Internship.position, Internship.created_at)
+    )
+    certifications = await session.scalars(
+        select(Certification)
+        .where(Certification.candidate_id == candidate_id)
+        .order_by(Certification.position, Certification.created_at)
+    )
+    return EvidenceOut(
+        candidate_id=candidate_id,
+        internships=[InternshipOut.model_validate(row) for row in internships.all()],
+        certifications=[CertificationOut.model_validate(row) for row in certifications.all()],
+    )
+
+
+@router.get("/{profile_id}/evidence", response_model=EvidenceOut)
+async def get_evidence(profile_id: uuid.UUID, session: SessionDep) -> EvidenceOut:
+    """The internships and certifications the owner has stated, confirmed or not."""
+    profile = await session.get(Profile, profile_id)
+    if profile is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "profile not found")
+    return await _evidence(session, profile.candidate_id)
+
+
+@router.put("/{profile_id}/evidence", response_model=EvidenceOut)
+async def save_evidence(
+    profile_id: uuid.UUID, body: EvidenceSave, session: SessionDep
+) -> EvidenceOut:
+    """Replace the profile's candidate's internships and certifications with these.
+
+    The whole list, in one transaction, so the screen and the tables cannot
+    disagree about what was removed. Only the dashboard writes these: a
+    record is what lets an internship or a certification reach a résumé, so
+    no MCP tool can (CLAUDE.md §2.1).
+    """
+    profile = await session.get(Profile, profile_id)
+    if profile is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "profile not found")
+    candidate_id = profile.candidate_id
+    await session.execute(delete(Internship).where(Internship.candidate_id == candidate_id))
+    await session.execute(delete(Certification).where(Certification.candidate_id == candidate_id))
+    session.add_all(
+        Internship(candidate_id=candidate_id, position=index, **item.model_dump())
+        for index, item in enumerate(body.internships)
+    )
+    session.add_all(
+        Certification(candidate_id=candidate_id, position=index, **item.model_dump())
+        for index, item in enumerate(body.certifications)
+    )
+    await session.commit()
+    return await _evidence(session, candidate_id)

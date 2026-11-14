@@ -1,4 +1,9 @@
-"""Tests for ATS-safe DOCX export and role-targeted Resume Studio synthesis."""
+"""The Resume Studio adds only what the owner stated, and a model only what the guard allows.
+
+Offline throughout: a synthetic résumé, synthetic projects, StubProvider. The
+model scenario is `test_targeted_tailoring.py`'s: a bullet that ran pytest
+checks supports "automated testing", and "Kubernetes" is a gap nothing backs.
+"""
 
 from __future__ import annotations
 
@@ -6,240 +11,321 @@ import io
 import uuid
 from datetime import UTC, datetime
 
-import pytest
 from docx import Document
+from docx.oxml.ns import qn
 
-from packages.core.models import Candidate, Profile, Project
-from packages.llm.provider import StubProvider
-from packages.tailor import edit
+from packages.core.models import Project
+from packages.tailor.assemble import assemble_pdf
 from packages.tailor.docx_export import render_docx
-from packages.tailor.parse import Contact, ParsedResume, parse_resume
+from packages.tailor.guard import SourceCorpus
+from packages.tailor.parse import ParsedResume, parse_resume
+from packages.tailor.rewrite import vet
 from packages.tailor.studio import (
-    CertificationRecord,
-    InternshipRecord,
+    ROLE_PRESETS,
     RoleTrack,
-    synthesize_resume,
+    as_printed,
+    pick_projects,
+    saved_lines_check,
+    synthesize,
+)
+from packages.tailor.studio_sources import (
+    CertificationFacts,
+    InternshipFacts,
+    build_source,
+)
+from tests.test_targeted_tailoring import ACCEPTED, ADDS_A_GAP, LOADER, Scripted
+
+EMPLOYER = "Data Analyst, Northwind Freight  Jan 2024 - May 2025"
+EMPLOYER_BULLET = "Built weekly freight reports for the operations team."
+POSTING = (
+    "Requirements:\nAutomated testing, FastAPI services, Kubernetes, and AWS Lambda.\n"
+    "Experience with Python and Docker.\n"
+)
+
+INTERNSHIP = InternshipFacts(
+    id="i1",
+    company="Acme Robotics",
+    role="Software Engineering Intern",
+    started="Jun 2025",
+    ended="Aug 2025",
+    stack=("Python", "FastAPI", "PostgreSQL"),
+    bullets=("Built a telemetry pipeline that cut report time by 40%.",),
+)
+CERTIFICATION = CertificationFacts(
+    id="c1",
+    name="AWS Certified Developer - Associate",
+    issuer="Amazon Web Services",
+    issued="Jun 2025",
+    credential_id="ABC-123",
+    skills=("AWS Lambda", "Python", "Amazon S3"),
 )
 
 
-def _sample_project(
-    *,
-    name: str,
-    description: str,
-    language: str,
-    topics: list[str],
-    deps: list[str],
-    is_private: bool = False,
-    pinned: bool = False,
-) -> Project:
-    return Project(
-        id=uuid.uuid4(),
-        candidate_id=uuid.uuid4(),
-        source="github",
-        external_id=name,
-        name=name,
-        full_name=f"owner/{name}",
-        url=f"https://github.com/owner/{name}",
-        description=description,
-        language=language,
-        topics_json=topics,
-        stars=4,
-        forks=0,
-        is_fork=False,
-        is_archived=False,
-        is_private=is_private,
-        pushed_at=datetime.now(UTC),
-        include=True,
-        pinned=pinned,
-        dependency_technologies=deps,
+def base_resume() -> ParsedResume:
+    sections = {
+        "experience": [EMPLOYER, EMPLOYER_BULLET, LOADER],
+        "skills": ["Languages: Python, SQL, pytest"],
+        "education": ["B.S. Computer Science, State University  2021 - 2025"],
+    }
+    raw = ["Fixture Owner", "fixture@example.com"]
+    for name, lines in sections.items():
+        raw += [name, *lines]
+    return ParsedResume.model_validate(
+        {
+            "contact": {"name": "Fixture Owner", "email": "fixture@example.com", "links": []},
+            "sections": sections,
+            "raw_lines": raw,
+        }
     )
 
 
-def _sample_base_resume() -> ParsedResume:
-    return edit.rebuild_raw_lines(
-        ParsedResume(
-            contact=Contact(
-                name="Alex Rivera",
-                email="alex@example.com",
-                phone="+1-555-0100",
-                links=["https://github.com/example-dev"],
-            ),
-            sections={
-                "summary": ["Software engineer building backend APIs and agent tooling."],
-                "experience": [
-                    "Backend Intern, Orbit Labs — May 2025 – Aug 2025",
-                    "Python, FastAPI, PostgreSQL",
-                    "Built idempotent FastAPI ingestion workers with pytest verification.",
-                ],
-                "education": [
-                    "B.S. Computer Science, State University — 2026",
-                ],
-                "skills": [
-                    "Languages: Python, TypeScript",
-                    "Frameworks: FastAPI, Next.js",
-                ],
-            },
+def project(name: str, **fields: object) -> Project:
+    values: dict[str, object] = {
+        "id": uuid.uuid4(),
+        "candidate_id": uuid.uuid4(),
+        "source": "github",
+        "external_id": name,
+        "name": name,
+        "full_name": f"octocat/{name}",
+        "url": f"https://github.com/octocat/{name}",
+        "description": f"{name} service in Python",
+        "language": "Python",
+        "topics_json": ["fastapi"],
+        "stars": 0,
+        "forks": 0,
+        "is_fork": False,
+        "is_archived": False,
+        "is_private": False,
+        "pushed_at": datetime.now(UTC),
+        "include": None,
+        "pinned": False,
+        "dependency_technologies": ["FastAPI"],
+    }
+    values.update(fields)
+    return Project(**values)
+
+
+def test_a_confirmed_internship_is_added_as_the_owner_wrote_it() -> None:
+    base = base_resume()
+    source = build_source(base, [INTERNSHIP])
+
+    experience = source.resume.section("experience")
+    assert experience[-3:] == [
+        "Software Engineering Intern, Acme Robotics  Jun 2025 - Aug 2025",
+        "Python, FastAPI, PostgreSQL",
+        "Built a telemetry pipeline that cut report time by 40%.",
+    ]
+    # The base is the guard's authority and is kept whole; the additions follow it.
+    assert source.resume.raw_lines[: len(base.raw_lines)] == base.raw_lines
+    assert source.origin_of(experience[-1]).kind == "internship"
+    assert source.origin_of(EMPLOYER_BULLET).kind == "resume"
+    assert source.added == ("Software Engineering Intern, Acme Robotics",)
+
+
+def test_an_open_ended_internship_is_not_called_present() -> None:
+    open_ended = InternshipFacts(
+        id="i2", company="Acme", role="Intern", started="Jun 2025", stack=(), bullets=()
+    )
+    assert build_source(base_resume(), [open_ended]).resume.section("experience")[-1] == (
+        "Intern, Acme  Jun 2025"
+    )
+
+
+def test_an_internship_already_on_the_resume_is_skipped_not_doubled() -> None:
+    listed = InternshipFacts(id="i3", company="Northwind Freight", role="Analyst", started="2024")
+    source = build_source(base_resume(), [listed])
+    assert source.resume.section("experience") == base_resume().section("experience")
+    assert source.skipped == ("Analyst, Northwind Freight",)
+
+
+def test_internship_tools_back_its_own_bullets_and_no_employers() -> None:
+    """The stack is evidence for the internship's lines, never another employer's."""
+    source = build_source(base_resume(), [INTERNSHIP])
+    corpus = SourceCorpus.from_resume(source.resume, verified=source.verified)
+
+    own = INTERNSHIP.bullets[0]
+    claim = "Built a telemetry pipeline that cut report time by 40%, using FastAPI."
+    accepted, reason, _ = vet(own, claim, corpus)
+    assert accepted, reason
+
+    # Without the confirmed stack the same sentence has nothing behind it.
+    unconfirmed = SourceCorpus.from_resume(source.resume)
+    assert not vet(own, claim, unconfirmed)[0]
+
+    elsewhere = "Built weekly freight reports for the operations team, using FastAPI."
+    refused, why, _ = vet(EMPLOYER_BULLET, elsewhere, corpus)
+    assert not refused and why is not None
+
+
+def test_certified_skills_are_listed_once_and_the_credential_stays_on_its_line() -> None:
+    source = build_source(base_resume(), certifications=[CERTIFICATION])
+
+    assert source.resume.section("certifications") == [
+        "AWS Certified Developer - Associate, Amazon Web Services (Credential ID ABC-123)  Jun 2025"
+    ]
+    # Python is already listed, so only the two new skills join the Skills section.
+    assert source.resume.section("skills")[-1] == "Certified: AWS Lambda, Amazon S3"
+
+
+async def test_a_certified_skill_is_covered_and_never_a_rewrite_target() -> None:
+    source = build_source(base_resume(), certifications=[CERTIFICATION])
+    draft = await synthesize(base_resume(), source, POSTING, RoleTrack.CLOUD_DEVOPS)
+
+    status = {t.term.lower(): t.status.value for t in draft.plan.terms}
+    assert status["lambda"] == status["aws"] == "covered"
+    assert all("lambda" not in t[0].lower() for b in draft.bullets for t in b.targets)
+    # Without the certification the same posting term is a gap.
+    plain = await synthesize(base_resume(), build_source(base_resume()), POSTING, RoleTrack.SWE)
+    assert {t.term.lower(): t.status.value for t in plain.plan.terms}["lambda"] == "gap"
+
+
+async def test_the_role_preset_never_reaches_the_page() -> None:
+    base = base_resume()
+    draft = await synthesize(base, build_source(base), POSTING, RoleTrack.CLOUD_DEVOPS)
+
+    printed = "\n".join(as_printed(draft.resume).raw_lines).lower() + draft.html.lower()
+    assert ROLE_PRESETS[RoleTrack.CLOUD_DEVOPS].label.lower() not in printed
+    assert "terraform" not in printed and "summary" not in draft.resume.sections
+
+
+def test_a_private_repository_is_evidence_only_until_the_owner_includes_it() -> None:
+    hidden = project("harness", is_private=True)
+    picks = {
+        p.project.name: p
+        for p in pick_projects(
+            [hidden],
+            base_resume(),
+            POSTING,
+            RoleTrack.SWE,
+            selected_ids=[str(hidden.id)],
         )
+    }
+    assert not picks["harness"].chosen and picks["harness"].held_back == "evidence only"
+
+    included = project("harness", is_private=True, include=True)
+    chosen = pick_projects([included], base_resume(), POSTING, RoleTrack.SWE)
+    assert chosen[0].chosen and chosen[0].held_back == ""
+
+
+async def test_a_printed_private_repository_never_prints_its_address() -> None:
+    base = base_resume()
+    included = project("harness", is_private=True, include=True)
+    draft = await synthesize(base, build_source(base), POSTING, RoleTrack.SWE, projects=[included])
+
+    assert "harness" in draft.html
+    assert "github.com/octocat/harness" not in draft.html
+    text = "\n".join(as_printed(draft.resume, draft.projects).raw_lines)
+    assert "github.com/octocat/harness" not in text
+
+
+async def test_an_undescribed_repository_gets_no_sentence_written_for_it() -> None:
+    base = base_resume()
+    bare = project("bare-repo", description=None, include=True)
+    draft = await synthesize(base, build_source(base), POSTING, RoleTrack.SWE, projects=[bare])
+
+    assert draft.projects == (bare,)
+    assert "Built bare-repo" not in draft.html and "bare-repo service" not in draft.html
+
+
+async def test_a_stub_model_revision_is_kept_with_its_evidence() -> None:
+    base = base_resume()
+    provider = Scripted(ACCEPTED)
+    draft = await synthesize(base, build_source(base), POSTING, RoleTrack.SWE, provider=provider)
+
+    loader = next(b for b in draft.bullets if b.original == LOADER)
+    assert loader.status == "rewritten" and loader.tailored == ACCEPTED
+    assert loader.targets == (("automated testing", "pytest", "practice"),)
+    assert ACCEPTED in draft.resume.section("experience")
+    # Only the bullet with something to gain was sent.
+    assert len(provider.calls) == 1 and EMPLOYER_BULLET not in provider.calls[0][1]
+    assert draft.calls == 1 and draft.tailored_by == "stub"
+    assert draft.ats_after.keywords >= draft.ats_before.keywords
+
+
+async def test_a_stub_model_that_invents_a_tool_is_refused() -> None:
+    base = base_resume()
+    draft = await synthesize(
+        base, build_source(base), POSTING, RoleTrack.SWE, provider=Scripted(ADDS_A_GAP)
     )
 
+    loader = next(b for b in draft.bullets if b.original == LOADER)
+    assert loader.status == "refused" and loader.tailored == LOADER
+    assert "Kubernetes" not in "\n".join(draft.resume.section("experience"))
 
-def test_render_docx_is_single_column_and_roundtrips() -> None:
-    base = _sample_base_resume()
-    base.sections["projects"] = [
-        "Harness Eval Suite",
-        "Python, pytest, Docker",
-        "Built deterministic replay checks for tool-calling evaluation runs.",
+
+async def test_without_a_model_nothing_is_rewritten_and_the_gaps_are_named() -> None:
+    base = base_resume()
+    draft = await synthesize(base, build_source(base), POSTING, RoleTrack.SWE)
+
+    assert {b.status for b in draft.bullets} == {"not asked"}
+    assert draft.calls == 0 and draft.tailored_by is None
+    gaps = {t.term.lower() for t in draft.plan.terms if t.status.value == "gap"}
+    assert "kubernetes" in gaps
+
+
+def test_a_saved_draft_may_hold_only_backed_lines() -> None:
+    base = base_resume()
+    source = build_source(base, [INTERNSHIP], [CERTIFICATION])
+    sections = {name: list(lines) for name, lines in source.resume.sections.items()}
+    sections["skills"] = ["Languages: pytest, Python, SQL", *sections["skills"][1:]]
+    sections["experience"] = [*sections["experience"], ACCEPTED, "Ran payroll for 4 offices."]
+
+    refused = saved_lines_check(
+        source,
+        sections,
+        rewrites=[(LOADER, ACCEPTED)],
+        owner_edits=["Ran payroll for 4 offices."],
+    )
+    assert refused == []
+
+    fabricated = {
+        **sections,
+        "experience": [*sections["experience"], "Led a Kubernetes migration."],
+    }
+    assert saved_lines_check(source, fabricated) == [
+        ACCEPTED,
+        "Ran payroll for 4 offices.",
+        "Led a Kubernetes migration.",
     ]
-    base.sections["certifications"] = [
-        "AWS Certified Solutions Architect — Associate (2025)",
-    ]
-    draft = edit.rebuild_raw_lines(base)
-
-    payload = render_docx(draft)
-    assert len(payload) > 1000
-
-    doc = Document(io.BytesIO(payload))
-    assert doc.tables == []
-
-    reparsed = parse_resume(payload, "resume.docx")
-    assert reparsed.contact.name == "Alex Rivera"
-    assert reparsed.contact.email == "alex@example.com"
-    assert "Built idempotent FastAPI ingestion workers" in "\n".join(reparsed.section("experience"))
-    assert "Harness Eval Suite" in "\n".join(reparsed.section("projects"))
-    assert "AWS Certified Solutions Architect" in "\n".join(reparsed.section("certifications"))
-    assert "State University" in "\n".join(reparsed.section("education"))
+    # A rewrite of a line that is not the source's is not a rewrite.
+    assert saved_lines_check(
+        source,
+        {"experience": ["Led a Kubernetes migration."]},
+        rewrites=[("Led nothing.", "Led a Kubernetes migration.")],
+    ) == ["Led a Kubernetes migration."]
 
 
-@pytest.mark.asyncio
-async def test_synthesize_resume_merges_private_repos_internships_and_certs() -> None:
-    candidate = Candidate(id=uuid.uuid4(), name="Alex Rivera", email="alex@example.com")
-    profile = Profile(
-        id=uuid.uuid4(),
-        candidate_id=candidate.id,
-        links_json={"linkedin": "https://linkedin.com/in/example-dev"},
-    )
-    private_repo = _sample_project(
-        name="agent-harness-evals",
-        description="Deterministic evaluation harness and sandboxing checks for coding agents",
-        language="Python",
-        topics=["ai-agents", "evals", "redis"],
-        deps=["FastAPI", "Redis", "Docker", "pytest"],
-        is_private=True,
-        pinned=True,
-    )
-    public_repo = _sample_project(
-        name="query-cache-bench",
-        description="Hybrid vector and keyword search benchmark service",
-        language="TypeScript",
-        topics=["nextjs", "redis"],
-        deps=["Next.js", "PostgreSQL"],
-        is_private=False,
-    )
-    internships = [
-        InternshipRecord(
-            company="Stealth Systems",
-            role="Agentic AI Engineering Intern",
-            dates="Jun 2025 – Sep 2025",
-            location="San Francisco, CA",
-            stack=["Python", "Redis", "Docker", "pytest"],
-            bullets=[
-                "Implemented tool-call trace evaluation and Redis hybrid retrieval checks in CI."
-            ],
-        )
-    ]
-    certifications = [
-        CertificationRecord(
-            name="AWS Certified Developer — Associate",
-            issuer="Amazon Web Services",
-            date="2025",
-            credential_id="AWS-12345",
-            skills=["AWS", "Docker"],
-        )
-    ]
-    jd = (
-        "Seeking an FDE / Harness Engineer with Python, FastAPI, Redis, Docker, "
-        "pytest, and deterministic agent evaluation experience."
-    )
+async def test_the_docx_is_one_column_and_reads_back_into_the_same_sections() -> None:
+    base = base_resume()
+    public = project("telemetry", include=True)
+    hidden = project("harness", is_private=True, include=True)
+    source = build_source(base, [INTERNSHIP], [CERTIFICATION])
+    draft = await synthesize(base, source, POSTING, RoleTrack.SWE, projects=[public, hidden])
 
-    result = await synthesize_resume(
-        job_description=jd,
-        role_track=RoleTrack.FDE_HARNESS,
-        candidate=candidate,
-        profile=profile,
-        base_resume=_sample_base_resume(),
-        projects=[private_repo, public_repo],
-        internships=internships,
-        certifications=certifications,
-        use_llm=False,
-        project_limit=4,
-    )
+    data = render_docx(draft.resume, draft.projects)
+    document = Document(io.BytesIO(data))
+    assert not document.tables
+    for section in document.sections:
+        columns = section._sectPr.find(qn("w:cols"))
+        assert columns is None or columns.get(qn("w:num"), "1") == "1"
 
-    assert result.role_track is RoleTrack.FDE_HARNESS
-    assert "agent-harness-evals" in result.selected_projects
-    assert result.ats_parse_score > 0.0
-    assert "python" in {t.lower() for t in result.matched_terms}
-    assert "redis" in {t.lower() for t in result.matched_terms}
-
-    proj_text = "\n".join(result.draft.section("projects"))
-    # Private repos do not emit dead public [GitHub] badges.
-    assert "agent-harness-evals\n" in proj_text or proj_text.startswith("agent-harness-evals")
-    assert "agent-harness-evals   [GitHub]" not in proj_text
-    assert "query-cache-bench   [GitHub]" in proj_text
-
-    exp_text = "\n".join(result.draft.section("experience"))
-    assert "Agentic AI Engineering Intern, Stealth Systems" in exp_text
-    cert_text = "\n".join(result.draft.section("certifications"))
-    assert "AWS Certified Developer — Associate" in cert_text
-    assert "AWS-12345" in cert_text
-    assert "<h2>Projects</h2>" in result.html_preview
+    back = parse_resume(data, "studio.docx")
+    assert back.section("experience") == draft.resume.section("experience")
+    assert back.section("certifications") == draft.resume.section("certifications")
+    projects_text = "\n".join(back.section("projects"))
+    assert "telemetry — telemetry service in Python" in projects_text
+    assert "github.com/octocat/telemetry" in projects_text
+    assert "harness" in projects_text and "github.com/octocat/harness" not in data.decode("latin-1")
 
 
-@pytest.mark.asyncio
-async def test_synthesize_resume_llm_guard_refuses_fabricated_tools() -> None:
-    class ScriptedGuardProvider(StubProvider):
-        async def complete(
-            self,
-            system: str,
-            user: str,
-            *,
-            max_tokens: int = 1024,
-            temperature: float = 0.2,
-        ) -> str:
-            self.calls.append((system, user))
-            if "Redis" in user:
-                return (
-                    '{"bullets": ["Implemented tool-call trace evaluation and Redis '
-                    'hybrid retrieval checks in CI."]}'
-                )
-            # Fabricate Kubernetes + Kafka which are absent from the candidate corpus.
-            return (
-                '{"bullets": ["Migrated FastAPI workers onto Kubernetes clusters and '
-                'Kafka streams."]}'
-            )
+async def test_the_pdf_carries_every_added_line_and_no_private_address() -> None:
+    base = base_resume()
+    hidden = project("harness", is_private=True, include=True)
+    source = build_source(base, [INTERNSHIP], [CERTIFICATION])
+    draft = await synthesize(base, source, POSTING, RoleTrack.SWE, projects=[hidden])
 
-    internships = [
-        InternshipRecord(
-            company="Stealth Systems",
-            role="Cloud & Backend Intern",
-            dates="2025",
-            stack=["Python", "Redis"],
-            bullets=[
-                "Built Redis hybrid retrieval checks with FastAPI and pytest.",
-            ],
-        )
-    ]
-    jd = "Need Python, FastAPI, Redis, Kubernetes, Kafka."
-
-    result = await synthesize_resume(
-        job_description=jd,
-        role_track=RoleTrack.CLOUD_DEVOPS,
-        base_resume=_sample_base_resume(),
-        internships=internships,
-        provider=ScriptedGuardProvider(),
-        use_llm=True,
-    )
-
-    exp_text = "\n".join(result.draft.section("experience"))
-    assert "Kubernetes" not in exp_text
-    assert "Kafka" not in exp_text
-    assert result.bullets_refused >= 1
+    pdf = assemble_pdf(draft.resume, list(draft.projects))
+    text = " ".join(parse_resume(pdf, "studio.pdf").raw_lines)
+    assert "Acme Robotics" in text and "cut report time by 40%" in text
+    assert "Credential ID ABC-123" in text and "harness" in text
+    assert "github.com/octocat/harness" not in text

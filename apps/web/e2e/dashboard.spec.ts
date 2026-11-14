@@ -84,25 +84,38 @@ test("matches filters reach server requests and validation stays beside controls
   expect(page.url()).not.toContain("min_salary");
 });
 
-test("Studio saves synthetic evidence and synthesizes a deterministic preview", async ({ page, request }) => {
+test("Studio saves confirmed evidence, synthesizes a traced draft, and saves a version", async ({ page, request }) => {
   await page.goto("/resumes/studio");
   await page.getByRole("button", { name: /Add internship/i }).click();
-  await page.getByPlaceholder("Company", { exact: true }).fill("Example Labs");
-  await page.getByPlaceholder("Role (e.g. AI Engineering Intern)").fill("Engineering Intern");
-  await page.getByRole("button", { name: "Save Internships & Certs", exact: true }).click();
-  await expect(page.getByText("Saved internships & certifications to profile.", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Synthesize Preview", exact: true }).click();
-  await expect(page.getByText("Synthesized role-targeted preview.", { exact: true })).toBeVisible();
-  const previewFrame = page.locator('iframe[title="Synthesized résumé preview"]');
-  await expect(previewFrame).toBeVisible();
+  await page.getByLabel("Company", { exact: true }).fill("Example Labs");
+  await page.getByLabel("Role", { exact: true }).fill("Engineering Intern");
+  await page.getByLabel("Started", { exact: true }).fill("Jun 2025");
+  await page.getByLabel(/What you did/).fill("Built a test harness that cut flaky runs by 30%.");
+  await page.getByLabel(/I confirm this is accurate/).check();
+  await page.getByRole("button", { name: "Save internships and certifications", exact: true }).click();
+  await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
+
+  await page.getByLabel("Paste the job description").fill("Requirements: Python and Kubernetes.");
+  await page.getByRole("button", { name: /Synthesize draft/ }).click();
+  await expect(page.getByRole("heading", { name: "The draft, line by line" })).toBeVisible();
+  await expect(page.getByText("Engineering Intern, Example Labs  Jun 2025", { exact: true })).toBeVisible();
+  await expect(page.getByText("No model was asked.", { exact: true })).toBeVisible();
+  const previewFrame = page.locator('iframe[title="Print preview"]');
   await expect(previewFrame).toHaveAttribute("sandbox", "");
   await expect(previewFrame).toHaveAttribute("srcdoc", /Alex Rivera/);
+
+  await page.getByRole("button", { name: "Save as a new version", exact: true }).click();
+  await expect(page.getByText("Saved as v2.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "DOCX" })).toHaveAttribute("href", /\/api\/resumes\/.+\/docx$/);
+
   const calls = await (await request.get(`${apiOrigin}/__calls`)).json();
   const evidence = calls.find((call: { method: string }) => call.method === "PUT");
-  expect(evidence.body.internships[0].company).toBe("Example Labs");
+  expect(evidence.body.internships[0]).toMatchObject({ company: "Example Labs", verified: true });
   const synthesis = calls.find((call: { path: string }) => call.path === "/resumes/synthesize");
-  expect(synthesis.body.save_version).toBe(false);
-  expect(synthesis.body.use_llm).toBe(false);
+  expect(synthesis.body.use_model).toBe(false);
+  const saved = calls.find((call: { path: string }) => call.path === "/resumes/synthesize/save");
+  expect(saved.body.rewrites).toEqual([]);
+  expect(saved.body.owner_edits).toEqual([]);
 });
 
 test("profile accepts fractional scores and rejects out-of-range input", async ({ page, request }) => {

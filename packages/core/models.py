@@ -1076,6 +1076,18 @@ class Project(Base):
     synced_at: Mapped[datetime] = _created_at()
     created_at: Mapped[datetime] = _created_at()
 
+    @property
+    def resume_listed(self) -> bool:
+        """Whether the owner lets this repository be printed as a résumé project.
+
+        Always, for a public one. A private one is evidence only until the
+        owner includes or pins it: its name on a résumé tells an employer it
+        exists. Excluding it wins over a pin.
+        """
+        if not self.is_private:
+            return True
+        return self.include is True or (self.pinned and self.include is not False)
+
     __table_args__ = (
         UniqueConstraint("candidate_id", "source", "external_id", name="uq_projects_source_id"),
         Index("ix_projects_candidate", "candidate_id"),

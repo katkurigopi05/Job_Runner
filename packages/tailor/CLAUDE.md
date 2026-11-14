@@ -784,3 +784,46 @@ median of 67% of asked skills backed, over the 192 postings that state any.
 Found on the way and left alone: 15 of the 300 stored `requirements_json`
 rows were read by extractor version 2 and name a skill that version 4 no
 longer reads as asked. The score reads the description, not the stored row.
+
+## The Resume Studio (2026-11-14)
+
+`/resumes/studio` drafts a résumé for one pasted posting: `studio.py`,
+`studio_sources.py`, `studio_load.py`, `apps/api/routers/resume_studio.py`.
+It replaced a first version that wrote a summary line from the chosen role
+preset and a "Built X using …" sentence for a repository with no description;
+both were claims nothing the owner wrote supports.
+
+What a later change could quietly undo (`tests/test_resume_studio.py`,
+`tests/test_resume_studio_api.py`, `tests/test_github_private_sync.py`):
+
+- **Every line has a source.** The base résumé, an internship or
+  certification the owner typed and confirmed (`internships`,
+  `certifications`, `verified`), GitHub's own fields in the generated Projects
+  section, or a targeted revision `rewrite.vet` accepted. The role preset only
+  ranks projects and never reaches the page.
+- **An internship's confirmed tools are evidence for its own lines only**
+  (`SourceCorpus.from_resume(verified=…)`, keyed by line, not by employer
+  name). The recombination check still holds: "using FastAPI" is accepted on
+  the internship's bullet, "a FastAPI telemetry pipeline" is not, and the same
+  words on another employer's bullet are refused. This is a source the owner
+  states on the dashboard, the same standing as a stack line under an entry;
+  widening it further is a §2.1 decision.
+- **A certification's skills go to one Skills line**, only the ones not
+  already listed. A skill on the page counts as covered, so targeted tailoring
+  never rewrites a bullet to claim it.
+- **A private repository is evidence only until the owner includes or pins
+  it** (`Project.resume_listed`), and once printed its address never is
+  (`projects.ProjectEntry.is_private`). Sync lists private and collaborator
+  repositories only with a token, and says when it fell back to the public
+  listing (`private_included`).
+- **A preview writes nothing.** Saving re-judges every line it is sent:
+  the source's own, a rewrite of a source line that passes `vet` again, or a
+  line the owner typed on the screen (`owner_edits`, the owner's words, kept in
+  `raw_lines` as the edit route keeps them). Anything else is refused and
+  nothing is saved.
+- **Dependency, container and CI files are evidence, a README is not.**
+  `packages/github/infrastructure.py` reads `FROM`, `image:` and `uses:`
+  against fixed tables, under `MAX_EVIDENCE_BYTES`. Declared tools rank a
+  project and back a linked entry; they are not printed in the generated
+  Projects section, which §2.1 limits to name, description, language and
+  topics.

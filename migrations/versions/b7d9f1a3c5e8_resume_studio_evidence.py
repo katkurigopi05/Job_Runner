@@ -47,6 +47,7 @@ def _owned_by_candidate() -> list[sa.Column]:  # type: ignore[type-arg]
 
 def _confirmation() -> list[sa.Column]:  # type: ignore[type-arg]
     return [
+        sa.Column("position", sa.SmallInteger(), server_default=sa.text("0"), nullable=False),
         sa.Column("verified", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column(
             "created_at",
@@ -88,6 +89,11 @@ def upgrade() -> None:
     op.create_index(
         "ix_certifications_candidate", "certifications", ["candidate_id"], if_not_exists=True
     )
+    # A table from an early draft of this revision has no `position`.
+    for table in ("internships", "certifications"):
+        op.execute(
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS position smallint NOT NULL DEFAULT 0"
+        )
 
 
 def downgrade() -> None:
