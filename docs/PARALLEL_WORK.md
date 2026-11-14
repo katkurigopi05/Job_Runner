@@ -17,7 +17,7 @@ Every agent works in its own git worktree. Not a branch in the shared
 checkout — a worktree.
 
 ```bash
-cd /Users/gopikrishnareddykatkuri/Desktop/Job_Runner
+cd /path/to/Job_Runner
 make worktree NAME=<short-name> BRANCH=<branch-name>
 ```
 

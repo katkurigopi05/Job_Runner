@@ -37,7 +37,7 @@ reached the employer is the owner's to check.
 ## Not done
 
 - Worker ids follow `socket.gethostname()`, which changed with the network
-  (`Gopis-MacBook-Pro.local-N`, then `Mac.attlocal.net-N`), so
+  (`example-workstation.local-N`, then `example-host.local-N`), so
   `reclaimed_from_self` can be wrong. It is logged and decides nothing.
 - The assistant's context does not yet mention a failing board. The feed
   does.
