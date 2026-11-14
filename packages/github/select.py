@@ -34,6 +34,17 @@ def _tokens(text: str) -> set[str]:
     return set(_WORD_RE.findall(text.lower()))
 
 
+def is_listed(project: Project) -> bool:
+    """Whether the owner lets this repository be printed as a résumé project.
+
+    Always, for a public one. For a private one, only after they include or
+    pin it; excluding it wins over a pin.
+    """
+    if not project.is_private:
+        return True
+    return project.include is True or (project.pinned and project.include is not False)
+
+
 def is_eligible(project: Project, *, require_description: bool = True) -> bool:
     """Whether a project may appear at all.
 
@@ -41,11 +52,18 @@ def is_eligible(project: Project, *, require_description: bool = True) -> bool:
     is. Otherwise: no forks, no archived repos, and — by default — nothing
     without a description, because the alternative is either a bare repo name
     or an invented summary, and §2.1 rules out the second.
+
+    A private repository is never eligible by ranking alone. Its name on a
+    résumé tells an employer it exists, so it appears only once the owner
+    includes or pins it (`is_listed`). Until then it is evidence only: it can
+    back a Projects entry the owner links it to, and nothing prints it.
     """
     if project.include is False:
         return False
     if project.include is True:
         return True
+    if not is_listed(project):
+        return False
     if project.is_fork or project.is_archived:
         return False
     return not (require_description and not (project.description or "").strip())

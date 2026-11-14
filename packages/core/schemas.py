@@ -499,6 +499,87 @@ class ResumeParsedOut(BaseModel):
     layout: ResumeLayoutOut | None = None
 
 
+RoleTrackLiteral = Literal[
+    "swe",
+    "fullstack",
+    "data_ml",
+    "ai_agentic",
+    "cloud_devops",
+    "fde_harness",
+]
+
+
+class StudioInternshipIn(BaseModel):
+    """Verified internship or co-op entry included during Resume Studio synthesis."""
+
+    company: str = Field(min_length=1, max_length=200)
+    role: str = Field(min_length=1, max_length=200)
+    dates: str = Field(default="", max_length=100)
+    location: str = Field(default="", max_length=120)
+    stack: list[str] = Field(default_factory=list)
+    bullets: list[str] = Field(default_factory=list)
+
+
+class StudioCertificationIn(BaseModel):
+    """Verified certification entry included during Resume Studio synthesis."""
+
+    name: str = Field(min_length=1, max_length=240)
+    issuer: str = Field(default="", max_length=160)
+    date: str = Field(default="", max_length=80)
+    credential_id: str = Field(default="", max_length=120)
+    skills: list[str] = Field(default_factory=list)
+
+
+class StudioEvidenceOut(BaseModel):
+    """Saved internships & certifications stored on a profile for Resume Studio."""
+
+    profile_id: uuid.UUID
+    internships: list[StudioInternshipIn] = Field(default_factory=list)
+    certifications: list[StudioCertificationIn] = Field(default_factory=list)
+
+
+class StudioEvidenceSave(BaseModel):
+    """Save verified internships and certifications onto a profile."""
+
+    profile_id: uuid.UUID
+    internships: list[StudioInternshipIn] = Field(default_factory=list)
+    certifications: list[StudioCertificationIn] = Field(default_factory=list)
+
+
+class ResumeSynthesizeRequest(BaseModel):
+    """Synthesize a role-targeted résumé from repos, internships, certs, and base résumé."""
+
+    candidate_id: uuid.UUID
+    profile_id: uuid.UUID | None = None
+    base_resume_id: uuid.UUID | None = None
+    role_track: RoleTrackLiteral = "swe"
+    job_description: str = Field(default="", max_length=25_000)
+    project_ids: list[uuid.UUID] | None = None
+    project_limit: int = Field(default=4, ge=1, le=8)
+    internships: list[StudioInternshipIn] = Field(default_factory=list)
+    certifications: list[StudioCertificationIn] = Field(default_factory=list)
+    use_llm: bool = False
+    save_version: bool = False
+    adopt: bool = True
+
+
+class ResumeSynthesizeOut(BaseModel):
+    """Preview + ATS readout + optional saved résumé version from Resume Studio."""
+
+    role_track: RoleTrackLiteral
+    matched_terms: list[str]
+    missing_terms: list[str]
+    ats_parse_score: float
+    ats_keyword_score: float
+    ats_findings: list[str]
+    selected_projects: list[str]
+    bullets_rewritten: int
+    bullets_refused: int
+    html_preview: str
+    parsed: dict[str, Any]
+    saved_resume: ResumeOut | None = None
+
+
 # --------------------------------------------------------------------------
 # Postings
 # --------------------------------------------------------------------------

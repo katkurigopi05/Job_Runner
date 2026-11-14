@@ -136,3 +136,42 @@ async def test_comparing_a_projects_resume_no_longer_refuses(db_session, monkeyp
 
     assert asked == ["ollama", "gemini"]
     assert len(candidates) == 2
+
+
+def test_both_experience_and_projects_bullets_are_tailored_and_written_back() -> None:
+    """When both Experience and Projects exist, bullets from both sections
+    are extracted and rewritten back into their respective sections."""
+    from packages.tailor.bullets import tailorable_sections
+
+    resume = _resume(
+        experience=["Backend Intern, Acme — 2025", "Built the billing API in FastAPI."],
+        projects=["VectorLab   [GitHub]", "Python, Redis", "Indexed 50k job chunks."],
+    )
+
+    assert tailorable_section(resume) == "experience"
+    assert tailorable_sections(resume) == ("experience", "projects")
+
+    section, bullets = tailorable_bullets(resume)
+    assert section == "experience"
+    assert bullets == [
+        "Built the billing API in FastAPI.",
+        "Indexed 50k job chunks.",
+    ]
+
+    result = TailorResult(
+        bullets=[
+            BulletRewrite(original=bullets[0], tailored="ENGINEERED FASTAPI", changed=True),
+            BulletRewrite(original=bullets[1], tailored="SCALED VECTOR INDEX", changed=True),
+        ]
+    )
+    tailored = apply_rewrites(resume, result)
+
+    assert tailored.section("experience") == [
+        "Backend Intern, Acme — 2025",
+        "ENGINEERED FASTAPI",
+    ]
+    assert tailored.section("projects") == [
+        "VectorLab   [GitHub]",
+        "Python, Redis",
+        "SCALED VECTOR INDEX",
+    ]

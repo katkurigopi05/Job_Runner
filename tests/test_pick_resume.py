@@ -256,8 +256,8 @@ async def test_the_choice_records_its_runners_up(db_session) -> None:
 
 #: Parses at 100%: contact links, a recognised education section, real dates.
 COMPLETE = [
-    "Gopi Krishna Reddy",
-    "(925) 555-0100 | g@example.com | linkedin.com/in/gopi | github.com/gopi",
+    "Alex Rivera",
+    "(925) 555-0100 | g@example.com | linkedin.com/in/example-dev | github.com/example-dev",
     "PROFESSIONAL SUMMARY",
     "Machine learning engineer with six years building models.",
     "EDUCATION",
@@ -273,7 +273,7 @@ COMPLETE = [
 #: Parses at 56%: no links, no education an ATS recognises, no dates. The
 #: shape of the stub sitting in the owner's own database as v1.
 STUB = [
-    "Gopi K",
+    "Alex R",
     "g@example.com | +1-555-0142",
     "Summary",
     "Backend engineer.",
