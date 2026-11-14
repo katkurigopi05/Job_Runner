@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible bug without attaching personal data or secrets
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Privacy reminder:** Never paste `.env` values, `VAULT_KEY`, tokens, `storage/` files, full employer page HTML, cookies/session exports, or personal résumé data into a public issue. Use synthetic examples (`example.com`, `demo.invalid`, fictional names/phones).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Concise summary of actual behavior vs expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal synthetic reproduction
+      description: Command, API call, or dashboard steps using synthetic fixtures or `make demo`.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, Node.js version, Postgres/Docker version, and git commit SHA.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy-check
+    attributes:
+      label: Privacy & security check
+      options:
+        - label: I removed all secrets, credentials, personal résumé text, and local filesystem paths.
+          required: true
