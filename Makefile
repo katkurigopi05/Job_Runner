@@ -639,3 +639,9 @@ import-portals:
 # guard falls back to capitalization and says so on every GuardReport.
 nltk-data:
 	$(PY)/python -m scripts.fetch_nltk_data
+
+# make demo — a separate, seeded demo database and the API and dashboard on it.
+# Synthetic data only (demo.invalid); see README "Quickstart".
+.PHONY: demo
+demo:
+	bash scripts/demo.sh
