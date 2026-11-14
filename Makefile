@@ -642,6 +642,13 @@ nltk-data:
 
 # make demo — a separate, seeded demo database and the API and dashboard on it.
 # Synthetic data only (demo.invalid); see README "Quickstart".
-.PHONY: demo
+.PHONY: demo sync-vectors benchmark-vectors
 demo:
 	bash scripts/demo.sh
+
+# Optional derived Redis index; install .[redis] and start the redis profile first.
+sync-vectors:
+	$(PY)/python -m scripts.sync_vectors $(ARGS)
+
+benchmark-vectors:
+	$(PY)/python -m scripts.benchmark_vectors $(ARGS)

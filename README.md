@@ -76,8 +76,9 @@ The complete environment template is [.env.example](.env.example); defaults are 
 | `VAULT_KEY`, `VAULT_ROOT` | Encrypt ATS credentials; generate a key with `make vault-key` |
 | `STORAGE_ROOT` | Local résumés, artifacts, and browser state; excluded from git and Docker |
 | `JOBRUNNER_ENV_FILE` | Select a private settings file outside the checkout |
+| `VECTOR_BACKEND` | `pgvector` (exact default), `pgvector_hnsw`, or optional `redis_hnsw` |
 
-For live workflows, see [docs/USAGE.md](docs/USAGE.md). Architecture specifications live in [CLAUDE.md](CLAUDE.md); design experiments and limitations live under `docs/`.
+Optional vector setup and a reproducible latency/Recall@10 benchmark: [docs/VECTOR_BACKENDS.md](docs/VECTOR_BACKENDS.md). For live workflows, see [docs/USAGE.md](docs/USAGE.md). Architecture specifications live in [CLAUDE.md](CLAUDE.md); design experiments and limitations live under `docs/`.
 
 ## Development and license
 

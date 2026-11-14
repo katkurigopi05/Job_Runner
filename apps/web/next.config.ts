@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 
 // The FastAPI app refuses non-loopback callers and has no CORS layer, on
 // purpose (apps/api/middleware.py). Proxying through Next rather than calling
@@ -15,11 +16,15 @@ const API_ORIGIN = process.env.JOBRUNNER_API ?? "http://127.0.0.1:8000";
 // this only has to be longer than the longest of them (300 s, provider.py).
 const PROXY_TIMEOUT_MS = 330_000;
 
-const nextConfig: NextConfig = {
-  experimental: { proxyTimeout: PROXY_TIMEOUT_MS },
-  async rewrites() {
-    return [{ source: "/api/:path*", destination: `${API_ORIGIN}/:path*` }];
-  },
-};
-
-export default nextConfig;
+export default function nextConfig(phase: string): NextConfig {
+  return {
+    // Keep `next dev` (`.next-dev`) separate from `next build` / `next start`
+    // (`.next`) so running a build never overwrites an active dev server's
+    // Webpack manifests and chunks (`__webpack_modules__[moduleId] is not a function`).
+    distDir: phase === PHASE_DEVELOPMENT_SERVER ? ".next-dev" : ".next",
+    experimental: { proxyTimeout: PROXY_TIMEOUT_MS },
+    async rewrites() {
+      return [{ source: "/api/:path*", destination: `${API_ORIGIN}/:path*` }];
+    },
+  };
+}

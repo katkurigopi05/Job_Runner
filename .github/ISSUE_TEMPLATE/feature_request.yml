@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose a focused improvement aligned with Job_Runner's local-first boundaries
+title: "[feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Scope note:** Job_Runner is local-first (`127.0.0.1`), keeps `AUTO_SUBMIT=false` by default, requires source-grounded résumé claims, and never evades CAPTCHA/anti-bot controls.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What workflow gap or friction does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed design
+      description: Describe API/CLI/UI changes and how existing invariants (no fabrication, loopback binding, tests) are preserved.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any simpler configuration or existing command you considered.

@@ -28,6 +28,7 @@ __pycache__/
 .github/
 node_modules/
 .next/
+.next-dev/
 playwright-report/
 test-results/
 
@@ -38,3 +39,26 @@ test-results/
 
 # Local backups: database dumps and résumé artifacts. PII, never committed or built.
 backups/
+
+# Environment backups and conflict copies carry the same secrets as .env.
+.env.*
+.env [0-9]*
+!.env.example
+.venv
+*.pdf
+*.docx
+*.rtf
+*.odt
+resume*
+Resume*
+RESUME*
+.claude/settings.local.json
+.claude/RESUME.md
+# Nested credential files and artifacts must not become COPY inputs either.
+**/.env
+**/.env.*
+**/.env [0-9]*
+**/*.pdf
+**/*.docx
+**/*.rtf
+**/*.odt

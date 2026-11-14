@@ -78,6 +78,13 @@ class PostingChunk(Base):
     __table_args__ = (
         UniqueConstraint("posting_id", "ordinal", name="uq_posting_chunks_posting_ordinal"),
         Index("ix_posting_chunks_posting_id", "posting_id"),
+        Index(
+            "ix_posting_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "halfvec_cosine_ops"},
+            postgresql_with={"m": 16, "ef_construction": 200},
+        ),
     )
 
 
