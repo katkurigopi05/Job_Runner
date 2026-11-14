@@ -87,22 +87,25 @@ test("matches filters reach server requests and validation stays beside controls
 test("Studio saves synthetic evidence and synthesizes a deterministic preview", async ({ page, request }) => {
   await page.goto("/resumes/studio");
   await page.getByRole("button", { name: /Add internship/i }).click();
-  await page.getByPlaceholder("Company", { exact: true }).fill("Example Labs");
-  await page.getByPlaceholder("Role (e.g. AI Engineering Intern)").fill("Engineering Intern");
-  await page.getByRole("button", { name: "Save Internships & Certs", exact: true }).click();
-  await expect(page.getByText("Saved internships & certifications to profile.", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Synthesize Preview", exact: true }).click();
-  await expect(page.getByText("Synthesized role-targeted preview.", { exact: true })).toBeVisible();
-  const previewFrame = page.locator('iframe[title="Synthesized résumé preview"]');
+  await page.getByLabel("Company", { exact: true }).fill("Example Labs");
+  await page.getByLabel("Role", { exact: true }).fill("Engineering Intern");
+  await page.getByLabel("Started", { exact: true }).fill("Jun 2025");
+  await page.getByLabel("I confirm this is accurate. Only confirmed records reach a résumé.").check();
+  await page.getByRole("button", { name: "Save internships and certifications", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved." })).toBeVisible();
+  await page.getByLabel("Paste the job description").fill("Requirements: Python, FastAPI, deterministic evaluation tools.");
+  await page.getByRole("button", { name: "Synthesize draft", exact: true }).click();
+  await page.getByText("Print preview (as generated, before your edits)").click();
+  const previewFrame = page.locator('iframe[title="Print preview"]');
   await expect(previewFrame).toBeVisible();
   await expect(previewFrame).toHaveAttribute("sandbox", "");
   await expect(previewFrame).toHaveAttribute("srcdoc", /Alex Rivera/);
   const calls = await (await request.get(`${apiOrigin}/__calls`)).json();
   const evidence = calls.find((call: { method: string }) => call.method === "PUT");
   expect(evidence.body.internships[0].company).toBe("Example Labs");
+  expect(evidence.body.internships[0].verified).toBe(true);
   const synthesis = calls.find((call: { path: string }) => call.path === "/resumes/synthesize");
-  expect(synthesis.body.save_version).toBe(false);
-  expect(synthesis.body.use_llm).toBe(false);
+  expect(synthesis.body.use_model).toBe(false);
 });
 
 test("profile accepts fractional scores and rejects out-of-range input", async ({ page, request }) => {

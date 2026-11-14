@@ -27,7 +27,7 @@ const match = {
 };
 const parsed = { contact: { name: "Alex Rivera", email: "alex@example.com" }, sections: { skills: ["Python"] }, raw_lines: ["Alex Rivera", "Skills", "Python"] };
 let applications = [];
-let evidence = { profile_id: profileId, internships: [], certifications: [] };
+let evidence = { candidate_id: candidateId, internships: [], certifications: [] };
 let rescorePending = false;
 let crawlPending = false;
 let calls = [];
@@ -42,7 +42,7 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify(value));
   };
   if (key === "POST /__reset") {
-    applications = []; evidence = { profile_id: profileId, internships: [], certifications: [] };
+    applications = []; evidence = { candidate_id: candidateId, internships: [], certifications: [] };
     rescorePending = false; crawlPending = false; calls = [];
     return json({ ok: true });
   }
@@ -81,13 +81,22 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     res.end(': deterministic offline stream\n\n'); return;
   }
-  if (key === "GET /resumes/studio-evidence") return json(evidence);
-  if (key === "PUT /resumes/studio-evidence") { evidence = body; return json(evidence); }
+  if (key === `GET /profiles/${profileId}/evidence`) return json(evidence);
+  if (key === `PUT /profiles/${profileId}/evidence`) {
+    evidence = { candidate_id: candidateId, internships: body.internships ?? [], certifications: body.certifications ?? [] };
+    return json(evidence);
+  }
   if (key === "POST /resumes/synthesize") return json({
-    role_track: body.role_track, matched_terms: ["Python"], missing_terms: [], ats_parse_score: 1,
-    ats_keyword_score: 1, ats_findings: [], selected_projects: [], bullets_rewritten: 0, bullets_refused: 0,
-    html_preview: "<!doctype html><html lang='en'><title>Preview</title><body><h1>Alex Rivera</h1><p>Python</p></body></html>",
-    parsed, saved_resume: body.save_version ? { ...resume, version: 2 } : null,
+    role_track: body.role_track, role_label: "AI / Agentic", base_resume_id: resumeId, base_version: 1,
+    contact: { name: "Alex Rivera", email: "alex@example.com", phone: null, links: [] },
+    sections: { skills: ["Python"] },
+    lines: { skills: [{ text: "Python", origin: "resume", label: "your résumé", original: null }] },
+    html: "<h1>Alex Rivera</h1><p>Python</p>",
+    bullets: [], terms: [{ term: "python", status: "supported", sources: ["base résumé"] }],
+    projects: [],
+    ats_before: { parse: 1, keywords: 0.5, overall: 0.75, supported: ["Python"], missing: [], findings: [] },
+    ats_after: { parse: 1, keywords: 1, overall: 1, supported: ["Python"], missing: [], findings: [] },
+    added: ["Example Labs — Engineering Intern"], skipped: [], tailored_by: null, calls: 0,
   });
   console.error(`Unexpected mock API request: ${key}`);
   json({ error: { code: "not_found", message: `No synthetic fixture for ${key}` } }, 404);

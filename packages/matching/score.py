@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Match, Posting, Profile, Project, Resume
+from packages.core.models_evidence import Certification, Internship
 
 if TYPE_CHECKING:
     from packages.matching.legitimacy import Assessment
@@ -112,9 +113,10 @@ class ScoredPosting:
 async def profile_text(session: AsyncSession, profile: Profile) -> str:
     """Everything the owner has that describes them.
 
-    Résumé plus projects — the same corpus the fabrication guard treats as
-    source facts, for the same reason: both are verified material rather than
-    anything a model produced.
+    Résumé, projects, and the internships and certifications the owner
+    confirmed — the same material the fabrication guard and the Resume Studio
+    treat as source facts, for the same reason: none of it is anything a
+    model produced.
     """
     parts: list[str] = []
 
@@ -135,11 +137,37 @@ async def profile_text(session: AsyncSession, profile: Profile) -> str:
             parts.append(project.language)
         parts.extend(project.topics_json or [])
 
+    parts.extend(await _confirmed_evidence_text(session, profile))
+
     for value in (profile.location, profile.work_auth):
         if value:
             parts.append(str(value))
 
     return "\n".join(parts)
+
+
+async def _confirmed_evidence_text(session: AsyncSession, profile: Profile) -> list[str]:
+    """The internships and certifications the owner confirmed, as the studio prints them.
+
+    Only confirmed ones, for the reason the studio reads only those: an
+    unconfirmed record is a draft still being typed.
+    """
+    parts: list[str] = []
+    internships = await session.scalars(
+        select(Internship).where(
+            Internship.candidate_id == profile.candidate_id, Internship.verified.is_(True)
+        )
+    )
+    for internship in internships.all():
+        parts += [internship.role, internship.company, *internship.stack, *internship.bullets]
+    certifications = await session.scalars(
+        select(Certification).where(
+            Certification.candidate_id == profile.candidate_id, Certification.verified.is_(True)
+        )
+    )
+    for certification in certifications.all():
+        parts += [certification.name, certification.issuer, *certification.skills]
+    return [part for part in parts if part and part.strip()]
 
 
 def _rubric(
