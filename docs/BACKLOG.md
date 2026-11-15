@@ -244,6 +244,29 @@ a rewrite that only stuffs keywords scores *worse*.
 > confidence grading and source display on the application `/review` screen,
 > and classified diff rationales remain
 > P5 work. Inferences must stay out of résumé facts.
+>
+> **Built (2026-11-15): source-kind tags, enforced.** Every unit of evidence
+> the guard holds says where it came from: `guard.SourceKind` is `resume`,
+> `internship`, `certification` or `github_repo`, on `CorpusItem.source_kind`
+> (its text), `CorpusItem.evidence_kind` (its linked or confirmed evidence)
+> and `SourceCorpus.shared_by_kind` (shared-section lines that are not the
+> résumé's). `guard.MAY_BACK` decides which sections each kind may back: the
+> résumé any section, still scoped to its entry; an internship its own
+> Experience lines and Skills; a certification Certifications and Skills; a
+> repository's structured GitHub record, never README prose, Projects and
+> Skills (a linked entry's bullets still take only its language, topics and
+> declared tools, `evidence.repository_technologies_text`).
+> `SourceCorpus.supports`, `check(section=…)`, recombination and
+> targeted tailoring all read it, and Studio tags its lines through
+> `studio_sources.Source.kinds`. The one behavior change: a confirmed
+> certification no longer backs an employer's, an internship's or a project's
+> bullet (it did, through the shared Skills and Certifications sections).
+> Untagged callers are unchanged. `tests/test_claim_source_kind.py`.
+>
+> The tags sit on the guard's own units rather than on new `Claim` /
+> `EvidenceSource` classes, which nothing would read yet. The FACT /
+> INFERENCE / MISSING / UNVERIFIED claim record below is still unbuilt; the
+> kind tag is what it will cite as each claim's source.
 
 **Spec:** §11, §15, §30, §34 · **Size:** M
 
