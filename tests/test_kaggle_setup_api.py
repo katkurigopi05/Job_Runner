@@ -120,3 +120,22 @@ async def test_foreign_origin_cannot_start_setup(dashboard, monkeypatch):
     result = await client.post("/chat/kaggle/setup", headers={"Origin": "https://example.test"})
     assert result.status_code == 401
     setup.assert_not_called()
+
+
+async def test_missing_dataset_reports_configuration_without_leaking_exception(
+    dashboard, monkeypatch
+):
+    from packages.llm.kaggle_qwen27 import DATASET_REQUIRED, DatasetNotConfigured
+
+    client, path = dashboard
+    before = path.read_bytes()
+    monkeypatch.setattr(
+        api.kaggle_setup, "setup", AsyncMock(side_effect=DatasetNotConfigured(SERVER))
+    )
+    assert (await client.post("/chat/kaggle/setup")).status_code == 202
+    await asyncio.wait_for(api._setup_task, timeout=5)
+    result = (await client.get("/chat/kaggle/setup")).json()
+    assert not result["running"]
+    assert result["error"] == DATASET_REQUIRED
+    assert "synthetic-credential" not in str(result)
+    assert path.read_bytes() == before

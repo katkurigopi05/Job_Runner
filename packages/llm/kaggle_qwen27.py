@@ -1,5 +1,17 @@
 """Pinned saved 27B startup cells. Retain both models' files on Kaggle disk."""
 
+from packages.llm.provider import LLMError
+
+DATASET_REQUIRED = (
+    "Set KAGGLE_QWEN27_DATASET to your versioned private bundle "
+    "(owner/dataset/versions/1), restart the API, then load the Kaggle helper again."
+)
+
+
+class DatasetNotConfigured(LLMError):
+    """A safe, fixed configuration error; never carries a session credential."""
+
+
 UNLOAD_8B = """
 import gc
 import torch
@@ -63,11 +75,10 @@ def load_27b(helper_source: str, *, loader_sha256: str = LOADER_SHA256) -> str:
     """
     from packages.core.config import get_settings
     from packages.llm.kaggle import CONTEXT_TOKENS, QWEN38_MODEL
-    from packages.llm.provider import LLMError
 
     dataset = get_settings().kaggle_qwen27_dataset
     if not dataset:
-        raise LLMError("Set KAGGLE_QWEN27_DATASET to your versioned private bundle before setup.")
+        raise DatasetNotConfigured(DATASET_REQUIRED)
 
     context = CONTEXT_TOKENS[QWEN38_MODEL]
     edits = (

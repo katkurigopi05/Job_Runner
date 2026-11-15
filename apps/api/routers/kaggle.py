@@ -20,6 +20,7 @@ from packages.llm.kaggle import (
     connection_path,
     read_connection,
 )
+from packages.llm.kaggle_qwen27 import DATASET_REQUIRED, DatasetNotConfigured
 from packages.llm.provider import LLMError
 
 router = APIRouter(prefix="/chat/kaggle", tags=["chat"])
@@ -63,6 +64,9 @@ async def _load_helper(saved: Connection) -> None:
         _setup_status = SetupStatus(detail=status.detail, connection=status)
     except ConnectionFailure as exc:
         _setup_status = SetupStatus(error=DETAILS[exc.state])
+    except DatasetNotConfigured:
+        # Whitelist the fixed recovery text, never arbitrary setup/kernel output.
+        _setup_status = SetupStatus(error=DATASET_REQUIRED)
     except Exception:
         # Transport and validation exceptions may contain the saved credential.
         _setup_status = SetupStatus(
