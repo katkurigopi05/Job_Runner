@@ -48,6 +48,13 @@ const server = createServer(async (req, res) => {
     return json({ ok: true });
   }
   if (key === "GET /__calls") return json(calls);
+  if (key === "POST /__table-fixtures") {
+    applications = [
+      { id: "synthetic-application", candidate_id: candidateId, profile_id: profileId, url: match.url, ats: "greenhouse", status: "submitted", outcome: "interview", created_at: "2026-01-12T00:00:00Z", updated_at: "2026-01-14T00:00:00Z", failure_reason: null },
+      { id: "synthetic-second", candidate_id: candidateId, profile_id: profileId, url: "https://alpha.example/jobs/platform", ats: "lever", status: "submitted", outcome: "rejected", created_at: "2026-01-10T00:00:00Z", updated_at: "2026-01-15T00:00:00Z", failure_reason: null },
+    ];
+    return json({ ok: true });
+  }
   calls.push({ method: req.method, path: url.pathname, query: url.search, body });
   if (key === "GET /health") return json({ status: "ok", api: "ok", database: "ok" });
   if (key === "GET /candidates") return json([{ id: candidateId, full_name: "Alex Rivera", email: "alex@example.com" }]);
