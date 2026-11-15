@@ -1,0 +1,1479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jobrunner - Database Architecture & Connection Topology</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <style>
+    :root {
+      --bg-dark: #07090e;
+      --bg-card: rgba(15, 20, 32, 0.75);
+      --bg-card-hover: rgba(22, 30, 48, 0.85);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-accent: rgba(56, 189, 248, 0.35);
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent-cyan: #38bdf8;
+      --accent-emerald: #10b981;
+      --accent-indigo: #818cf8;
+      --accent-purple: #c084fc;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+      --glow-cyan: rgba(56, 189, 248, 0.15);
+      --glow-emerald: rgba(16, 185, 129, 0.15);
+      --glow-purple: rgba(192, 132, 252, 0.15);
+      --glow-amber: rgba(245, 158, 11, 0.15);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      min-height: 100vh;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(56, 189, 248, 0.06) 0%, transparent 40%),
+        radial-gradient(circle at 85% 20%, rgba(192, 132, 252, 0.06) 0%, transparent 40%),
+        radial-gradient(circle at 50% 85%, rgba(16, 185, 129, 0.05) 0%, transparent 50%);
+    }
+
+    /* Header */
+    header {
+      padding: 1.5rem 2.5rem;
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      background: rgba(7, 9, 14, 0.85);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .logo-badge {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #0284c7, #6366f1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .logo-badge svg {
+      width: 24px;
+      height: 24px;
+      fill: none;
+      stroke: #fff;
+      stroke-width: 2;
+    }
+
+    h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(to right, #ffffff, #94a3b8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+
+    .header-pills {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .pill {
+      font-family: 'Fira Code', monospace;
+      font-size: 0.75rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      box-shadow: 0 0 10px var(--accent-emerald);
+      animation: pulse 2s infinite ease-in-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.9); }
+    }
+
+    /* Main Container */
+    main {
+      padding: 2rem 2.5rem;
+      max-width: 1720px;
+      margin: 0 auto;
+    }
+
+    /* Nav Tabs */
+    .nav-tabs {
+      display: flex;
+      gap: 0.6rem;
+      margin-bottom: 2rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.75rem;
+    }
+
+    .tab-btn {
+      font-family: 'Inter', sans-serif;
+      font-size: 0.88rem;
+      font-weight: 500;
+      padding: 0.6rem 1.25rem;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .tab-btn:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .tab-btn.active {
+      color: #fff;
+      background: rgba(56, 189, 248, 0.1);
+      border-color: rgba(56, 189, 248, 0.3);
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.15);
+    }
+
+    /* Content Views */
+    .view-section {
+      display: none;
+    }
+    .view-section.active {
+      display: block;
+      animation: fadeIn 0.3s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Top Grid Stat Cards */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.25rem 1.5rem;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .stat-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--card-accent, var(--accent-cyan)), transparent);
+    }
+
+    .stat-label {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.4rem;
+    }
+
+    .stat-value {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.45rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .stat-desc {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.35rem;
+    }
+
+    /* Topology Layout */
+    .topology-container {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 1.75rem;
+      align-items: start;
+    }
+
+    @media (max-width: 1200px) {
+      .topology-container {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .canvas-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      position: relative;
+    }
+
+    .card-header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.85rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.15rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    /* Architecture Flow Graphic */
+    .arch-flow-svg {
+      width: 100%;
+      height: auto;
+      border-radius: 12px;
+      background: rgba(4, 6, 10, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.5);
+    }
+
+    /* SVG Interactive Nodes */
+    .svg-node {
+      cursor: pointer;
+      transition: filter 0.2s, transform 0.2s;
+    }
+    .svg-node:hover rect {
+      stroke: #38bdf8 !important;
+      stroke-width: 2 !important;
+      filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.4));
+    }
+    .svg-node.selected rect {
+      stroke: #10b981 !important;
+      stroke-width: 2.5 !important;
+      filter: drop-shadow(0 0 14px rgba(16, 185, 129, 0.5));
+    }
+
+    /* Inspector Side Panel */
+    .inspector-panel {
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      position: sticky;
+      top: 90px;
+    }
+
+    .inspector-header {
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1rem;
+    }
+
+    .inspector-tag {
+      font-family: 'Fira Code', monospace;
+      font-size: 0.72rem;
+      color: var(--accent-cyan);
+      background: rgba(56, 189, 248, 0.1);
+      padding: 0.2rem 0.55rem;
+      border-radius: 6px;
+      display: inline-block;
+      margin-bottom: 0.5rem;
+    }
+
+    .inspector-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .detail-row {
+      margin-bottom: 1rem;
+    }
+
+    .detail-label {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.3rem;
+    }
+
+    .detail-value {
+      font-size: 0.88rem;
+      color: var(--text-main);
+      line-height: 1.45;
+    }
+
+    .code-box {
+      font-family: 'Fira Code', monospace;
+      font-size: 0.78rem;
+      background: rgba(2, 4, 8, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 0.75rem 0.9rem;
+      color: #38bdf8;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* Schema Table Explorer */
+    .domain-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .domain-pill {
+      font-size: 0.82rem;
+      padding: 0.45rem 1rem;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .domain-pill:hover {
+      background: rgba(255, 255, 255, 0.07);
+      color: #fff;
+    }
+
+    .domain-pill.active {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: rgba(56, 189, 248, 0.4);
+      color: var(--accent-cyan);
+      font-weight: 600;
+    }
+
+    .tables-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .db-table-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+      cursor: pointer;
+    }
+
+    .db-table-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(56, 189, 248, 0.3);
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+
+    .table-card-head {
+      padding: 0.9rem 1.15rem;
+      background: rgba(255, 255, 255, 0.02);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .table-name {
+      font-family: 'Fira Code', monospace;
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .table-domain-tag {
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-weight: 500;
+    }
+
+    .tag-identity { background: rgba(129, 140, 248, 0.15); color: #818cf8; }
+    .tag-jobs { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+    .tag-matching { background: rgba(192, 132, 252, 0.15); color: #c084fc; }
+    .tag-ops { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+
+    .table-card-body {
+      padding: 1rem 1.15rem;
+    }
+
+    .table-desc {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 0.9rem;
+      line-height: 1.4;
+    }
+
+    .col-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      font-family: 'Fira Code', monospace;
+      font-size: 0.74rem;
+    }
+
+    .col-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.25rem 0.4rem;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.25);
+    }
+
+    .col-name {
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .pk-badge { color: #f59e0b; font-weight: bold; }
+    .fk-badge { color: #38bdf8; }
+    .vec-badge { color: #c084fc; font-weight: 600; }
+
+    .col-type {
+      color: #64748b;
+    }
+
+    /* Flow Sequence Cards */
+    .flow-card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .flow-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.5rem;
+    }
+
+    .flow-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.75rem;
+      padding: 0.3rem 0.7rem;
+      border-radius: 6px;
+      font-weight: 600;
+      margin-bottom: 0.8rem;
+    }
+
+    .flow-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      position: relative;
+      margin-top: 1rem;
+    }
+
+    .flow-steps::before {
+      content: '';
+      position: absolute;
+      left: 14px;
+      top: 15px;
+      bottom: 15px;
+      width: 2px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .flow-step-item {
+      display: flex;
+      gap: 1rem;
+      position: relative;
+      align-items: flex-start;
+    }
+
+    .step-num {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: #0f172a;
+      border: 2px solid var(--accent-cyan);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+      z-index: 1;
+    }
+
+    .step-content {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      flex-grow: 1;
+    }
+
+    .step-title {
+      font-size: 0.86rem;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 0.2rem;
+    }
+
+    .step-sub {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.35;
+    }
+
+    /* Live connection line animation */
+    @keyframes flowLine {
+      to {
+        stroke-dashoffset: -20;
+      }
+    }
+    .flow-active-line {
+      stroke-dasharray: 6 4;
+      animation: flowLine 1.2s linear infinite;
+    }
+
+    /* Search Input */
+    .search-input-wrapper {
+      position: relative;
+      margin-bottom: 1.5rem;
+      max-width: 480px;
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 0.65rem 1rem 0.65rem 2.4rem;
+      border-radius: 8px;
+      background: rgba(15, 20, 32, 0.8);
+      border: 1px solid var(--border);
+      color: #fff;
+      font-size: 0.88rem;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .search-input:focus {
+      border-color: var(--accent-cyan);
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.2);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 0.85rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      stroke: var(--text-dim);
+    }
+
+    footer {
+      margin-top: 4rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.82rem;
+    }
+  </style>
+</head>
+<body>
+  <p style="padding:1rem">Historical architecture illustration. The SQLAlchemy models and Alembic migrations define the current schema; connection strings below use synthetic local defaults.</p>
+
+  <!-- Top Header -->
+  <header>
+    <div class="brand">
+      <div class="logo-badge">
+        <svg viewBox="0 0 24 24">
+          <ellipse cx="12" cy="5" rx="9" ry="3"/>
+          <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+        </svg>
+      </div>
+      <div>
+        <h1>Database Architecture & Connections</h1>
+        <div class="subtitle">Jobrunner Single-Source-of-Truth PostgreSQL 16 + pgvector</div>
+      </div>
+    </div>
+    <div class="header-pills">
+      <div class="pill">
+        <span class="status-dot"></span>
+        <span>Postgres 16 + pgvector</span>
+      </div>
+      <div class="pill">
+        <span style="color: var(--accent-cyan);">Host: 5433</span>
+        <span style="color: var(--text-dim);">&rarr;</span>
+        <span style="color: var(--accent-emerald);">Docker: 5432</span>
+      </div>
+      <div class="pill">
+        <span>No Redis &bull; SKIP LOCKED</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Body Content -->
+  <main>
+
+    <!-- Top Key Metrics -->
+    <div class="stats-grid">
+      <div class="stat-card" style="--card-accent: var(--accent-cyan);">
+        <div class="stat-label">Primary Database Engine</div>
+        <div class="stat-value">PostgreSQL 16 <span style="font-size: 0.85rem; color: var(--accent-cyan); font-weight: normal;">+ pgvector</span></div>
+        <div class="stat-desc">Containerized via Docker with persistent volume <span style="font-family: monospace;">jobrunner-pgdata</span></div>
+      </div>
+      <div class="stat-card" style="--card-accent: var(--accent-emerald);">
+        <div class="stat-label">Connection Driver & Pool</div>
+        <div class="stat-value">asyncpg <span style="font-size: 0.85rem; color: var(--accent-emerald); font-weight: normal;">SQLAlchemy 2.0</span></div>
+        <div class="stat-desc">Cached async engine with <span style="font-family: monospace;">pool_pre_ping=True</span> &amp; <span style="font-family: monospace;">expire_on_commit=False</span></div>
+      </div>
+      <div class="stat-card" style="--card-accent: var(--accent-purple);">
+        <div class="stat-label">Vector Embeddings</div>
+        <div class="stat-value">384 Dimensions</div>
+        <div class="stat-desc">Native <span style="font-family: monospace;">Vector(384)</span> via <span style="font-family: monospace;">BAAI/bge-small-en-v1.5</span> for resumes &amp; postings</div>
+      </div>
+      <div class="stat-card" style="--card-accent: var(--accent-amber);">
+        <div class="stat-label">Async Job Queue</div>
+        <div class="stat-value">Zero Redis</div>
+        <div class="stat-desc">Native PostgreSQL <span style="font-family: monospace;">FOR UPDATE SKIP LOCKED</span> with lease heartbeats</div>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="nav-tabs">
+      <button class="tab-btn active" onclick="switchTab('topology')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        Connection Topology View
+      </button>
+      <button class="tab-btn" onclick="switchTab('erd')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+        Entity Relationship (ERD) Explorer
+      </button>
+      <button class="tab-btn" onclick="switchTab('flows')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        Data & Transaction Flows
+      </button>
+      <button class="tab-btn" onclick="switchTab('config')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Database Config &amp; Ports
+      </button>
+    </div>
+
+    <!-- VIEW 1: TOPOLOGY VIEW -->
+    <div id="view-topology" class="view-section active">
+      <div class="topology-container">
+        
+        <!-- Left Visual SVG Canvas -->
+        <div class="canvas-card">
+          <div class="card-header-bar">
+            <div class="card-title">
+              <svg width="20" height="20" fill="none" stroke="var(--accent-cyan)" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/></svg>
+              Interactive Topology Map (Click any node to inspect)
+            </div>
+            <div style="font-size: 0.78rem; color: var(--text-dim);">
+              Animated paths represent live data transport
+            </div>
+          </div>
+
+          <svg class="arch-flow-svg" viewBox="0 0 1020 640" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="grad-web" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#0284c7" stop-opacity="0.3"/>
+                <stop offset="100%" stop-color="#0369a1" stop-opacity="0.1"/>
+              </linearGradient>
+              <linearGradient id="grad-api" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#059669" stop-opacity="0.35"/>
+                <stop offset="100%" stop-color="#047857" stop-opacity="0.1"/>
+              </linearGradient>
+              <linearGradient id="grad-worker" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#d97706" stop-opacity="0.35"/>
+                <stop offset="100%" stop-color="#b45309" stop-opacity="0.1"/>
+              </linearGradient>
+              <linearGradient id="grad-pg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#4f46e5" stop-opacity="0.45"/>
+                <stop offset="100%" stop-color="#312e81" stop-opacity="0.2"/>
+              </linearGradient>
+              <linearGradient id="grad-box" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#1e293b" stop-opacity="0.9"/>
+                <stop offset="100%" stop-color="#0f172a" stop-opacity="0.8"/>
+              </linearGradient>
+            </defs>
+
+            <!-- GROUP: Client / Frontend -->
+            <g class="svg-node" id="node-web" onclick="selectNode('web')">
+              <rect x="40" y="50" width="220" height="90" rx="10" fill="url(#grad-box)" stroke="#38bdf8" stroke-width="1.2"/>
+              <text x="60" y="85" fill="#f8fafc" font-family="Outfit" font-size="15" font-weight="600">Next.js Web UI</text>
+              <text x="60" y="105" fill="#94a3b8" font-family="Fira Code" font-size="12">Port 3001 (127.0.0.1)</text>
+              <text x="60" y="125" fill="#64748b" font-family="Inter" font-size="11">Hand-rolled UI &bull; No direct DB</text>
+            </g>
+
+            <g class="svg-node" id="node-mcp" onclick="selectNode('mcp')">
+              <rect x="40" y="170" width="220" height="80" rx="10" fill="url(#grad-box)" stroke="#818cf8" stroke-width="1.2"/>
+              <text x="60" y="202" fill="#f8fafc" font-family="Outfit" font-size="15" font-weight="600">MCP Server (apps/mcp)</text>
+              <text x="60" y="222" fill="#94a3b8" font-family="Fira Code" font-size="12">Claude Code Tool Layer</text>
+              <text x="60" y="238" fill="#64748b" font-family="Inter" font-size="11">JobrunnerClient &bull; HTTP proxy</text>
+            </g>
+
+            <!-- GROUP: Middle Application Services -->
+            <g class="svg-node" id="node-api" onclick="selectNode('api')">
+              <rect x="360" y="60" width="240" height="150" rx="12" fill="url(#grad-api)" stroke="#10b981" stroke-width="1.4"/>
+              <text x="385" y="95" fill="#ffffff" font-family="Outfit" font-size="17" font-weight="700">FastAPI Backend</text>
+              <text x="385" y="117" fill="#6ee7b7" font-family="Fira Code" font-size="12">apps/api &bull; Port 8000</text>
+              <text x="385" y="145" fill="#cbd5e1" font-family="Inter" font-size="12">&bull; Scoped SessionDep per request</text>
+              <text x="385" y="165" fill="#cbd5e1" font-family="Inter" font-size="12">&bull; Loopback-only peer security</text>
+              <text x="385" y="185" fill="#cbd5e1" font-family="Inter" font-size="12">&bull; SSE Realtime status streams</text>
+            </g>
+
+            <g class="svg-node" id="node-worker" onclick="selectNode('worker')">
+              <rect x="360" y="240" width="240" height="160" rx="12" fill="url(#grad-worker)" stroke="#f59e0b" stroke-width="1.4"/>
+              <text x="385" y="275" fill="#ffffff" font-family="Outfit" font-size="17" font-weight="700">Background Worker</text>
+              <text x="385" y="297" fill="#fcd34d" font-family="Fira Code" font-size="12">apps/worker/run.py</text>
+              <text x="385" y="325" fill="#cbd5e1" font-family="Inter" font-size="12">&bull; FOR UPDATE SKIP LOCKED queue</text>
+              <text x="385" y="345" fill="#cbd5e1" font-family="Inter" font-size="12">&bull; Lease renewal &amp; Heartbeats</text>
+              <text x="385" y="365" fill="#cbd5e1" font-family="Inter" font-size="12">&bull; Handlers: apply, crawl, inbox</text>
+              <text x="385" y="385" fill="#cbd5e1" font-family="Inter" font-size="12">&bull; Playwright browser execution</text>
+            </g>
+
+            <!-- GROUP: Auxiliary DB Clients -->
+            <g class="svg-node" id="node-dab" onclick="selectNode('dab')">
+              <rect x="40" y="280" width="220" height="80" rx="10" fill="url(#grad-box)" stroke="#c084fc" stroke-width="1.2"/>
+              <text x="60" y="312" fill="#f8fafc" font-family="Outfit" font-size="15" font-weight="600">Data API Builder (DAB)</text>
+              <text x="60" y="332" fill="#94a3b8" font-family="Fira Code" font-size="12">apps/dab (GraphQL / REST)</text>
+              <text x="60" y="348" fill="#64748b" font-family="Inter" font-size="11">Reads api_postings view</text>
+            </g>
+
+            <g class="svg-node" id="node-tests" onclick="selectNode('tests')">
+              <rect x="360" y="430" width="240" height="90" rx="10" fill="url(#grad-box)" stroke="#ef4444" stroke-width="1.2"/>
+              <text x="385" y="462" fill="#f8fafc" font-family="Outfit" font-size="15" font-weight="600">Pytest Test Suite</text>
+              <text x="385" y="482" fill="#fca5a5" font-family="Fira Code" font-size="12">tests/conftest.py</text>
+              <text x="385" y="502" fill="#64748b" font-family="Inter" font-size="11">pg_try_advisory_lock &bull; jobrunner_test</text>
+            </g>
+
+            <g class="svg-node" id="node-alembic" onclick="selectNode('alembic')">
+              <rect x="40" y="390" width="220" height="75" rx="10" fill="url(#grad-box)" stroke="#94a3b8" stroke-width="1.2"/>
+              <text x="60" y="422" fill="#f8fafc" font-family="Outfit" font-size="15" font-weight="600">Alembic Migrations</text>
+              <text x="60" y="442" fill="#94a3b8" font-family="Fira Code" font-size="12">migrations/versions/</text>
+              <text x="60" y="456" fill="#64748b" font-family="Inter" font-size="11">36 schema revisions &bull; DDL</text>
+            </g>
+
+            <!-- GROUP: Port Translation Layer -->
+            <rect x="655" y="30" width="60" height="540" rx="8" fill="rgba(15, 23, 42, 0.6)" stroke="#475569" stroke-width="1" stroke-dasharray="4 4"/>
+            <text x="685" y="290" fill="#94a3b8" font-family="Fira Code" font-size="13" transform="rotate(90, 685, 290)" text-anchor="middle">
+              HOST 5433  &rarr;  CONTAINER 5432
+            </text>
+
+            <!-- GROUP: Docker PostgreSQL Container -->
+            <g class="svg-node" id="node-postgres" onclick="selectNode('postgres')">
+              <rect x="750" y="40" width="230" height="520" rx="16" fill="url(#grad-pg)" stroke="#6366f1" stroke-width="2"/>
+              <text x="775" y="80" fill="#ffffff" font-family="Outfit" font-size="19" font-weight="700">Docker Container</text>
+              <text x="775" y="102" fill="#a5b4fc" font-family="Fira Code" font-size="13">jobrunner-postgres</text>
+              <text x="775" y="122" fill="#c7d2fe" font-family="Inter" font-size="11">pgvector/pgvector:pg16</text>
+
+              <!-- DB 1: jobrunner -->
+              <rect x="765" y="150" width="200" height="190" rx="10" fill="rgba(15, 23, 42, 0.85)" stroke="#38bdf8" stroke-width="1.2"/>
+              <text x="780" y="178" fill="#38bdf8" font-family="Outfit" font-size="15" font-weight="600">&bull; jobrunner (Main)</text>
+              <text x="780" y="200" fill="#94a3b8" font-family="Inter" font-size="11">- Ext: pgvector (384d)</text>
+              <text x="780" y="220" fill="#94a3b8" font-family="Inter" font-size="11">- 24 Domain Tables</text>
+              <text x="780" y="240" fill="#94a3b8" font-family="Inter" font-size="11">- View: api_postings</text>
+              <text x="780" y="260" fill="#94a3b8" font-family="Inter" font-size="11">- FTS + Cosine RRF</text>
+              <text x="780" y="280" fill="#94a3b8" font-family="Inter" font-size="11">- queue_tasks Queue</text>
+              <text x="780" y="315" fill="#10b981" font-family="Fira Code" font-size="11">&bull; Runtime Status: LIVE</text>
+
+              <!-- DB 2: jobrunner_test -->
+              <rect x="765" y="360" width="200" height="110" rx="10" fill="rgba(15, 23, 42, 0.85)" stroke="#ef4444" stroke-width="1.2"/>
+              <text x="780" y="388" fill="#f87171" font-family="Outfit" font-size="15" font-weight="600">&bull; jobrunner_test</text>
+              <text x="780" y="410" fill="#94a3b8" font-family="Inter" font-size="11">- Ext: pgvector (384d)</text>
+              <text x="780" y="430" fill="#94a3b8" font-family="Inter" font-size="11">- Full Schema Mirror</text>
+              <text x="780" y="450" fill="#94a3b8" font-family="Inter" font-size="11">- Advisory Lock isolated</text>
+
+              <!-- Storage Volume -->
+              <rect x="765" y="490" width="200" height="50" rx="8" fill="rgba(30, 41, 59, 0.7)" stroke="#475569" stroke-width="1"/>
+              <text x="780" y="520" fill="#cbd5e1" font-family="Fira Code" font-size="11">Vol: jobrunner-pgdata</text>
+            </g>
+
+            <!-- CONNECTIONS & LINES -->
+            <!-- Web to API -->
+            <path d="M 260 95 L 360 95" stroke="#38bdf8" stroke-width="2" class="flow-active-line"/>
+            <text x="310" y="85" fill="#38bdf8" font-family="Fira Code" font-size="9" text-anchor="middle">Proxy HTTP</text>
+
+            <!-- MCP to API -->
+            <path d="M 260 210 L 310 210 L 310 135 L 360 135" fill="none" stroke="#818cf8" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+            <!-- DAB to Port -->
+            <path d="M 260 320 L 320 320 L 320 370 L 655 370" fill="none" stroke="#c084fc" stroke-width="1.5"/>
+
+            <!-- Alembic to Port -->
+            <path d="M 260 425 L 330 425 L 330 410 L 655 410" fill="none" stroke="#94a3b8" stroke-width="1.5"/>
+
+            <!-- API to Port -->
+            <path d="M 600 135 L 655 135" stroke="#10b981" stroke-width="2.5" class="flow-active-line"/>
+            <text x="625" y="125" fill="#10b981" font-family="Fira Code" font-size="10" text-anchor="middle">asyncpg</text>
+
+            <!-- Worker to Port -->
+            <path d="M 600 320 L 655 320" stroke="#f59e0b" stroke-width="2.5" class="flow-active-line"/>
+            <text x="625" y="310" fill="#f59e0b" font-family="Fira Code" font-size="10" text-anchor="middle">asyncpg</text>
+
+            <!-- Tests to Port -->
+            <path d="M 600 475 L 655 475" stroke="#ef4444" stroke-width="2"/>
+            <text x="628" y="465" fill="#ef4444" font-family="Fira Code" font-size="9" text-anchor="middle">test_db</text>
+
+            <!-- Port to Postgres Container -->
+            <path d="M 715 135 L 750 135" stroke="#10b981" stroke-width="2.5" class="flow-active-line"/>
+            <path d="M 715 320 L 750 320" stroke="#f59e0b" stroke-width="2.5" class="flow-active-line"/>
+            <path d="M 715 475 L 750 475" stroke="#ef4444" stroke-width="2"/>
+
+          </svg>
+        </div>
+
+        <!-- Right Detail Inspector -->
+        <div class="inspector-panel" id="inspector">
+          <div class="inspector-header">
+            <span class="inspector-tag" id="insp-tag">CONTAINER &bull; POSTGRES</span>
+            <div class="inspector-title" id="insp-title">jobrunner-postgres</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem;" id="insp-sub">
+              PostgreSQL 16 with pgvector extension enabled
+            </div>
+          </div>
+
+          <div class="detail-row">
+            <div class="detail-label">Network Binding &amp; Ports</div>
+            <div class="detail-value" id="insp-ports">
+              Host: <strong style="color: var(--accent-cyan);">5433</strong> &rarr; Container: <strong style="color: var(--accent-emerald);">5432</strong>
+            </div>
+          </div>
+
+          <div class="detail-row">
+            <div class="detail-label">Connection String (Normal &amp; Async)</div>
+            <div class="code-box" id="insp-conn">postgresql+asyncpg://jobrunner:jobrunner@localhost:5433/jobrunner</div>
+          </div>
+
+          <div class="detail-row">
+            <div class="detail-label">Connection Pool Strategy</div>
+            <div class="detail-value" id="insp-pool">
+              SQLAlchemy 2.0 AsyncEngine cached with <code>@lru_cache</code>. <code>pool_pre_ping=True</code> tests liveness on checkout. Sessions created via <code>async_sessionmaker(expire_on_commit=False)</code>.
+            </div>
+          </div>
+
+          <div class="detail-row">
+            <div class="detail-label">Source of Truth Files</div>
+            <div class="detail-value" id="insp-files">
+              &bull; <code>packages/core/db.py</code><br>
+              &bull; <code>packages/core/config.py</code><br>
+              &bull; <code>docker-compose.override.yml</code><br>
+              &bull; <code>scripts/init-db.sql</code>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- VIEW 2: ERD & SCHEMA EXPLORER -->
+    <div id="view-erd" class="view-section">
+      <div class="search-input-wrapper">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" class="search-input" id="tableSearch" placeholder="Filter tables, columns or data types..." oninput="filterTables()">
+      </div>
+
+      <div class="domain-filters">
+        <button class="domain-pill active" onclick="filterDomain('all')">All Tables (24)</button>
+        <button class="domain-pill" onclick="filterDomain('identity')">Identity &amp; Candidate (6)</button>
+        <button class="domain-pill" onclick="filterDomain('jobs')">Jobs &amp; Crawling (10)</button>
+        <button class="domain-pill" onclick="filterDomain('matching')">Matching &amp; Applications (6)</button>
+        <button class="domain-pill" onclick="filterDomain('ops')">Queue &amp; Ops (2)</button>
+      </div>
+
+      <div class="tables-grid" id="tablesContainer">
+
+        <!-- Table: users -->
+        <div class="db-table-card" data-domain="identity">
+          <div class="table-card-head">
+            <div class="table-name">
+              <span>users</span>
+            </div>
+            <span class="table-domain-tag tag-identity">Identity</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Account owner record owning candidates.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name"><span class="pk-badge">&bull;</span> id</span><span class="col-type">UUID (PK)</span></div>
+              <div class="col-item"><span class="col-name">email</span><span class="col-type">VARCHAR(320) UQ</span></div>
+              <div class="col-item"><span class="col-name">created_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table: candidates -->
+        <div class="db-table-card" data-domain="identity">
+          <div class="table-card-head">
+            <div class="table-name"><span>candidates</span></div>
+            <span class="table-domain-tag tag-identity">Identity</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Person applying to jobs, points to encrypted vault secrets.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name"><span class="pk-badge">&bull;</span> id</span><span class="col-type">UUID (PK)</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> user_id</span><span class="col-type">UUID &rarr; users.id</span></div>
+              <div class="col-item"><span class="col-name">name, email</span><span class="col-type">VARCHAR</span></div>
+              <div class="col-item"><span class="col-name">email_mode</span><span class="col-type">VARCHAR ('self'|'managed')</span></div>
+              <div class="col-item"><span class="col-name">secrets_ref</span><span class="col-type">VARCHAR (Vault ref)</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table: profiles -->
+        <div class="db-table-card" data-domain="identity">
+          <div class="table-card-head">
+            <div class="table-name"><span>profiles</span></div>
+            <span class="table-domain-tag tag-identity">Identity</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Target preferences, citizenship, target seniority, thresholds.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name"><span class="pk-badge">&bull;</span> id</span><span class="col-type">UUID (PK)</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> candidate_id</span><span class="col-type">UUID &rarr; candidates.id</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> base_resume_id</span><span class="col-type">UUID &rarr; resumes.id</span></div>
+              <div class="col-item"><span class="col-name">min_match_score</span><span class="col-type">FLOAT</span></div>
+              <div class="col-item"><span class="col-name">citizenship_status</span><span class="col-type">VARCHAR</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table: resumes -->
+        <div class="db-table-card" data-domain="identity">
+          <div class="table-card-head">
+            <div class="table-name"><span>resumes</span></div>
+            <span class="table-domain-tag tag-identity">Identity</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Source resumes and tailored versions with 384d pgvector.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name"><span class="pk-badge">&bull;</span> id</span><span class="col-type">UUID (PK)</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> candidate_id</span><span class="col-type">UUID &rarr; candidates.id</span></div>
+              <div class="col-item"><span class="col-name"><span class="vec-badge">&#9670;</span> embedding</span><span class="col-type">Vector(384)</span></div>
+              <div class="col-item"><span class="col-name">raw_markdown</span><span class="col-type">TEXT</span></div>
+              <div class="col-item"><span class="col-name">parsed_json</span><span class="col-type">JSONB</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> tailored_for_posting_id</span><span class="col-type">UUID &rarr; postings.id</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table: companies -->
+        <div class="db-table-card" data-domain="jobs">
+          <div class="table-card-head">
+            <div class="table-name"><span>companies</span></div>
+            <span class="table-domain-tag tag-jobs">Jobs &amp; Crawling</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Target companies, career boards, and ATS adapters.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name"><span class="pk-badge">&bull;</span> id</span><span class="col-type">UUID (PK)</span></div>
+              <div class="col-item"><span class="col-name">name, slug, domain</span><span class="col-type">VARCHAR</span></div>
+              <div class="col-item"><span class="col-name">ats_type</span><span class="col-type">VARCHAR (greenhouse, lever...)</span></div>
+              <div class="col-item"><span class="col-name">careers_url</span><span class="col-type">VARCHAR</span></div>
+              <div class="col-item"><span class="col-name">board_hash</span><span class="col-type">VARCHAR</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table: postings -->
+        <div class="db-table-card" data-domain="jobs">
+          <div class="table-card-head">
+            <div class="table-name"><span>postings</span></div>
+            <span class="table-domain-tag tag-jobs">Jobs &amp; Crawling</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Scraped job postings with full description and pgvector embeddings.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name"><span class="pk-badge">&bull;</span> id</span><span class="col-type">UUID (PK)</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> company_id</span><span class="col-type">UUID &rarr; companies.id</span></div>
+              <div class="col-item"><span class="col-name">title, external_id</span><span class="col-type">VARCHAR</span></div>
+              <div class="col-item"><span class="col-name"><span class="vec-badge">&#9670;</span> embedding</span><span class="col-type">Vector(384)</span></div>
+              <div class="col-item"><span class="col-name">requirements_json</span><span class="col-type">JSONB</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> canonical_job_id</span><span class="col-type">UUID &rarr; canonical_jobs.id</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table: posting_chunks -->
+        <div class="db-table-card" data-domain="jobs">
+          <div class="table-card-head">
+            <div class="table-name"><span>posting_chunks</span></div>
+            <span class="table-domain-tag tag-jobs">Jobs &amp; Crawling</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Chunked sections of posting descriptions for granular vector matching.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name"><span class="pk-badge">&bull;</span> id</span><span class="col-type">UUID (PK)</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> posting_id</span><span class="col-type">UUID &rarr; postings.id</span></div>
+              <div class="col-item"><span class="col-name">chunk_index</span><span class="col-type">INT</span></div>
+              <div class="col-item"><span class="col-name"><span class="vec-badge">&#9670;</span> embedding</span><span class="col-type">Vector(384)</span></div>
+              <div class="col-item"><span class="col-name">text</span><span class="col-type">TEXT</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table: matches -->
+        <div class="db-table-card" data-domain="matching">
+          <div class="table-card-head">
+            <div class="table-name"><span>matches</span></div>
+            <span class="table-domain-tag tag-matching">Matching</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Scoring evaluations, decisions, partial index for undecided queue.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name"><span class="pk-badge">&bull;</span> id</span><span class="col-type">UUID (PK)</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> profile_id</span><span class="col-type">UUID &rarr; profiles.id</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> posting_id</span><span class="col-type">UUID &rarr; postings.id</span></div>
+              <div class="col-item"><span class="col-name">score</span><span class="col-type">FLOAT (Indexed DESC)</span></div>
+              <div class="col-item"><span class="col-name">decision</span><span class="col-type">VARCHAR ('apply'|'skip'|NULL)</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> tailored_resume_id</span><span class="col-type">UUID &rarr; resumes.id</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table: applications -->
+        <div class="db-table-card" data-domain="matching">
+          <div class="table-card-head">
+            <div class="table-name"><span>applications</span></div>
+            <span class="table-domain-tag tag-matching">Matching</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Full lifecycle state machine for job submissions.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name"><span class="pk-badge">&bull;</span> id</span><span class="col-type">UUID (PK)</span></div>
+              <div class="col-item"><span class="col-name"><span class="fk-badge">&rarr;</span> profile_id, posting_id</span><span class="col-type">UUID (FKs)</span></div>
+              <div class="col-item"><span class="col-name">status</span><span class="col-type">VARCHAR (draft..submitted)</span></div>
+              <div class="col-item"><span class="col-name">custom_answers</span><span class="col-type">JSONB</span></div>
+              <div class="col-item"><span class="col-name">outcome</span><span class="col-type">VARCHAR (interview..offer)</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table: queue_tasks -->
+        <div class="db-table-card" data-domain="ops">
+          <div class="table-card-head">
+            <div class="table-name"><span>queue_tasks</span></div>
+            <span class="table-domain-tag tag-ops">Queue &amp; Ops</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Postgres FOR UPDATE SKIP LOCKED task queue with lease renewal.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name"><span class="pk-badge">&bull;</span> id</span><span class="col-type">UUID (PK)</span></div>
+              <div class="col-item"><span class="col-name">kind</span><span class="col-type">VARCHAR (apply, crawl...)</span></div>
+              <div class="col-item"><span class="col-name">payload</span><span class="col-type">JSONB</span></div>
+              <div class="col-item"><span class="col-name">status</span><span class="col-type">VARCHAR ('pending'|'running'...)</span></div>
+              <div class="col-item"><span class="col-name">locked_by</span><span class="col-type">VARCHAR (hostname/id)</span></div>
+              <div class="col-item"><span class="col-name">lease_expires_at</span><span class="col-type">TIMESTAMPTZ (Indexed)</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table: worker_heartbeats -->
+        <div class="db-table-card" data-domain="ops">
+          <div class="table-card-head">
+            <div class="table-name"><span>worker_heartbeats</span></div>
+            <span class="table-domain-tag tag-ops">Queue &amp; Ops</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Worker node liveness and active task telemetry.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name"><span class="pk-badge">&bull;</span> worker_id</span><span class="col-type">VARCHAR (PK)</span></div>
+              <div class="col-item"><span class="col-name">hostname</span><span class="col-type">VARCHAR</span></div>
+              <div class="col-item"><span class="col-name">last_heartbeat</span><span class="col-type">TIMESTAMPTZ</span></div>
+              <div class="col-item"><span class="col-name">current_task_id</span><span class="col-type">UUID</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- View: api_postings -->
+        <div class="db-table-card" data-domain="jobs">
+          <div class="table-card-head">
+            <div class="table-name"><span>api_postings (VIEW)</span></div>
+            <span class="table-domain-tag tag-jobs">SQL View</span>
+          </div>
+          <div class="table-card-body">
+            <div class="table-desc">Vector-free SQL projection of postings designed for Azure Data API Builder.</div>
+            <div class="col-list">
+              <div class="col-item"><span class="col-name">id, company_id, title</span><span class="col-type">Standard Columns</span></div>
+              <div class="col-item"><span class="col-name">description_raw</span><span class="col-type">TEXT</span></div>
+              <div class="col-item"><span class="col-name">requirements_json</span><span class="col-type">JSONB</span></div>
+              <div class="col-item"><span class="col-name" style="color: #f87171;">Omitted: embedding</span><span class="col-type">Prevents DAB Crash</span></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- VIEW 3: FLOWS -->
+    <div id="view-flows" class="view-section">
+      <div class="flow-card-grid">
+
+        <!-- Flow 1: Queue Task Claiming -->
+        <div class="flow-card">
+          <div class="flow-badge" style="background: rgba(245, 158, 11, 0.15); color: var(--accent-amber);">
+            QUEUE ARCHITECTURE
+          </div>
+          <h3 style="font-size: 1.15rem; color: #fff; margin-bottom: 0.4rem;">Postgres FOR UPDATE SKIP LOCKED</h3>
+          <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.4;">
+            How the worker claims tasks exclusively without lock contention and safely recovers from mid-flight crashes.
+          </p>
+
+          <div class="flow-steps">
+            <div class="flow-step-item">
+              <div class="step-num" style="border-color: var(--accent-amber);">1</div>
+              <div class="step-content">
+                <div class="step-title">SELECT ... FOR UPDATE SKIP LOCKED</div>
+                <div class="step-sub">Selects runnable row where status='pending' OR lease_expires_at &lt; clock_timestamp().</div>
+              </div>
+            </div>
+            <div class="flow-step-item">
+              <div class="step-num" style="border-color: var(--accent-amber);">2</div>
+              <div class="step-content">
+                <div class="step-title">Commit Claim Transaction</div>
+                <div class="step-sub">Sets locked_by=worker_id, lease_expires_at=now()+300s, attempts=attempts+1. Commits immediately so crash doesn't reset attempts.</div>
+              </div>
+            </div>
+            <div class="flow-step-item">
+              <div class="step-num" style="border-color: var(--accent-amber);">3</div>
+              <div class="step-content">
+                <div class="step-title">Heartbeat Lease Renewal Task</div>
+                <div class="step-sub">_keep_lease_alive background task extends lease every 60s while Playwright drives ATS browser form.</div>
+              </div>
+            </div>
+            <div class="flow-step-item">
+              <div class="step-num" style="border-color: var(--accent-amber);">4</div>
+              <div class="step-content">
+                <div class="step-title">Finalize State</div>
+                <div class="step-sub">Marks status='completed' or 'failed'. Reclaimed crashed tasks resume idempotently.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Flow 2: Hybrid Search & RRF -->
+        <div class="flow-card">
+          <div class="flow-badge" style="background: rgba(192, 132, 252, 0.15); color: var(--accent-purple);">
+            VECTOR &amp; LEXICAL SEARCH
+          </div>
+          <h3 style="font-size: 1.15rem; color: #fff; margin-bottom: 0.4rem;">Dense pgvector &amp; FTS Fusion (RRF)</h3>
+          <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.4;">
+            Overcomes semantic drift between adjacent roles (e.g. Python vs Java) by fusing dense cosine similarity with exact BM25/FTS terms.
+          </p>
+
+          <div class="flow-steps">
+            <div class="flow-step-item">
+              <div class="step-num" style="border-color: var(--accent-purple);">1</div>
+              <div class="step-content">
+                <div class="step-title">Dense Embedding Retrieval</div>
+                <div class="step-sub">Candidate resume vector (384d) compared against postings.embedding using pgvector cosine distance operator (&lt;=&gt;).</div>
+              </div>
+            </div>
+            <div class="flow-step-item">
+              <div class="step-num" style="border-color: var(--accent-purple);">2</div>
+              <div class="step-content">
+                <div class="step-title">Lexical BM25 / FTS Search</div>
+                <div class="step-sub">PostgreSQL Full Text Search queries title and description with inverse document frequencies (corpus_stats).</div>
+              </div>
+            </div>
+            <div class="flow-step-item">
+              <div class="step-num" style="border-color: var(--accent-purple);">3</div>
+              <div class="step-content">
+                <div class="step-title">Reciprocal Rank Fusion (k=60)</div>
+                <div class="step-sub">Score = &Sigma; 1 / (60 + rank_i). Rank-based fusion reconciles disparate score scales without artificial weights.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Flow 3: Test Isolation & Advisory Locks -->
+        <div class="flow-card">
+          <div class="flow-badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444;">
+            TEST CONCURRENCY
+          </div>
+          <h3 style="font-size: 1.15rem; color: #fff; margin-bottom: 0.4rem;">Advisory Locks &amp; Isolation</h3>
+          <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.4;">
+            Prevents parallel pytest processes or agent sessions from destroying each other's test state in the database.
+          </p>
+
+          <div class="flow-steps">
+            <div class="flow-step-item">
+              <div class="step-num" style="border-color: #ef4444;">1</div>
+              <div class="step-content">
+                <div class="step-title">pg_try_advisory_lock</div>
+                <div class="step-sub">First pytest process takes session advisory lock (0x4A6F6252). Second process exits cleanly rather than racing.</div>
+              </div>
+            </div>
+            <div class="flow-step-item">
+              <div class="step-num" style="border-color: #ef4444;">2</div>
+              <div class="step-content">
+                <div class="step-title">Transaction Rollback Fixture</div>
+                <div class="step-sub">Unit tests execute inside a single transaction and rollback at teardown for speed.</div>
+              </div>
+            </div>
+            <div class="flow-step-item">
+              <div class="step-num" style="border-color: #ef4444;">3</div>
+              <div class="step-content">
+                <div class="step-title">Cascading Table Truncation</div>
+                <div class="step-sub">Integration tests that commit across processes clean up by truncating _ALL_TABLES with CASCADE.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- VIEW 4: CONFIGURATION & METRICS -->
+    <div id="view-config" class="view-section">
+      <div class="canvas-card" style="margin-bottom: 1.5rem;">
+        <div class="card-header-bar">
+          <div class="card-title">
+            <svg width="20" height="20" fill="none" stroke="var(--accent-emerald)" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            Production &amp; Development Database Configuration
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+          <div>
+            <h4 style="font-size: 0.95rem; color: #fff; margin-bottom: 0.75rem;">docker-compose.override.yml</h4>
+            <div class="code-box">services:
+  postgres:
+    # Port 5432 held by other projects on host
+    # !override replaces base list rather than appending
+    ports: !override
+      - "5433:5432"</div>
+
+            <h4 style="font-size: 0.95rem; color: #fff; margin: 1.25rem 0 0.75rem;">.env Configuration</h4>
+            <div class="code-box">DATABASE_URL=postgresql://jobrunner:jobrunner@localhost:5433/jobrunner
+TEST_DATABASE_URL=postgresql+asyncpg://jobrunner:jobrunner@localhost:5433/jobrunner_test</div>
+          </div>
+
+          <div>
+            <h4 style="font-size: 0.95rem; color: #fff; margin-bottom: 0.75rem;">packages/core/db.py (Engine &amp; Pooling)</h4>
+            <div class="code-box">@lru_cache
+def get_engine() -> AsyncEngine:
+    return create_async_engine(
+        get_settings().async_database_url,
+        pool_pre_ping=True
+    )
+
+@lru_cache
+def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(
+        get_engine(),
+        expire_on_commit=False
+    )</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+      Jobrunner Database Architecture &bull; Built with SQLAlchemy 2.0 Async, asyncpg, pgvector, and PostgreSQL 16 &bull; Single-Source-of-Truth
+    </footer>
+
+  </main>
+
+  <!-- Interactive JavaScript Logic -->
+  <script>
+    const nodeDetails = {
+      postgres: {
+        tag: "CONTAINER • POSTGRES 16",
+        title: "jobrunner-postgres",
+        sub: "Primary database container running PostgreSQL 16 + pgvector",
+        ports: "Host: 5433 → Container: 5432 (Volume: jobrunner-pgdata)",
+        conn: "postgresql+asyncpg://jobrunner:jobrunner@localhost:5433/jobrunner",
+        pool: "create_async_engine with pool_pre_ping=True. Houses both 'jobrunner' (main) and 'jobrunner_test' databases.",
+        files: "• docker-compose.yml\n• docker-compose.override.yml\n• scripts/init-db.sql"
+      },
+      api: {
+        tag: "SERVICE • FASTAPI BACKEND",
+        title: "FastAPI App (apps/api)",
+        sub: "Request-scoped database sessions on Port 8000 (127.0.0.1)",
+        ports: "Loopback-only :8000 (No public CORS; behind Next.js proxy)",
+        conn: "SessionDep injected via async with get_sessionmaker()() as session",
+        pool: "One AsyncSession per HTTP request. Automatic rollback on exception, commit upon response completion.",
+        files: "• apps/api/deps.py\n• apps/api/middleware.py\n• packages/core/db.py"
+      },
+      worker: {
+        tag: "WORKER • QUEUE CONSUMER",
+        title: "Worker Daemon (apps/worker/run.py)",
+        sub: "Consumes queue_tasks with FOR UPDATE SKIP LOCKED",
+        ports: "Direct connection to PostgreSQL Port 5433",
+        conn: "Independent task transactions with _keep_lease_alive heartbeat",
+        pool: "Claims task, commits claim to bump attempts, runs handler (apply, crawl, inbox), updates status.",
+        files: "• apps/worker/run.py\n• packages/core/queue.py\n• packages/core/heartbeat.py"
+      },
+      web: {
+        tag: "FRONTEND • NEXT.JS 15",
+        title: "Next.js Web UI (apps/web)",
+        sub: "Client dashboard running on Port 3001",
+        ports: "Binds to 127.0.0.1:3001 (Loopback only)",
+        conn: "No direct database connection. Proxies /api/:path* to FastAPI :8000.",
+        pool: "Next.js proxy timeout configured to 330,000ms in next.config.ts to accommodate local LLM inference.",
+        files: "• apps/web/next.config.ts\n• apps/web/lib/display.ts"
+      },
+      mcp: {
+        tag: "MCP • MODEL CONTEXT PROTOCOL",
+        title: "MCP Server (apps/mcp)",
+        sub: "Claude Code conversational tool integration",
+        ports: "Stdio / Client subprocess",
+        conn: "Connects via JobrunnerClient HTTP client to FastAPI backend",
+        pool: "Zero direct SQL access; preserves approval gates and fabrication checks.",
+        files: "• apps/mcp/server.py\n• apps/mcp/client.py"
+      },
+      dab: {
+        tag: "DATA API BUILDER • GRAPHQL / REST",
+        title: "Data API Builder (apps/dab)",
+        sub: "Direct PostgreSQL engine exposing tables and views",
+        ports: "Direct TCP to Port 5433 via JOBRUNNER_DAB_CONN",
+        conn: "Reads public.companies and public.api_postings SQL View",
+        pool: "The api_postings view strips out the pgvector column to prevent System.Object deserialization errors.",
+        files: "• apps/dab/dab-config.json\n• migrations/versions/d4e6f8a0b1c3_api_postings_view.py"
+      },
+      tests: {
+        tag: "TESTS • PYTEST SUITE",
+        title: "Pytest Test Suite (tests/)",
+        sub: "Automated testing against jobrunner_test",
+        ports: "Direct TCP to Port 5433 (database: jobrunner_test)",
+        conn: "TEST_DATABASE_URL pointing at jobrunner_test",
+        pool: "Uses pg_try_advisory_lock(0x4A6F6252) to serialize runs. Fast rollback fixtures for unit tests, cascading truncation for integration.",
+        files: "• tests/conftest.py"
+      },
+      alembic: {
+        tag: "MIGRATIONS • DDL ENGINE",
+        title: "Alembic (migrations/)",
+        sub: "Database schema version control with 36 revisions",
+        ports: "Direct TCP to Port 5433",
+        conn: "DATABASE_URL via migrations/env.py",
+        pool: "Handles schema upgrades, partial indexes, pgvector extension, and SQL views.",
+        files: "• alembic.ini\n• migrations/env.py\n• migrations/versions/"
+      }
+    };
+
+    function selectNode(nodeKey) {
+      document.querySelectorAll('.svg-node').forEach(el => el.classList.remove('selected'));
+      const activeNode = document.getElementById('node-' + nodeKey);
+      if (activeNode) activeNode.classList.add('selected');
+
+      const info = nodeDetails[nodeKey];
+      if (!info) return;
+
+      document.getElementById('insp-tag').innerText = info.tag;
+      document.getElementById('insp-title').innerText = info.title;
+      document.getElementById('insp-sub').innerText = info.sub;
+      document.getElementById('insp-ports').innerHTML = info.ports;
+      document.getElementById('insp-conn').innerText = info.conn;
+      document.getElementById('insp-pool').innerText = info.pool;
+      document.getElementById('insp-files').innerHTML = info.files.replace(/\n/g, '<br>');
+    }
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.view-section').forEach(view => view.classList.remove('active'));
+
+      event.currentTarget.classList.add('active');
+      document.getElementById('view-' + tabId).classList.add('active');
+    }
+
+    function filterDomain(domain) {
+      document.querySelectorAll('.domain-pill').forEach(pill => pill.classList.remove('active'));
+      event.currentTarget.classList.add('active');
+
+      const cards = document.querySelectorAll('.db-table-card');
+      cards.forEach(card => {
+        if (domain === 'all' || card.getAttribute('data-domain') === domain) {
+          card.style.display = 'block';
+        } else {
+          card.style.display = 'none';
+        }
+      });
+    }
+
+    function filterTables() {
+      const q = document.getElementById('tableSearch').value.toLowerCase();
+      const cards = document.querySelectorAll('.db-table-card');
+      cards.forEach(card => {
+        const text = card.innerText.toLowerCase();
+        card.style.display = text.includes(q) ? 'block' : 'none';
+      });
+    }
+  </script>
+</body>
+</html>

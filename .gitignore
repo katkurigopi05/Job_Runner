@@ -106,3 +106,7 @@ docker-compose.override.yml
 # Frontend Playwright artifacts under apps/web/
 apps/web/playwright-report/
 apps/web/test-results/
+
+# Private operational handoffs and internal app analysis
+/PROJECT_CONTEXT.md
+/docs/TSENTA_RESUME_TAILORING_ANALYSIS.md

@@ -626,7 +626,7 @@ async def test_llm_failure_falls_back_to_the_rule_verdict() -> None:
 #: but it is shaped like it, and it is the case the tiers exist for.
 REALISTIC_REJECTION = (
     "Re: Your application for Senior Backend Engineer (R-4471) at Acme, Inc.",
-    """Hi Gopi,
+    """Hi Alex,
 
 Thanks so much for taking the time to speak with our team last week. We were
 genuinely impressed by your background in distributed systems.
@@ -638,7 +638,7 @@ We'd love to stay in touch. Please do apply again down the road.
 
 Dana Whitfield, Technical Recruiter | Acme, Inc.
 
-> On Tue, Aug 12, 2026 Gopi wrote:
+> On Tue, Aug 12, 2026 Alex wrote:
 > Hi Dana, I'm very excited about the platform team and wanted to follow up
 > on next steps and the interview panel.
 --
