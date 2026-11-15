@@ -53,7 +53,8 @@ _STORED = (
 #: in the list and not the rest of the sentence: "Kafka, Kinesis, or Pub/Sub".
 _ITEM = r"[\w.+#/-]+(?: [\w.+#/-]+){0,2}"
 _THEN_OR = re.compile(
-    rf"\s*(?:\(\s*or\b|(?:\([^)]*\)\s*)?(?:,\s*{_ITEM}){{0,4}},?\s+or\b)", re.IGNORECASE
+    rf"(?:or\b|\(\s*or\b|(?:,\s*{_ITEM}){{1,4}},?\s+or\b|,\s*or\b)",
+    re.IGNORECASE,
 )
 _OR_BEFORE = re.compile(rf"\bor\s+(?:an?\s+|the\s+)?(?:{_ITEM}\s*,\s*){{0,2}}$", re.IGNORECASE)
 #: "Kafka/Kinesis". A name with a slash of its own ("CI/CD") is one skill, and
@@ -109,6 +110,19 @@ class SkillEvidence:
         return f'{self.label} here: {reading} — "{self.quote}"'
 
 
+def _or_after(text: str) -> bool:
+    # Trim once outside the regex: overlapping whitespace quantifiers before
+    # "or" made a long, nonmatching whitespace suffix quadratic.
+    text = text.lstrip()
+    if _THEN_OR.match(text):
+        return True
+    if text.startswith("("):
+        end = text.find(")")
+        if end != -1:
+            return _THEN_OR.match(text[end + 1 :].lstrip()) is not None
+    return False
+
+
 def is_option(quote: str, skill: Skill) -> bool:
     """Whether `quote` offers `skill` as a choice among others, or as an example.
 
@@ -135,7 +149,7 @@ def is_option(quote: str, skill: Skill) -> bool:
         stop = _CLAUSE_END.search(after)
         clause_after = after[: stop.start()] if stop else after
         if (
-            _THEN_OR.match(clause_after)
+            _or_after(clause_after)
             or _SLASH_AFTER.match(clause_after)
             or _OR_BEFORE.search(clause_before)
             or _SLASH_BEFORE.search(clause_before)

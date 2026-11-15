@@ -49,12 +49,16 @@ _NOT_THE_PROJECT = frozenset(
 _REQUIREMENT_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 
+def is_project_path(path: str) -> bool:
+    """Whether `path` sits in the project itself, not in something it installed or vendored."""
+    return not set(path.split("/")[:-1]) & _NOT_THE_PROJECT
+
+
 def is_manifest_path(path: str) -> bool:
     """Whether `path` (repository-relative) is a dependency file of the project."""
-    parts = path.split("/")
-    if set(parts[:-1]) & _NOT_THE_PROJECT:
+    if not is_project_path(path):
         return False
-    name = parts[-1]
+    name = path.rsplit("/", 1)[-1]
     return name in _MANIFEST_NAMES or bool(_REQUIREMENTS_RE.match(name))
 
 

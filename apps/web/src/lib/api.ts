@@ -1,9 +1,8 @@
 /**
- * Server-side client for the FastAPI app.
+ * Shared client for the FastAPI app.
  *
- * Everything here runs on the Next server, never in the browser. That is not
- * an optimization: the API has no authentication and refuses non-loopback
- * callers, so the request has to originate from this process over loopback.
+ * Server calls use the loopback API; browser calls use the same-origin Next
+ * proxy. The API refuses non-loopback callers.
  */
 
 const API = process.env.JOBRUNNER_API ?? "http://127.0.0.1:8000";
@@ -910,13 +909,20 @@ export interface Project {
   url: string;
   description: string | null;
   language: string | null;
+  topics?: string[];
+  stars?: number;
   is_fork: boolean;
+  is_archived: boolean;
   is_private: boolean;
+  include: boolean | null;
+  pinned: boolean;
   pushed_at: string | null;
   /** What the repository's own dependency files declare, by résumé name. */
   dependency_technologies: string[];
   /** The résumé Projects entry this repository backs, as the owner linked it. */
   resume_entry: string | null;
+  /** Printed as a résumé project; false for a private one not yet included or pinned. */
+  resume_listed?: boolean;
 }
 
 /** A résumé's Projects entries, and which repository plainly is which. */
@@ -1050,10 +1056,10 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API}${path}`, {
+    response = await fetch(`${typeof window === "undefined" ? API : "/api"}${path}`, {
       ...init,
       headers: { "content-type": "application/json", ...init?.headers },
       cache: "no-store",
@@ -1190,7 +1196,24 @@ export interface DiscoveryStatus {
   weighting_reason: string;
 }
 
+export interface QueueStart {
+  queued: boolean;
+  already_waiting: number;
+  worker_alive: boolean;
+}
+
+export interface RescoreStatus {
+  pending: number;
+  running: boolean;
+  worker_alive: boolean;
+  last_status: string | null;
+  last_finished_at: string | null;
+}
+
 export const api = {
+  startCrawl: () => request<QueueStart>("/crawl", { method: "POST" }),
+  rescoreMatches: () => request<QueueStart>("/matches/rescore", { method: "POST" }),
+  rescoreStatus: () => request<RescoreStatus>("/matches/rescore"),
   health: () => request<Health>("/health"),
   crawlStatus: () => request<CrawlStatus>("/crawl/status"),
   discoveryStatus: () => request<DiscoveryStatus>("/companies/status"),
@@ -1202,6 +1225,16 @@ export const api = {
     }),
 
   applications: () => request<Application[]>("/applications"),
+  createApplication: (body: {
+    candidate_id: string;
+    profile_id: string;
+    url: string;
+    ats?: string | null;
+  }) =>
+    request<Application>("/applications", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   application: (id: string) => request<Application>(`/applications/${id}`),
   events: (id: string) =>
     request<ApplicationEvent[]>(`/applications/${id}/events`),
@@ -1235,16 +1268,34 @@ export const api = {
     request<Project[]>(`/projects?candidate_id=${encodeURIComponent(candidateId)}`),
   projectEntries: (resumeId: string) =>
     request<ProjectEntries>(`/projects/entries?resume_id=${encodeURIComponent(resumeId)}`),
+  /** Curate a repository (`include`, `pinned`, or linked résumé project). */
+  updateProject: (
+    projectId: string,
+    body: { include?: boolean | null; pinned?: boolean | null; resume_entry?: string | null },
+  ) =>
+    request<Project>(`/projects/${projectId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   /** Link a repository to the résumé project it backs, or unlink it (null). */
   linkProject: (projectId: string, resumeEntry: string | null) =>
     request<Project>(`/projects/${projectId}`, {
       method: "PATCH",
       body: JSON.stringify({ resume_entry: resumeEntry }),
     }),
-  syncProjects: (candidateId: string, username: string) =>
+  syncProjects: (
+    candidateId: string,
+    username: string,
+    options?: { includePrivate?: boolean; token?: string | null },
+  ) =>
     request<ProjectSyncResult>("/projects/sync/github", {
       method: "POST",
-      body: JSON.stringify({ candidate_id: candidateId, username }),
+      body: JSON.stringify({
+        candidate_id: candidateId,
+        username,
+        include_private: options?.includePrivate ?? false,
+        token: options?.token || null,
+      }),
     }),
 
   /** How an ATS reads this profile's résumé against one posting. */
@@ -1484,6 +1535,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ resume_id: resumeId }),
     }),
+
 };
 
 /** Statuses that are waiting on the owner rather than on the machine. */

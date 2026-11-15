@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import re
 
-from packages.tailor.bullets import LineKind, classify, list_payload, tailorable_section
+from packages.tailor.bullets import LineKind, classify, list_payload, tailorable_sections
 from packages.tailor.guard import _COMMON_WORDS, _TOKEN_RE, _index, normalize, singular
 from packages.tailor.parse import ParsedResume
 
@@ -64,8 +64,7 @@ def inventory(parsed: ParsedResume) -> frozenset[str]:
     for name in _SKILL_SECTIONS:
         lines.extend(parsed.section(name))
 
-    section = tailorable_section(parsed)
-    if section is not None:
+    for section in tailorable_sections(parsed):
         lines.extend(line for line in parsed.section(section) if classify(line) is LineKind.META)
 
     terms: set[str] = set()

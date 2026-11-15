@@ -89,6 +89,13 @@ _PROSE_WORDS = 12
 _LIST_FRAGMENT_WORDS = 4
 
 
+def tailorable_sections(parsed: ParsedResume) -> tuple[str, ...]:
+    """Every populated tailorable section on `parsed`, in priority order."""
+    return tuple(
+        name for name in TAILORABLE_SECTIONS if any(line.strip() for line in parsed.section(name))
+    )
+
+
 def tailorable_section(parsed: ParsedResume) -> str | None:
     """The section holding the bullets to rewrite, or None if there are none.
 
@@ -96,10 +103,8 @@ def tailorable_section(parsed: ParsedResume) -> str | None:
     with neither section is one the parser could not read, or one that genuinely
     has no prose to rewrite, and both are the caller's to report.
     """
-    for name in TAILORABLE_SECTIONS:
-        if any(line.strip() for line in parsed.section(name)):
-            return name
-    return None
+    sections = tailorable_sections(parsed)
+    return sections[0] if sections else None
 
 
 class LineKind(StrEnum):
@@ -402,14 +407,17 @@ def rewritable_indices(lines: list[str]) -> list[int]:
 
 
 def tailorable_bullets(parsed: ParsedResume) -> tuple[str | None, list[str]]:
-    """The section name and the prose lines within it.
+    """The primary section name and the prose lines across all tailorable sections.
 
-    Returned together so a caller cannot rewrite bullets taken from one section
-    and write them back into another — the failure this module exists to make
-    impossible.
+    Returned in deterministic `tailorable_sections` order so `apply_rewrites`
+    writes each tailored bullet back into its exact original section and line,
+    allowing résumés with both employment/internships and projects to tailor both.
     """
-    name = tailorable_section(parsed)
-    if name is None:
+    sections = tailorable_sections(parsed)
+    if not sections:
         return None, []
-    lines = parsed.section(name)
-    return name, [lines[i] for i in rewritable_indices(lines)]
+    bullets: list[str] = []
+    for name in sections:
+        lines = parsed.section(name)
+        bullets.extend(lines[i] for i in rewritable_indices(lines))
+    return sections[0], bullets

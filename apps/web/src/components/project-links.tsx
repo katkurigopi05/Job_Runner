@@ -1,8 +1,14 @@
 "use client";
 
-import { useActionState } from "react";
+import { Lock, Pin, PinOff } from "lucide-react";
+import { useActionState, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
-import { linkProject, syncProjects, type ProjectActionResult } from "@/app/resumes/actions";
+import {
+  curateProject,
+  linkProject,
+  syncProjects,
+  type ProjectActionResult,
+} from "@/app/resumes/actions";
 import type { Project } from "@/lib/api";
 
 const BUTTON =
@@ -36,16 +42,35 @@ function RepositoryRow({
   suggested?: string;
 }) {
   const [state, run] = useActionState<ProjectActionResult | null, FormData>(linkProject, null);
+  const [pinned, setPinned] = useState(project.pinned);
+  const [includeState, setIncludeState] = useState<boolean | null>(project.include);
+  const [pendingCurate, startCurate] = useTransition();
   const current = project.resume_entry ?? "";
   // A link to an entry this résumé no longer has is still shown, so it can be
   // seen and cleared rather than silently doing nothing.
   const options = current && !entries.includes(current) ? [current, ...entries] : entries;
   const selectId = `link-${project.id}`;
 
+  const togglePin = () => {
+    const next = !pinned;
+    setPinned(next);
+    startCurate(async () => {
+      await curateProject(project.id, { pinned: next });
+    });
+  };
+
+  const cycleInclude = () => {
+    const next = includeState === null ? true : includeState ? false : null;
+    setIncludeState(next);
+    startCurate(async () => {
+      await curateProject(project.id, { include: next });
+    });
+  };
+
   return (
-    <li className="grid gap-3 border-b border-rule py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]">
+    <li className="grid gap-3 border-b border-rule py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
       <div className="min-w-0">
-        <p className="flex flex-wrap items-baseline gap-2">
+        <p className="flex flex-wrap items-center gap-2">
           <a
             href={project.url}
             className="text-base underline-offset-4 hover:underline"
@@ -53,8 +78,39 @@ function RepositoryRow({
             {project.name}
           </a>
           {project.is_private ? (
-            <span className="text-xs text-ink-faint">private</span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-rule px-2 py-0.5 font-mono text-[11px] text-ink-soft">
+              <Lock className="h-2.5 w-2.5" aria-hidden />
+              private
+            </span>
           ) : null}
+          <button
+            type="button"
+            onClick={togglePin}
+            disabled={pendingCurate}
+            title={pinned ? "Pinned onto résumés" : "Pin onto résumés"}
+            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[11px] transition ${
+              pinned
+                ? "border-go/40 bg-go-soft text-go"
+                : "border-rule text-ink-faint hover:text-ink"
+            }`}
+          >
+            {pinned ? <Pin className="h-2.5 w-2.5" aria-hidden /> : <PinOff className="h-2.5 w-2.5" aria-hidden />}
+            {pinned ? "pinned" : "pin"}
+          </button>
+          <button
+            type="button"
+            onClick={cycleInclude}
+            disabled={pendingCurate}
+            className={`rounded-full border px-2 py-0.5 font-mono text-[11px] transition ${
+              includeState === true
+                ? "border-go/40 bg-go-soft text-go"
+                : includeState === false
+                  ? "border-stop/40 bg-stop-soft text-stop"
+                  : "border-rule text-ink-faint hover:text-ink"
+            }`}
+          >
+            {includeState === true ? "always include" : includeState === false ? "excluded" : "auto-rank"}
+          </button>
         </p>
         {project.dependency_technologies.length > 0 ? (
           <p className="mt-1 text-sm text-ink-soft">
@@ -142,8 +198,23 @@ export function ProjectLinks({
             name="username"
             defaultValue={githubUser}
             placeholder="GitHub username"
-            className="w-40 rounded-[var(--radius)] border border-rule bg-paper px-2 py-1.5 text-sm"
+            className="w-36 rounded-[var(--radius)] border border-rule bg-paper px-2 py-1.5 text-sm"
           />
+          <label htmlFor="github-token" className="sr-only">
+            GitHub personal access token (optional)
+          </label>
+          <input
+            id="github-token"
+            name="token"
+            type="password"
+            autoComplete="off"
+            placeholder="Token (or GITHUB_TOKEN env)"
+            className="w-44 rounded-[var(--radius)] border border-rule bg-paper px-2 py-1.5 text-xs"
+          />
+          <label className="inline-flex items-center gap-1.5 text-xs text-ink-soft">
+            <input type="checkbox" name="include_private" defaultChecked className="accent-go" />
+            <span>Private repos</span>
+          </label>
           <Save label="sync from GitHub" pending="syncing…" />
         </form>
       </header>
@@ -154,9 +225,21 @@ export function ProjectLinks({
           no repositories imported yet
         </p>
       ) : entries.length === 0 ? (
-        <p className="text-sm text-ink-faint">
-          this résumé has no Projects entries to link to
-        </p>
+        <div className="space-y-3">
+          <p className="font-mono text-xs text-ink-faint">
+            {own.length} repositories synced (this base résumé has no Projects section headings to link yet — use Resume Studio to synthesize one).
+          </p>
+          <ul>
+            {own.map((project) => (
+              <RepositoryRow
+                key={project.id}
+                project={project}
+                entries={entries}
+                suggested={suggestions[project.id]}
+              />
+            ))}
+          </ul>
+        </div>
       ) : (
         <ul>
           {own.map((project) => (

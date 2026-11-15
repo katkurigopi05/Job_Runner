@@ -31,6 +31,7 @@ from packages.matching.locality import (
     locality_of,
     reads_as_remote,
 )
+from packages.matching.location_fields import office_facts
 
 #: Seniority ladder, lowest first. Used to reject a mismatch in either
 #: direction — an intern posting and a principal posting are both wrong for a
@@ -99,6 +100,8 @@ def is_remote(posting: Posting) -> bool:
     could be remote in the feed and on-site to the filter that decides whether
     it is scored at all.
     """
+    if posting.is_remote is not None:
+        return posting.is_remote
     return reads_as_remote(
         title=posting.title, location=posting.location, description=posting.description_raw
     )
@@ -170,7 +173,7 @@ def location_matches(
     from a bare name. The lists are much longer now, but the filter no longer
     depends on their being complete.
     """
-    if not profile.location or not posting.location:
+    if not profile.location or (not posting.location and not posting.country_code):
         # Nothing to contradict, so do not exclude on a guess.
         return True
 
@@ -192,6 +195,10 @@ def location_matches(
             title=posting.title,
             description=posting.description_raw,
             remote_outside_california=remote_outside_california,
+            country_code=posting.country_code,
+            state_code=posting.state_code,
+            is_remote=posting.is_remote,
+            offices=office_facts(posting.locations_json),
         )
         is None
     )

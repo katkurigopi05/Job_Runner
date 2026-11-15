@@ -266,11 +266,20 @@ def test_assembly_escapes_source_text() -> None:
         "+1 (555) 555-0100",
         "555-555-0100",
         "+44 20 7946 0958",
-        "+91 98765 43210",
-        "+91-98765-43210",
+        "+91 00000 00000",
+        "+91-00000-00000",
     ],
 )
 def test_phone_formats_are_recognized(number: str) -> None:
     """A résumé from outside North America is not an edge case."""
     resume = parse_text(f"Ada Lovelace\nada@example.com | {number}\n")
     assert resume.contact.phone is not None
+
+
+@pytest.mark.parametrize(
+    "heading",
+    ["Internships", "Internship Experience", "Co-op Experience", "Relevant Experience"],
+)
+def test_internships_headings_are_parsed_into_experience(heading: str) -> None:
+    resume = parse_text(f"Ada Lovelace\nada@example.com\n\n{heading}\nBuilt ML eval harness.\n")
+    assert resume.section("experience") == ["Built ML eval harness."]

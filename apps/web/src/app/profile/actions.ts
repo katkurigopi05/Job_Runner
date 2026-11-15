@@ -63,6 +63,17 @@ export async function saveProfile(
     payload.min_match_score = Number(score);
   }
 
+  const years = payload.max_required_experience_years;
+  if (years !== undefined && years !== null &&
+      (typeof years !== "number" || !Number.isFinite(years) || years < 0 || years > 50)) {
+    return { ok: false, message: "Required experience must be a number from 0 to 50, or blank for no limit." };
+  }
+  const threshold = payload.min_match_score;
+  if (threshold !== undefined &&
+      (typeof threshold !== "number" || !Number.isFinite(threshold) || threshold < 0 || threshold > 1)) {
+    return { ok: false, message: "Minimum match score must be a number from 0 to 1." };
+  }
+
   // A label is the one field that cannot be cleared — it is how you tell two
   // profiles apart in the queue.
   if (payload.label === null) delete payload.label;

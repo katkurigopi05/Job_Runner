@@ -94,7 +94,7 @@ SECTION_TITLES: dict[str, str] = {
 #: no ATS vendor publishes its parser, so our own is the referee.
 #:
 #: **`h1` has real space under it.** Without it `pypdf` merged the name into
-#: the contact line and returned `Gopi Krishna Reddy Katkurigkatkuri@…` — our
+#: the contact line and returned `Alex Riveraalex@…` — our
 #: own output reproducing, on the way out, the same fused-field defect the
 #: DOCX reader was just fixed for on the way in.
 #:

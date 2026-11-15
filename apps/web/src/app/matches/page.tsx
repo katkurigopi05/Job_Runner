@@ -8,7 +8,10 @@ import {
   type Rubric,
 } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
+import { QueueApplicationButton } from "@/components/queue-application-button";
+import { RefreshButton } from "@/components/refresh-button";
 import { FilterBar } from "./filter-bar";
+import { MatchControls } from "./match-controls";
 import { AtsPanel } from "./ats-panel";
 import { DiscoveryStrip } from "./discovery-strip";
 import { EligibilityNote } from "@/components/eligibility-note";
@@ -123,14 +126,20 @@ export default async function MatchesPage({
 
   return (
     <div className="space-y-10">
-      <header>
-        <h1 className="text-display leading-[1.05] tracking-tight">
-          Matches
-        </h1>
-        <p className="mt-3 max-w-prose text-ink-soft">
-          What the crawler found, scored against your profile. Every score shows
-          its working, so you can disagree with it.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-display leading-[1.05] tracking-tight">
+            Matches
+          </h1>
+          <p className="mt-3 max-w-prose text-ink-soft">
+            What the crawler found, scored against your profile. Every score shows
+            its working, so you can disagree with it.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-start gap-2">
+          <MatchControls />
+          <RefreshButton />
+        </div>
       </header>
 
       {/* Before the feed, because what the feed is *missing* is the question
@@ -441,6 +450,11 @@ export default async function MatchesPage({
 
                 {/* Actions, set apart from the reasoning above them. */}
                 <div className="mt-6 flex flex-wrap items-center gap-5 border-t border-rule-soft pt-4">
+                  <QueueApplicationButton
+                    postingUrl={match.url}
+                    profileId={match.profile_id}
+                    ats={match.ats_type}
+                  />
                   <Link
                     href={`/postings/${match.posting_id}`}
                     className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline"

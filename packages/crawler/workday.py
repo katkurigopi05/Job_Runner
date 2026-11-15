@@ -192,10 +192,64 @@ def read_detail(body: str, listing: ExtractedPosting) -> ExtractedPosting:
         raise WorkdayBoardError("Workday detail belongs to a different requisition")
     if published is not None and published.tzinfo is None:
         published = published.replace(tzinfo=UTC)
+    from packages.matching.location_fields import country_code, normalize
+
+    def label(value: Any) -> str | None:
+        if isinstance(value, dict):
+            value = value.get("descriptor") or value.get("location") or value.get("name")
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    offices: list[dict[str, Any]] = []
+    primary = label(info.get("location"))
+    if not primary and country_code(info.get("country")):
+        primary = label(info.get("country")) or country_code(info.get("country"))
+    if primary:
+        offices.append({"raw": primary, "country_code": country_code(info.get("country"))})
+    additional = info.get("additionalLocations")
+    if isinstance(additional, list):
+        for office in additional:
+            if raw := label(office):
+                offices.append(
+                    {
+                        "raw": raw,
+                        "country_code": country_code(office.get("country"))
+                        if isinstance(office, dict)
+                        else None,
+                    }
+                )
+    remote_label = (label(info.get("remoteType")) or "").casefold()
+    source_remote = {
+        "remote": True,
+        "onsite": False,
+        "on-site": False,
+        "on site": False,
+        "hybrid": False,
+    }.get(remote_label)
+    updates: dict[str, Any] = {
+        "listed_location": listing.listed_location
+        if listing.listed_location is not None
+        else listing.location or "",
+    }
+    location = listing.location
+    if primary:
+        offices = list({office["raw"]: office for office in offices}.values())
+        location = "; ".join(office["raw"] for office in offices)
+        updates["location"] = location
+    # Canonicalize cached source facts on the first detail read, even if the
+    # detail repeats no location fields. Otherwise a later cache reuse would
+    # add these facts for the first time and falsely report every row edited.
+    updates["source_locations"] = normalize(
+        location,
+        title=listing.title,
+        description=strip_html(description),
+        source_locations=offices if primary else listing.source_locations,
+        source_remote=source_remote,
+    )["locations_json"]
     result = listing.model_copy(
         update={
             "description_raw": strip_html(description),
             "published_at": published or listing.published_at,
+            **updates,
         }
     )
     result.content_hash = posting_hash(result)

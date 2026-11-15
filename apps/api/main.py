@@ -28,6 +28,7 @@ from apps.api.routers import (
     projects,
     queue,
     ranking,
+    resume_studio,
     resumes,
     search_preferences,
     setup,
@@ -55,6 +56,7 @@ app.include_router(profiles.router)
 app.include_router(applications.router)
 app.include_router(projects.router)
 app.include_router(resumes.router)
+app.include_router(resume_studio.router)
 app.include_router(postings.router)
 app.include_router(inbox.router)
 app.include_router(chat.router)

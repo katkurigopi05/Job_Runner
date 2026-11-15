@@ -8,6 +8,7 @@ import {
 } from "@/lib/api";
 import { ReviewCard } from "./review-card";
 import { ErrorPanel } from "@/components/error-panel";
+import { RefreshButton } from "@/components/refresh-button";
 import { AssistantDock } from "@/components/assistant-dock";
 
 export const dynamic = "force-dynamic";
@@ -57,13 +58,16 @@ export default async function ReviewPage() {
 
   return (
     <div className="space-y-10">
-      <header>
-        <h1 className="text-display leading-[1.05] tracking-tight">Review queue</h1>
-        <p className="mt-3 max-w-prose text-ink-soft">
-          {waiting.length === 0
-            ? "Nothing is waiting on you."
-            : `${waiting.length} application${waiting.length === 1 ? "" : "s"} filled and held. Oldest first — these are the ones nothing happens to until you decide.`}
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-display leading-[1.05] tracking-tight">Review queue</h1>
+          <p className="mt-3 max-w-prose text-ink-soft">
+            {waiting.length === 0
+              ? "Nothing is waiting on you."
+              : `${waiting.length} application${waiting.length === 1 ? "" : "s"} filled and held. Oldest first — these are the ones nothing happens to until you decide.`}
+          </p>
+        </div>
+        <RefreshButton />
       </header>
 
       {waiting.length === 0 ? (

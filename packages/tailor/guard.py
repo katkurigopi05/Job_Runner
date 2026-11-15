@@ -537,6 +537,17 @@ def entry_key(name: str) -> str:
     return entry_name(name).casefold()
 
 
+#: Opens the `CorpusItem.entry` of an Experience line the owner confirmed
+#: tools for, followed by those tools. A Projects title would have to be this
+#: prefix and the same tools, word for word, to share an entry with one.
+VERIFIED_ENTRY = "verified:"
+
+
+def line_key(line: str) -> str:
+    """One résumé line, compared without regard to spacing or case."""
+    return " ".join(line.split()).casefold()
+
+
 def project_names(resume: ParsedResume) -> list[str]:
     """The names of the résumé's Projects entries, read the way the guard reads them."""
     from packages.tailor.technologies import inventory
@@ -633,6 +644,7 @@ class SourceCorpus:
         resume: ParsedResume,
         *extra_texts: str,
         linked: Mapping[str, str] | None = None,
+        verified: Mapping[str, str] | None = None,
     ) -> SourceCorpus:
         """Index a parsed résumé, keeping each job and project separable.
 
@@ -645,6 +657,14 @@ class SourceCorpus:
         the entry's `evidence`, usable by its own bullets and no other's
         (CLAUDE.md §2.1). A name that is not a Projects entry links nothing:
         an employer's bullet never takes a repository's stack.
+
+        `verified` maps one Experience line, as written, to the tools the
+        owner confirmed for the internship that line belongs to
+        (`studio.verified_evidence`). It is that line's `evidence` and no
+        other line's. Keyed by the line and not by an employer's name on
+        purpose: a name would reach every bullet under a heading that merely
+        resembles it, and a line reaches only itself. A Projects line never
+        takes it.
         """
         items: list[CorpusItem] = []
         shared_texts: list[str] = [*resume.preamble]
@@ -655,6 +675,8 @@ class SourceCorpus:
 
         by_key = {entry_key(name): text for name, text in (linked or {}).items() if text.strip()}
         by_key.pop("", None)
+        by_line = {line_key(line): text for line, text in (verified or {}).items() if text.strip()}
+        by_line.pop("", None)
 
         # Local import: `technologies` reads `bullets.classify`, which imports
         # `parse`, and `parse` is imported here. Deferred the same way the
@@ -681,6 +703,12 @@ class SourceCorpus:
                         title = entry_key(first)
                     after_title = opens
                     evidence = by_key.get(title)
+                elif by_line:
+                    evidence = by_line.get(line_key(entry.split("\n", 1)[0]))
+                    # Lines confirmed with the same tools are one entry, so
+                    # targeted tailoring places a term on those lines only
+                    # and never reads "no entry" as "every employer".
+                    title = VERIFIED_ENTRY + line_key(evidence) if evidence else ""
                 items.append(
                     CorpusItem(
                         ref=f"{name}:{position}",
@@ -688,7 +716,7 @@ class SourceCorpus:
                         tokens=frozenset(_index(entry)),
                         evidence=frozenset(_index(evidence)) if evidence else frozenset(),
                         evidence_text=evidence or "",
-                        entry=title if name == "projects" else "",
+                        entry=title if name == "projects" or evidence else "",
                     )
                 )
 

@@ -5,6 +5,7 @@ import {
 } from "@/lib/api";
 import { StatusPill, STATUS_ORDER } from "@/components/status";
 import { ErrorPanel } from "@/components/error-panel";
+import { RefreshButton } from "@/components/refresh-button";
 import {
   LivePipeline, LiveWaitingCount, LiveWaitingHeadline, StatusStreamProvider, type StatusCounts,
 } from "@/components/status-stream";
@@ -61,9 +62,12 @@ export default async function DeskPage() {
   return (
     <StatusStreamProvider initial={counts}>
       <div className="desk">
-        <header>
-          <p className="desk-eyebrow">Desk, {date}</p>
-          <LiveWaitingHeadline initial={counts} />
+        <header className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="desk-eyebrow">Desk, {date}</p>
+            <LiveWaitingHeadline initial={counts} />
+          </div>
+          <RefreshButton />
         </header>
         <div className="desk-stats">
           <Stat value={digest.applications_submitted.toLocaleString("en-US")} label="Sent" detail="last 7 days" href="/applications" />

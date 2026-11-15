@@ -6,7 +6,7 @@ Security fixes target the current `main` branch and the latest tagged release, w
 
 ## Local trust boundary
 
-Job_Runner is a single-user, local-first application. The API has no authentication; it can read résumé data and trigger application workflows. API, dashboard, and PostgreSQL must bind to loopback. Keep `ALLOW_NON_LOCAL=false`. Do not expose them through a public interface, tunnel, reverse proxy, or shared machine account without an independently designed authentication boundary. Loopback and Origin/Host checks reduce network/browser attacks; they do not isolate untrusted processes on the same machine.
+Job_Runner is a single-user, local-first application. The API has no authentication; it can read résumé data and trigger application workflows. API, dashboard, PostgreSQL, and optional Redis must bind to loopback. Keep `ALLOW_NON_LOCAL=false`. Do not expose them through a public interface, tunnel, reverse proxy, or shared machine account without an independently designed authentication boundary. Loopback and Origin/Host checks reduce network/browser attacks; they do not isolate untrusted processes on the same machine.
 
 `AUTO_SUBMIT=false` is the shipped default. Keep human review enabled, inspect the résumé diff and answers, and approve each application deliberately. A per-profile opt-in and score threshold apply to automated submission. Unknown answers park for review. Work authorization and employment history must come verbatim from the profile. CAPTCHA, OTP, or site restrictions require the owner's involvement; no evasion is supported.
 
@@ -16,6 +16,7 @@ Job_Runner is a single-user, local-first application. The API has no authenticat
 - ATS credentials use the Fernet vault in `packages/core/vault.py`. Keep `VAULT_KEY` separate from encrypted credential files, preferably outside the checkout. Backups containing the database or storage are personal data too.
 - `.env.example` contains placeholders and local Compose credentials only. `.env`, `.env.*` backups, `.secrets/`, and storage must stay out of commits and image layers. Rotate any credential that has entered git history; deleting a file does not revoke it.
 - Local model inference keeps prompts on the machine. Explicitly selected remote LLM providers can receive résumé/posting text; inspect their policies and the local LLM audit records before enabling them. GitHub tokens should have the narrowest read permissions needed.
+- Redis is a disposable vector/metadata cache. It must contain no résumé, credentials, or browser state. PostgreSQL revalidates candidate hits. Redis metadata is eventually consistent: sync after changing or deleting postings. Rebuild after cache loss.
 
 ## Reporting a vulnerability
 

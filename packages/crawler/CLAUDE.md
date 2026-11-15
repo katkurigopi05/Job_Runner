@@ -1,5 +1,14 @@
 # Notes on the crawler and the registry
 
+## Mandatory location rules
+
+Follow [AGENTS.md](AGENTS.md) for every crawler database write. Board crawls,
+aggregator discovery, and detail backfills share `crawl._store`, structured
+location normalization, and the US-only admission gate. Database constraints
+validate country/state formats, office JSON, extractor versions, and agreement
+between scalar summaries and per-office facts. Run `make check-crawler-locations`
+before completing crawler changes. These checks also belong to gate 5 and CI.
+
 Moved here from the root `CLAUDE.md` on 2026-10-11, word for word, so they
 load only when work touches this directory. "§N" below is a section of
 the root file, which keeps every heading and says where each section went.
@@ -683,3 +692,42 @@ seen, or `_close_missing` would close a listed job. What must not be undone:
 
 `StoreResult.abroad` counts the skips and `abroad_postings_not_stored` logs
 them per company. `tests/test_crawl_skips_abroad.py`.
+
+## §16: additions of 2026-09-14, and what must not be undone
+
+Moved here from the root `CLAUDE.md` on 2026-10-26, word for word, so it
+loads only when work touches this directory. The root file keeps the
+section heading and its safety rules.
+
+Built against `docs/PROJECT_AUDIT_2026-09-14.md`. Each line is a property a
+later change could quietly break.
+
+- **Registry repair.** The 119 company rows predated `Company.slug`, so the
+  source-status migration backfilled all of them to `no_website` and the
+  dashboard asked for 119 URLs while 11,851 postings were open.
+  `sync_registry` now also reads `retired:` and marks those rows `failed`,
+  keeping earlier evidence under `previous`; `registry_health` diagnoses
+  drift read-only. Live preview on 2026-09-14: 74 created, 181 verified,
+  12 retired, Temporal and Runway moved boards. **Not applied** to the live
+  database — `/setup` offers it.
+- **Only the last month of postings is kept** (`POSTING_MAX_AGE_DAYS`, 30).
+  The crawler does not store an old posting *new* to the database; one
+  already held is still stamped as seen, because `_close_missing` closes
+  whatever a crawl did not stamp, and a still-listed posting would be closed.
+  `make prune-postings` deletes held postings that are closed or old, never
+  one the owner applied to, swiped on, tailored a résumé for, or graded:
+  `applications` and `resumes` point at postings `ON DELETE SET NULL`, and a
+  tailored résumé that loses its posting reads as a base résumé. An undated
+  posting is never deleted for its age. First run, 2026-09-30, after a
+  verified backup: 19,807 deleted, 7 kept for the owner, the postings table
+  226 MB to 39 MB, and chat search about 3x faster (940 to 329 ms).
+
+  **The prune now runs itself** (`POSTING_AUTO_PRUNE`, on), at the start of
+  every matching pass and by the same rules. The limit alone only stopped new
+  old postings arriving: the day after that first run, 222 held postings and
+  3,132 of their chunk vectors had aged out and were still searched. A
+  posting's vectors go with it — `description_embedding` is on the row and
+  `posting_chunks` cascades. The pass does not `VACUUM FULL`, which locks the
+  tables search reads; the command still does, and now for every table a
+  posting delete cascades into, read from the models. Its hand-written list
+  had missed `posting_chunks`, the largest of them.

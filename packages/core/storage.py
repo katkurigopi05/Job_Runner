@@ -10,6 +10,7 @@ Résumés and screenshots of half-filled application forms are PII (CLAUDE.md
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Protocol
@@ -75,10 +76,13 @@ class LocalStorage:
         """
         if not key or key.startswith("/"):
             raise ValueError(f"invalid storage key: {key!r}")
-        candidate = (self.root / key).resolve()
-        if candidate != self.root and self.root not in candidate.parents:
+        candidate = os.path.realpath(os.path.join(self.root, key))
+        # A separator boundary rejects sibling prefixes such as root-other;
+        # realpath also resolves symlinks before any filesystem access.
+        root_prefix = os.fspath(self.root).rstrip(os.sep) + os.sep
+        if candidate == os.fspath(self.root) or not candidate.startswith(root_prefix):
             raise ValueError(f"storage key escapes root: {key!r}")
-        return candidate
+        return Path(candidate)
 
     def put(self, key: str, data: bytes) -> str:
         target = self._resolve(key)

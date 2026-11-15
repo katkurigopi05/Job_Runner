@@ -75,6 +75,8 @@ async def test_sync_imports_repositories(
         "total": 2,
         "dependencies_read": 1,
         "dependencies_skipped": 0,
+        "private_included": False,
+        "private": 0,
     }
 
 
@@ -91,6 +93,8 @@ async def test_sync_is_idempotent(client: AsyncClient, complete_candidate, _fake
         "total": 2,
         "dependencies_read": 0,
         "dependencies_skipped": 0,
+        "private_included": False,
+        "private": 0,
     }
 
     listing = await client.get(

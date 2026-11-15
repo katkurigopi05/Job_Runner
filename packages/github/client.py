@@ -10,8 +10,9 @@ description comes back with no description; §2.1 makes inventing one a bug,
 not a nicety.
 
 Unauthenticated requests are limited to 60/hour. Set GITHUB_TOKEN (a
-read-only, public_repo-scoped token is enough) for 5000/hour and to include
-private repositories.
+read-only token) for 5000/hour and to include private repositories. The
+token is sent to GitHub's own two hosts and nowhere else; it is never
+stored, logged or put in an error.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import httpx
 import structlog
 from pydantic import BaseModel, Field
 
+from packages.github.infrastructure import declared_in, is_infrastructure_path
 from packages.github.manifests import is_manifest_path, packages_in, technologies
 
 log = structlog.get_logger(__name__)
@@ -34,9 +36,13 @@ API_ROOT = "https://api.github.com"
 #: base64 and every file costs one of the 60 unauthenticated calls an hour.
 RAW_ROOT = "https://raw.githubusercontent.com"
 
-#: Dependency files read per repository, shallowest first. A monorepo with a
-#: package.json per package is covered well before this.
+#: Dependency, container and CI files read per repository, shallowest first.
+#: A monorepo with a package.json per package is covered well before this.
 MAX_MANIFESTS = 25
+
+#: All the bytes read from one repository's files. Past it the rest are left
+#: unread: a repository that large is declaring nothing a person typed.
+MAX_EVIDENCE_BYTES = 2_000_000
 
 #: A dependency file larger than this is not one a person wrote.
 MAX_MANIFEST_BYTES = 512_000
@@ -74,6 +80,9 @@ class Repository(BaseModel):
     is_private: bool = False
     pushed_at: datetime | None = None
     default_branch: str | None = None
+    #: The account the repository sits under. Another account's, for a
+    #: repository the owner only collaborates on.
+    owner_login: str | None = None
 
     @classmethod
     def from_api(cls, payload: dict[str, Any]) -> Repository:
@@ -93,6 +102,7 @@ class Repository(BaseModel):
             is_private=bool(payload.get("private")),
             pushed_at=payload.get("pushed_at"),
             default_branch=payload.get("default_branch") or None,
+            owner_login=(payload.get("owner") or {}).get("login") or None,
         )
 
 
@@ -128,7 +138,8 @@ class GitHubClient:
         """Every repository for `username`, newest push first.
 
         With a token, `/user/repos` is used so private repositories are
-        visible; without one, only the public listing is available.
+        visible, including ones the owner collaborates on under another
+        account; without one, only the public listing is available.
         """
         if include_private and not self.token:
             raise GitHubError("include_private requires a GITHUB_TOKEN")
@@ -147,7 +158,8 @@ class GitHubClient:
                     "direction": "desc",
                 }
                 if include_private:
-                    params["affiliation"] = "owner"
+                    params["affiliation"] = "owner,collaborator"
+                    params["visibility"] = "all"
                 else:
                     params["type"] = "owner"
 
@@ -166,10 +178,11 @@ class GitHubClient:
         return repositories
 
     async def repository_technologies(self, repository: Repository) -> list[str]:
-        """What `repository`'s own dependency files say it uses, by résumé name.
+        """What `repository`'s own dependency, container and CI files declare, by résumé name.
 
         One API call (the tree listing); the files themselves come from the
-        raw host. A rate limit is raised, never read as "uses nothing". A tree
+        raw host, at most `MAX_MANIFESTS` of them and `MAX_EVIDENCE_BYTES` in
+        all. A rate limit is raised, never read as "uses nothing". A tree
         GitHub answers in an unexpected shape reads as nothing.
         """
         branch = repository.default_branch or "HEAD"
@@ -192,21 +205,29 @@ class GitHubClient:
                     if isinstance(entry, dict)
                     and entry.get("type") == "blob"
                     and isinstance(entry.get("path"), str)
-                    and is_manifest_path(entry["path"])
+                    and (is_manifest_path(entry["path"]) or is_infrastructure_path(entry["path"]))
                 ),
                 key=lambda path: (path.count("/"), path),
             )[:MAX_MANIFESTS]
 
             declared: set[str] = set()
+            named: set[str] = set()
+            budget = MAX_EVIDENCE_BYTES
             for path in paths:
                 raw = await client.get(
                     f"{RAW_ROOT}/{repository.full_name}/{quote(branch)}/{quote(path)}"
                 )
                 if raw.status_code != 200 or len(raw.content) > MAX_MANIFEST_BYTES:
                     continue
-                declared |= packages_in(path, raw.text)
+                budget -= len(raw.content)
+                if budget < 0:
+                    break
+                if is_infrastructure_path(path):
+                    named |= declared_in(path, raw.text)
+                else:
+                    declared |= packages_in(path, raw.text)
 
-        found = technologies(declared)
+        found = sorted({*technologies(declared), *named}, key=str.lower)
         log.info(
             "github_dependencies_read",
             repository=repository.full_name,

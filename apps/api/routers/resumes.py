@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, UploadFile, status
+from fastapi import APIRouter, File, Form, Response, UploadFile, status
 from sqlalchemy import func, select
 
 from apps.api.deps import SessionDep
@@ -29,9 +29,12 @@ from packages.core.schemas import (
 from packages.core.storage import get_storage, resume_key
 from packages.github.select import select_projects
 from packages.tailor.assemble import describe
+from packages.tailor.docx_export import render_docx
 from packages.tailor.layout import measure, section_headings
 from packages.tailor.parse import ParsedResume, ParseError, parse_resume
 from packages.tailor.projects import LinkStyle, ProjectEntry, link_text
+from packages.tailor.studio import STUDIO_STAMP
+from packages.tailor.studio_load import candidate_projects
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
@@ -288,4 +291,34 @@ async def preview_assembly(
         rendered_links=[
             link_text(ProjectEntry.from_project(p), LinkStyle.ICON_SLUG) for p in chosen
         ],
+    )
+
+
+@router.get("/{resume_id}/docx")
+async def download_resume_docx(resume_id: uuid.UUID, session: SessionDep) -> Response:
+    """The résumé as a single-column .docx, for a site that asks for Word.
+
+    A version saved from the Resume Studio carries the GitHub projects it was
+    printed with (`studio.STUDIO_STAMP`); they are read again and set the way
+    the PDF sets them. One the owner has since made evidence only is left out.
+    """
+    resume = await session.get(Resume, resume_id)
+    if resume is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "resume not found")
+    if not resume.parsed_json:
+        raise ApiError(ErrorCode.INVALID_REQUEST, "this résumé has no parsed form to export")
+
+    parsed = ParsedResume.model_validate(resume.parsed_json)
+    stamp = resume.parsed_json.get(STUDIO_STAMP) or {}
+    wanted = [str(i) for i in stamp.get("project_ids", []) if isinstance(i, str)]
+    owned = await candidate_projects(session, resume.candidate_id) if wanted else []
+    by_id = {str(p.id): p for p in owned if p.resume_listed}
+    projects = [by_id[i] for i in wanted if i in by_id]
+    docx_bytes = await asyncio.to_thread(render_docx, parsed, projects)
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="resume-v{resume.version}.docx"',
+        },
     )

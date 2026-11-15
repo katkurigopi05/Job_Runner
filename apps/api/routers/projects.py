@@ -36,6 +36,10 @@ async def sync_github(body: SyncGitHubRequest, session: SessionDep) -> SyncResul
     """Import the owner's repositories from GitHub.
 
     Re-running updates in place; `include` and `pinned` choices survive.
+    With `include_private` and a token, private repositories and ones the
+    owner collaborates on are listed too; without a token the public listing
+    is read and `private_included` says so. A private repository is evidence
+    only until the owner includes or pins it (`Project.resume_listed`).
     """
     candidate = await session.get(Candidate, body.candidate_id)
     if candidate is None:
@@ -49,6 +53,7 @@ async def sync_github(body: SyncGitHubRequest, session: SessionDep) -> SyncResul
             body.username,
             token=token,
             include_private=body.include_private,
+            force_evidence=body.force_evidence,
         )
     except RateLimited as exc:
         raise ApiError(ErrorCode.RATE_LIMITED, str(exc)) from exc
@@ -62,6 +67,8 @@ async def sync_github(body: SyncGitHubRequest, session: SessionDep) -> SyncResul
         total=result.total,
         dependencies_read=result.dependencies_read,
         dependencies_skipped=result.dependencies_skipped,
+        private_included=result.private_included,
+        private=result.private,
     )
 
 

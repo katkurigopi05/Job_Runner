@@ -34,6 +34,11 @@ def _tokens(text: str) -> set[str]:
     return set(_WORD_RE.findall(text.lower()))
 
 
+def is_listed(project: Project) -> bool:
+    """Whether the owner lets this repository be printed (`Project.resume_listed`)."""
+    return project.resume_listed
+
+
 def is_eligible(project: Project, *, require_description: bool = True) -> bool:
     """Whether a project may appear at all.
 
@@ -41,11 +46,18 @@ def is_eligible(project: Project, *, require_description: bool = True) -> bool:
     is. Otherwise: no forks, no archived repos, and — by default — nothing
     without a description, because the alternative is either a bare repo name
     or an invented summary, and §2.1 rules out the second.
+
+    A private repository is never eligible by ranking alone. Its name on a
+    résumé tells an employer it exists, so it appears only once the owner
+    includes or pins it (`is_listed`). Until then it is evidence only: it can
+    back a Projects entry the owner links it to, and nothing prints it.
     """
     if project.include is False:
         return False
     if project.include is True:
         return True
+    if not is_listed(project):
+        return False
     if project.is_fork or project.is_archived:
         return False
     return not (require_description and not (project.description or "").strip())
@@ -55,7 +67,8 @@ def relevance(project: Project, job_text: str) -> float:
     """Overlap between the project's own words and the posting's. 0.0–1.0.
 
     Only uses text the project actually carries — name, description, language,
-    topics. Nothing is inferred about what the project does.
+    topics, and the tools its own files declare. Nothing is inferred about
+    what the project does.
     """
     if not job_text.strip():
         return 0.0
@@ -68,6 +81,7 @@ def relevance(project: Project, job_text: str) -> float:
                 project.description or "",
                 project.language or "",
                 " ".join(project.topics_json or []),
+                " ".join(project.dependency_technologies or []),
             ],
         )
     )

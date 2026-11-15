@@ -94,7 +94,7 @@ async def linked_evidence(session: AsyncSession, candidate_id: uuid.UUID) -> dic
     return {key: "\n".join(texts) for key, texts in grouped.items()}
 
 
-def _comparable(name: str) -> str:
+def comparable_name(name: str) -> str:
     """`Job_Runner` and `jobrunner` compare equal; so do `Attorney.AI` and `attorney-ai`."""
     return "".join(ch for ch in name.casefold() if ch.isalnum())
 
@@ -107,13 +107,13 @@ def suggest_links(names: list[str], projects: list[Project]) -> dict[uuid.UUID, 
     owner to link the wrong repository. Forks and repositories already linked
     are not offered one.
     """
-    by_name = {_comparable(name): name for name in names}
+    by_name = {comparable_name(name): name for name in names}
     return {
-        project.id: by_name[_comparable(project.name)]
+        project.id: by_name[comparable_name(project.name)]
         for project in projects
         if not project.is_fork
         and project.resume_entry is None
-        and _comparable(project.name) in by_name
+        and comparable_name(project.name) in by_name
     }
 
 

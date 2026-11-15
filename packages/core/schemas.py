@@ -277,8 +277,11 @@ class SyncGitHubRequest(BaseModel):
     candidate_id: uuid.UUID
     username: str = Field(min_length=1, max_length=100)
     #: Overrides GITHUB_TOKEN for this call. Never stored, never logged.
-    token: str | None = None
+    token: str | None = Field(default=None, max_length=300, repr=False)
     include_private: bool = False
+    #: Read every repository's files again, not only those pushed to since the
+    #: last read: how a repository picks up a kind of file read since.
+    force_evidence: bool = False
 
 
 class SyncResultOut(BaseModel):
@@ -292,6 +295,10 @@ class SyncResultOut(BaseModel):
     #: Repositories due a read that did not get one (a rate limit). The next
     #: sync tries them again.
     dependencies_skipped: int = 0
+    #: Whether private repositories were listed: False when they were asked
+    #: for with no token, so a short list is not read as "none exist".
+    private_included: bool = False
+    private: int = 0
 
 
 class ProjectOut(BaseModel):
@@ -314,6 +321,9 @@ class ProjectOut(BaseModel):
     pushed_at: datetime | None
     include: bool | None
     pinned: bool
+    #: Printed as a résumé project (True), or evidence only: a private
+    #: repository the owner has not included or pinned (`Project.resume_listed`).
+    resume_listed: bool = True
     #: What the repository's own dependency files declare, by résumé name.
     dependency_technologies: list[str] = Field(default_factory=list)
     #: The résumé Projects entry this repository backs, as the owner linked it.
@@ -513,6 +523,10 @@ class PostingOut(BaseModel):
     url: str
     title: str | None
     location: str | None
+    country_code: str | None = None
+    state_code: str | None = None
+    is_remote: bool | None = None
+    locations_json: list[dict[str, Any]] | None = None
     ats_type: str | None
     external_id: str | None
     #: When the source says it went up. None when the board does not say.

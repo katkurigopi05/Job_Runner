@@ -306,14 +306,17 @@ def classify(
     *,
     projects: Sequence[Project] = (),
     linked: Mapping[str, str] | None = None,
+    verified: Mapping[str, str] | None = None,
 ) -> Plan:
     """Sort a posting's terms against a résumé. No model is asked anything.
 
     `linked` is `evidence.linked_evidence`: what repositories the owner linked
     to the résumé's projects report of themselves. A term one of them backs is
-    a target of that project's bullets, and of no other.
+    a target of that project's bullets, and of no other. `verified` is the
+    same for an internship's confirmed tools and its own lines
+    (`guard.SourceCorpus.from_resume`).
     """
-    corpus = SourceCorpus.from_resume(parsed, linked=linked)
+    corpus = SourceCorpus.from_resume(parsed, linked=linked, verified=verified)
     section, bullets = tailorable_bullets(parsed)
     whole = Said(_document(parsed))
     shared_text = _shared(parsed)
@@ -705,14 +708,17 @@ async def revise(
     projects: Sequence[Project] = (),
     plan: Plan | None = None,
     linked: Mapping[str, str] | None = None,
+    verified: Mapping[str, str] | None = None,
 ) -> Revision:
     """Revise the bullets that have something to gain. The rest are untouched.
 
     With no opportunity the provider is never called, and the result is the
     résumé as it stands with `Revision.message` saying why.
     """
-    plan = plan or classify(parsed, job_description, projects=projects, linked=linked)
-    corpus = SourceCorpus.from_resume(parsed, linked=linked)
+    plan = plan or classify(
+        parsed, job_description, projects=projects, linked=linked, verified=verified
+    )
+    corpus = SourceCorpus.from_resume(parsed, linked=linked, verified=verified)
 
     rewrites: list[BulletRewrite] = []
     outcomes: list[Outcome] = []

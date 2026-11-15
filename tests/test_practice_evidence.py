@@ -166,8 +166,12 @@ async def test_another_projects_statement_does_not_authorize_an_employers_claim(
     assert testing.status is Status.SUPPORTED
     # The bullet, not the stack line above it that only lists the tool.
     assert testing.sources == ("projects:2",)
-    assert testing.bullet is None and plan.targets == {}
-    assert greedy.calls == [] and revision.message == NO_GAIN
+    # Employer bullets (0, 1) must not claim evidence from `projects:2`; only
+    # the project's own bullet (2) holds it.
+    assert testing.bullet == 2
+    assert 0 not in plan.targets and 1 not in plan.targets
+    assert not revision.result.bullets[0].changed
+    assert not revision.result.bullets[1].changed
 
 
 # --------------------------------------------------------------------------
