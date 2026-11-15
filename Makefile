@@ -118,7 +118,7 @@ vault-key:
 	@$(PY)/python -c 'from packages.core.vault import generate_key; print(generate_key())'
 
 # make kaggle-setup — after saving a new Kaggle session's link (Reconnect in the
-# assistant), load Qwen3 8B and the Jobrunner helper into it and point Jobrunner
+# assistant), load saved Qwen3.8 27B and its helper into it and point Jobrunner
 # at that kernel. Reuses a kernel that already has them; deletes idle kernels with
 # nothing attached. fresh=1 deletes every kernel first. Prints no link or kernel id.
 kaggle-setup:
