@@ -236,10 +236,13 @@ a rewrite that only stuffs keywords scores *worse*.
 > and `tailorable_bullets` collect multiple populated sections; Studio assembles
 > experience, projects, certifications and skills and sends eligible bullets
 > through `tailor_bullets` and `apply_rewrites`. That coverage is implemented.
+> Studio now shows line-level source/evidence traces and checks saved lines again;
+> that is partial provenance coverage, not confidence grading.
 > It does not provide claim classification: the guard still accepts/refuses,
 > and Studio's refusal counts and missing keyword list are not per-claim
 > FACT / INFERENCE / MISSING / UNVERIFIED tags. Persistent claim records,
-> source/confidence display on `/review`, and classified diff rationales remain
+> confidence grading and source display on the application `/review` screen,
+> and classified diff rationales remain
 > P5 work. Inferences must stay out of résumé facts.
 
 **Spec:** §11, §15, §30, §34 · **Size:** M

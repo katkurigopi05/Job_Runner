@@ -20,7 +20,7 @@ for line in lines:
             companies.append(current)
             current = {}
 
-with open("/Users/gopikrishnareddykatkuri/.gemini/antigravity-cli/brain/c0d862b8-cad9-4fc6-beea-ec486a2e8f56/live_sde_roles.md", "w") as out:
+with open("live_sde_roles.md", "w") as out:
     out.write("# Live SDE Roles from CSV\n\n")
     out.write(f"Found {len(companies)} open SDE roles directly from the ATS boards of the companies in the CSV.\n\n")
     out.write("| Company | Title | Location | Link |\n")

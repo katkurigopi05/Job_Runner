@@ -3,17 +3,17 @@
     "code_sha": "155d78946f43e98ecf6d08ccdc941f8fbd55824f",
     "files": {
       "qwen4b_full_f16.npy": {
-        "path": "/Users/gopikrishnareddykatkuri/Desktop/Job_Runner/storage/embed_rank_bench/whole_index_2026-11-02/vectors.nosync/qwen4b_full_f16.npy",
+        "path": "./storage/embed_rank_bench/whole_index_2026-11-02/vectors.nosync/qwen4b_full_f16.npy",
         "bytes": 1148728448,
         "sha256": "30001ecec51bab5f5674c88e1e8798eff09f3c4485327b5ade8e1abccbc41511"
       },
       "ollama_q4_questions.npy": {
-        "path": "/Users/gopikrishnareddykatkuri/Desktop/Job_Runner/storage/embed_rank_bench/whole_index_2026-11-02/vectors.nosync/ollama_q4_questions.npy",
+        "path": "./storage/embed_rank_bench/whole_index_2026-11-02/vectors.nosync/ollama_q4_questions.npy",
         "bytes": 1147008,
         "sha256": "45c764c6a81e4a9c26862578ffbe2bd7099565d48f1eb28caa24d279a1ce4795"
       },
       "whole_index.json.gz": {
-        "path": "/Users/gopikrishnareddykatkuri/Desktop/Job_Runner/storage/embed_rank_bench/whole_index_2026-11-02/whole_index.json.gz",
+        "path": "./storage/embed_rank_bench/whole_index_2026-11-02/whole_index.json.gz",
         "bytes": 36695841,
         "sha256": "8f7ea38dcd860c03517161a35daf96030a22497b763c29cb7c84f92717576343"
       }
