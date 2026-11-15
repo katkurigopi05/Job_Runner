@@ -59,8 +59,6 @@ _THEN_OR = re.compile(
 _OR_BEFORE = re.compile(rf"\bor\s+(?:an?\s+|the\s+)?(?:{_ITEM}\s*,\s*){{0,2}}$", re.IGNORECASE)
 #: "Kafka/Kinesis". A name with a slash of its own ("CI/CD") is one skill, and
 #: its pattern takes the slash with it, so none is left beside it here.
-_SLASH_AFTER = re.compile(r"\s*/\s*[A-Za-z]")
-_SLASH_BEFORE = re.compile(r"[A-Za-z]\s*/\s*$")
 #: Offered as an instance of something wider: "a message queue such as Kafka".
 #: "including" is left out: "tools including Kafka and Spark" asks for both.
 _EXAMPLE_BEFORE = re.compile(
@@ -123,6 +121,22 @@ def _or_after(text: str) -> bool:
     return False
 
 
+def _slash_after(text: str) -> bool:
+    after = text.lstrip()
+    if not after.startswith("/"):
+        return False
+    name = after[1:].lstrip()
+    return bool(name and name[0].isascii() and name[0].isalpha())
+
+
+def _slash_before(text: str) -> bool:
+    before = text.rstrip()
+    if not before.endswith("/"):
+        return False
+    name = before[:-1].rstrip()
+    return bool(name and name[-1].isascii() and name[-1].isalpha())
+
+
 def is_option(quote: str, skill: Skill) -> bool:
     """Whether `quote` offers `skill` as a choice among others, or as an example.
 
@@ -150,9 +164,9 @@ def is_option(quote: str, skill: Skill) -> bool:
         clause_after = after[: stop.start()] if stop else after
         if (
             _or_after(clause_after)
-            or _SLASH_AFTER.match(clause_after)
+            or _slash_after(clause_after)
             or _OR_BEFORE.search(clause_before)
-            or _SLASH_BEFORE.search(clause_before)
+            or _slash_before(clause_before)
             or _EXAMPLE_BEFORE.search(clause_before)
         ):
             return True

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { ApiError } from "@/lib/api";
+import { profilePath } from "@/lib/profile-path";
 
 const API = process.env.JOBRUNNER_API ?? "http://127.0.0.1:8000";
 
@@ -23,6 +24,11 @@ export async function saveProfile(
   _prev: SaveResult | null,
   form: FormData,
 ): Promise<SaveResult> {
+  const path = profilePath(profileId);
+  if (path === null) {
+    return { ok: false, message: "Choose a valid profile, then retry." };
+  }
+
   const text = (field: string) => {
     const value = form.get(field);
     if (value === null) return undefined;
@@ -82,7 +88,7 @@ export async function saveProfile(
     if (payload[key] === undefined) delete payload[key];
   }
 
-  const response = await fetch(`${API}/profiles/${profileId}`, {
+  const response = await fetch(`${API}${path}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
