@@ -29,6 +29,7 @@ from packages.core.models import (
     Resume,
     User,
 )
+from packages.core.models_evidence import Certification, Internship
 from packages.core.state import transition
 from packages.core.storage import get_storage
 from packages.matching.embed import LexicalEmbedder
@@ -161,6 +162,66 @@ async def seed(session: AsyncSession) -> dict[str, int]:
         auto_submit=False,
         links_json={"github": "https://github.com/example-dev"},
     )
+    # The Studio reads confirmed evidence tables, separately from resume prose.
+    # All of these records belong to the explicitly synthetic demo candidate.
+    for i, record in enumerate(
+        [
+            dict(
+                company="Harbor Labs",
+                role="Software Engineering Intern",
+                started="Jun 2025",
+                ended="Aug 2025",
+                stack=["Python", "FastAPI", "PostgreSQL", "pytest"],
+                bullets=[
+                    ORIGINAL,
+                    (
+                        "Added pytest integration checks and GitHub Actions "
+                        "workflows for API releases."
+                    ),
+                ],
+            ),
+            dict(
+                company="Beacon Systems",
+                role="Cloud Engineering Intern",
+                started="Jun 2024",
+                ended="Aug 2024",
+                stack=["AWS", "Terraform", "Docker", "OpenTelemetry"],
+                bullets=[
+                    "Provisioned AWS development environments using Terraform and Docker.",
+                    "Instrumented service health checks with OpenTelemetry for incident triage.",
+                ],
+            ),
+        ]
+    ):
+        await add(
+            Internship,
+            f"internship-{i}",
+            candidate_id=candidate.id,
+            verified=True,
+            position=i,
+            **record,
+        )
+    for i, record in enumerate(
+        [
+            dict(
+                name="AWS Certified Cloud Practitioner", issuer="AWS", issued="2025", skills=["AWS"]
+            ),
+            dict(
+                name="HashiCorp Certified: Terraform Associate",
+                issuer="HashiCorp",
+                issued="2025",
+                skills=["Terraform"],
+            ),
+        ]
+    ):
+        await add(
+            Certification,
+            f"certification-{i}",
+            candidate_id=candidate.id,
+            verified=True,
+            position=i,
+            **record,
+        )
     for i, (name, language, topics) in enumerate(
         [
             ("agent-workbench", "Python", ["retrieval", "evaluation", "fastapi"]),

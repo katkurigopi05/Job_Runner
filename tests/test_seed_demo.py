@@ -3,6 +3,7 @@
 from sqlalchemy import func, select
 
 from packages.core.models import Application, Candidate, Match, Profile, Project, QueueTask
+from packages.core.models_evidence import Certification, Internship
 from packages.core.storage import get_storage
 from scripts.seed_demo import demo_id, seed
 
@@ -12,7 +13,15 @@ async def test_seed_demo_is_idempotent_and_preserves_review_decisions(db_session
     candidate = await db_session.get(Candidate, demo_id("candidate"))
     assert candidate.name == "Jordan Chen"
     candidate.name = "Reviewer edited fixture"
+    internship = await db_session.get(Internship, demo_id("internship-0"))
+    assert internship.verified and internship.position == 0
+    internship.role = "Reviewer edited internship"
     second = await seed(db_session)
+    assert internship.role == "Reviewer edited internship"
+    assert await db_session.scalar(select(func.count()).select_from(Internship)) == 2
+    assert await db_session.scalar(select(func.count()).select_from(Certification)) == 2
+    certifications = list((await db_session.scalars(select(Certification))).all())
+    assert all(record.verified for record in certifications)
     assert first["created"] > 0 and second["created"] == 0
     assert candidate.name == "Reviewer edited fixture"
     assert await db_session.scalar(select(func.count()).select_from(Match)) == 10
