@@ -264,3 +264,39 @@ def test_enforce_limit_keeps_a_small_file(tmp_path) -> None:
     storage.put("shot.png", b"x" * 1024)
     assert storage.enforce_limit("shot.png") is True
     assert storage.exists("shot.png")
+
+
+@pytest.mark.parametrize("key", [".", "nested/..", "../root-sibling/outside.txt"])
+def test_storage_rejects_root_and_sibling_prefix(tmp_path, key):
+    storage = LocalStorage(tmp_path / "root")
+    with pytest.raises(ValueError):
+        storage.path_for(key)
+
+
+def test_storage_rejects_symlink_escape_for_every_operation(tmp_path):
+    root = tmp_path / "root"
+    storage = LocalStorage(root)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "private.txt").write_text("synthetic private data")
+    (root / "linked").symlink_to(outside, target_is_directory=True)
+    source = tmp_path / "input.txt"
+    source.write_text("synthetic input")
+    operations = [
+        lambda: storage.put("linked/private.txt", b"replacement"),
+        lambda: storage.put_file("linked/private.txt", source),
+        lambda: storage.get("linked/private.txt"),
+        lambda: storage.exists("linked/private.txt"),
+        lambda: storage.delete("linked/private.txt"),
+        lambda: storage.path_for("linked/private.txt"),
+    ]
+    for operation in operations:
+        with pytest.raises(ValueError):
+            operation()
+    assert (outside / "private.txt").read_text() == "synthetic private data"
+
+
+def test_storage_preserves_unicode_and_internal_relative_keys(tmp_path):
+    storage = LocalStorage(tmp_path)
+    storage.put("drafts/../résumés/Alex Rivera.txt", b"synthetic resume")
+    assert storage.get("résumés/Alex Rivera.txt") == b"synthetic resume"
