@@ -216,3 +216,13 @@ def test_a_saved_loader_without_an_expected_setting_is_not_run(tmp_path, monkeyp
 
     with pytest.raises(RuntimeError, match="refusing to change it"):
         run_startup_cell(tmp_path, monkeypatch, changed)
+
+
+def test_missing_dataset_has_a_distinct_safe_configuration_error(monkeypatch):
+    from packages.core.config import get_settings
+    from packages.llm.kaggle_qwen27 import DATASET_REQUIRED, DatasetNotConfigured, load_27b
+
+    monkeypatch.setattr(get_settings(), "kaggle_qwen27_dataset", None)
+    with pytest.raises(DatasetNotConfigured) as error:
+        load_27b("synthetic helper")
+    assert str(error.value) == DATASET_REQUIRED

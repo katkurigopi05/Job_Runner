@@ -37,7 +37,7 @@ const HEADINGS: Record<KaggleState, string> = {
   kernel_missing: "Kaggle notebook unavailable",
   helper_missing: "Load the Kaggle helper",
   helper_outdated: "Update the Kaggle helper",
-  model_not_ready: "Load the Kaggle model",
+  model_not_ready: "Load Qwen3.8 27B",
   ready: "Kaggle ready",
   select_kernel: "Choose a Kaggle notebook",
 };
@@ -223,7 +223,7 @@ export function KaggleConnection() {
         </button>
       </div>
       <p className="text-xs text-ink-faint">
-        IDE connection is separate. Restarting Kaggle requires reconnecting here and loading the model/helper.
+        Auto uses Qwen3.8 27B Q6_K. Restarting Kaggle requires reconnecting here and loading 27B and its helper.
       </p>
       {error ? <p role="alert" className="text-xs text-stop">{error}</p> : null}
       {expanded ? (

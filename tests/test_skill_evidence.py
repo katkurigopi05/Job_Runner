@@ -261,8 +261,27 @@ def test_long_whitespace_is_not_an_optional_skill_clause():
             "from packages.matching.evidence import is_option; "
             "from packages.matching.skill_vocab import BY_KEY; "
             "assert not is_option('Python' + ' ' * 100000 + 'required', BY_KEY['python']); "
-            "assert is_option('Python' + ' ' * 100000 + 'or Go', BY_KEY['python'])",
+            "assert is_option('Python' + ' ' * 100000 + 'or Go', BY_KEY['python']); "
+            "assert is_option('Python /' + ' ' * 100000 + 'Go', BY_KEY['python']); "
+            "assert is_option('Go' + ' ' * 100000 + '/ Python', BY_KEY['python']); "
+            "assert not is_option('Python /' + ' ' * 100000 + '!', BY_KEY['python'])",
         ],
         check=True,
         timeout=5,
     )
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("Kafka \t/\n Kinesis", True),
+        ("Kinesis \u00a0/ \t Kafka", True),
+        ("Kafka / 123", False),
+        ("Kafka /é", False),
+        ("é / Kafka", False),
+        ("Kafka /", False),
+        ("/ Kafka", False),
+    ],
+)
+def test_slash_choices_preserve_whitespace_and_ascii_name_boundaries(line, expected):
+    assert is_option(line, KAFKA) is expected

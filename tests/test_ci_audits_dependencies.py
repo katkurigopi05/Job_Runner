@@ -48,6 +48,13 @@ def test_the_audit_token_can_only_read() -> None:
     assert _audit_job()["permissions"] == {"contents": "read"}
 
 
+def test_every_ci_job_uses_a_read_only_token() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    assert workflow["permissions"] == {"contents": "read"}
+    for job in workflow["jobs"].values():
+        assert job.get("permissions", workflow["permissions"]) == {"contents": "read"}
+
+
 def test_dependabot_leaves_the_python_lock_to_make_lock() -> None:
     config = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text(encoding="utf-8"))
     ecosystems = {update["package-ecosystem"] for update in config["updates"]}
