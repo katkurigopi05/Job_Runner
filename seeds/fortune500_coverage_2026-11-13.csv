@@ -1,0 +1,499 @@
+As Of,Fortune Rank,Fortune 500 Company,CSV Company Name,Action,Reference Website,Website Source,Website Status,Fortune Page
+2026-11-13,1,Amazon,Amazon,existing_name,,,,https://fortune.com/company/amazon-com/
+2026-11-13,2,Walmart,Walmart,existing_name,,,,https://fortune.com/company/walmart/
+2026-11-13,3,UnitedHealth Group,UnitedHealth Group,existing_name,,,,https://fortune.com/company/unitedhealth-group/
+2026-11-13,4,Apple,Apple,existing_name,,,,https://fortune.com/company/apple/
+2026-11-13,5,Alphabet,Alphabet Inc.,existing_normalised_name,,,,https://fortune.com/company/alphabet/
+2026-11-13,6,CVS Health,CVS Health,existing_name,,,,https://fortune.com/company/cvs-health/
+2026-11-13,7,Berkshire Hathaway,Berkshire Hathaway,existing_name,,,,https://fortune.com/company/berkshire-hathaway/
+2026-11-13,8,McKesson,McKesson,existing_name,,,,https://fortune.com/company/mckesson/
+2026-11-13,9,Exxon Mobil Holdings,ExxonMobil,existing_alias,,,,https://fortune.com/company/exxon-mobil/
+2026-11-13,10,Cencora,Cencora,existing_name,,,,https://fortune.com/company/amerisourcebergen/
+2026-11-13,11,Microsoft,Microsoft,existing_name,,,,https://fortune.com/company/microsoft/
+2026-11-13,12,JPMorgan Chase,JPMorgan Chase,existing_name,,,,https://fortune.com/company/jpmorgan-chase/
+2026-11-13,13,Costco Wholesale,Costco,existing_alias,,,,https://fortune.com/company/costco/
+2026-11-13,14,Cigna Group,Cigna,existing_normalised_name,,,,https://fortune.com/company/cigna/
+2026-11-13,15,Cardinal Health,Cardinal Health,existing_name,,,,https://fortune.com/company/cardinal-health/
+2026-11-13,16,Nvidia,Nvidia,existing_name,,,,https://fortune.com/company/nvidia/
+2026-11-13,17,Meta Platforms,Facebook,existing_alias,,,,https://fortune.com/company/facebook/
+2026-11-13,18,Elevance Health,Elevance Health,existing_name,,,,https://fortune.com/company/elevance-health/
+2026-11-13,19,Centene,Centene Corporation,existing_normalised_name,,,,https://fortune.com/company/centene/
+2026-11-13,20,Bank of America,Bank of America,existing_name,,,,https://fortune.com/company/bank-of-america-corp/
+2026-11-13,21,Chevron,Chevron Corporation,existing_normalised_name,,,,https://fortune.com/company/chevron/
+2026-11-13,22,Ford Motor,Ford Motor Company,existing_normalised_name,,,,https://fortune.com/company/ford-motor/
+2026-11-13,23,General Motors,General Motors,existing_name,,,,https://fortune.com/company/general-motors/
+2026-11-13,24,Citigroup,Citigroup,existing_name,,,,https://fortune.com/company/citigroup/
+2026-11-13,25,Home Depot,Home Depot,existing_name,,,,https://fortune.com/company/home-depot/
+2026-11-13,26,Fannie Mae,Fannie Mae,added,https://www.fanniemae.com/,https://www.wikidata.org/wiki/Q621096,confirmed,https://fortune.com/company/fannie-mae/
+2026-11-13,27,Kroger,Kroger,existing_name,,,,https://fortune.com/company/kroger/
+2026-11-13,28,Verizon Communications,Verizon,existing_alias,,,,https://fortune.com/company/verizon/
+2026-11-13,29,Phillips 66,Phillips 66,existing_name,,,,https://fortune.com/company/phillips/
+2026-11-13,30,Marathon Petroleum,Marathon Petroleum,existing_name,,,,https://fortune.com/company/marathon-petroleum/
+2026-11-13,31,StoneX Group,StoneX Group,added,https://www.stonex.com/,https://www.wikidata.org/wiki/Q1666331,confirmed,https://fortune.com/company/stonex-group/
+2026-11-13,32,State Farm Insurance,State Farm Insurance,added,https://www.statefarm.com/,https://www.wikidata.org/wiki/Q2007336,confirmed,https://fortune.com/company/state-farm-insurance-cos/
+2026-11-13,33,Freddie Mac,Freddie Mac,added,https://www.freddiemac.com/,https://www.wikidata.org/wiki/Q935969,confirmed,https://fortune.com/company/freddie-mac/
+2026-11-13,34,Humana,Humana,existing_name,,,,https://fortune.com/company/humana/
+2026-11-13,35,AT&T,AT&T,existing_name,,,,https://fortune.com/company/att/
+2026-11-13,36,Goldman Sachs Group,Goldman Sachs,existing_normalised_name,,,,https://fortune.com/company/goldman-sachs-group/
+2026-11-13,37,Comcast,Comcast,existing_name,,,,https://fortune.com/company/comcast/
+2026-11-13,38,Wells Fargo,Wells Fargo,existing_name,,,,https://fortune.com/company/wells-fargo/
+2026-11-13,39,Morgan Stanley,Morgan Stanley,existing_name,,,,https://fortune.com/company/morgan-stanley/
+2026-11-13,40,Valero Energy,Valero Energy,existing_name,,,,https://fortune.com/company/valero-energy/
+2026-11-13,41,Dell Technologies,Dell Technologies,existing_name,,,,https://fortune.com/company/dell-technologies/
+2026-11-13,42,Target,Target Corporation,existing_normalised_name,,,,https://fortune.com/company/target/
+2026-11-13,43,Tesla,Tesla,existing_name,,,,https://fortune.com/company/tesla/
+2026-11-13,44,Walt Disney,Walt Disney Company,existing_normalised_name,,,,https://fortune.com/company/disney/
+2026-11-13,45,Johnson & Johnson,Johnson & Johnson,existing_name,,,,https://fortune.com/company/johnson-johnson/
+2026-11-13,46,PepsiCo,PepsiCo,existing_name,,,,https://fortune.com/company/pepsico/
+2026-11-13,47,Boeing,Boeing,existing_name,,,,https://fortune.com/company/boeing/
+2026-11-13,48,UPS,United Parcel Service,existing_alias,,,,https://fortune.com/company/ups/
+2026-11-13,49,RTX,RTX Corporation,existing_normalised_name,,,,https://fortune.com/company/raytheon-technologies/
+2026-11-13,50,FedEx,FedEx,existing_name,,,,https://fortune.com/company/fedex/
+2026-11-13,51,Progressive,Progressive Corporation,existing_normalised_name,,,,https://fortune.com/company/progressive/
+2026-11-13,52,Lowe's,Lowe's,existing_name,,,,https://fortune.com/company/lowes/
+2026-11-13,53,Energy Transfer,Energy Transfer,added,https://www.energytransfer.com/,https://www.wikidata.org/wiki/Q5377000,confirmed,https://fortune.com/company/energy-transfer-equity/
+2026-11-13,54,Procter & Gamble,Procter & Gamble,existing_name,,,,https://fortune.com/company/procter-gamble/
+2026-11-13,55,Sysco,Sysco,existing_name,,,,https://fortune.com/company/sysco/
+2026-11-13,56,American Express,American Express,existing_name,,,,https://fortune.com/company/american-express/
+2026-11-13,57,Albertsons,Albertsons,added,https://www.albertsonscompanies.com/,https://www.wikidata.org/wiki/Q2831861,confirmed,https://fortune.com/company/albertsons-cos/
+2026-11-13,58,Archer Daniels Midland,Archer Daniels Midland,existing_name,,,,https://fortune.com/company/archer-daniels-midland/
+2026-11-13,59,MetLife,MetLife,existing_name,,,,https://fortune.com/company/metlife/
+2026-11-13,60,HCA Healthcare,HCA Healthcare,existing_name,,,,https://fortune.com/company/hca-holdings/
+2026-11-13,61,Lockheed Martin,Lockheed Martin,existing_name,,,,https://fortune.com/company/lockheed-martin/
+2026-11-13,62,New York Life Insurance,New York Life Insurance,added,https://newyorklife.com/,https://www.wikidata.org/wiki/Q1039380,confirmed,https://fortune.com/company/new-york-life-insurance/
+2026-11-13,63,Capital One Financial,Capital One,existing_normalised_name,,,,https://fortune.com/company/capital-one-financial/
+2026-11-13,64,Allstate,Allstate,existing_name,,,,https://fortune.com/company/allstate/
+2026-11-13,65,Caterpillar,Caterpillar Inc.,existing_normalised_name,,,,https://fortune.com/company/caterpillar/
+2026-11-13,66,International Business Machines,IBM,existing_alias,,,,https://fortune.com/company/ibm/
+2026-11-13,67,Eli Lilly,Lilly (Eli),existing_alias,,,,https://fortune.com/company/eli-lilly/
+2026-11-13,68,MSD,Merck & Co.,existing_alias,,,,https://fortune.com/company/merck/
+2026-11-13,69,Nationwide,Nationwide,added,https://www.nationwide.com/,https://www.wikidata.org/wiki/Q6979886,confirmed,https://fortune.com/company/nationwide/
+2026-11-13,70,Broadcom,Broadcom,existing_name,,,,https://fortune.com/company/broadcom/
+2026-11-13,71,Delta Air Lines,Delta Air Lines,existing_name,,,,https://fortune.com/company/delta-air-lines/
+2026-11-13,72,Publix Super Markets,Publix Super Markets,added,https://www.publix.com/,https://www.wikidata.org/wiki/Q672170,confirmed,https://fortune.com/company/publix-super-markets/
+2026-11-13,73,Pfizer,Pfizer,existing_name,,,,https://fortune.com/company/pfizer/
+2026-11-13,74,TD Synnex,TD Synnex,added,https://www.tdsynnex.com/,homepage title: TD SYNNEX | People who drive technology distribution forward,confirmed,https://fortune.com/company/synnex/
+2026-11-13,75,ConocoPhillips,ConocoPhillips,existing_name,,,,https://fortune.com/company/conocophillips/
+2026-11-13,76,Galaxy Digital,Galaxy Digital,added,https://www.galaxy.com/,homepage title: Galaxy | Digital Assets & AI Infrastructure | Galaxy,confirmed,https://fortune.com/company/galaxy-digital/
+2026-11-13,77,AbbVie,AbbVie,existing_name,,,,https://fortune.com/company/abbvie/
+2026-11-13,78,Prudential Financial,Prudential Financial,existing_name,,,,https://fortune.com/company/prudential-financial/
+2026-11-13,79,TJX,TJX Companies,existing_normalised_name,,,,https://fortune.com/company/tjx/
+2026-11-13,80,Performance Food Group,Performance Food Group,added,https://www.pfgc.com/,https://www.wikidata.org/wiki/Q2070689,confirmed,https://fortune.com/company/performance-food-group/
+2026-11-13,81,United Airlines Holdings,United Airlines Holdings,existing_name,,,,https://fortune.com/company/united-continental-holdings/
+2026-11-13,82,Oracle,Oracle,existing_name,,,,https://fortune.com/company/oracle/
+2026-11-13,83,Cisco Systems,Cisco,existing_normalised_name,,,,https://fortune.com/company/cisco-systems-inc/
+2026-11-13,84,HP,Hewlett Packard,existing_alias,,,,https://fortune.com/company/hp/
+2026-11-13,85,Charter Communications,Charter Communications,existing_name,,,,https://fortune.com/company/charter-communications/
+2026-11-13,86,American Airlines Group,American Airlines Group,added,https://www.aa.com/,https://www.wikidata.org/wiki/Q4742937,confirmed,https://fortune.com/company/american-airlines-group/
+2026-11-13,87,Tyson Foods,Tyson Foods,existing_name,,,,https://fortune.com/company/tyson-foods/
+2026-11-13,88,Intel,Intel,existing_name,,,,https://fortune.com/company/intel/
+2026-11-13,89,Enterprise Products Partners,Enterprise Products Partners,added,https://enterpriseproducts.com/,https://www.wikidata.org/wiki/Q5380346,confirmed,https://fortune.com/company/enterprise-products-partners/
+2026-11-13,90,Ingram Micro Holding,Ingram Micro Holding,added,https://www.ingrammicro.com/,https://www.wikidata.org/wiki/Q324616,confirmed,https://fortune.com/company/ingram-micro/
+2026-11-13,91,General Dynamics,General Dynamics,existing_name,,,,https://fortune.com/company/general-dynamics/
+2026-11-13,92,Uber Technologies,Uber,existing_normalised_name,,,,https://fortune.com/company/uber-technologies/
+2026-11-13,93,United Services Automobile Assn.,USAA,added,https://www.usaa.com/,https://www.wikidata.org/wiki/Q7865722,confirmed,https://fortune.com/company/usaa/
+2026-11-13,94,TIAA,TIAA,added,https://www.tiaa.org/,https://www.wikidata.org/wiki/Q740999,confirmed,https://fortune.com/company/tiaa/
+2026-11-13,95,Liberty Mutual Insurance Group,Liberty Mutual Insurance Group,added,https://www.libertymutual.com/,https://www.wikidata.org/wiki/Q1516450,confirmed,https://fortune.com/company/liberty-mutual-insurance-group/
+2026-11-13,96,Travelers,Travelers Companies,existing_normalised_name,,,,https://fortune.com/company/travelers-cos/
+2026-11-13,97,Bristol-Myers Squibb,Bristol Myers Squibb,existing_normalised_name,,,,https://fortune.com/company/bristol-myers-squibb/
+2026-11-13,98,Coca-Cola,Coca-Cola Company,existing_normalised_name,,,,https://fortune.com/company/coca-cola/
+2026-11-13,99,Nike,"Nike, Inc.",existing_normalised_name,,,,https://fortune.com/company/nike/
+2026-11-13,100,Massachusetts Mutual Life Insurance,MassMutual,added,https://www.massmutual.com/,https://www.wikidata.org/wiki/Q4385833,confirmed,https://fortune.com/company/massachusetts-mutual-life-insurance/
+2026-11-13,101,GE Aerospace,GE Aerospace,existing_name,,,,https://fortune.com/company/general-electric/
+2026-11-13,102,Deere,Deere & Company,existing_normalised_name,,,,https://fortune.com/company/deere/
+2026-11-13,103,Plains GP Holdings,Plains GP Holdings,added,https://www.plains.com/,homepage title: Bringing energy to life - Plains All American Pipeline,confirmed,https://fortune.com/company/plains-gp-holdings/
+2026-11-13,104,Molina Healthcare,Molina Healthcare,added,https://molinahealthcare.com/,https://www.wikidata.org/wiki/Q6896175,confirmed,https://fortune.com/company/molina-healthcare/
+2026-11-13,105,Netflix,Netflix,existing_name,,,,https://fortune.com/company/netflix/
+2026-11-13,106,Thermo Fisher Scientific,Thermo Fisher Scientific,existing_name,,,,https://fortune.com/company/thermo-fisher-scientific/
+2026-11-13,107,Abbott Laboratories,Abbott Laboratories,existing_name,,,,https://fortune.com/company/abbott-laboratories/
+2026-11-13,108,Qualcomm,Qualcomm,existing_name,,,,https://fortune.com/company/qualcomm/
+2026-11-13,109,Northwestern Mutual,Northwestern Mutual,added,https://www.northwesternmutual.com/,https://www.wikidata.org/wiki/Q1630166,confirmed,https://fortune.com/company/northwestern-mutual/
+2026-11-13,110,U.S. Bancorp,U.S. Bancorp,existing_name,,,,https://fortune.com/company/u-s-bancorp/
+2026-11-13,111,Dollar General,Dollar General,existing_name,,,,https://fortune.com/company/dollar-general/
+2026-11-13,112,Northrop Grumman,Northrop Grumman,existing_name,,,,https://fortune.com/company/northrop-grumman/
+2026-11-13,113,Best Buy,Best Buy,existing_name,,,,https://fortune.com/company/best-buy/
+2026-11-13,114,Salesforce,Salesforce,existing_name,,,,https://fortune.com/company/salesforce-com/
+2026-11-13,115,Bank of New York (BNY),BNY Mellon,existing_alias,,,,https://fortune.com/company/bank-of-new-york-mellon-corp/
+2026-11-13,116,Honeywell Technologies,Honeywell Technologies,existing_name,,,,https://fortune.com/company/honeywell-international/
+2026-11-13,117,Philip Morris International,Philip Morris International,existing_name,,,,https://fortune.com/company/philip-morris-international/
+2026-11-13,118,CBRE Group,CBRE Group,existing_name,,,,https://fortune.com/company/cbre-group/
+2026-11-13,119,Visa,Visa,existing_name,,,,https://fortune.com/company/visa/
+2026-11-13,120,Dow,Dow Inc.,existing_normalised_name,,,,https://fortune.com/company/dow/
+2026-11-13,121,US Foods Holding,US Foods Holding,added,https://www.usfoods.com/,https://www.wikidata.org/wiki/Q1668265,confirmed,https://fortune.com/company/us-foods-holding/
+2026-11-13,122,Mondelēz International,Mondelez International,existing_alias,,,,https://fortune.com/company/mondelez-international/
+2026-11-13,123,Lithia Motors,Lithia Motors,added,https://www.lithiadriveway.com/,homepage title: Lithia & Driveway,confirmed,https://fortune.com/company/lithia-motors/
+2026-11-13,124,GE Vernova,GE Vernova,existing_name,,,,https://fortune.com/company/gevernova/
+2026-11-13,125,Micron Technology,Micron Technology,existing_name,,,,https://fortune.com/company/micron-technology/
+2026-11-13,126,Warner Bros. Discovery,Warner Bros. Discovery,added,https://www.wbd.com/,https://www.wikidata.org/wiki/Q107074885,confirmed,https://fortune.com/company/discovery/
+2026-11-13,127,Starbucks,Starbucks,existing_name,,,,https://fortune.com/company/starbucks/
+2026-11-13,128,World Kinect,World Kinect,added,https://www.worldfuel.com/,homepage: worldkinect.com and world-kinect.com both redirect here,confirmed,https://fortune.com/company/world-fuel-services/
+2026-11-13,129,Amgen,Amgen,existing_name,,,,https://fortune.com/company/amgen/
+2026-11-13,130,CHS,CHS Inc.,added,https://www.chsinc.com/,homepage title: Creating connections to empower agriculture | CHS,confirmed,https://fortune.com/company/chs/
+2026-11-13,131,Advanced Micro Devices,AMD,existing_alias,,,,https://fortune.com/company/advanced-micro-devices/
+2026-11-13,132,Coupang,Coupang,added,https://www.aboutcoupang.com/,"homepage title: Coupang, Inc.",confirmed,https://fortune.com/company/coupang/
+2026-11-13,133,Hewlett Packard Enterprise,Hewlett-Packard Enterprise,existing_normalised_name,,,,https://fortune.com/company/hewlett-packard-enterprise/
+2026-11-13,134,D.R. Horton,D. R. Horton,existing_normalised_name,,,,https://fortune.com/company/d-r-horton/
+2026-11-13,135,Lennar Corporation,Lennar,existing_normalised_name,,,,https://fortune.com/company/lennar/
+2026-11-13,136,PNC Financial Services Group,PNC Financial Services,existing_normalised_name,,,,https://fortune.com/company/pnc-financial-services/
+2026-11-13,137,Cummins,Cummins,existing_name,,,,https://fortune.com/company/cummins/
+2026-11-13,138,Oneok,Oneok,existing_name,,,,https://fortune.com/company/oneok/
+2026-11-13,139,PayPal Holdings,PayPal,existing_normalised_name,,,,https://fortune.com/company/paypal-holdings/
+2026-11-13,140,GuideWell Mutual Holding,GuideWell Mutual Holding,added,https://www.guidewell.com/,homepage title: Advancing Health Together | GuideWell,confirmed,https://fortune.com/company/guidewell-mutual-holding/
+2026-11-13,141,Mastercard,Mastercard,existing_name,,,,https://fortune.com/company/mastercard/
+2026-11-13,142,Nucor,Nucor,existing_name,,,,https://fortune.com/company/nucor/
+2026-11-13,143,Apollo Global Management,Apollo Global Management,existing_name,,,,https://fortune.com/company/apollo-global-management/
+2026-11-13,144,Penske Automotive Group,Penske Automotive Group,added,https://www.penskeautomotive.com/,https://www.wikidata.org/wiki/Q1975799,confirmed,https://fortune.com/company/penske-automotive-group/
+2026-11-13,145,Duke Energy,Duke Energy,existing_name,,,,https://fortune.com/company/duke-energy/
+2026-11-13,146,United Natural Foods,United Natural Foods,added,https://www.unfi.com/,https://www.wikidata.org/wiki/Q7888979,confirmed,https://fortune.com/company/united-natural-foods/
+2026-11-13,147,Ferguson Enterprises,Ferguson Enterprises,existing_name,,,,https://fortune.com/company/ferguson/
+2026-11-13,148,Arrow Electronics,Arrow Electronics,added,https://www.arrow.com/,https://www.wikidata.org/wiki/Q2059537,confirmed,https://fortune.com/company/arrow-electronics/
+2026-11-13,149,NRG Energy,NRG Energy,existing_name,,,,https://fortune.com/company/nrg-energy/
+2026-11-13,150,Truist Financial,Truist Financial,existing_name,,,,https://fortune.com/company/bbt-corp/
+2026-11-13,151,Jabil,Jabil,existing_name,,,,https://fortune.com/company/jabil-circuit/
+2026-11-13,152,Southern,Southern Company,existing_normalised_name,,,,https://fortune.com/company/southern/
+2026-11-13,153,Gilead Sciences,Gilead Sciences,existing_name,,,,https://fortune.com/company/gilead-sciences/
+2026-11-13,154,PBF Energy,PBF Energy,added,https://www.pbfenergy.com/,https://www.wikidata.org/wiki/Q16979157,confirmed,https://fortune.com/company/pbf-energy/
+2026-11-13,155,Paramount Skydance,Skydance Corporation,existing_alias,,,,https://fortune.com/company/cbs/
+2026-11-13,156,KKR,Kohlberg Kravis Roberts,existing_alias,,,,https://fortune.com/company/kkr/
+2026-11-13,157,Quanta Services,Quanta Services,existing_name,,,,https://fortune.com/company/quanta-services/
+2026-11-13,158,Paccar,Paccar,existing_name,,,,https://fortune.com/company/paccar/
+2026-11-13,159,Medline,Medline,added,https://www.medline.com/,https://www.wikidata.org/wiki/Q6807236,confirmed,https://fortune.com/company/medline/
+2026-11-13,160,Hartford Insurance Group,Hartford,existing_alias,,,,https://fortune.com/company/hartford-financial-services/
+2026-11-13,162,CarMax,CarMax,added,https://www.carmax.com/,not confirmed: site answered 403 to an automated request,unconfirmed,https://fortune.com/company/carmax/
+2026-11-13,163,Southwest Airlines,Southwest Airlines,existing_name,,,,https://fortune.com/company/southwest-airlines/
+2026-11-13,164,Baker Hughes,Baker Hughes,existing_name,,,,https://fortune.com/company/baker-hughes/
+2026-11-13,165,Charles Schwab,Charles Schwab Corporation,existing_normalised_name,,,,https://fortune.com/company/charles-schwab/
+2026-11-13,166,AutoNation,AutoNation,added,https://www.autonation.com/,https://www.wikidata.org/wiki/Q784804,confirmed,https://fortune.com/company/auto-nation/
+2026-11-13,167,NextEra Energy,NextEra Energy,existing_name,,,,https://fortune.com/company/nextera-energy/
+2026-11-13,168,Marsh & McLennan,Marsh McLennan,existing_normalised_name,,,,https://fortune.com/company/marsh-mclennan/
+2026-11-13,169,Booking Holdings,Booking Holdings,existing_name,,,,https://fortune.com/company/booking-holdings/
+2026-11-13,170,McDonald's,McDonald's,existing_name,,,,https://fortune.com/company/mcdonalds/
+2026-11-13,171,HF Sinclair,HF Sinclair,added,https://www.hfsinclair.com/,not confirmed: site answered 403 to an automated request,unconfirmed,https://fortune.com/company/hollyfrontier/
+2026-11-13,172,AIG,American International Group,existing_alias,,,,https://fortune.com/company/aig/
+2026-11-13,173,Occidental Petroleum,Occidental Petroleum,existing_name,,,,https://fortune.com/company/occidental-petroleum/
+2026-11-13,174,Marriott International,Marriott International,existing_name,,,,https://fortune.com/company/marriott-international/
+2026-11-13,175,Jones Lang LaSalle,Jones Lang LaSalle,added,https://www.jll.com/,https://www.wikidata.org/wiki/Q1703389,confirmed,https://fortune.com/company/jones-lang-lasalle/
+2026-11-13,176,International Paper,International Paper,existing_name,,,,https://fortune.com/company/international-paper/
+2026-11-13,177,Freeport-McMoRan,Freeport-McMoRan,existing_name,,,,https://fortune.com/company/freeport-mcmoran/
+2026-11-13,178,Constellation Energy,Constellation Energy,existing_name,,,,https://fortune.com/company/constellation-energy/
+2026-11-13,179,Waste Management,Waste Management,existing_name,,,,https://fortune.com/company/waste-management/
+2026-11-13,180,Live Nation Entertainment,Live Nation Entertainment,existing_name,,,,https://fortune.com/company/live-nation-entertainment/
+2026-11-13,181,Stryker,Stryker Corporation,existing_normalised_name,,,,https://fortune.com/company/stryker/
+2026-11-13,182,Dollar Tree,Dollar Tree,existing_name,,,,https://fortune.com/company/dollar-tree/
+2026-11-13,183,3M,3M,existing_name,,,,https://fortune.com/company/3m/
+2026-11-13,184,Kraft Heinz,Kraft Heinz,existing_name,,,,https://fortune.com/company/kraft-heinz/
+2026-11-13,185,PG&E,PG&E Corporation,existing_normalised_name,,,,https://fortune.com/company/pge-corp/
+2026-11-13,186,Danaher,Danaher Corporation,existing_normalised_name,,,,https://fortune.com/company/danaher/
+2026-11-13,187,Union Pacific,Union Pacific Corporation,existing_normalised_name,,,,https://fortune.com/company/union-pacific/
+2026-11-13,188,Genuine Parts,Genuine Parts Company,existing_normalised_name,,,,https://fortune.com/company/genuine-parts/
+2026-11-13,189,Exelon,Exelon,existing_name,,,,https://fortune.com/company/exelon/
+2026-11-13,190,BlackRock,BlackRock,existing_name,,,,https://fortune.com/company/blackrock/
+2026-11-13,191,Block,Square,existing_alias,,,,https://fortune.com/company/square/
+2026-11-13,192,Adobe,Adobe,existing_name,,,,https://fortune.com/company/adobe-systems/
+2026-11-13,193,Reinsurance Group of America,Reinsurance Group of America,added,https://www.rgare.com/,https://www.wikidata.org/wiki/Q1793182,confirmed,https://fortune.com/company/reinsurance-group-of-america/
+2026-11-13,194,Sherwin-Williams,Sherwin-Williams,existing_name,,,,https://fortune.com/company/sherwin-williams/
+2026-11-13,195,WESCO International,WESCO International,added,https://www.wesco.com/,https://www.wikidata.org/wiki/Q7949044,confirmed,https://fortune.com/company/wesco-international/
+2026-11-13,196,Lear,Lear Corporation,added,https://www.lear.com/,https://www.wikidata.org/wiki/Q502344,confirmed,https://fortune.com/company/lear/
+2026-11-13,197,Synchrony Financial,Synchrony Financial,existing_name,,,,https://fortune.com/company/synchrony-financial/
+2026-11-13,198,Amphenol,Amphenol,existing_name,,,,https://fortune.com/company/amphenol/
+2026-11-13,199,Ross Stores,Ross Stores,existing_name,,,,https://fortune.com/company/ross-stores/
+2026-11-13,200,Newmont,Newmont,existing_name,,,,https://fortune.com/company/newmont-mining/
+2026-11-13,201,EOG Resources,EOG Resources,existing_name,,,,https://fortune.com/company/eog-resources/
+2026-11-13,202,State Street,State Street Corporation,existing_normalised_name,,,,https://fortune.com/company/state-street-corp/
+2026-11-13,203,Macy's,Macy's,existing_name,,,,https://fortune.com/company/macys/
+2026-11-13,204,Group 1 Automotive,Group 1 Automotive,added,https://www.group1auto.com/,https://www.wikidata.org/wiki/Q5611081,confirmed,https://fortune.com/company/group-1-automotive/
+2026-11-13,205,CDW,CDW Corporation,existing_normalised_name,,,,https://fortune.com/company/cdw/
+2026-11-13,206,Avnet,Avnet,added,https://www.avnet.com/,https://www.wikidata.org/wiki/Q4829076,confirmed,https://fortune.com/company/avnet/
+2026-11-13,207,Halliburton,Halliburton,existing_name,,,,https://fortune.com/company/halliburton/
+2026-11-13,208,Super Micro Computer,Supermicro,existing_alias,,,,https://fortune.com/company/super-micro-computer/
+2026-11-13,209,American Electric Power,American Electric Power,existing_name,,,,https://fortune.com/company/american-electric-power/
+2026-11-13,210,L3Harris Technologies,L3Harris,existing_normalised_name,,,,https://fortune.com/company/harris/
+2026-11-13,211,Becton Dickinson,Becton Dickinson,existing_name,,,,https://fortune.com/company/becton-dickinson/
+2026-11-13,212,Carrier Global,Carrier Global,existing_name,,,,https://fortune.com/company/carrier-global/
+2026-11-13,213,BJ's Wholesale Club,BJ's Wholesale Club,added,https://www.bjs.com/,https://www.wikidata.org/wiki/Q4835754,confirmed,https://fortune.com/company/bjs-wholesale-club/
+2026-11-13,214,Tenet Healthcare,Tenet Healthcare,added,https://www.tenethealth.com/,https://www.wikidata.org/wiki/Q3518066,confirmed,https://fortune.com/company/tenet-healthcare/
+2026-11-13,215,Fiserv,Fiserv,existing_name,,,,https://fortune.com/company/fiserv/
+2026-11-13,216,Cognizant Technology Solutions,Cognizant,existing_normalised_name,,,,https://fortune.com/company/cognizant-technology-solutions/
+2026-11-13,217,GE HealthCare,GE HealthCare,existing_name,,,,https://fortune.com/company/ge-healthcare-technologies/
+2026-11-13,218,Automatic Data Processing,Automatic Data Processing,existing_name,,,,https://fortune.com/company/adp/
+2026-11-13,219,Colgate-Palmolive,Colgate-Palmolive,existing_name,,,,https://fortune.com/company/colgate-palmolive/
+2026-11-13,220,Carvana,Carvana,existing_name,,,,https://fortune.com/company/carvana/
+2026-11-13,221,Altria Group,Altria,existing_normalised_name,,,,https://fortune.com/company/altria-group/
+2026-11-13,222,Boston Scientific,Boston Scientific,existing_name,,,,https://fortune.com/company/boston-scientific/
+2026-11-13,223,Cheniere Energy,Cheniere Energy,added,https://www.cheniere.com/,https://www.wikidata.org/wiki/Q27926500,confirmed,https://fortune.com/company/cheniere-energy/
+2026-11-13,224,Parker-Hannifin,Parker Hannifin,existing_normalised_name,,,,https://fortune.com/company/parker-hannifin/
+2026-11-13,225,Kimberly-Clark,Kimberly-Clark,existing_name,,,,https://fortune.com/company/kimberly-clark/
+2026-11-13,226,American Family Insurance Group,American Family Insurance Group,added,https://www.amfam.com/,https://www.wikidata.org/wiki/Q4743730,confirmed,https://fortune.com/company/american-family-insurance-group/
+2026-11-13,227,General Mills,General Mills,existing_name,,,,https://fortune.com/company/general-mills/
+2026-11-13,228,Edison International,Edison International,existing_name,,,,https://fortune.com/company/edison-international/
+2026-11-13,229,AutoZone,AutoZone,existing_name,,,,https://fortune.com/company/autozone/
+2026-11-13,230,Ameriprise Financial,Ameriprise Financial,existing_name,,,,https://fortune.com/company/ameriprise-financial/
+2026-11-13,231,Intuit,Intuit,existing_name,,,,https://fortune.com/company/intuit/
+2026-11-13,232,Guardian Life Ins. Co. of America,Guardian Life,added,https://www.guardianlife.com/,https://www.wikidata.org/wiki/Q3118789,confirmed,https://fortune.com/company/guardian-life-ins-co-of-america/
+2026-11-13,233,Cleveland-Cliffs,Cleveland-Cliffs,added,https://www.clevelandcliffs.com/,https://www.wikidata.org/wiki/Q5133094,confirmed,https://fortune.com/company/cleveland-cliffs/
+2026-11-13,234,Global Partners,Global Partners,added,https://www.globalp.com/,homepage title: Homepage | Global Partners LP,confirmed,https://fortune.com/company/global-partners/
+2026-11-13,235,Aramark,Aramark,added,https://www.aramark.com/,https://www.wikidata.org/wiki/Q625708,confirmed,https://fortune.com/company/aramark/
+2026-11-13,236,Corebridge Financial,Corebridge Financial,added,https://www.corebridgefinancial.com/,https://www.wikidata.org/wiki/Q115803672,confirmed,https://fortune.com/company/corebridge-financial/
+2026-11-13,237,Loews,Loews Corporation,existing_normalised_name,,,,https://fortune.com/company/loews/
+2026-11-13,238,Lam Research,Lam Research,existing_name,,,,https://fortune.com/company/lam-research/
+2026-11-13,239,Goodyear Tire & Rubber,Goodyear Tire & Rubber,added,https://www.goodyear.com/,https://www.wikidata.org/wiki/Q620875,confirmed,https://fortune.com/company/goodyear-tire-rubber/
+2026-11-13,240,Pacific Life,Pacific Life,added,https://www.pacificlife.com/,"homepage title: Life Insurance, Retirement Income, Employee Benefits",confirmed,https://fortune.com/company/pacific-life/
+2026-11-13,241,Auto-Owners Insurance,Auto-Owners Insurance,added,https://www.auto-owners.com/,https://www.wikidata.org/wiki/Q4826032,confirmed,https://fortune.com/company/auto-owners-insurance/
+2026-11-13,242,Peter Kiewit Sons',Kiewit,added,https://www.kiewit.com/,https://www.wikidata.org/wiki/Q1741142,confirmed,https://fortune.com/company/peter-kiewit-sons/
+2026-11-13,243,Lincoln National,Lincoln National,added,https://www.lincolnfinancial.com/,https://www.wikidata.org/wiki/Q1825763,confirmed,https://fortune.com/company/lincoln-national/
+2026-11-13,244,Steel Dynamics,Steel Dynamics,existing_name,,,,https://fortune.com/company/steel-dynamics/
+2026-11-13,245,Emerson Electric,Emerson Electric,existing_name,,,,https://fortune.com/company/emerson-electric/
+2026-11-13,246,Asbury Automotive Group,Asbury Automotive Group,added,https://www.asburyauto.com/,https://www.wikidata.org/wiki/Q4803735,confirmed,https://fortune.com/company/asbury-automotive-group/
+2026-11-13,247,ManpowerGroup,ManpowerGroup,added,https://www.manpowergroup.com/,https://www.wikidata.org/wiki/Q1472539,confirmed,https://fortune.com/company/manpowergroup/
+2026-11-13,248,W.W. Grainger,W. W. Grainger,existing_normalised_name,,,,https://fortune.com/company/w-w-grainger/
+2026-11-13,249,Jones Financial (Edward Jones),Edward Jones,added,https://www.edwardjones.com/,homepage title: Edward Jones: Financial Advisors and Wealth Strategies,confirmed,https://fortune.com/company/edward-jones/
+2026-11-13,250,O'Reilly Automotive,O'Reilly Automotive,existing_name,,,,https://fortune.com/company/oreilly-automotive/
+2026-11-13,251,Vistra,Vistra Corp.,existing_normalised_name,,,,https://fortune.com/company/vistra-energy/
+2026-11-13,252,Texas Instruments,Texas Instruments,existing_name,,,,https://fortune.com/company/texas-instruments/
+2026-11-13,253,MGM Resorts International,MGM Resorts,existing_normalised_name,,,,https://fortune.com/company/mgm-resorts-international/
+2026-11-13,254,Corteva,Corteva,added,https://www.corteva.com/,https://www.wikidata.org/wiki/Q63197674,confirmed,https://fortune.com/company/corteva/
+2026-11-13,255,Universal Health Services,Universal Health Services,existing_name,,,,https://fortune.com/company/universal-health-services/
+2026-11-13,256,PulteGroup,PulteGroup,existing_name,,,,https://fortune.com/company/pultegroup/
+2026-11-13,257,Omnicom Group,Omnicom Group,existing_name,,,,https://fortune.com/company/omnicom-group/
+2026-11-13,258,Dick's Sporting Goods,Dick's Sporting Goods,added,https://www.dickssportinggoods.com/,https://www.wikidata.org/wiki/Q5272601,confirmed,https://fortune.com/company/dicks-sporting-goods/
+2026-11-13,259,Devon Energy,Devon Energy,existing_name,,,,https://fortune.com/company/devon-energy/
+2026-11-13,260,Leidos Holdings,Leidos,existing_normalised_name,,,,https://fortune.com/company/leidos-holdings/
+2026-11-13,261,Aflac,Aflac,existing_name,,,,https://fortune.com/company/aflac/
+2026-11-13,262,Targa Resources,Targa Resources,existing_name,,,,https://fortune.com/company/targa-resources/
+2026-11-13,263,Murphy USA,Murphy USA,added,https://www.murphyusa.com/,https://www.wikidata.org/wiki/Q19604459,confirmed,https://fortune.com/company/murphy-usa/
+2026-11-13,264,LPL Financial Holdings,LPL Financial Holdings,added,https://www.lpl.com/,https://www.wikidata.org/wiki/Q6459734,confirmed,https://fortune.com/company/lpl-financial-holdings/
+2026-11-13,265,Emcor Group,Emcor,existing_normalised_name,,,,https://fortune.com/company/emcor-group/
+2026-11-13,266,Kinder Morgan,Kinder Morgan,existing_name,,,,https://fortune.com/company/kinder-morgan/
+2026-11-13,267,Consolidated Edison,Consolidated Edison,existing_name,,,,https://fortune.com/company/consolidated-edison/
+2026-11-13,268,Keurig Dr Pepper,Keurig Dr Pepper,existing_name,,,,https://fortune.com/company/dr-pepper-snapple-group/
+2026-11-13,269,Republic Services,Republic Services,existing_name,,,,https://fortune.com/company/republic-services/
+2026-11-13,270,Markel Group,Markel Group,added,https://www.markel.com/,homepage title: Specialty Insurance | Markel,confirmed,https://fortune.com/company/markel/
+2026-11-13,271,Farmers Insurance Exchange,Farmers Insurance Exchange,added,https://www.farmers.com/,https://www.wikidata.org/wiki/Q1396863,confirmed,https://fortune.com/company/farmers-insurance-exchange/
+2026-11-13,272,Dominion Energy,Dominion Energy,existing_name,,,,https://fortune.com/company/dominion-resources/
+2026-11-13,273,Land O'Lakes,Land O'Lakes,added,https://www.landolakesinc.com/,"homepage title: Land O'Lakes, Inc. - Home",confirmed,https://fortune.com/company/land-olakes/
+2026-11-13,274,IQVIA Holdings,IQVIA,existing_normalised_name,,,,https://fortune.com/company/quintiles-ims-holdings/
+2026-11-13,275,Fox,Fox Corporation,existing_normalised_name,,,,https://fortune.com/company/fox/
+2026-11-13,276,AECOM,AECOM,added,https://www.aecom.com/,https://www.wikidata.org/wiki/Q2825507,confirmed,https://fortune.com/company/aecom/
+2026-11-13,277,C.H. Robinson Worldwide,C.H. Robinson,existing_normalised_name,,,,https://fortune.com/company/c-h-robinson-worldwide/
+2026-11-13,278,Bitgo Holdings,Bitgo,existing_normalised_name,,,,https://fortune.com/company/bitgo-holdings/
+2026-11-13,279,United Rentals,United Rentals,existing_name,,,,https://fortune.com/company/united-rentals/
+2026-11-13,280,Ecolab,Ecolab,existing_name,,,,https://fortune.com/company/ecolab/
+2026-11-13,281,Illinois Tool Works,Illinois Tool Works,existing_name,,,,https://fortune.com/company/illinois-tool-works/
+2026-11-13,282,Casey's General Stores,Casey's,existing_alias,,,,https://fortune.com/company/caseys-general-stores/
+2026-11-13,283,Raymond James Financial,Raymond James Financial,existing_name,,,,https://fortune.com/company/raymond-james-financial/
+2026-11-13,284,PPG Industries,PPG Industries,existing_name,,,,https://fortune.com/company/ppg-industries/
+2026-11-13,285,DTE Energy,DTE Energy,existing_name,,,,https://fortune.com/company/dte-energy/
+2026-11-13,286,Corning,Corning Inc.,existing_normalised_name,,,,https://fortune.com/company/corning/
+2026-11-13,287,Principal Financial,Principal Financial Group,existing_normalised_name,,,,https://fortune.com/company/principal-financial/
+2026-11-13,288,Mutual of Omaha,Mutual of Omaha,added,https://www.mutualofomaha.com/,https://www.wikidata.org/wiki/Q17108173,confirmed,https://fortune.com/company/mutual-of-omaha-insurance/
+2026-11-13,289,Kohl's,Kohl's,added,https://www.kohls.com/,https://www.wikidata.org/wiki/Q967265,confirmed,https://fortune.com/company/kohls/
+2026-11-13,290,Tractor Supply,Tractor Supply,existing_name,,,,https://fortune.com/company/tractor-supply/
+2026-11-13,291,Whirlpool,Whirlpool,added,https://www.whirlpoolcorp.com/,https://www.wikidata.org/wiki/Q1471346,confirmed,https://fortune.com/company/whirlpool/
+2026-11-13,292,Fluor,Fluor,added,https://www.fluor.com/,https://www.wikidata.org/wiki/Q653581,confirmed,https://fortune.com/company/fluor/
+2026-11-13,293,Gap,Gap Inc.,added,https://www.gapinc.com/,https://www.wikidata.org/wiki/Q420822,confirmed,https://fortune.com/company/gap/
+2026-11-13,294,S&P Global,S&P Global,existing_name,,,,https://fortune.com/company/sp-global/
+2026-11-13,295,Ally Financial,Ally Financial,added,https://www.ally.com/,https://www.wikidata.org/wiki/Q2032800,confirmed,https://fortune.com/company/ally-financial/
+2026-11-13,296,Builders FirstSource,Builders FirstSource,added,https://www.bldr.com/,https://www.wikidata.org/wiki/Q27686100,confirmed,https://fortune.com/company/builders-firstsource/
+2026-11-13,297,Sonic Automotive,Sonic Automotive,added,https://www.sonicautomotive.com/,https://www.wikidata.org/wiki/Q7561788,confirmed,https://fortune.com/company/sonic-automotive/
+2026-11-13,298,Stanley Black & Decker,Stanley Black & Decker,existing_name,,,,https://fortune.com/company/stanley-black-decker/
+2026-11-13,299,Kenvue,Kenvue,existing_name,,,,https://fortune.com/company/kenvue/
+2026-11-13,300,Kyndryl Holdings,Kyndryl Holdings,added,https://www.kyndryl.com/,https://www.wikidata.org/wiki/Q131883733,confirmed,https://fortune.com/company/kyndryl-holdings/
+2026-11-13,301,Diamondback Energy,Diamondback Energy,existing_name,,,,https://fortune.com/company/diamondback-energy/
+2026-11-13,302,EchoStar,EchoStar,existing_name,,,,https://fortune.com/company/echostar/
+2026-11-13,303,Textron,Textron,existing_name,,,,https://fortune.com/company/textron/
+2026-11-13,304,Expedia Group,Expedia Group,existing_name,,,,https://fortune.com/company/expedia-group/
+2026-11-13,305,W.R. Berkley,W. R. Berkley Corporation,existing_normalised_name,,,,https://fortune.com/company/w-r-berkley/
+2026-11-13,306,Xcel Energy,Xcel Energy,existing_name,,,,https://fortune.com/company/xcel-energy/
+2026-11-13,307,FirstEnergy,FirstEnergy,existing_name,,,,https://fortune.com/company/firstenergy/
+2026-11-13,308,Erie Insurance Group,Erie Indemnity,existing_alias,,,,https://fortune.com/company/erie-insurance-group/
+2026-11-13,309,First Citizens BancShares,First Citizens BancShares,added,https://www.firstcitizens.com/,https://www.wikidata.org/wiki/Q5452733,confirmed,https://fortune.com/company/first-citizens-bancshares/
+2026-11-13,310,Blackstone,The Blackstone Group,existing_normalised_name,,,,https://fortune.com/company/blackstone-group/
+2026-11-13,311,Fidelity National Financial,Fidelity National Financial,added,https://fnf.com/,homepage title: Fidelity National Financial - Home,confirmed,https://fortune.com/company/fidelity-national-financial/
+2026-11-13,312,Otis Worldwide,Otis Worldwide,existing_name,,,,https://fortune.com/company/otis-worldwide/
+2026-11-13,313,Amentum Holdings,Amentum Holdings,added,https://www.amentum.com/,https://www.wikidata.org/wiki/Q106472108,confirmed,https://fortune.com/company/amentum-holdings/
+2026-11-13,314,Regeneron Pharmaceuticals,Regeneron Pharmaceuticals,existing_name,,,,https://fortune.com/company/regeneron-pharmaceuticals/
+2026-11-13,315,Estée Lauder,Estée Lauder Companies,existing_normalised_name,,,,https://fortune.com/company/estee-lauder/
+2026-11-13,316,BorgWarner,BorgWarner,added,https://www.borgwarner.com/,https://www.wikidata.org/wiki/Q825943,confirmed,https://fortune.com/company/borgwarner/
+2026-11-13,317,Northern Trust,Northern Trust,existing_name,,,,https://fortune.com/company/northern-trust/
+2026-11-13,318,Viatris,Viatris,existing_name,,,,https://fortune.com/company/viatris/
+2026-11-13,319,MasTec,MasTec,added,https://www.mastec.com/,https://www.wikidata.org/wiki/Q6782217,confirmed,https://fortune.com/company/mastec/
+2026-11-13,320,Reliance,"Reliance, Inc.",added,https://www.reliance.com/,"homepage title: Reliance, Inc | Global Diversified Metal Solutions & Processing",confirmed,https://fortune.com/company/reliance-steel-aluminum/
+2026-11-13,321,Western & Southern Financial Group,Western & Southern Financial Group,added,https://www.westernsouthern.com/,https://www.wikidata.org/wiki/Q7987429,confirmed,https://fortune.com/company/western-southern-financial/
+2026-11-13,322,Alaska Air Group,Alaska Air Group,added,https://www.alaskaair.com/,homepage title: Alaska Airlines - Flight Deals and Cheap Airline Tickets - Book Today,confirmed,https://fortune.com/company/alaska-air-group/
+2026-11-13,323,BrightSpring Health Services,BrightSpring Health Services,added,https://www.brightspringhealth.com/,https://www.wikidata.org/wiki/Q138212837,confirmed,https://fortune.com/company/brightspring-health-services/
+2026-11-13,324,CSX,CSX Corporation,existing_normalised_name,,,,https://fortune.com/company/csx/
+2026-11-13,325,LKQ,LKQ,added,https://www.lkqcorp.com/,https://www.wikidata.org/wiki/Q20711490,confirmed,https://fortune.com/company/lkq/
+2026-11-13,326,Labcorp Holdings,Labcorp,existing_normalised_name,,,,https://fortune.com/company/laboratory-corp-of-america/
+2026-11-13,327,Arthur J. Gallagher,Arthur J. Gallagher & Co.,existing_normalised_name,,,,https://fortune.com/company/arthur-j-gallagher/
+2026-11-13,328,Venture Global,Venture Global,added,https://ventureglobal.com/,homepage title: Venture Global | Innovating to provide low-cost LNG,confirmed,https://fortune.com/company/venutre-global/
+2026-11-13,329,DoorDash,DoorDash,existing_name,,,,https://fortune.com/company/doordash/
+2026-11-13,330,Sempra,Sempra,existing_name,,,,https://fortune.com/company/sempra-energy/
+2026-11-13,331,DaVita,DaVita,existing_name,,,,https://fortune.com/company/davita/
+2026-11-13,332,Eversource Energy,Eversource Energy,existing_name,,,,https://fortune.com/company/eversource-energy/
+2026-11-13,333,ServiceNow,ServiceNow,existing_name,,,,https://fortune.com/company/servicenow/
+2026-11-13,334,M&T Bank,M&T Bank,existing_name,,,,https://fortune.com/company/mt-bank-corp/
+2026-11-13,335,Henry Schein,Henry Schein,existing_name,,,,https://fortune.com/company/henry-schein/
+2026-11-13,336,GXO Logistics,GXO Logistics,added,https://gxo.com/,https://www.wikidata.org/wiki/Q116550003,confirmed,https://fortune.com/company/gxo-logistics/
+2026-11-13,337,Ball,Ball Corporation,existing_normalised_name,,,,https://fortune.com/company/ball/
+2026-11-13,338,Unum Group,Unum Group,added,https://www.unum.com/,https://www.wikidata.org/wiki/Q143435,confirmed,https://fortune.com/company/unum-group/
+2026-11-13,339,Las Vegas Sands,Las Vegas Sands,existing_name,,,,https://fortune.com/company/las-vegas-sands/
+2026-11-13,340,Entergy,Entergy,existing_name,,,,https://fortune.com/company/entergy/
+2026-11-13,341,Fifth Third Bancorp,Fifth Third Bancorp,existing_name,,,,https://fortune.com/company/fifth-third-bancorp/
+2026-11-13,342,Graybar Electric,Graybar Electric,added,https://www.graybar.com/,https://www.wikidata.org/wiki/Q5598285,confirmed,https://fortune.com/company/graybar-electric/
+2026-11-13,343,DXC Technology,DXC Technology,added,https://dxc.com/,https://www.wikidata.org/wiki/Q28782856,confirmed,https://fortune.com/company/dxc-technology/
+2026-11-13,344,Alcoa,Alcoa,added,https://www.alcoa.com/,https://www.wikidata.org/wiki/Q135325,confirmed,https://fortune.com/company/alcoa/
+2026-11-13,345,Assurant,Assurant,existing_name,,,,https://fortune.com/company/assurant/
+2026-11-13,346,Ryder System,Ryder System,added,https://ryder.com/,https://www.wikidata.org/wiki/Q2178198,confirmed,https://fortune.com/company/ryder-system/
+2026-11-13,347,Intercontinental Exchange,Intercontinental Exchange,existing_name,,,,https://fortune.com/company/intercontinental-exchange/
+2026-11-13,348,Cincinnati Financial,Cincinnati Financial,existing_name,,,,https://fortune.com/company/cincinnati-financial/
+2026-11-13,349,Chewy,Chewy,added,https://www.chewy.com/,https://www.wikidata.org/wiki/Q28130158,confirmed,https://fortune.com/company/chewy/
+2026-11-13,350,Huntington Bancshares,Huntington Bancshares,existing_name,,,,https://fortune.com/company/huntington-bancshares/
+2026-11-13,352,Huntington Ingalls Industries,Huntington Ingalls Industries,existing_name,,,,https://fortune.com/company/huntington-ingalls-industries/
+2026-11-13,353,Wayfair,Wayfair,added,https://www.wayfair.com/,https://www.wikidata.org/wiki/Q3540193,confirmed,https://fortune.com/company/wayfair/
+2026-11-13,354,Lumen Technologies,Lumen Technologies,added,https://www.lumen.com/,homepage title: Lumen Technologies,confirmed,https://fortune.com/company/centurylink/
+2026-11-13,355,Ulta Beauty,Ulta Beauty,existing_name,,,,https://fortune.com/company/ulta-beauty/
+2026-11-13,356,Crown Holdings,Crown Holdings,added,https://www.crowncork.com/,https://www.wikidata.org/wiki/Q5189378,confirmed,https://fortune.com/company/crown-holdings/
+2026-11-13,357,Airbnb,Airbnb,existing_name,,,,https://fortune.com/company/airbnb/
+2026-11-13,358,AES,AES Corporation,existing_normalised_name,,,,https://fortune.com/company/aes/
+2026-11-13,359,Norfolk Southern,Norfolk Southern,existing_name,,,,https://fortune.com/company/norfolk-southern/
+2026-11-13,360,Public Service Enterprise Group,Public Service Enterprise Group,existing_name,,,,https://fortune.com/company/public-service-enterprise-group/
+2026-11-13,361,KLA,KLA Corporation,existing_normalised_name,,,,https://fortune.com/company/kla-tencor/
+2026-11-13,362,Expand Energy,Expand Energy,existing_name,,,,https://fortune.com/company/chesapeake-energy/
+2026-11-13,363,Hormel Foods,Hormel Foods,existing_name,,,,https://fortune.com/company/hormel-foods/
+2026-11-13,364,Darden Restaurants,Darden Restaurants,existing_name,,,,https://fortune.com/company/darden-restaurants/
+2026-11-13,365,Citizens Financial Group,Citizens Financial Group,existing_name,,,,https://fortune.com/company/citizens-financial-group/
+2026-11-13,366,Mosaic,Mosaic,existing_name,,,,https://fortune.com/company/mosaic/
+2026-11-13,367,Hilton Worldwide Holdings,Hilton Worldwide,existing_normalised_name,,,,https://fortune.com/company/hilton-worldwide-holdings/
+2026-11-13,368,Air Products & Chemicals,Air Products,existing_alias,,,,https://fortune.com/company/air-products-chemicals/
+2026-11-13,369,Jacobs Solutions,Jacobs Solutions,existing_name,,,,https://fortune.com/company/jacobs-engineering-group/
+2026-11-13,370,Vertex Pharmaceuticals,Vertex Pharmaceuticals,existing_name,,,,https://fortune.com/company/vertex-pharmaceuticals/
+2026-11-13,371,J.B. Hunt Transport Services,J.B. Hunt,existing_alias,,,,https://fortune.com/company/j-b-hunt-transport-services/
+2026-11-13,372,Booz Allen Hamilton Holding,Booz Allen Hamilton Holding,added,https://www.boozallen.com/,https://www.wikidata.org/wiki/Q893221,confirmed,https://fortune.com/company/booz-allen-hamilton/
+2026-11-13,373,Williams,Williams Companies,existing_normalised_name,,,,https://fortune.com/company/williams/
+2026-11-13,374,Chipotle Mexican Grill,Chipotle Mexican Grill,existing_name,,,,https://fortune.com/company/chipotle-mexican-grill/
+2026-11-13,375,Yum China Holdings,Yum China Holdings,added,https://www.yumchina.com/,https://www.wikidata.org/wiki/Q30645592,confirmed,https://fortune.com/company/yum-china-holdings/
+2026-11-13,376,Oscar Health,Oscar Health,added,https://www.hioscar.com/,https://www.wikidata.org/wiki/Q24204297,confirmed,https://fortune.com/company/oscar-health/
+2026-11-13,377,Hershey,Hershey Company,existing_normalised_name,,,,https://fortune.com/company/hershey/
+2026-11-13,378,Motorola Solutions,Motorola Solutions,existing_name,,,,https://fortune.com/company/motorola-solutions/
+2026-11-13,379,Equitable Holdings,Equitable Holdings,added,https://equitable.com/,https://www.wikidata.org/wiki/Q4655171,confirmed,https://fortune.com/company/equitable-holdings/
+2026-11-13,380,Avis Budget Group,Avis Budget Group,added,https://avisbudgetgroup.com/,https://www.wikidata.org/wiki/Q2874395,confirmed,https://fortune.com/company/avis-budget-group/
+2026-11-13,381,Conagra Brands,Conagra Brands,added,https://www.conagrabrands.com/,https://www.wikidata.org/wiki/Q1123399,confirmed,https://fortune.com/company/conagra-brands/
+2026-11-13,382,Baxter International,Baxter International,existing_name,,,,https://fortune.com/company/baxter-international/
+2026-11-13,383,Burlington Stores,Burlington Stores,added,https://www.burlington.com/,https://www.wikidata.org/wiki/Q4999220,confirmed,https://fortune.com/company/burlington-stores/
+2026-11-13,384,Caesars Entertainment,Caesars Entertainment,added,https://www.caesars.com/,https://www.wikidata.org/wiki/Q18636524,confirmed,https://fortune.com/company/eldorado-resorts/
+2026-11-13,385,Owens Corning,Owens Corning,added,https://www.owenscorning.com/,https://www.wikidata.org/wiki/Q7114736,confirmed,https://fortune.com/company/owens-corning/
+2026-11-13,386,KeyCorp,KeyCorp,existing_name,,,,https://fortune.com/company/keycorp/
+2026-11-13,387,Thrivent Financial,Thrivent Financial,added,https://www.thrivent.com/,https://www.wikidata.org/wiki/Q7798301,confirmed,https://fortune.com/company/thrivent-financial-for-lutherans/
+2026-11-13,388,Westlake,Westlake,added,https://westlake.com/,homepage title: Westlake Corporation | Global Diversified Industrial Company,confirmed,https://fortune.com/company/westlake-chemical/
+2026-11-13,389,Westinghouse Air Brake,Wabtec,existing_alias,,,,https://fortune.com/company/westinghouse-air-brake/
+2026-11-13,390,Molson Coors Beverage,Molson Coors Beverage,added,https://www.molsoncoors.com/,https://www.wikidata.org/wiki/Q3319685,confirmed,https://fortune.com/company/molson-coors-brewing/
+2026-11-13,391,Lululemon athletica,Lululemon athletica,existing_name,,,,https://fortune.com/company/lululemon-athletica/
+2026-11-13,392,FM,FM,added,https://www.fm.com/,not confirmed: site answered 403 to an automated request,unconfirmed,https://fortune.com/company/fm-global/
+2026-11-13,393,Ebay,Ebay,existing_name,,,,https://fortune.com/company/ebay/
+2026-11-13,394,Expeditors Intl. of Washington,Expeditors International,existing_alias,,,,https://fortune.com/company/expeditors-intl-of-washington/
+2026-11-13,395,Quest Diagnostics,Quest Diagnostics,existing_name,,,,https://fortune.com/company/quest-diagnostics/
+2026-11-13,396,Analog Devices,Analog Devices,existing_name,,,,https://fortune.com/company/analog-devices/
+2026-11-13,397,Andersons,The Andersons,added,https://www.andersonsinc.com/,https://www.wikidata.org/wiki/Q7713699,confirmed,https://fortune.com/company/andersons/
+2026-11-13,398,Gold.com,Gold.com,added,https://www.gold.com/,"homepage title: Gold.com, Inc. - Integrated Precious Metals Company | NYSE:GOLD",confirmed,https://fortune.com/company/a-mark-precious-metals/
+2026-11-13,399,Toll Brothers,Toll Brothers,added,https://www.tollbrothers.com/,https://www.wikidata.org/wiki/Q7814310,confirmed,https://fortune.com/company/toll-brothers/
+2026-11-13,400,International Flavors & Fragrances,International Flavors & Fragrances,existing_name,,,,https://fortune.com/company/international-flavors-fragrances/
+2026-11-13,401,Welltower,Welltower,existing_name,,,,https://fortune.com/company/welltower/
+2026-11-13,402,Jefferies Financial Group,Jefferies Financial Group,added,https://www.jefferies.com/,https://www.wikidata.org/wiki/Q325789,confirmed,https://fortune.com/company/leucadia-national/
+2026-11-13,403,Autoliv,Autoliv,added,https://www.autoliv.com/,https://www.wikidata.org/wiki/Q787044,confirmed,https://fortune.com/company/autoliv/
+2026-11-13,404,Mohawk Industries,Mohawk Industries,added,https://www.mohawkind.com/,https://www.wikidata.org/wiki/Q6893780,confirmed,https://fortune.com/company/mohawk-industries/
+2026-11-13,405,Delek US Holdings,Delek US Holdings,added,https://www.delekus.com/,https://www.wikidata.org/wiki/Q104664954,confirmed,https://fortune.com/company/delek-us-holdings/
+2026-11-13,406,Fidelity National Information (FIS),Fidelity National Information Services,existing_alias,,,,https://fortune.com/company/fidelity-national-information-services/
+2026-11-13,407,Accendra Health,Accendra Health,added,https://www.accendrahealth.com/,homepage title: Accendra Health Home Page,confirmed,https://fortune.com/company/owens-minor/
+2026-11-13,408,American Tower,American Tower,existing_name,,,,https://fortune.com/company/american-tower/
+2026-11-13,409,NVR,"NVR, Inc.",existing_normalised_name,,,,https://fortune.com/company/nvr/
+2026-11-13,410,Interactive Brokers Group,Interactive Brokers,existing_normalised_name,,,,https://fortune.com/company/interactive-brokers-group/
+2026-11-13,411,Oshkosh,Oshkosh,added,https://www.oshkoshcorp.com/,https://www.wikidata.org/wiki/Q1969091,confirmed,https://fortune.com/company/oshkosh/
+2026-11-13,412,Cintas,Cintas,existing_name,,,,https://fortune.com/company/cintas/
+2026-11-13,413,Campbell's,Campbell's,added,https://www.thecampbellscompany.com/,homepage title: Home - The Campbell's Company,confirmed,https://fortune.com/company/campbell-soup/
+2026-11-13,414,Vertiv Holdings,Vertiv,existing_normalised_name,,,,https://fortune.com/company/vertiv-holdings/
+2026-11-13,415,Global Payments,Global Payments,existing_name,,,,https://fortune.com/company/global-payments/
+2026-11-13,416,Constellation Brands,Constellation Brands,existing_name,,,,https://fortune.com/company/constellation-brands/
+2026-11-13,417,AGCO,AGCO,added,https://www.agcocorp.com/,https://www.wikidata.org/wiki/Q292292,confirmed,https://fortune.com/company/agco/
+2026-11-13,418,Intuitive Surgical,Intuitive Surgical,existing_name,,,,https://fortune.com/company/intuitive-surgical/
+2026-11-13,419,Ace Hardware,Ace Hardware,added,https://www.acehardware.com/,https://www.wikidata.org/wiki/Q4672981,confirmed,https://fortune.com/company/ace-hardware-corporation/
+2026-11-13,420,Dana,Dana Incorporated,added,https://www.dana.com/,https://www.wikidata.org/wiki/Q5214701,confirmed,https://fortune.com/company/dana/
+2026-11-13,421,Biogen,Biogen,existing_name,,,,https://fortune.com/company/biogen/
+2026-11-13,422,News Corp.,News Corp,existing_normalised_name,,,,https://fortune.com/company/news-corp/
+2026-11-13,423,Concentrix,Concentrix,added,https://www.concentrix.com/,https://www.wikidata.org/wiki/Q19647854,confirmed,https://fortune.com/company/concentrix/
+2026-11-13,424,WEC Energy Group,WEC Energy Group,existing_name,,,,https://fortune.com/company/wec-energy-group/
+2026-11-13,425,VF,VF Corporation,added,https://vfc.com/,https://www.wikidata.org/wiki/Q457960,confirmed,https://fortune.com/company/vf/
+2026-11-13,426,Seaboard,Seaboard,added,https://www.seaboardcorp.com/,homepage title: Seaboard – Seaboard Corporation,confirmed,https://fortune.com/company/seaboard/
+2026-11-13,427,Icahn Enterprises,Icahn Enterprises,added,https://www.ielp.com/,https://www.wikidata.org/wiki/Q5985017 (its icahnenterprises.com redirects here),confirmed,https://fortune.com/company/icahn-enterprises/
+2026-11-13,428,Regions Financial,Regions Financial Corporation,existing_normalised_name,,,,https://fortune.com/company/regions-financial/
+2026-11-13,429,Thor Industries,Thor Industries,added,https://www.thorindustries.com/,https://www.wikidata.org/wiki/Q7796068,confirmed,https://fortune.com/company/thor-industries/
+2026-11-13,430,Workday,Workday,existing_name,,,,https://fortune.com/company/workday/
+2026-11-13,431,Celanese,Celanese,added,https://www.celanese.com/,https://www.wikidata.org/wiki/Q547450,confirmed,https://fortune.com/company/celanese/
+2026-11-13,432,Western Digital,Western Digital,existing_name,,,,https://fortune.com/company/western-digital/
+2026-11-13,433,QVC Group,QVC Group,added,https://www.qvcgrp.com/,homepage title: QVC Group,confirmed,https://fortune.com/company/qurate-retail/
+2026-11-13,434,Zoetis,Zoetis,existing_name,,,,https://fortune.com/company/zoetis/
+2026-11-13,435,CenterPoint Energy,CenterPoint Energy,existing_name,,,,https://fortune.com/company/centerpoint-energy/
+2026-11-13,436,Equinix,Equinix,existing_name,,,,https://fortune.com/company/equinix/
+2026-11-13,437,Palo Alto Networks,Palo Alto Networks,existing_name,,,,https://fortune.com/company/palo-alto-networks/
+2026-11-13,438,APA,APA Corporation,existing_normalised_name,,,,https://fortune.com/company/apache/
+2026-11-13,439,Old Republic International,Old Republic International,added,https://www.oldrepublic.com/,https://www.wikidata.org/wiki/Q7084833,confirmed,https://fortune.com/company/old-republic-international/
+2026-11-13,440,Comfort Systems USA,Comfort Systems USA,existing_name,,,,https://fortune.com/company/comfort-systems-usa/
+2026-11-13,441,JetBlue Airways,JetBlue Airways,added,https://www.jetblue.com/,https://www.wikidata.org/wiki/Q161086,confirmed,https://fortune.com/company/jetblue-airways/
+2026-11-13,442,PPL,PPL Corporation,existing_normalised_name,,,,https://fortune.com/company/ppl/
+2026-11-13,443,Xylem,Xylem Inc.,existing_normalised_name,,,,https://fortune.com/company/xylem/
+2026-11-13,444,Arista Networks,Arista,existing_alias,,,,https://fortune.com/company/arista-networks/
+2026-11-13,445,Packaging Corp. of America,Packaging Corporation of America,existing_normalised_name,,,,https://fortune.com/company/packaging-corp-of-america/
+2026-11-13,446,PVH,PVH,added,https://www.pvh.com/,https://www.wikidata.org/wiki/Q1132272,confirmed,https://fortune.com/company/pvh/
+2026-11-13,447,Ovintiv,Ovintiv,added,https://www.ovintiv.com/,homepage title: Welcome to Ovintiv.com – Ovintiv,confirmed,https://fortune.com/company/ovintiv/
+2026-11-13,448,Avery Dennison,Avery Dennison,existing_name,,,,https://fortune.com/company/avery-dennison/
+2026-11-13,449,TransDigm Group,TransDigm Group,existing_name,,,,https://fortune.com/company/transdigm-group/
+2026-11-13,450,Sprouts Farmers Market,Sprouts Farmers Market,added,https://www.sprouts.com/,https://www.wikidata.org/wiki/Q7581369,confirmed,https://fortune.com/company/sprouts-farmers-market/
+2026-11-13,451,Prologis,Prologis,existing_name,,,,https://fortune.com/company/prologis/
+2026-11-13,452,Franklin Templeton,Franklin Resources,existing_alias,,,,https://fortune.com/company/franklin-resources/
+2026-11-13,453,Eastman Chemical,Eastman Chemical,added,https://www.eastman.com/,https://www.wikidata.org/wiki/Q899022,confirmed,https://fortune.com/company/eastman-chemical/
+2026-11-13,454,ABM Industries,ABM Industries,added,https://www.abm.com/,https://www.wikidata.org/wiki/Q4650338,confirmed,https://fortune.com/company/abm-industries/
+2026-11-13,455,NOV,NOV,added,https://www.nov.com/,https://www.wikidata.org/wiki/Q1817417,confirmed,https://fortune.com/company/national-oilwell-varco/
+2026-11-13,456,J.M. Smucker,J.M. Smucker Company,existing_normalised_name,,,,https://fortune.com/company/j-m-smucker/
+2026-11-13,457,Securian Financial Group,Securian Financial Group,added,https://www.securian.com/,https://www.wikidata.org/wiki/Q16988133,confirmed,https://fortune.com/company/securian-financial-group/
+2026-11-13,458,EQT,EQT Corporation,existing_normalised_name,,,,https://fortune.com/company/eqt/
+2026-11-13,459,CACI International,CACI International,added,https://www.caci.com/,https://www.wikidata.org/wiki/Q1022711,confirmed,https://fortune.com/company/caci-international/
+2026-11-13,460,Graphic Packaging Holding,Graphic Packaging Holding,added,https://www.graphicpkg.com/,https://www.wikidata.org/wiki/Q5597139,confirmed,https://fortune.com/company/graphic-packaging-holding/
+2026-11-13,461,Advance Auto Parts,Advance Auto Parts,added,https://www.advanceautoparts.com/,https://www.wikidata.org/wiki/Q4686051,confirmed,https://fortune.com/company/advance-auto-parts/
+2026-11-13,462,Optimum Communications,Optimum Communications,added,https://www.optimum.com/,"homepage title: Optimum Fiber Internet, TV & Mobile Plans | Optimum",confirmed,https://fortune.com/company/altice-usa/
+2026-11-13,463,Sirius XM Holdings,Sirius XM Holdings,added,https://www.siriusxm.com/,https://www.wikidata.org/wiki/Q3277465,confirmed,https://fortune.com/company/sirius-xm-holdings/
+2026-11-13,464,CMS Energy,CMS Energy,existing_name,,,,https://fortune.com/company/cms-energy/
+2026-11-13,465,Hertz Global Holdings,Hertz Global Holdings,added,https://www.hertz.com/,https://www.wikidata.org/wiki/Q1543874,confirmed,https://fortune.com/company/hertz-global-holdings/
+2026-11-13,466,Ameren,Ameren,existing_name,,,,https://fortune.com/company/ameren/
+2026-11-13,467,Rockwell Automation,Rockwell Automation,existing_name,,,,https://fortune.com/company/rockwell-automation/
+2026-11-13,468,Solventum,Solventum,existing_name,,,,https://fortune.com/company/solventum/
+2026-11-13,469,Monster Beverage,Monster Beverage,existing_name,,,,https://fortune.com/company/monster-beverage/
+2026-11-13,470,Nasdaq,"Nasdaq, Inc.",existing_normalised_name,,,,https://fortune.com/company/nasdaq/
+2026-11-13,471,Howmet Aerospace,Howmet Aerospace,existing_name,,,,https://fortune.com/company/arconic/
+2026-11-13,472,Insight Enterprises,Insight Global,existing_normalised_name,,,,https://fortune.com/company/insight-enterprises/
+2026-11-13,473,Zimmer Biomet Holdings,Zimmer Biomet,existing_normalised_name,,,,https://fortune.com/company/zimmer-biomet-holdings-3/
+2026-11-13,474,Yum Brands,Yum! Brands,existing_normalised_name,,,,https://fortune.com/company/yum-brands/
+2026-11-13,475,Fastenal,Fastenal,existing_name,,,,https://fortune.com/company/fastenal/
+2026-11-13,476,Marvell Technology,Marvell,existing_normalised_name,,,,https://fortune.com/company/marvell-technology/
+2026-11-13,477,Voya Financial,Voya Financial,added,https://www.voya.com/,https://www.wikidata.org/wiki/Q5972276,confirmed,https://fortune.com/company/voya-financial/
+2026-11-13,478,American Financial Group,American Financial Group,added,https://www.afginc.com/,https://www.wikidata.org/wiki/Q4743779,confirmed,https://fortune.com/company/american-financial-group/
+2026-11-13,479,Post Holdings,Post Holdings,added,https://www.postholdings.com/,https://www.wikidata.org/wiki/Q27988145,confirmed,https://fortune.com/company/post-holdings/
+2026-11-13,480,XPO,XPO,added,https://www.xpo.com/,https://www.wikidata.org/wiki/Q8042415,confirmed,https://fortune.com/company/xpo-logistics/
+2026-11-13,481,DuPont,DuPont,existing_name,,,,https://fortune.com/company/dow-chemical/
+2026-11-13,482,Sanmina,Sanmina,added,https://www.sanmina.com/,https://www.wikidata.org/wiki/Q426583,confirmed,https://fortune.com/company/sanmina/
+2026-11-13,483,Taylor Morrison Home,Taylor Morrison Home,added,https://www.taylormorrison.com/,homepage title: New Homes for Sale from America's Most Trusted Home Builder,confirmed,https://fortune.com/company/taylor-morrison-home/
+2026-11-13,484,Dover,Dover,existing_name,,,,https://fortune.com/company/dover/
+2026-11-13,485,Vulcan Materials,Vulcan Materials Company,existing_normalised_name,,,,https://fortune.com/company/vulcan-materials/
+2026-11-13,486,APi Group,APi Group,added,https://www.apigroupinc.com/,https://www.wikidata.org/wiki/Q30298154,confirmed,https://fortune.com/company/api-group/
+2026-11-13,487,Roper Technologies,Roper Technologies,existing_name,,,,https://fortune.com/company/roper-technologies/
+2026-11-13,488,KBR,KBR,added,https://www.kbr.com/,https://www.wikidata.org/wiki/Q596499,confirmed,https://fortune.com/company/kbr/
+2026-11-13,489,Sonoco Products,Sonoco Products,added,https://www.sonoco.com/,https://www.wikidata.org/wiki/Q7562151,confirmed,https://fortune.com/company/sonoco-products/
+2026-11-13,490,Williams-Sonoma,"Williams-Sonoma, Inc.",existing_normalised_name,,,,https://fortune.com/company/williams-sonoma/
+2026-11-13,491,Commercial Metals,Commercial Metals,added,https://www.cmc.com/,https://www.wikidata.org/wiki/Q5152510,confirmed,https://fortune.com/company/commercial-metals/
+2026-11-13,492,Moody's,Moody's Corporation,existing_normalised_name,,,,https://fortune.com/company/moodys/
+2026-11-13,493,Continental Resources,Continental Resources,added,https://www.clr.com/,homepage title: Continental Resources - America's Energy Champion,confirmed,https://fortune.com/company/continental-resources/
+2026-11-13,494,Ingersoll Rand,Ingersoll Rand,existing_name,,,,https://fortune.com/company/gardner-denver/
+2026-11-13,495,Core & Main,Core & Main,added,https://coreandmain.com/,https://www.wikidata.org/wiki/Q65066106,confirmed,https://fortune.com/company/core-main/
+2026-11-13,496,Coterra Energy,Coterra Energy,added,https://www.coterra.com/,homepage title: Coterra Energy - Flexible and built for the future.,confirmed,https://fortune.com/company/coterra-energy/
+2026-11-13,497,Primoris Services,Primoris Services,added,https://www.prim.com/,https://www.wikidata.org/wiki/Q20714950,confirmed,https://fortune.com/company/primoris-services/
+2026-11-13,498,Masco,Masco,existing_name,,,,https://fortune.com/company/masco/
+2026-11-13,499,Somnigroup International,Somnigroup International,added,https://www.somnigroup.com/,not confirmed: site answered 403 to an automated request,unconfirmed,https://fortune.com/company/tempur-sealy-international/
+2026-11-13,500,Resideo Technologies,Resideo Technologies,added,https://www.resideo.com/,https://www.wikidata.org/wiki/Q110443096,confirmed,https://fortune.com/company/resideo-technologies/

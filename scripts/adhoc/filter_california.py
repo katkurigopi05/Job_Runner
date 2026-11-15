@@ -45,7 +45,7 @@ for c in companies:
     if is_bay_area:
         bay_area_jobs.append(c)
 
-with open("/Users/gopikrishnareddykatkuri/.gemini/antigravity-cli/brain/c0d862b8-cad9-4fc6-beea-ec486a2e8f56/california_sde_roles.md", "w") as out:
+with open("california_sde_roles.md", "w") as out:
     out.write("# California Bay Area SDE Roles\n\n")
     out.write(f"Found {len(bay_area_jobs)} open SDE roles in California / Bay Area.\n\n")
     out.write("| Company | Title | Location | Link |\n")
