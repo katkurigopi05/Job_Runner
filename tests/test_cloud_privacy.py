@@ -69,7 +69,7 @@ def test_unicode_json_escaped_known_names_are_masked() -> None:
     assert redactor.restore(masked) == text
 
 
-@pytest.mark.parametrize("phone", ["2025550147", "+44 20 7946 0958", "+91 98765 43210"])
+@pytest.mark.parametrize("phone", ["2025550147", "+44 20 7946 0958", "+91 00000 00000"])
 def test_common_phone_formats_are_masked(phone) -> None:
     redactor = privacy.Redactor(privacy.Identifiers())
     assert phone not in redactor.mask(phone)

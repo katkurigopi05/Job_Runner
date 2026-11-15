@@ -154,8 +154,8 @@ def test_a_line_that_is_only_a_date_does_not_split() -> None:
 # --------------------------------------------------------------------------
 
 _INTERNSHIPS = """\
-Gopi Katkuri
-gopi@example.com | linkedin.com/in/gopi
+Alex Rivera
+alex@example.com | linkedin.com/in/example-dev
 
 EXPERIENCE
 
