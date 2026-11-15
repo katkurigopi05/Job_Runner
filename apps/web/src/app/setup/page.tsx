@@ -1,4 +1,5 @@
 import { ApiError, api, type SetupItem, type SetupState, type SetupStatus } from "@/lib/api";
+import { RefreshButton } from "@/components/refresh-button";
 import { RegistrySync } from "./registry-sync";
 import { StepList } from "./step-list";
 
@@ -119,7 +120,10 @@ export default async function SetupPage() {
         <h1 className="mt-3 max-w-3xl text-display leading-[1.05] tracking-tight">
           {HEADLINE[status.overall]}
         </h1>
-        <p className="mt-4 text-xs text-ink-faint">Checked {generated}. Reload to check again.</p>
+        <div className="mt-4 flex flex-wrap items-center gap-4">
+          <p className="text-xs text-ink-faint">Checked {generated}.</p>
+          <RefreshButton label="Re-check setup" />
+        </div>
 
         {open.length > 0 ? (
           <nav aria-label="Problems" className="mt-8 border-t border-rule pt-5">

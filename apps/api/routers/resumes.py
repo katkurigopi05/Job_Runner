@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Response, UploadFile, status
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
@@ -25,29 +25,16 @@ from packages.core.schemas import (
     ResumeOut,
     ResumeParsedOut,
     ResumePreviewOut,
-    ResumeSynthesizeOut,
-    ResumeSynthesizeRequest,
-    StudioCertificationIn,
-    StudioEvidenceOut,
-    StudioEvidenceSave,
-    StudioInternshipIn,
 )
 from packages.core.storage import get_storage, resume_key
 from packages.github.select import select_projects
-from packages.llm.router import tailor_resume
-from packages.tailor.assemble import assemble_pdf, describe
+from packages.tailor.assemble import describe
 from packages.tailor.docx_export import render_docx
-from packages.tailor.evidence import linked_evidence
 from packages.tailor.layout import measure, section_headings
 from packages.tailor.parse import ParsedResume, ParseError, parse_resume
 from packages.tailor.projects import LinkStyle, ProjectEntry, link_text
-from packages.tailor.publish import house_options
-from packages.tailor.studio import (
-    CertificationRecord,
-    InternshipRecord,
-    RoleTrack,
-    synthesize_resume,
-)
+from packages.tailor.studio import STUDIO_STAMP
+from packages.tailor.studio_load import candidate_projects
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
@@ -309,7 +296,12 @@ async def preview_assembly(
 
 @router.get("/{resume_id}/docx")
 async def download_resume_docx(resume_id: uuid.UUID, session: SessionDep) -> Response:
-    """Export any parsed résumé version as a clean single-column ATS-safe .docx."""
+    """The résumé as a single-column .docx, for a site that asks for Word.
+
+    A version saved from the Resume Studio carries the GitHub projects it was
+    printed with (`studio.STUDIO_STAMP`); they are read again and set the way
+    the PDF sets them. One the owner has since made evidence only is left out.
+    """
     resume = await session.get(Resume, resume_id)
     if resume is None:
         raise ApiError(ErrorCode.NOT_FOUND, "resume not found")
@@ -317,213 +309,16 @@ async def download_resume_docx(resume_id: uuid.UUID, session: SessionDep) -> Res
         raise ApiError(ErrorCode.INVALID_REQUEST, "this résumé has no parsed form to export")
 
     parsed = ParsedResume.model_validate(resume.parsed_json)
-    docx_bytes = await asyncio.to_thread(render_docx, parsed)
+    stamp = resume.parsed_json.get(STUDIO_STAMP) or {}
+    wanted = [str(i) for i in stamp.get("project_ids", []) if isinstance(i, str)]
+    owned = await candidate_projects(session, resume.candidate_id) if wanted else []
+    by_id = {str(p.id): p for p in owned if p.resume_listed}
+    projects = [by_id[i] for i in wanted if i in by_id]
+    docx_bytes = await asyncio.to_thread(render_docx, parsed, projects)
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
             "Content-Disposition": f'attachment; filename="resume-v{resume.version}.docx"',
         },
-    )
-
-
-@router.post("/synthesize", response_model=ResumeSynthesizeOut)
-async def synthesize_studio_resume(
-    body: ResumeSynthesizeRequest, session: SessionDep
-) -> ResumeSynthesizeOut:
-    """Synthesize a role-targeted résumé from GitHub repos, internships, certs, and a JD."""
-    candidate = await session.get(Candidate, body.candidate_id)
-    if candidate is None:
-        raise ApiError(ErrorCode.INVALID_REQUEST, "candidate_id does not exist")
-
-    profile: Profile | None = None
-    if body.profile_id is not None:
-        profile = await session.get(Profile, body.profile_id)
-        if profile is None or profile.candidate_id != candidate.id:
-            raise ApiError(ErrorCode.INVALID_REQUEST, "profile_id does not belong to candidate")
-    else:
-        profile = await session.scalar(
-            select(Profile)
-            .where(Profile.candidate_id == candidate.id)
-            .order_by(Profile.created_at.asc())
-            .limit(1)
-        )
-
-    base_row: Resume | None = None
-    if body.base_resume_id is not None:
-        base_row = await session.get(Resume, body.base_resume_id)
-        if base_row is None or base_row.candidate_id != candidate.id:
-            raise ApiError(ErrorCode.INVALID_REQUEST, "base_resume_id does not belong to candidate")
-    elif profile is not None and profile.base_resume_id is not None:
-        base_row = await session.get(Resume, profile.base_resume_id)
-    else:
-        base_row = await session.scalar(
-            select(Resume)
-            .where(Resume.candidate_id == candidate.id)
-            .order_by(Resume.version.desc())
-            .limit(1)
-        )
-
-    base_parsed = (
-        ParsedResume.model_validate(base_row.parsed_json)
-        if base_row is not None and base_row.parsed_json
-        else None
-    )
-
-    projects = list(
-        (await session.scalars(select(Project).where(Project.candidate_id == candidate.id))).all()
-    )
-    if body.project_ids is not None:
-        wanted = set(body.project_ids)
-        projects = [p for p in projects if p.id in wanted]
-
-    studio_saved = (
-        profile.answers_kv_json.get("resume_studio", {})
-        if profile and isinstance(profile.answers_kv_json, dict)
-        else {}
-    )
-    internships = (
-        [InternshipRecord.model_validate(item.model_dump()) for item in body.internships]
-        if body.internships
-        else [
-            InternshipRecord.model_validate(item)
-            for item in studio_saved.get("internships", [])
-            if isinstance(item, dict)
-        ]
-    )
-    certifications = (
-        [CertificationRecord.model_validate(item.model_dump()) for item in body.certifications]
-        if body.certifications
-        else [
-            CertificationRecord.model_validate(item)
-            for item in studio_saved.get("certifications", [])
-            if isinstance(item, dict)
-        ]
-    )
-
-    evidence = await linked_evidence(session, candidate.id)
-    provider = tailor_resume() if body.use_llm else None
-    synthesis = await synthesize_resume(
-        job_description=body.job_description,
-        role_track=RoleTrack(body.role_track),
-        candidate=candidate,
-        profile=profile,
-        base_resume=base_parsed,
-        projects=projects,
-        internships=internships,
-        certifications=certifications,
-        linked_evidence=evidence,
-        provider=provider,
-        use_llm=body.use_llm,
-        project_limit=body.project_limit,
-    )
-
-    saved_resume: Resume | None = None
-    if body.save_version:
-        try:
-            pdf = await asyncio.to_thread(assemble_pdf, synthesis.draft, None, house_options())
-        except Exception as exc:  # noqa: BLE001 - WeasyPrint runtime dependency
-            raise ApiError(
-                ErrorCode.INTERNAL_ERROR,
-                f"the synthesized résumé could not be rendered to PDF ({type(exc).__name__})",
-            ) from exc
-
-        next_version = (
-            await session.scalar(
-                select(func.coalesce(func.max(Resume.version), 0) + 1).where(
-                    Resume.candidate_id == candidate.id
-                )
-            )
-        ) or 1
-
-        storage = get_storage()
-        key = resume_key(str(candidate.id), next_version, "resume.pdf")
-        try:
-            storage.put(key, pdf)
-        except Exception as exc:  # noqa: BLE001
-            raise ApiError(ErrorCode.INTERNAL_ERROR, f"could not store résumé: {exc}") from exc
-
-        saved_resume = Resume(
-            candidate_id=candidate.id,
-            version=next_version,
-            storage_ref=key,
-            parsed_json=synthesis.draft.model_dump(mode="json"),
-            is_default=body.adopt,
-        )
-        if body.adopt:
-            await session.execute(
-                update(Resume).where(Resume.candidate_id == candidate.id).values(is_default=False)
-            )
-        session.add(saved_resume)
-        await session.flush()
-
-        if body.adopt and profile is not None:
-            profile.base_resume_id = saved_resume.id
-
-        await session.commit()
-        await session.refresh(saved_resume)
-
-    return ResumeSynthesizeOut(
-        role_track=body.role_track,
-        matched_terms=synthesis.matched_terms,
-        missing_terms=synthesis.missing_terms,
-        ats_parse_score=synthesis.ats_parse_score,
-        ats_keyword_score=synthesis.ats_keyword_score,
-        ats_findings=synthesis.ats_findings,
-        selected_projects=synthesis.selected_projects,
-        bullets_rewritten=synthesis.bullets_rewritten,
-        bullets_refused=synthesis.bullets_refused,
-        html_preview=synthesis.html_preview,
-        parsed=synthesis.draft.model_dump(mode="json"),
-        saved_resume=ResumeOut.model_validate(saved_resume) if saved_resume else None,
-    )
-
-
-@router.get("/studio-evidence", response_model=StudioEvidenceOut)
-async def get_studio_evidence(profile_id: uuid.UUID, session: SessionDep) -> StudioEvidenceOut:
-    """Return saved internships and certifications stored on a profile for Resume Studio."""
-    profile = await session.get(Profile, profile_id)
-    if profile is None:
-        raise ApiError(ErrorCode.NOT_FOUND, "profile not found")
-
-    studio_saved = (
-        profile.answers_kv_json.get("resume_studio", {})
-        if isinstance(profile.answers_kv_json, dict)
-        else {}
-    )
-    internships = [
-        StudioInternshipIn.model_validate(item)
-        for item in studio_saved.get("internships", [])
-        if isinstance(item, dict)
-    ]
-    certifications = [
-        StudioCertificationIn.model_validate(item)
-        for item in studio_saved.get("certifications", [])
-        if isinstance(item, dict)
-    ]
-    return StudioEvidenceOut(
-        profile_id=profile.id,
-        internships=internships,
-        certifications=certifications,
-    )
-
-
-@router.put("/studio-evidence", response_model=StudioEvidenceOut)
-async def save_studio_evidence(body: StudioEvidenceSave, session: SessionDep) -> StudioEvidenceOut:
-    """Persist verified internships and certifications on a profile without overwriting Q&A."""
-    profile = await session.get(Profile, body.profile_id)
-    if profile is None:
-        raise ApiError(ErrorCode.NOT_FOUND, "profile not found")
-
-    updated = dict(profile.answers_kv_json or {})
-    updated["resume_studio"] = {
-        "internships": [item.model_dump(mode="json") for item in body.internships],
-        "certifications": [item.model_dump(mode="json") for item in body.certifications],
-    }
-    profile.answers_kv_json = updated
-    await session.commit()
-    return StudioEvidenceOut(
-        profile_id=profile.id,
-        internships=body.internships,
-        certifications=body.certifications,
     )

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ApiError, api, type Application, type ApplicationStatus } from "@/lib/api";
 import { StatusPill } from "@/components/status";
 import { ErrorPanel } from "@/components/error-panel";
+import { RefreshButton } from "@/components/refresh-button";
 
 export const dynamic = "force-dynamic";
 
@@ -27,11 +28,14 @@ export default async function PipelinePage() {
 
   return (
     <div className="space-y-10">
-      <header>
-        <h1 className="text-display leading-[1.05] tracking-tight">Pipeline</h1>
-        <p className="mt-3 max-w-prose text-ink-soft">
-          Every application, by where it stopped.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-display leading-[1.05] tracking-tight">Pipeline</h1>
+          <p className="mt-3 max-w-prose text-ink-soft">
+            Every application, by where it stopped.
+          </p>
+        </div>
+        <RefreshButton />
       </header>
 
       <div className="space-y-10">

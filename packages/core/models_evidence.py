@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, func, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, SmallInteger, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,6 +38,11 @@ def _created_at() -> Mapped[datetime]:
     return mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+def _position() -> Mapped[int]:
+    """Where the owner put it in their list. Rows saved together share `created_at`."""
+    return mapped_column(SmallInteger, nullable=False, server_default=text("0"))
+
+
 class Internship(Base):
     """One internship, as the owner states it."""
 
@@ -57,6 +62,7 @@ class Internship(Base):
     bullets: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=_EMPTY_LIST)
     #: The owner confirmed the record. Only a confirmed one reaches a résumé.
     verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    position: Mapped[int] = _position()
     created_at: Mapped[datetime] = _created_at()
 
     __table_args__ = (Index("ix_internships_candidate", "candidate_id"),)
@@ -78,6 +84,7 @@ class Certification(Base):
     #: never a reason to rewrite an employer's or a project's bullet.
     skills: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=_EMPTY_LIST)
     verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    position: Mapped[int] = _position()
     created_at: Mapped[datetime] = _created_at()
 
     __table_args__ = (Index("ix_certifications_candidate", "candidate_id"),)

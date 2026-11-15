@@ -35,14 +35,8 @@ def _tokens(text: str) -> set[str]:
 
 
 def is_listed(project: Project) -> bool:
-    """Whether the owner lets this repository be printed as a résumé project.
-
-    Always, for a public one. For a private one, only after they include or
-    pin it; excluding it wins over a pin.
-    """
-    if not project.is_private:
-        return True
-    return project.include is True or (project.pinned and project.include is not False)
+    """Whether the owner lets this repository be printed (`Project.resume_listed`)."""
+    return project.resume_listed
 
 
 def is_eligible(project: Project, *, require_description: bool = True) -> bool:
@@ -73,7 +67,8 @@ def relevance(project: Project, job_text: str) -> float:
     """Overlap between the project's own words and the posting's. 0.0–1.0.
 
     Only uses text the project actually carries — name, description, language,
-    topics. Nothing is inferred about what the project does.
+    topics, and the tools its own files declare. Nothing is inferred about
+    what the project does.
     """
     if not job_text.strip():
         return 0.0
@@ -86,6 +81,7 @@ def relevance(project: Project, job_text: str) -> float:
                 project.description or "",
                 project.language or "",
                 " ".join(project.topics_json or []),
+                " ".join(project.dependency_technologies or []),
             ],
         )
     )

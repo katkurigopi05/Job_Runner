@@ -6,6 +6,7 @@
 @theme {
   --color-side: #1f1e1d;
   --color-paper: #262624;
+  --color-paper-warm: #23201c;
   --color-paper-raised: #2d2c2a;
   --color-paper-high: #373633;
   --color-ink: #f5f4ef;
@@ -13,6 +14,8 @@
   --color-ink-faint: #9a988f;
   --color-rule: rgba(240, 238, 229, 0.09);
   --color-rule-soft: rgba(240, 238, 229, 0.08);
+  --color-brand: #d97757;
+  --color-brand-soft: #36221b;
   --color-attn: #d97757;
   --color-attn-text: #e5906f;
   --color-attn-soft: #45322b;
@@ -45,6 +48,7 @@
   color-scheme: light;
   --color-side: #f3f1ea;
   --color-paper: #faf9f5;
+  --color-paper-warm: #f6f2e9;
   --color-paper-raised: #ffffff;
   --color-paper-high: #f0eee6;
   --color-ink: #141413;
@@ -52,6 +56,8 @@
   --color-ink-faint: #6f6e69;
   --color-rule: rgba(31, 30, 29, 0.1);
   --color-rule-soft: rgba(31, 30, 29, 0.08);
+  --color-brand: #c96442;
+  --color-brand-soft: #faece6;
   --color-attn: #b5532f;
   --color-attn-text: #b5532f;
   --color-attn-soft: #f6e8df;
@@ -72,6 +78,7 @@
     color-scheme: light;
     --color-side: #f3f1ea;
     --color-paper: #faf9f5;
+    --color-paper-warm: #f6f2e9;
     --color-paper-raised: #ffffff;
     --color-paper-high: #f0eee6;
     --color-ink: #141413;
@@ -79,6 +86,8 @@
     --color-ink-faint: #6f6e69;
     --color-rule: rgba(31, 30, 29, 0.1);
     --color-rule-soft: rgba(31, 30, 29, 0.08);
+    --color-brand: #c96442;
+    --color-brand-soft: #faece6;
     --color-attn: #b5532f;
     --color-attn-text: #b5532f;
     --color-attn-soft: #f6e8df;
