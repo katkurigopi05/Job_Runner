@@ -2,7 +2,10 @@
 
 import { useMutation } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useId } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useFieldArray, useForm, useWatch } from "react-hook-form";
+import { evidenceFormSchema, type EvidenceFormValues } from "@/lib/schemas";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
 import {
@@ -43,26 +46,32 @@ interface EvidenceEditorProps {
   onSaved: (evidence: Evidence) => void;
 }
 
-function replaced<T>(list: T[], index: number, next: T): T[] {
-  return list.map((item, at) => (at === index ? next : item));
-}
-
 function TextField(props: {
   label: string;
   value: string | null;
   onChange: (value: string) => void;
   placeholder?: string;
+  error?: string;
 }) {
+  const errorId = useId();
   return (
-    <label className="grid gap-1 text-xs text-ink-soft">
-      {props.label}
+    <div className="grid gap-1 text-xs text-ink-soft">
+      <label htmlFor={errorId}>{props.label}</label>
       <input
+        id={errorId}
         className={FIELD}
+        aria-invalid={!!props.error}
+        aria-describedby={props.error ? `${errorId}-error` : undefined}
         value={props.value ?? ""}
         placeholder={props.placeholder}
         onChange={(event) => props.onChange(event.target.value)}
       />
-    </label>
+      {props.error ? (
+        <span id={`${errorId}-error`} role="alert" className="text-stop">
+          {props.error}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -88,36 +97,52 @@ export function EvidenceEditor({
   evidence,
   onSaved,
 }: EvidenceEditorProps) {
-  const [internships, setInternships] = useState<Internship[]>(
-    evidence.internships,
-  );
-  const [certifications, setCertifications] = useState<Certification[]>(
-    evidence.certifications,
-  );
-  const [dirty, setDirty] = useState(false);
-
+  const {
+    control,
+    setValue,
+    reset,
+    handleSubmit,
+    formState: { errors, isDirty: dirty, isSubmitted },
+  } = useForm<EvidenceFormValues>({
+    resolver: zodResolver(evidenceFormSchema),
+    defaultValues: {
+      internships: evidence.internships,
+      certifications: evidence.certifications,
+    },
+  });
+  const internshipFields = useFieldArray({ control, name: "internships" });
+  const certificationFields = useFieldArray({
+    control,
+    name: "certifications",
+  });
+  const internships = useWatch({ control, name: "internships" });
+  const certifications = useWatch({ control, name: "certifications" });
   const save = useMutation({
-    mutationFn: () =>
-      studioApi.saveEvidence(profileId, { internships, certifications }),
+    mutationFn: (values: EvidenceFormValues) =>
+      studioApi.saveEvidence(profileId, values),
     onSuccess: (saved) => {
-      setInternships(saved.internships);
-      setCertifications(saved.certifications);
-      setDirty(false);
+      reset({
+        internships: saved.internships,
+        certifications: saved.certifications,
+      });
       onSaved(saved);
     },
   });
-
   const editInternship = (index: number, patch: Partial<Internship>) => {
-    setInternships((list) =>
-      replaced(list, index, { ...list[index], ...patch }),
-    );
-    setDirty(true);
+    for (const [key, value] of Object.entries(patch)) {
+      setValue(`internships.${index}.${key as keyof Internship}`, value, {
+        shouldDirty: true,
+        shouldValidate: isSubmitted,
+      });
+    }
   };
   const editCertification = (index: number, patch: Partial<Certification>) => {
-    setCertifications((list) =>
-      replaced(list, index, { ...list[index], ...patch }),
-    );
-    setDirty(true);
+    for (const [key, value] of Object.entries(patch)) {
+      setValue(`certifications.${index}.${key as keyof Certification}`, value, {
+        shouldDirty: true,
+        shouldValidate: isSubmitted,
+      });
+    }
   };
 
   return (
@@ -136,17 +161,19 @@ export function EvidenceEditor({
       <div className="space-y-4">
         {internships.map((item, index) => (
           <fieldset
-            key={item.id ?? `new-${index}`}
+            key={internshipFields.fields[index].id}
             className="grid gap-3 border-t border-rule pt-4 sm:grid-cols-2"
           >
             <legend className="sr-only">Internship {index + 1}</legend>
             <TextField
               label="Company"
+              error={errors.internships?.[index]?.company?.message}
               value={item.company}
               onChange={(v) => editInternship(index, { company: v })}
             />
             <TextField
               label="Role"
+              error={errors.internships?.[index]?.role?.message}
               value={item.role}
               onChange={(v) => editInternship(index, { role: v })}
             />
@@ -195,10 +222,7 @@ export function EvidenceEditor({
                 size="sm"
                 variant="ghost"
                 onClick={() => {
-                  setInternships((list) =>
-                    list.filter((_, at) => at !== index),
-                  );
-                  setDirty(true);
+                  internshipFields.remove(index);
                 }}
               >
                 <Trash2 aria-hidden /> Remove
@@ -209,8 +233,7 @@ export function EvidenceEditor({
         <Button
           size="sm"
           onClick={() => {
-            setInternships((list) => [...list, BLANK_INTERNSHIP]);
-            setDirty(true);
+            internshipFields.append({ ...BLANK_INTERNSHIP });
           }}
         >
           <Plus aria-hidden /> Add internship
@@ -220,12 +243,13 @@ export function EvidenceEditor({
       <div className="space-y-4">
         {certifications.map((item, index) => (
           <fieldset
-            key={item.id ?? `new-${index}`}
+            key={certificationFields.fields[index].id}
             className="grid gap-3 border-t border-rule pt-4 sm:grid-cols-2"
           >
             <legend className="sr-only">Certification {index + 1}</legend>
             <TextField
               label="Certification"
+              error={errors.certifications?.[index]?.name?.message}
               value={item.name}
               onChange={(v) => editCertification(index, { name: v })}
             />
@@ -268,10 +292,7 @@ export function EvidenceEditor({
                 size="sm"
                 variant="ghost"
                 onClick={() => {
-                  setCertifications((list) =>
-                    list.filter((_, at) => at !== index),
-                  );
-                  setDirty(true);
+                  certificationFields.remove(index);
                 }}
               >
                 <Trash2 aria-hidden /> Remove
@@ -282,8 +303,7 @@ export function EvidenceEditor({
         <Button
           size="sm"
           onClick={() => {
-            setCertifications((list) => [...list, BLANK_CERTIFICATION]);
-            setDirty(true);
+            certificationFields.append({ ...BLANK_CERTIFICATION });
           }}
         >
           <Plus aria-hidden /> Add certification
@@ -294,7 +314,11 @@ export function EvidenceEditor({
         <Button
           variant="accent"
           disabled={!dirty || save.isPending}
-          onClick={() => save.mutate()}
+          onClick={() =>
+            void handleSubmit((values) =>
+              save.mutateAsync(values).catch(() => undefined),
+            )()
+          }
         >
           {save.isPending ? "Saving…" : "Save internships and certifications"}
         </Button>
