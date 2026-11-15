@@ -4,6 +4,18 @@ Moved here from the root `CLAUDE.md` on 2026-10-11, word for word, so they
 load only when work touches this directory. "§N" below is a section of
 the root file, which keeps every heading and says where each section went.
 
+## Kaggle Auto requires 27B (owner instruction, 2026-11-05)
+
+Kaggle Auto requires the verified `unsloth/Qwen3.8-27B-GGUF:UD-Q6_K` helper.
+It must never select or fall back to 8B, even when 8B alone reports ready.
+Dashboard setup and `make kaggle-setup` reuse 27B or load the checksum-pinned
+saved Kaggle bundle, unloading idle 8B first without deleting its files.
+Busy kernels block a switch; a missing bundle or invalid 27B identity is an
+error, never permission to use 8B. Keep this in the installation source and
+the running preview. `test_kaggle_default_27b.py` and `test_kaggle_auto_model.py`
+protect this preference across restarts. Legacy explicit 8B transport remains
+available for old experiments; public Auto does not choose it.
+
 ## §7: LLM provider abstraction
 
 Implementations: `OllamaProvider`, `OllamaCloudProvider`, `GeminiProvider`,
