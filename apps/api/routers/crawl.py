@@ -152,7 +152,6 @@ async def start_crawl(session: SessionDep) -> CrawlStartOut:
         worker_alive=any(
             worker.state is WorkerState.ALIVE for worker in await heartbeat.workers(session)
         ),
-        paused=False,
     )
 
 
@@ -176,7 +175,6 @@ async def resume_crawl(session: SessionDep) -> CrawlStartOut:
         worker_alive=any(
             worker.state is WorkerState.ALIVE for worker in await heartbeat.workers(session)
         ),
-        paused=False,
     )
 
 

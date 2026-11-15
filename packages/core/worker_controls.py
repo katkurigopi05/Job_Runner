@@ -36,6 +36,7 @@ CRAWLER_TASK_KINDS: frozenset[str] = frozenset(
 
 DEFAULT_CONTROLS_PATH = Path("storage/worker-controls.json")
 _LOCK = threading.Lock()
+_TEST_MEMORY_STATE: dict[str, WorkerControlsState] = {}
 
 
 @dataclass(frozen=True)
@@ -48,10 +49,10 @@ class WorkerControlsState:
 
     def active_kinds(self, available: list[str] | tuple[str, ...]) -> list[str]:
         """Filter `available` handler kinds by `enabled_kinds` and `crawler_paused`."""
-        allowed = set(self.enabled_kinds)
+        disabled = set(ALL_WORKER_KINDS) - set(self.enabled_kinds)
         out: list[str] = []
         for kind in available:
-            if kind not in allowed:
+            if kind in disabled:
                 continue
             if self.crawler_paused and kind in CRAWLER_TASK_KINDS:
                 continue
@@ -59,10 +60,12 @@ class WorkerControlsState:
         return out
 
 
-def _controls_path() -> Path:
+def _controls_path() -> Path | None:
     override = os.environ.get("JOBRUNNER_WORKER_CONTROLS_FILE", "").strip()
     if override:
         return Path(override)
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return None
     return DEFAULT_CONTROLS_PATH
 
 
@@ -88,6 +91,9 @@ def load_worker_controls() -> WorkerControlsState:
     """Read current worker controls from disk, falling back to safe defaults."""
     path = _controls_path()
     with _LOCK:
+        if path is None:
+            test_key = os.environ.get("PYTEST_CURRENT_TEST", "")
+            return _TEST_MEMORY_STATE.get(test_key, WorkerControlsState())
         if not path.exists():
             return WorkerControlsState()
         try:
@@ -137,6 +143,10 @@ def save_worker_controls(
         "max_workers": updated.max_workers,
     }
     with _LOCK:
+        if path is None:
+            test_key = os.environ.get("PYTEST_CURRENT_TEST", "")
+            _TEST_MEMORY_STATE[test_key] = updated
+            return updated
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")

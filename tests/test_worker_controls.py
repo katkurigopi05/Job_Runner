@@ -126,7 +126,6 @@ async def test_crawl_pause_resume_stop_and_controls_routes(tmp_path: Path, monke
 
             resume_res = await client.post("/crawl/resume")
             assert resume_res.status_code == 200
-            assert resume_res.json()["paused"] is False
             assert resume_res.json()["queued"] is True
     finally:
         app.dependency_overrides.pop(db_session, None)

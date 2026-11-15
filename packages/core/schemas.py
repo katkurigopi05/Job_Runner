@@ -707,7 +707,6 @@ class CrawlStartOut(BaseModel):
     #: A crawl queued with no worker to run it looks exactly like a registry
     #: with nothing new.
     worker_alive: bool
-    paused: bool = False
 
 
 class CrawlStopOut(BaseModel):
