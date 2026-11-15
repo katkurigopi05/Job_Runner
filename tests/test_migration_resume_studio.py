@@ -57,3 +57,71 @@ async def test_studio_migration_preserves_tables_from_early_development(scratch_
             )
     finally:
         await engine.dispose()
+
+
+async def test_ordering_upgrades_already_stamped_studio(scratch_database):  # noqa: F811
+    _alembic("upgrade", "b7d9f1a3c5e8", scratch_database)
+    engine = create_async_engine(scratch_database)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                sa.text("INSERT INTO users(email) VALUES ('owner@example.com')")
+            )
+            await connection.execute(
+                sa.text(
+                    "INSERT INTO candidates(user_id,name,email,email_mode) "
+                    "SELECT id,'Alex Rivera','alex@example.com','self' FROM users"
+                )
+            )
+            await connection.execute(
+                sa.text(
+                    "INSERT INTO certifications(candidate_id,name,issuer,verified) "
+                    "SELECT id,'Example Certification','Example Issuer',true FROM candidates"
+                )
+            )
+        _alembic("upgrade", "head", scratch_database)
+        async with engine.connect() as connection:
+            assert (
+                await connection.execute(
+                    sa.text("SELECT name,verified,position FROM certifications")
+                )
+            ).one() == ("Example Certification", True, 0)
+        _alembic("downgrade", "b7d9f1a3c5e8", scratch_database)
+        async with engine.connect() as connection:
+            assert (
+                await connection.execute(sa.text("SELECT name,verified FROM certifications"))
+            ).one() == ("Example Certification", True)
+        _alembic("upgrade", "head", scratch_database)
+    finally:
+        await engine.dispose()
+
+
+async def test_ordering_preserves_interim_development_columns(scratch_database):  # noqa: F811
+    _alembic("upgrade", "b7d9f1a3c5e8", scratch_database)
+    engine = create_async_engine(scratch_database)
+    try:
+        async with engine.begin() as connection:
+            for table in ("internships", "certifications"):
+                await connection.execute(
+                    sa.text(f"ALTER TABLE {table} ADD COLUMN position smallint NOT NULL DEFAULT 0")
+                )
+            await connection.execute(
+                sa.text("INSERT INTO users(email) VALUES ('owner@example.com')")
+            )
+            await connection.execute(
+                sa.text(
+                    "INSERT INTO candidates(user_id,name,email,email_mode) "
+                    "SELECT id,'Alex Rivera','alex@example.com','self' FROM users"
+                )
+            )
+            await connection.execute(
+                sa.text(
+                    "INSERT INTO certifications(candidate_id,name,issuer,verified,position) "
+                    "SELECT id,'Example Certification','Example Issuer',true,4 FROM candidates"
+                )
+            )
+        _alembic("upgrade", "head", scratch_database)
+        async with engine.connect() as connection:
+            assert await connection.scalar(sa.text("SELECT position FROM certifications")) == 4
+    finally:
+        await engine.dispose()
