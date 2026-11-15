@@ -20,7 +20,7 @@ def health(model=kaggle.QWEN38_MODEL, **changes):
     return {
         "state": "ready",
         "protocol": 1,
-        "context_tokens": 4096,
+        "context_tokens": kaggle.CONTEXT_TOKENS[model],
         "model": model,
         "helper": kaggle.HELPERS[model],
         "gpu_count": 2,
@@ -56,13 +56,37 @@ def test_health_discovers_both_helpers_without_inference_or_loading():
     assert json.loads(eval(kaggle.HEALTH_EXPRESSION, {})) == {"helpers": []}
 
 
+def test_setup_probe_recognizes_loaded_qwen_without_running_it():
+    from packages.llm import kaggle_setup
+
+    def complete(*args):
+        pytest.fail("Setup readiness must never generate")
+
+    complete.jobrunner_health = lambda: health()
+    facts = json.loads(
+        eval(
+            kaggle_setup.PROBE,
+            {
+                "jobrunner_qwen38_complete": complete,
+                "jobrunner27_engine": object(),
+                "jobrunner27_tokenizer": object(),
+                "jobrunner27_identity": health(),
+            },
+        )
+    )
+    assert facts == {"model": False, "helper": True, "qwen38_model": True}
+
+
 @pytest.mark.parametrize("models", [[kaggle.MODEL], [kaggle.QWEN38_MODEL], list(kaggle.HELPERS)])
-async def test_auto_chooses_ready_model_preferring_27b(provider, monkeypatch, models):
+async def test_auto_requires_27b(provider, monkeypatch, models):
     monkeypatch.setattr(
         provider, "_exchange", AsyncMock(return_value={"helpers": [health(m) for m in models]})
     )
     status = await provider.health()
-    expected = kaggle.QWEN38_MODEL if kaggle.QWEN38_MODEL in models else kaggle.MODEL
+    if kaggle.QWEN38_MODEL not in models:
+        assert status.state == "model_not_ready" and status.model is None
+        return
+    expected = kaggle.QWEN38_MODEL
     assert status.state == "ready" and status.model == provider.model == expected
     assert kaggle.MODEL_LABELS[expected] in status.detail
 
@@ -76,6 +100,7 @@ async def test_auto_chooses_ready_model_preferring_27b(provider, monkeypatch, mo
         {"thinking": True},
         {"protocol": True},
         {"context_tokens": 8192},
+        {"context_tokens": 4096},
         {"helper": "unexpected_helper"},
         {"state": []},
     ],
@@ -89,7 +114,7 @@ async def test_invalid_27b_readiness_never_receives_private_prompt(provider, mon
     assert "PRIVATE" not in exchange.call_args.args[0]
 
 
-async def test_auto_can_use_8b_when_27b_is_unready_at_start(provider, monkeypatch):
+async def test_auto_refuses_8b_when_27b_is_unready_at_start(provider, monkeypatch):
     monkeypatch.setattr(
         provider,
         "_exchange",
@@ -99,7 +124,11 @@ async def test_auto_can_use_8b_when_27b_is_unready_at_start(provider, monkeypatc
             }
         ),
     )
-    assert (await provider.health()).model == kaggle.MODEL
+    status = await provider.health()
+    assert status.state == "model_not_ready" and status.model is None
+    with pytest.raises(LLMError, match="27B"):
+        await provider.complete("PRIVATE SYSTEM", "PRIVATE USER")
+    assert all("PRIVATE" not in call.args[0] for call in provider._exchange.call_args_list)
 
 
 async def test_resolved_model_never_switches_when_kernel_changes(provider, monkeypatch):
@@ -182,7 +211,6 @@ async def test_plain_stream_and_selection_label_actual_masked_model(
             if selection
             else (),
         ),
-        question="Which role uses Kafka?",
         selection_evidence=(EvidenceItem(id="P1", text="Uses Kafka", source_label="P1"),)
         if selection
         else None,
@@ -206,9 +234,9 @@ def test_27b_helper_refuses_truncation_and_checks_context_before_generation():
     from scripts.kaggle_qwen38_helper import install
 
     engine = SimpleNamespace(
-        n_ctx=lambda: 4096,
+        n_ctx=lambda: 16384,
         metadata={"general.name": "Qwen3.8-27B"},
-        tokenize=lambda *args, **kwargs: [1] * 4000,
+        tokenize=lambda *args, **kwargs: [1] * 16000,
         reset=lambda: None,
         create_completion=lambda **kwargs: pytest.fail("too long"),
     )
@@ -233,22 +261,65 @@ def test_27b_helper_refuses_truncation_and_checks_context_before_generation():
         install(engine, tokenizer, {**identity, "model_sha256": "wrong"})
 
 
-def test_setup_probe_recognizes_loaded_qwen_without_running_it():
-    from packages.llm import kaggle_setup
+def test_27b_helper_takes_a_prompt_longer_than_the_old_context():
+    """12,000 tokens was refused at 4,096; it has to reach the model at 16,384."""
+    from scripts.kaggle_qwen38_helper import install
 
-    def complete(*args):
-        pytest.fail("Setup readiness must never generate")
+    asked = []
 
-    complete.jobrunner_health = lambda: health()
-    facts = json.loads(
-        eval(
-            kaggle_setup.PROBE,
-            {
-                "jobrunner_qwen38_complete": complete,
-                "jobrunner27_engine": object(),
-                "jobrunner27_tokenizer": object(),
-                "jobrunner27_identity": health(),
-            },
-        )
+    def create_completion(**kwargs):
+        asked.append(len(kwargs["prompt"]))
+        return {
+            "choices": [{"finish_reason": "stop", "text": "answer"}],
+            "usage": {"prompt_tokens": len(kwargs["prompt"]), "completion_tokens": 1},
+        }
+
+    engine = SimpleNamespace(
+        n_ctx=lambda: 16384,
+        metadata={"general.name": "Qwen3.8-27B"},
+        tokenize=lambda *args, **kwargs: [1] * 12000,
+        reset=lambda: None,
+        create_completion=create_completion,
     )
-    assert facts == {"model": False, "helper": True, "qwen38_model": True}
+    tokenizer = SimpleNamespace(apply_chat_template=lambda *args, **kwargs: "prompt")
+    helper = install(engine, tokenizer, health())
+    payload = {
+        "model": kaggle.QWEN38_MODEL,
+        "system": "system",
+        "user": "user",
+        "temperature": 0,
+        "max_tokens": 1024,
+    }
+
+    reply = json.loads(helper(json.dumps(payload)))
+
+    assert reply["status"] == "ok" and asked == [12000]
+    assert helper.jobrunner_health()["context_tokens"] == 16384
+
+
+def test_27b_helper_refuses_an_engine_loaded_at_the_old_context():
+    """A kernel still holding the 4,096 load must not be reported ready."""
+    from scripts.kaggle_qwen38_helper import install
+
+    engine = SimpleNamespace(n_ctx=lambda: 4096, metadata={"general.name": "Qwen3.8-27B"})
+    tokenizer = SimpleNamespace(apply_chat_template=lambda *args, **kwargs: "prompt")
+
+    with pytest.raises(ValueError):
+        install(engine, tokenizer, health())
+
+
+def test_each_helper_and_the_provider_agree_on_the_context():
+    """The helper is sent to the kernel as text, so it cannot import the number."""
+    from scripts import kaggle_helper, kaggle_qwen38_helper
+
+    assert kaggle.CONTEXT_TOKENS == {kaggle.QWEN38_MODEL: 16384, kaggle.MODEL: 4096}
+    assert kaggle.CONTEXT_TOKENS[kaggle.QWEN38_MODEL] == kaggle_qwen38_helper.CONTEXT_TOKENS
+    assert kaggle.CONTEXT_TOKENS[kaggle.MODEL] == kaggle_helper.CONTEXT_TOKENS
+
+
+async def test_ready_27b_reports_its_own_context(provider, monkeypatch):
+    monkeypatch.setattr(provider, "_exchange", AsyncMock(return_value={"helpers": [health()]}))
+
+    status = await provider.health()
+
+    assert status.state == "ready" and status.context_tokens == 16384
