@@ -246,3 +246,23 @@ def test_same_clause_direct_demand_survives_quantified_framework_choice(line):
     reading = extract("Requirements\n" + line).as_json()
     assert skill_evidence(reading, "pytorch").option is False
     assert skill_evidence(reading, "tensorflow").option is True
+
+
+def test_long_whitespace_is_not_an_optional_skill_clause():
+    import subprocess
+    import sys
+
+    # Bound the regression externally so the former quadratic regex cannot
+    # hang the test runner. No network, models or database are involved.
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from packages.matching.evidence import is_option; "
+            "from packages.matching.skill_vocab import BY_KEY; "
+            "assert not is_option('Python' + ' ' * 100000 + 'required', BY_KEY['python']); "
+            "assert is_option('Python' + ' ' * 100000 + 'or Go', BY_KEY['python'])",
+        ],
+        check=True,
+        timeout=5,
+    )
