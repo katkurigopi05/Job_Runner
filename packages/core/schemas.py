@@ -661,6 +661,8 @@ class CrawlStatusOut(BaseModel):
     pending: int
     #: Unfinished work is unclaimed and no live worker can drain it.
     stalled: bool
+    #: Whether the owner has paused crawler tasks from being claimed.
+    paused: bool = False
     #: When the last crawl finished, successfully or not. None if none ever has.
     last_finished_at: datetime | None = None
     #: Status of that last crawl: "done" or "failed".
@@ -705,6 +707,33 @@ class CrawlStartOut(BaseModel):
     #: A crawl queued with no worker to run it looks exactly like a registry
     #: with nothing new.
     worker_alive: bool
+    paused: bool = False
+
+
+class CrawlStopOut(BaseModel):
+    """What pausing or stopping the crawler did."""
+
+    paused: bool
+    cancelled: int = 0
+    worker_alive: bool = False
+
+
+class WorkerControlsOut(BaseModel):
+    """Runtime crawler pause state and worker task-kind / concurrency settings."""
+
+    crawler_paused: bool
+    enabled_kinds: list[str]
+    available_kinds: list[str]
+    max_workers: int
+    alive_workers: int
+
+
+class WorkerControlsUpdate(BaseModel):
+    """Update runtime crawler pause state, enabled worker kinds, or worker cap."""
+
+    crawler_paused: bool | None = None
+    enabled_kinds: list[str] | None = None
+    max_workers: int | None = Field(default=None, ge=1, le=8)
 
 
 #: The most earlier exchanges a request may carry. The assistant is given

@@ -54,6 +54,17 @@ test("crawl and rescore show worker feedback and completion", async ({ page }) =
   await page.goto("/matches");
   await page.getByRole("button", { name: "Run Crawl", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "No live worker" })).toBeVisible();
+  await page.getByRole("button", { name: "Pause Crawl", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Crawler paused" })).toBeVisible();
+  await page.getByRole("button", { name: "Resume Crawl", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Crawler resumed" })).toBeVisible();
+  await page.getByRole("button", { name: "Stop Crawl", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Crawler stopped (2 pending tasks cancelled)." })).toBeVisible();
+  await page.getByRole("button", { name: /Workers \(/ }).click();
+  const region = page.getByRole("region", { name: "Worker controls" });
+  await expect(region).toBeVisible();
+  await region.getByRole("combobox", { name: "Max workers" }).selectOption("4");
+  await expect(page.getByRole("status").filter({ hasText: "max 4 workers" })).toBeVisible();
   await page.getByRole("button", { name: "Rescore Matches", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Worker is alive" })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Rescore complete" })).toBeVisible();
