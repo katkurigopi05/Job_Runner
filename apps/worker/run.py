@@ -53,6 +53,7 @@ from packages.core.queue import (
     renew_lease,
 )
 from packages.core.trace import correlated, normalize_trace_id
+from packages.core.worker_controls import load_worker_controls
 
 log = structlog.get_logger(__name__)
 
@@ -135,11 +136,14 @@ async def run_once(
     heartbeat: Heartbeat | None = None,
 ) -> bool:
     """Claim and run at most one task. Returns True if one was processed."""
+    active_kinds = load_worker_controls().active_kinds(list(HANDLERS))
+    if not active_kinds:
+        return False
     async with core_db.get_sessionmaker()() as session:
         claimed = await claim_task(
             session,
             worker_id=worker_id,
-            kinds=list(HANDLERS),
+            kinds=active_kinds,
             after_others=list(YIELDING_KINDS),
             lease_seconds=lease_seconds,
         )
