@@ -30,11 +30,23 @@ PostgreSQL is the system of record. Résumés, browser sessions, and screenshots
 - **Durable execution:** PostgreSQL leases and `FOR UPDATE SKIP LOCKED` support retries; a state machine and append-only events record progress. A submission ledger fences duplicate attempts.
 - **Replaceable model providers:** local and explicitly selected remote providers share routing and audit boundaries. No production request silently falls back to test stubs.
 
-## Quickstart & configuration
+## Quickstart
 
 Prerequisites: Python 3.12, Node.js 22, npm, Docker with Compose v2, and native PDF libraries. On macOS: `brew install pango cairo gdk-pixbuf libffi`. On Debian/Ubuntu: `sudo apt-get install -y libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 libffi8` (see also [Dockerfile](Dockerfile)).
 
-Copy `.env.example` to `.env`, configure your local settings, then run:
+```bash
+make demo
+```
+
+This installs missing dependencies, starts loopback-only PostgreSQL, migrates a separate `jobrunner_demo` database, seeds synthetic fixtures, and starts the API and dashboard. Open **http://127.0.0.1:3001**. Ports 8000 and 3001 must be available. Ctrl-C stops the foreground demo services; `make down` stops the database without deleting its volume.
+
+Explore `/matches` (10 scored jobs), `/review` (a résumé diff and an unanswered question), `/resumes` (internships, certifications, and three synthetic GitHub imports), and `/tracker` (interview, assessment, awaiting, and rejected outcomes). Rerunning preserves reviewer edits. All job links use reserved `demo.invalid`; nothing is sent. Fixture scores are illustrative. The demo starts no worker and needs no LLM or GitHub credentials. Live assistant generation requires a configured local model.
+
+To prepare without starting servers: `DEMO_PREPARE_ONLY=1 make demo`. The isolated settings and artifacts live under ignored `storage/demo/`. Set `DEMO_ROOT` to an absolute temporary directory to keep all demo files outside the checkout. If the default ports are occupied, use `DEMO_API_PORT=18000 DEMO_WEB_PORT=13001 make demo`.
+
+## Configuration
+
+For your own profile, copy `.env.example` to `.env`, then run:
 
 ```bash
 make install
@@ -58,7 +70,7 @@ The complete environment template is [.env.example](.env.example); defaults are 
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL with pgvector; Compose uses a public local-development credential |
 | `AUTO_SUBMIT=false` | Keep the approval gate; profiles also have their own opt-in |
-| `LLM_PROVIDER`, `LLM_TASK_*` | Select model routing; `stub` is for tests, `ollama` for local inference |
+| `LLM_PROVIDER`, `LLM_TASK_*` | Select model routing; `stub` is for tests/demo fixtures, `ollama` for local inference |
 | `OLLAMA_*`, provider API keys | Configure only providers you explicitly choose; remote calls can transmit résumé text |
 | `GITHUB_USERNAME`, `GITHUB_TOKEN` | Optional project import; token needed for private repos and higher rate limits |
 | `VAULT_KEY`, `VAULT_ROOT` | Encrypt ATS credentials; generate a key with `make vault-key` |
