@@ -750,6 +750,33 @@ edit in between, and the chunks at the old hash were cut from the text before it
 stale. The postings already stale on 2026-11-18 are not repaired: nothing stored their old text,
 so they are re-cut and re-embedded once. `tests/test_chunks_survive_listing_edits.py`.
 
+## Opt-in search-area admission
+
+`CRAWLER_STORE_SEARCH_AREA_ONLY=false` preserves the default crawl. When
+explicitly enabled alongside `SEARCH_US_ONLY`, `_store` also asks
+`locality.area_exclusion` before inserting a NEW posting. It follows
+`SEARCH_REMOTE_OUTSIDE_CALIFORNIA`; California and remote US offices stay.
+A mixed list with an unplaced/unknown office stays because that office could
+be in the area. Existing postings still update, reopen and receive seen stamps.
+`StoreResult.outside_area` and `outside_area_postings_not_stored` count the
+additional skips separately from the existing foreign/age counters.
+
+This never deletes stored jobs or changes search visibility. Turning it off
+lets subsequent polls admit previously skipped jobs. No live setting is enabled
+by this change. `make check-crawler-locations` exercises the marked test database
+and is included in gate 5. `tests/test_crawl_search_area.py` holds the opt-in,
+unknown, mixed-office, widening and held-record cases.
+
+
+Prospective admission measured read-only against the same 53,790 open-posting
+snapshot on 2026-11-18 (treating each as new, normalizing its recorded source
+locations): 53,775 admitted with the new flag off, 26,496 with it on; 27,279
+additional skips, 15 excluded by the pre-existing foreign gate in both cases.
+15,365 uncertain-office postings remain admitted. This is not deletion of held
+rows: enabling the flag on the live database would retain all existing rows.
+The original main vocabulary is used for this measurement; the separate foreign
+vocabulary PR has its own audit counts. Live configuration stays unchanged.
+
 ## Oracle Recruiting public reader (2026-11-18)
 
 The report names 33 Oracle Recruiting companies. An explicit HTTPS
