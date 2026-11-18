@@ -1,0 +1,30 @@
+{
+  "items": [
+    {
+      "Offset": 0,
+      "Limit": 25,
+      "TotalJobsCount": 54,
+      "SiteNumber": "CX",
+      "requisitionList": [
+        {
+          "Id": "260670",
+          "Title": "Maintenance Technician | Camden Sotelo/Tempe",
+          "PostedDate": "2026-11-18",
+          "PrimaryLocationCountry": "US",
+          "PrimaryLocation": "Tempe, AZ, United States",
+          "WorkplaceType": "",
+          "secondaryLocations": []
+        },
+        {
+          "Id": "260693",
+          "Title": "Maintenance Technician | Camden Carolinian/Manor Park/Overlook",
+          "PostedDate": "2026-11-15",
+          "PrimaryLocationCountry": "US",
+          "PrimaryLocation": "Raleigh, NC, United States",
+          "WorkplaceType": "",
+          "secondaryLocations": []
+        }
+      ]
+    }
+  ]
+}
