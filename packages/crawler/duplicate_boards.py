@@ -71,6 +71,8 @@ def website_domain(company: Company) -> str:
         "ashbyhq.com",
         "workable.com",
         "myworkdayjobs.com",
+        "jibeapply.com",
+        "icims.com",
         "oraclecloud.com",
         "breezy.hr",
         "rippling.com",
