@@ -776,3 +776,30 @@ What a later change could undo:
   purpose, and so is a role whose only evidence is wording no pattern lists. A "home-based
   role" counts, as `tests/test_remote_work_evidence.py` already held, territory roles included.
   `tests/test_remote_declared.py` holds both directions.
+
+
+## Location vocabulary audit (2026-11-18)
+
+Read-only `make audit-locations` over 53,790 open postings on main:
+UNPLACED 12,847 -> 12,576 (1,837 -> 1,825 distinct labels), text-based search
+area 26,354 -> 26,083. The eight regression labels are Chihuahua, DLF CYBERCITY
+12B, Cork, Ranjangaon, Baja, Guangzhou Juncheng, Gratkorn and Sysco Regina.
+The patterns also settle four related labels: total 271 newly excluded postings.
+All four Sysco Regina postings now classify abroad. This is the audit's text
+classification, not a claim to have rewritten existing structured source facts.
+No live rows or settings were changed. Count-only labels and employer site
+names with no geographic evidence remain unknown; US state qualifiers and a
+California office beside a foreign office still keep their normal precedence.
+
+Primary provenance for the less obvious site labels:
+- Sysco Regina: https://www.sysco.ca/location/regina
+- Ranjangaon: https://www.jabil.com/global-entities.html
+- Gratkorn: https://www.nxp.com/company/about-nxp/worldwide-locations/austria:AUSTRIA
+- DLF block 12B: https://www.dlf.in/offices/pdf/magazine/DLF-Offices-Pulse-vol-7.pdf
+- Guangzhou: https://www.nxp.com/company/about-nxp/worldwide-locations/greater-china:CHINA
+
+These are the foreign labels in the audit's initial 25 most frequent unplaced
+strings, plus the owner's Regina example. The 1,825 remaining labels are not
+all foreign: count labels, US places, ambiguous names and unreviewed foreign
+places still need source evidence. `tests/test_location_area.py` covers each
+added label, remote foreign rejection, mixed offices, and unchanged unknowns.
