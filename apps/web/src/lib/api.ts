@@ -1146,6 +1146,8 @@ export interface CrawlStatus {
   pending: number;
   /** Unclaimed work with no live worker available to drain it. */
   stalled: boolean;
+  /** Whether the owner has paused crawler tasks from being claimed. */
+  paused?: boolean;
   last_finished_at?: string | null;
   last_status?: string | null;
   /** Newest posting anyone has seen. This is what staleness actually means. */
@@ -1200,6 +1202,21 @@ export interface QueueStart {
   queued: boolean;
   already_waiting: number;
   worker_alive: boolean;
+  paused?: boolean;
+}
+
+export interface CrawlStop {
+  paused: boolean;
+  cancelled: number;
+  worker_alive: boolean;
+}
+
+export interface WorkerControls {
+  crawler_paused: boolean;
+  enabled_kinds: string[];
+  available_kinds: string[];
+  max_workers: number;
+  alive_workers: number;
 }
 
 export interface RescoreStatus {
@@ -1212,6 +1229,19 @@ export interface RescoreStatus {
 
 export const api = {
   startCrawl: () => request<QueueStart>("/crawl", { method: "POST" }),
+  pauseCrawl: () => request<CrawlStop>("/crawl/pause", { method: "POST" }),
+  resumeCrawl: () => request<QueueStart>("/crawl/resume", { method: "POST" }),
+  stopCrawl: () => request<CrawlStop>("/crawl/stop", { method: "POST" }),
+  workerControls: () => request<WorkerControls>("/crawl/controls"),
+  updateWorkerControls: (body: {
+    crawler_paused?: boolean;
+    enabled_kinds?: string[];
+    max_workers?: number;
+  }) =>
+    request<WorkerControls>("/crawl/controls", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   rescoreMatches: () => request<QueueStart>("/matches/rescore", { method: "POST" }),
   rescoreStatus: () => request<RescoreStatus>("/matches/rescore"),
   health: () => request<Health>("/health"),

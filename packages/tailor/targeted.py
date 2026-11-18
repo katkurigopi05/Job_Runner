@@ -73,6 +73,7 @@ from packages.tailor.guard import (
     _ATTRIBUTED_SECTIONS,
     _TOKEN_RE,
     SourceCorpus,
+    SourceKind,
     _index,
     normalize,
     singular,
@@ -307,16 +308,17 @@ def classify(
     projects: Sequence[Project] = (),
     linked: Mapping[str, str] | None = None,
     verified: Mapping[str, str] | None = None,
+    kinds: Mapping[str, SourceKind] | None = None,
 ) -> Plan:
     """Sort a posting's terms against a résumé. No model is asked anything.
 
     `linked` is `evidence.linked_evidence`: what repositories the owner linked
     to the résumé's projects report of themselves. A term one of them backs is
     a target of that project's bullets, and of no other. `verified` is the
-    same for an internship's confirmed tools and its own lines
-    (`guard.SourceCorpus.from_resume`).
+    same for an internship's confirmed tools and its own lines, and `kinds`
+    says which lines are not the résumé's (`guard.SourceCorpus.from_resume`).
     """
-    corpus = SourceCorpus.from_resume(parsed, linked=linked, verified=verified)
+    corpus = SourceCorpus.from_resume(parsed, linked=linked, verified=verified, kinds=kinds)
     section, bullets = tailorable_bullets(parsed)
     whole = Said(_document(parsed))
     shared_text = _shared(parsed)
@@ -330,7 +332,7 @@ def classify(
         {
             item.entry: (item, Said(item.evidence_text))
             for item in corpus.items
-            if item.evidence_text
+            if item.evidence_text and item.usable_evidence
         }.values()
     )
 
@@ -709,6 +711,7 @@ async def revise(
     plan: Plan | None = None,
     linked: Mapping[str, str] | None = None,
     verified: Mapping[str, str] | None = None,
+    kinds: Mapping[str, SourceKind] | None = None,
 ) -> Revision:
     """Revise the bullets that have something to gain. The rest are untouched.
 
@@ -716,9 +719,9 @@ async def revise(
     résumé as it stands with `Revision.message` saying why.
     """
     plan = plan or classify(
-        parsed, job_description, projects=projects, linked=linked, verified=verified
+        parsed, job_description, projects=projects, linked=linked, verified=verified, kinds=kinds
     )
-    corpus = SourceCorpus.from_resume(parsed, linked=linked, verified=verified)
+    corpus = SourceCorpus.from_resume(parsed, linked=linked, verified=verified, kinds=kinds)
 
     rewrites: list[BulletRewrite] = []
     outcomes: list[Outcome] = []

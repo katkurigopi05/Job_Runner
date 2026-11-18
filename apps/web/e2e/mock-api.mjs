@@ -31,6 +31,9 @@ const emptyEvidence = () => ({ candidate_id: candidateId, internships: [], certi
 let evidence = emptyEvidence();
 let rescorePending = false;
 let crawlPending = false;
+let crawlPaused = false;
+const defaultWorkerKinds = ["rescore", "apply", "crawl", "crawl_company", "discover_company", "deep_dive_company", "discover", "inbox"];
+let workerControls = { crawler_paused: false, enabled_kinds: [...defaultWorkerKinds], available_kinds: [...defaultWorkerKinds], max_workers: 1, alive_workers: 1 };
 let calls = [];
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1");
@@ -44,10 +47,19 @@ const server = createServer(async (req, res) => {
   };
   if (key === "POST /__reset") {
     applications = []; evidence = emptyEvidence();
-    rescorePending = false; crawlPending = false; calls = [];
+    rescorePending = false; crawlPending = false; crawlPaused = false;
+    workerControls = { crawler_paused: false, enabled_kinds: [...defaultWorkerKinds], available_kinds: [...defaultWorkerKinds], max_workers: 1, alive_workers: 1 };
+    calls = [];
     return json({ ok: true });
   }
   if (key === "GET /__calls") return json(calls);
+  if (key === "POST /__table-fixtures") {
+    applications = [
+      { id: "synthetic-application", candidate_id: candidateId, profile_id: profileId, url: match.url, ats: "greenhouse", status: "submitted", outcome: "interview", created_at: "2026-01-12T00:00:00Z", updated_at: "2026-01-14T00:00:00Z", failure_reason: null },
+      { id: "synthetic-second", candidate_id: candidateId, profile_id: profileId, url: "https://alpha.example/jobs/platform", ats: "lever", status: "submitted", outcome: "rejected", created_at: "2026-01-10T00:00:00Z", updated_at: "2026-01-15T00:00:00Z", failure_reason: null },
+    ];
+    return json({ ok: true });
+  }
   calls.push({ method: req.method, path: url.pathname, query: url.search, body });
   if (key === "GET /health") return json({ status: "ok", api: "ok", database: "ok" });
   if (key === "GET /candidates") return json([{ id: candidateId, full_name: "Alex Rivera", email: "alex@example.com" }]);
@@ -70,8 +82,22 @@ const server = createServer(async (req, res) => {
   if (["GET /inbox", "GET /inbox/unrouted", "GET /tasks"].includes(key)) return json([]);
   if (key === "GET /companies/status") return json({ companies_total: 0 });
   if (key === "GET /setup/status") return json({ overall: "ok", generated_at: now, items: [] });
-  if (key === "GET /crawl/status") return json({ running: false, pending: crawlPending ? 1 : 0, stalled: crawlPending, last_finished_at: null, last_status: null, newest_posting_at: now, backlog: [] });
-  if (key === "POST /crawl") { crawlPending = true; return json({ queued: true, already_waiting: 0, worker_alive: false }); }
+  if (key === "GET /crawl/status") return json({ running: false, pending: crawlPending ? 1 : 0, stalled: crawlPending && !crawlPaused, paused: crawlPaused, last_finished_at: null, last_status: null, newest_posting_at: now, backlog: [] });
+  if (key === "POST /crawl") { crawlPending = true; crawlPaused = false; workerControls.crawler_paused = false; return json({ queued: true, already_waiting: 0, worker_alive: false, paused: false }); }
+  if (key === "POST /crawl/pause") { crawlPaused = true; workerControls.crawler_paused = true; return json({ paused: true, cancelled: 0, worker_alive: true }); }
+  if (key === "POST /crawl/resume") { crawlPaused = false; crawlPending = true; workerControls.crawler_paused = false; return json({ queued: true, already_waiting: 0, worker_alive: true, paused: false }); }
+  if (key === "POST /crawl/stop") { const cancelled = crawlPending ? 2 : 0; crawlPending = false; crawlPaused = true; workerControls.crawler_paused = true; return json({ paused: true, cancelled, worker_alive: true }); }
+  if (key === "GET /crawl/controls") return json(workerControls);
+  if (key === "PUT /crawl/controls") {
+    workerControls = {
+      ...workerControls,
+      ...(body.crawler_paused !== undefined ? { crawler_paused: body.crawler_paused } : {}),
+      ...(body.enabled_kinds !== undefined ? { enabled_kinds: body.enabled_kinds } : {}),
+      ...(body.max_workers !== undefined ? { max_workers: body.max_workers } : {}),
+    };
+    crawlPaused = workerControls.crawler_paused;
+    return json(workerControls);
+  }
   if (key === "POST /matches/rescore") { rescorePending = true; return json({ queued: true, already_waiting: 0, worker_alive: true }, 202); }
   if (key === "GET /matches/rescore") {
     const pending = rescorePending;
