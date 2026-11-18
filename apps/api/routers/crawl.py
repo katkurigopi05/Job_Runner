@@ -37,7 +37,20 @@ from packages.core import heartbeat
 from packages.core.enums import QueueTaskStatus
 from packages.core.heartbeat import WorkerState
 from packages.core.models import Posting, QueueTask
-from packages.core.schemas import CrawlStartOut, CrawlStatusOut, StageBacklogOut
+from packages.core.queue import cancel_pending
+from packages.core.schemas import (
+    CrawlStartOut,
+    CrawlStatusOut,
+    CrawlStopOut,
+    StageBacklogOut,
+    WorkerControlsOut,
+    WorkerControlsUpdate,
+)
+from packages.core.worker_controls import (
+    ALL_WORKER_KINDS,
+    load_worker_controls,
+    save_worker_controls,
+)
 from packages.crawler.dispatch import CRAWL_COMPANY_TASK_KIND, DISCOVER_COMPANY_TASK_KIND
 from packages.crawler.progress import crawl_backlog
 
@@ -108,11 +121,16 @@ async def crawl_status(session: SessionDep) -> CrawlStatusOut:
         )
     ).first()
 
+    controls = load_worker_controls()
+    if controls.crawler_paused:
+        running = False
+
     return CrawlStatusOut(
         running=bool(running),
         pending=int(pending or 0),
         # An unclaimed queue with no live workers is not a completed crawl.
-        stalled=bool(pending) and not bool(running),
+        stalled=bool(pending) and not bool(running) and not controls.crawler_paused,
+        paused=controls.crawler_paused,
         last_finished_at=(last.finished_at or last.locked_at) if last else None,
         last_status=last.status if last else None,
         # The number that actually answers "are my postings current". A crawl
@@ -125,6 +143,7 @@ async def crawl_status(session: SessionDep) -> CrawlStatusOut:
 @router.post("", response_model=CrawlStartOut)
 async def start_crawl(session: SessionDep) -> CrawlStartOut:
     """Queue one registry crawl, unless one is already waiting or running."""
+    save_worker_controls(crawler_paused=False)
     requested = await request_crawl(session, trigger="manual")
     await session.commit()
     return CrawlStartOut(
@@ -133,4 +152,86 @@ async def start_crawl(session: SessionDep) -> CrawlStartOut:
         worker_alive=any(
             worker.state is WorkerState.ALIVE for worker in await heartbeat.workers(session)
         ),
+    )
+
+
+@router.post("/pause", response_model=CrawlStopOut)
+async def pause_crawl(session: SessionDep) -> CrawlStopOut:
+    """Pause the crawler so workers stop claiming crawl/discovery tasks."""
+    save_worker_controls(crawler_paused=True)
+    alive = any(worker.state is WorkerState.ALIVE for worker in await heartbeat.workers(session))
+    return CrawlStopOut(paused=True, cancelled=0, worker_alive=alive)
+
+
+@router.post("/resume", response_model=CrawlStartOut)
+async def resume_crawl(session: SessionDep) -> CrawlStartOut:
+    """Resume the crawler and ensure a crawl tick is queued if nothing is waiting."""
+    save_worker_controls(crawler_paused=False)
+    requested = await request_crawl(session, trigger="manual")
+    await session.commit()
+    return CrawlStartOut(
+        queued=requested.queued is not None,
+        already_waiting=requested.waiting,
+        worker_alive=any(
+            worker.state is WorkerState.ALIVE for worker in await heartbeat.workers(session)
+        ),
+    )
+
+
+@router.post("/stop", response_model=CrawlStopOut)
+async def stop_crawl(session: SessionDep) -> CrawlStopOut:
+    """Pause the crawler and cancel pending company crawl/discovery tasks."""
+    save_worker_controls(crawler_paused=True)
+    cancelled_crawl = await cancel_pending(
+        session,
+        kind=CRAWL_COMPANY_TASK_KIND,
+        reason="stopped by the owner",
+    )
+    cancelled_discover = await cancel_pending(
+        session,
+        kind=DISCOVER_COMPANY_TASK_KIND,
+        reason="stopped by the owner",
+    )
+    await session.commit()
+    alive = any(worker.state is WorkerState.ALIVE for worker in await heartbeat.workers(session))
+    return CrawlStopOut(
+        paused=True,
+        cancelled=len(cancelled_crawl) + len(cancelled_discover),
+        worker_alive=alive,
+    )
+
+
+@router.get("/controls", response_model=WorkerControlsOut)
+async def get_controls(session: SessionDep) -> WorkerControlsOut:
+    """Read current crawler pause state and worker task/concurrency settings."""
+    controls = load_worker_controls()
+    alive_count = sum(
+        1 for worker in await heartbeat.workers(session) if worker.state is WorkerState.ALIVE
+    )
+    return WorkerControlsOut(
+        crawler_paused=controls.crawler_paused,
+        enabled_kinds=controls.enabled_kinds,
+        available_kinds=list(ALL_WORKER_KINDS),
+        max_workers=controls.max_workers,
+        alive_workers=alive_count,
+    )
+
+
+@router.put("/controls", response_model=WorkerControlsOut)
+async def update_controls(body: WorkerControlsUpdate, session: SessionDep) -> WorkerControlsOut:
+    """Update crawler pause state, enabled worker task kinds, or worker concurrency cap."""
+    controls = save_worker_controls(
+        crawler_paused=body.crawler_paused,
+        enabled_kinds=body.enabled_kinds,
+        max_workers=body.max_workers,
+    )
+    alive_count = sum(
+        1 for worker in await heartbeat.workers(session) if worker.state is WorkerState.ALIVE
+    )
+    return WorkerControlsOut(
+        crawler_paused=controls.crawler_paused,
+        enabled_kinds=controls.enabled_kinds,
+        available_kinds=list(ALL_WORKER_KINDS),
+        max_workers=controls.max_workers,
+        alive_workers=alive_count,
     )

@@ -20,8 +20,9 @@ Three things this holds:
   width, all zeros, or not finite. What the search does without one is the
   caller's decision, and it should say so.
 
-The assistant calls this only with CHAT_QWEN_SEARCH enabled. Its default
-search remains bge-small; chunk_search.py records any query embedding failure.
+The assistant calls this only with CHAT_QWEN_SEARCH or CHAT_QWEN_ONLY enabled.
+Its default search remains bge-small; chunk_search.py records any query
+embedding failure, or under CHAT_QWEN_ONLY refuses the question with it.
 """
 
 from __future__ import annotations

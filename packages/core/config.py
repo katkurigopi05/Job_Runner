@@ -452,6 +452,13 @@ class Settings(BaseSettings):
     #: Opt-in Qwen discovery; keyword ordering and uncovered postings retain bge-small.
     chat_qwen_search: bool = False
 
+    #: Qwen3-Embedding-4B is the only model that orders or finds postings, and
+    #: implies `chat_qwen_search`. bge-small and the lexical spaces are never
+    #: loaded or scanned; a question Qwen cannot embed is refused with the
+    #: reason, never searched another way. Postings without Qwen vectors are
+    #: still found by keywords, unranked by meaning, and counted in the reply.
+    chat_qwen_only: bool = False
+
     #: What the assistant does with a title that names no level when a
     #: question names one ("senior data engineer jobs").
     #:

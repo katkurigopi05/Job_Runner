@@ -811,6 +811,17 @@ What a later change could quietly undo (`tests/test_resume_studio.py`,
 - **A certification's skills go to one Skills line**, only the ones not
   already listed. A skill on the page counts as covered, so targeted tailoring
   never rewrites a bullet to claim it.
+- **A fact backs only the sections its kind may (2026-11-15, BACKLOG P5).**
+  `guard.MAY_BACK`: the résumé's own facts any section (still entry-scoped),
+  an internship its own Experience lines and Skills, a certification
+  Certifications and Skills, a repository's structured record Projects and
+  Skills. Studio passes `Source.kinds` to every corpus it builds
+  (`from_resume(kinds=…)`, `targeted.classify`/`revise`); a caller that passes
+  none gets the résumé-only corpus it always got. Before this, a confirmed
+  certification's line sat in a shared section nothing attributed, and "on
+  AWS Lambda" passed on an employer's bullet. A certification written on the
+  uploaded résumé is still résumé text and still shared; narrowing that is a
+  §2.1 decision (`tests/test_claim_source_kind.py`).
 - **A private repository is evidence only until the owner includes or pins
   it** (`Project.resume_listed`), and once printed its address never is
   (`projects.ProjectEntry.is_private`). Sync lists private and collaborator

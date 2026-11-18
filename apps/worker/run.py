@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import contextlib
 import signal
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -35,6 +36,7 @@ from packages.core import db as core_db
 from packages.core.config import get_settings
 from packages.core.enums import FailureReason
 from packages.core.heartbeat import Heartbeat
+from packages.core.metrics import get_metrics_registry
 from packages.core.models import Application
 from packages.core.queue import (
     DEFAULT_LEASE_SECONDS,
@@ -51,6 +53,7 @@ from packages.core.queue import (
     renew_lease,
 )
 from packages.core.trace import correlated, normalize_trace_id
+from packages.core.worker_controls import load_worker_controls
 
 log = structlog.get_logger(__name__)
 
@@ -133,11 +136,14 @@ async def run_once(
     heartbeat: Heartbeat | None = None,
 ) -> bool:
     """Claim and run at most one task. Returns True if one was processed."""
+    active_kinds = load_worker_controls().active_kinds(list(HANDLERS))
+    if not active_kinds:
+        return False
     async with core_db.get_sessionmaker()() as session:
         claimed = await claim_task(
             session,
             worker_id=worker_id,
-            kinds=list(HANDLERS),
+            kinds=active_kinds,
             after_others=list(YIELDING_KINDS),
             lease_seconds=lease_seconds,
         )
@@ -256,6 +262,8 @@ async def _process(session: AsyncSession, claimed: ClaimedTask) -> None:
     # it would trigger a lazy load outside the async context.
     task_id = claimed.task.id
     task_kind = claimed.task.kind
+    started_at = time.perf_counter()
+    registry = get_metrics_registry()
 
     handler = HANDLERS.get(task_kind)
     if handler is None:
@@ -264,6 +272,11 @@ async def _process(session: AsyncSession, claimed: ClaimedTask) -> None:
             claimed,
             f"no_handler:{task_kind}",
             max_attempts=0,
+        )
+        registry.record_worker_task(
+            kind=task_kind,
+            outcome="ownership_lost" if outcome is None else "failed",
+            duration_s=time.perf_counter() - started_at,
         )
         if outcome is None:
             raise ClaimOwnershipLost(str(task_id))
@@ -276,6 +289,11 @@ async def _process(session: AsyncSession, claimed: ClaimedTask) -> None:
             await handler(session, claimed)
     except ClaimOwnershipLost:
         await session.rollback()
+        registry.record_worker_task(
+            kind=task_kind,
+            outcome="ownership_lost",
+            duration_s=time.perf_counter() - started_at,
+        )
         raise
     except TaskDeferred as exc:
         # Neither done nor failed. The handler handed the task back because its
@@ -283,6 +301,11 @@ async def _process(session: AsyncSession, claimed: ClaimedTask) -> None:
         # retry and nothing to complete — and the deferral it wrote has to be
         # kept, which is why this commits where the generic handler rolls back.
         await session.commit()
+        registry.record_worker_task(
+            kind=task_kind,
+            outcome="deferred",
+            duration_s=time.perf_counter() - started_at,
+        )
         log.info(
             "task_deferred",
             task_id=str(task_id),
@@ -295,6 +318,11 @@ async def _process(session: AsyncSession, claimed: ClaimedTask) -> None:
         # A malformed payload will never succeed, so do not burn retries on it.
         await session.rollback()
         outcome = await _fail(session, claimed, type(exc).__name__, max_attempts=0)
+        registry.record_worker_task(
+            kind=task_kind,
+            outcome="ownership_lost" if outcome is None else "failed",
+            duration_s=time.perf_counter() - started_at,
+        )
         if outcome is None:
             raise ClaimOwnershipLost(str(task_id)) from exc
         log.error("task_payload_invalid", task_id=str(task_id), error=type(exc).__name__)
@@ -307,6 +335,11 @@ async def _process(session: AsyncSession, claimed: ClaimedTask) -> None:
         timed_out = isinstance(exc, TimeoutError) and deadline.expired()
         message = f"timed out after {limit:g}s" if timed_out else type(exc).__name__
         will_retry = await _fail(session, claimed, message, policy=retry_policy(task_kind))
+        registry.record_worker_task(
+            kind=task_kind,
+            outcome="ownership_lost" if will_retry is None else "failed",
+            duration_s=time.perf_counter() - started_at,
+        )
         if will_retry is None:
             raise ClaimOwnershipLost(str(task_id)) from exc
         if not will_retry:
@@ -324,8 +357,18 @@ async def _process(session: AsyncSession, claimed: ClaimedTask) -> None:
 
     if not await complete_task(session, claimed):
         await session.rollback()
+        registry.record_worker_task(
+            kind=task_kind,
+            outcome="ownership_lost",
+            duration_s=time.perf_counter() - started_at,
+        )
         raise ClaimOwnershipLost(str(task_id))
     await session.commit()
+    registry.record_worker_task(
+        kind=task_kind,
+        outcome="done",
+        duration_s=time.perf_counter() - started_at,
+    )
     log.info("task_done", task_id=str(task_id), kind=task_kind)
     # After the commit, never before: `notify_if_parked` says why.
     await _notify(session, claimed)

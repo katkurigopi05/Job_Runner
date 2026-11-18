@@ -48,8 +48,10 @@ def importers(package: str) -> list[str]:
 def test_the_dashboard_depends_on_exactly_these_five() -> None:
     """Approved runtime packages: adding a UI/effect dependency is an explicit decision."""
     assert set(PACKAGE["dependencies"]) == {
+        "@hookform/resolvers",
         "@radix-ui/react-slot",
         "@tanstack/react-query",
+        "@tanstack/react-table",
         "border-beam",
         "class-variance-authority",
         "clsx",
@@ -57,8 +59,10 @@ def test_the_dashboard_depends_on_exactly_these_five() -> None:
         "next",
         "react",
         "react-dom",
+        "react-hook-form",
         "tailwind-merge",
         "thinking-orbs",
+        "zod",
     }
 
 

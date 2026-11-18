@@ -265,7 +265,9 @@ async def synthesize(
         limit=project_limit,
     )
     chosen = [pick.project for pick in picks if pick.chosen]
-    corpus = SourceCorpus.from_resume(source.resume, linked=linked, verified=source.verified)
+    corpus = SourceCorpus.from_resume(
+        source.resume, linked=linked, verified=source.verified, kinds=source.kinds
+    )
 
     revision: Revision | None = None
     if provider is not None:
@@ -276,6 +278,7 @@ async def synthesize(
             projects=chosen,
             linked=linked,
             verified=source.verified,
+            kinds=source.kinds,
         )
         plan, result = revision.plan, revision.result
     else:
@@ -285,6 +288,7 @@ async def synthesize(
             projects=chosen,
             linked=linked,
             verified=source.verified,
+            kinds=source.kinds,
         )
         result = TailorResult(bullets=[BulletRewrite(original=b, tailored=b) for b in plan.bullets])
 
@@ -321,7 +325,9 @@ def saved_lines_check(
     from the browser, so a rewrite is judged again rather than trusted, and a
     line that is none of the three is refused rather than saved.
     """
-    corpus = SourceCorpus.from_resume(source.resume, linked=linked, verified=source.verified)
+    corpus = SourceCorpus.from_resume(
+        source.resume, linked=linked, verified=source.verified, kinds=source.kinds
+    )
     source_keys = {line_key(line) for lines in source.resume.sections.values() for line in lines}
     skills = source.resume.section("skills")
     allowed = source_keys | {line_key(edit) for edit in owner_edits}

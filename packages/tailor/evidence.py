@@ -7,7 +7,9 @@ omitted, but only when they remain attributed to that project. This module
 never reads an employer bullet and never generates a claim.
 
 A repository the owner linked to a résumé Projects entry (`Project.resume_entry`)
-is evidence for that entry's bullets (`linked_evidence`, CLAUDE.md §2.1).
+is evidence for that entry's bullets (`linked_evidence`, CLAUDE.md §2.1). The
+guard tags it `github_repo`, a kind that may back Projects and Skills and
+never an employer's Experience (`guard.MAY_BACK`).
 """
 
 from __future__ import annotations
