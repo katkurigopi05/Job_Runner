@@ -95,13 +95,15 @@ def _systems_linked(html: str) -> Iterator[tuple[str, str]]:
 
 def other_job_system(html: str) -> tuple[str, str] | None:
     """`(name, url)` for the first link in `html` to a job system we cannot read."""
+    from packages.crawler.oracle import slug_for
     from packages.crawler.workday import parse_site
 
     return next(
         (
             (name, url)
             for name, url in _systems_linked(html)
-            if name != "Workday" or parse_site(url) is None
+            if (name != "Workday" or parse_site(url) is None)
+            and (name != "Oracle Recruiting" or slug_for(url) is None)
         ),
         None,
     )
