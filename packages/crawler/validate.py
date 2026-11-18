@@ -116,11 +116,12 @@ def _api_is_board(response: FetchResult, ats: str) -> bool:
     if ats == "icims":
         from urllib.parse import urlparse
 
-        from packages.crawler.icims import IcimsBoardError, parse_page
+        from packages.crawler.icims import IcimsBoardError
+        from packages.crawler.icims import parse_page as parse_icims_page
 
         try:
             parsed = urlparse(response.url)
-            parse_page(response.text, f"{parsed.scheme}://{parsed.netloc}")
+            parse_icims_page(response.text, f"{parsed.scheme}://{parsed.netloc}")
             return True
         except (ValueError, IcimsBoardError):
             return False
