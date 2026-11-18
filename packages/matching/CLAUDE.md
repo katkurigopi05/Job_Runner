@@ -706,6 +706,10 @@ Both switches stay off by default; new semantic finds need grades before
 promotion. Question-by-question results are in `docs/evaluations/qwen-*.csv`.
 
 
+`CHAT_QWEN_ONLY` (2026-11-17, owner's request) makes Qwen the only model: it also orders
+keyword matches, bge-small is never loaded or scanned, and a question it cannot embed is
+refused rather than searched with bge-small. Details: `.claude/rules/assistant-search.md`.
+
 ### Owner review: exact Qwen discovery only (2026-11-02)
 
 The earlier Qwen keyword reordering is superseded. Keywords retain bge-small;
