@@ -276,3 +276,22 @@ async def test_local_answers_still_release_the_query_model(
     await chat.prepare(ChatRequest(message="kafka jobs", provider=provider), db_session)
     assert fakes[1] == [("kafka jobs", "5m" if provider == "ollama" else None)]
     assert len(releases) == releases_expected
+
+
+async def test_a_company_question_is_refused_too_since_qwen_orders_it(db_session, ollama_down):
+    """Strict means strict: the keywords matched, but the order shown is Qwen's."""
+    await posting(db_session, "Platform Builder")
+    with pytest.raises(chunk_search.QwenSearchUnavailable):
+        await R.retrieve(db_session, "jobs at Acme")
+
+
+@pytest.mark.parametrize("route", ["/chat", "/chat/stream"])
+async def test_both_routes_refuse_with_the_same_error_before_any_answer(client, monkeypatch, route):
+    async def refused(*args, **kwargs):
+        raise chunk_search.QwenSearchUnavailable(OLLAMA_DOWN)
+
+    monkeypatch.setattr(chat, "retrieve", refused)
+    answered = await client.post(route, json={"message": "kafka jobs", "provider": "kaggle"})
+    assert answered.status_code == 500
+    message = answered.json()["error"]["message"]
+    assert "CHAT_QWEN_ONLY" in message and "ollama serve" in message

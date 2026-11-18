@@ -1382,9 +1382,11 @@ could undo, each held by `tests/test_qwen_only_search.py`:
 - **A question Qwen cannot embed is refused, never searched another way**
   (`chunk_search.QwenSearchUnavailable`). The chat says the embedder's own reason, which names the
   remedy (`ollama serve`, `ollama pull …`), and that nothing was searched with bge-small and no model
-  was asked. A question that needs no vector (a count, "hello") is answered with Ollama down.
-- **What Qwen cannot rank is counted, not searched**: `Retrieval.qwen_uncovered` is the chunked open
-  postings with no Qwen vectors, and the context says keywords can find them but nothing ranked them
+  was asked. A question that searches no postings ("hello", a status question) is answered with Ollama
+  down. One that does is refused even when the keywords matched ("jobs at Stripe"): the order
+  shown is Qwen's, and there is none to give.
+- **What Qwen cannot rank is counted, not searched**: `Retrieval.qwen_uncovered` is the open postings
+  bge-small has vectors for (chunks or the one posting vector) and Qwen has none, and the context says keywords can find them but nothing ranked them
   by meaning. A vector-only question cannot reach them, and `unsearchable` counts them.
 
 On the live database that day: 14,542 open postings in the owner's area had Qwen vectors, 45 did

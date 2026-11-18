@@ -315,8 +315,8 @@ class ChunkQueries:
     fallback_reason: str | None = None
     #: (open postings the Qwen space covers, open postings only bge-small
     #: reaches), counted once per question; None when not counted. Under
-    #: `strict` the second is the chunked postings with no Qwen vectors,
-    #: which nothing ranks by meaning.
+    #: `strict` the second is the postings bge-small has vectors for (chunks
+    #: or the one posting vector) and Qwen has none, which nothing ranks by meaning.
     covered: tuple[int, int] | None = None
     strict: bool = False
 

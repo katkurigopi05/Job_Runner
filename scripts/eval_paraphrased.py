@@ -99,7 +99,11 @@ async def main() -> int:
                     json.dumps([asdict(r) for r in reports], indent=1), encoding="utf-8"
                 )
     finally:
-        if any(modes[name].settings.get("chat_qwen_search") for name in args.mode or []):
+        if any(
+            modes[name].settings.get("chat_qwen_search")
+            or modes[name].settings.get("chat_qwen_only")
+            for name in args.mode or []
+        ):
             await chunk_search.release_embedder()
         await get_engine().dispose()
 

@@ -747,7 +747,8 @@ class Retrieval:
     qwen_searched: int | None = None
     bge_fallback_searched: int = 0
     #: CHAT_QWEN_ONLY: no other model ordered or found postings, and how many
-    #: chunked postings have no Qwen vectors, so nothing ranked them by meaning.
+    #: postings bge-small has vectors for and Qwen has none, so nothing ranked
+    #: them by meaning.
     qwen_only: bool = False
     qwen_uncovered: int = 0
     #: Why the opt-in Qwen query failed; surfaced in context and the reply.
