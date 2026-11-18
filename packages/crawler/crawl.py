@@ -383,15 +383,14 @@ async def _store(
 
     # What the edited postings said *before* this upsert, for a baseline
     # version. Read first because the statement below overwrites it.
-    baselines = await _unversioned_baselines(
-        session,
-        [
-            previous.id
-            for item in extracted
-            if (previous := existing.get(item.external_id)) is not None
-            and previous.content_hash != item.content_hash
-        ],
-    )
+    edited = {
+        previous.id: (previous.content_hash, item)
+        for item in extracted
+        if (previous := existing.get(item.external_id)) is not None
+        and previous.content_hash != item.content_hash
+    }
+    baselines = await _unversioned_baselines(session, list(edited))
+    unchanged_text = await _same_description(session, edited)
 
     # In batches: one statement binds every column of every row, and asyncpg
     # refuses more than 32,767 parameters. A 2,000-posting Workday board is
@@ -425,6 +424,7 @@ async def _store(
         result.new = list(new_ids.values())
 
     await _record_versions(session, values, existing, new_ids, baselines, current)
+    await _keep_chunks(session, unchanged_text)
 
     from packages.matching.canonical import assign
 
@@ -436,6 +436,53 @@ async def _store(
 
 #: The most parameters asyncpg binds in one statement.
 ASYNCPG_PARAMETER_LIMIT = 32767
+
+
+async def _same_description(
+    session: AsyncSession, edited: dict[uuid.UUID, tuple[str | None, ExtractedPosting]]
+) -> list[dict[str, object]]:
+    """Edited postings whose description reads the same: (id, old hash, new hash).
+
+    A chunk is cut from the normalized description alone, so an edit to the
+    title, the location or the board's office facts leaves every chunk and its
+    vectors right. Read before the upsert overwrites the old text.
+    """
+    if not edited:
+        return []
+    from packages.matching.chunks import normalize
+
+    ids = list(edited)
+    before: dict[uuid.UUID, str | None] = {}
+    for first in range(0, len(ids), ASYNCPG_PARAMETER_LIMIT):
+        rows = await session.execute(
+            select(Posting.id, Posting.description_raw).where(
+                Posting.id.in_(ids[first : first + ASYNCPG_PARAMETER_LIMIT])
+            )
+        )
+        before.update({row.id: row.description_raw for row in rows})
+    moves: list[dict[str, object]] = []
+    for posting_id, (old_hash, item) in edited.items():
+        old, new = before.get(posting_id), item.description_raw
+        if old and new and old.strip() and normalize(old) == normalize(new):
+            moves.append({"posting": posting_id, "old": old_hash, "new": item.content_hash})
+    return moves
+
+
+async def _keep_chunks(session: AsyncSession, moves: list[dict[str, object]]) -> None:
+    """Move chunks cut from the replaced version to the new hash; older ones stay stale."""
+    if not moves:
+        return
+    from sqlalchemy import Table, bindparam
+
+    from packages.core.models_chunks import PostingChunk
+
+    table = cast(Table, PostingChunk.__table__)
+    await session.execute(
+        update(table)
+        .where(table.c.posting_id == bindparam("posting"), table.c.content_hash == bindparam("old"))
+        .values(content_hash=bindparam("new")),
+        moves,
+    )
 
 
 def _upsert_statement(values: list[dict[str, object]]) -> Any:

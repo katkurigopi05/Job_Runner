@@ -731,3 +731,19 @@ later change could quietly break.
   tables search reads; the command still does, and now for every table a
   posting delete cascades into, read from the models. Its hand-written list
   had missed `posting_chunks`, the largest of them.
+
+## A listing edit that keeps the description keeps its chunks (2026-11-18)
+
+A chunk is current while its `content_hash` is the posting's, and `posting_hash` covers the
+title, the location and the board's office facts as well as the description. So a Workday
+listing that changed "2 Locations" to a city made every chunk stale: the next chunk pass deleted
+them, their Qwen vectors went with them (`ON DELETE CASCADE`), and the same text went back to
+the GPU. On 2026-11-18, 114 open postings held 1,915 vectors cut from a description that cut
+the same chunks today.
+
+`_store` now reads an edited posting's old description before the upsert, and when the
+normalized text is unchanged moves the chunks cut from the replaced version to the new hash, in
+the same transaction (`_same_description`, `_keep_chunks`). Chunks are cut from the description
+alone, so their bge-small and Qwen vectors stay right. Chunks already stale before the edit stay
+stale. The postings already stale on 2026-11-18 are not repaired: nothing stored their old text,
+so they are re-cut and re-embedded once. `tests/test_chunks_survive_listing_edits.py`.
