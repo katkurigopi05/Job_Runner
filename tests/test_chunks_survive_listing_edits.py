@@ -145,3 +145,71 @@ async def test_an_unchanged_listing_touches_no_chunk(db_session) -> None:
     await _store(db_session, company, [again], us_only=False, max_age_days=0)
 
     assert {content_hash for content_hash, _ in await _chunks(db_session, posting)} == {"first"}
+
+
+async def test_one_store_moves_only_the_postings_whose_text_is_unchanged(db_session) -> None:
+    company, kept = await _stored(db_session)
+    other = ExtractedPosting(
+        ats_type="workday",
+        external_id="R200",
+        url="https://acme.wd1.myworkdayjobs.com/jobs/job/R200",
+        title="Analytics Engineer",
+        location="2 Locations",
+        description_raw=BODY + " Second role.",
+        content_hash="other-first",
+    )
+    await _store(db_session, company, [other], us_only=False, max_age_days=0)
+    changed = await db_session.scalar(select(Posting).where(Posting.external_id == "R200"))
+    assert changed is not None
+    db_session.add(
+        PostingChunk(
+            posting_id=changed.id,
+            ordinal=0,
+            start=0,
+            length=500,
+            content_hash="other-first",
+            embedding_model="sentence-transformers",
+            embedding=[0.0] * 384,
+            overlap=OVERLAP,
+        )
+    )
+    await db_session.flush()
+
+    moved = _listing(location="San Jose, CA", content_hash="second")
+    rewritten = other.model_copy(
+        update={"description_raw": BODY + " Kafka too.", "content_hash": "other-second"}
+    )
+    await _store(db_session, company, [moved, rewritten], us_only=False, max_age_days=0)
+
+    assert {h for h, _ in await _chunks(db_session, kept)} == {"second"}
+    assert {h for h, _ in await _chunks(db_session, changed)} == {"other-first"}
+
+
+async def test_a_listing_that_had_no_text_moves_nothing(db_session) -> None:
+    """The description backfill: the old row had no text, so no chunk was cut from it."""
+    from packages.crawler.crawl import _same_description
+
+    company = Company(name=f"Acme {uuid.uuid4().hex[:6]}")
+    db_session.add(company)
+    await db_session.flush()
+    bare = _listing(location="2 Locations", content_hash="listed", body="")
+    bare = bare.model_copy(update={"description_raw": None})
+    await _store(db_session, company, [bare], us_only=False, max_age_days=0)
+    posting = await db_session.scalar(select(Posting).where(Posting.company_id == company.id))
+    assert posting is not None
+
+    filled = _listing(location="2 Locations", content_hash="filled")
+    assert await _same_description(db_session, {posting.id: ("listed", filled)}) == []
+
+
+async def test_text_read_after_another_edit_is_not_trusted(db_session) -> None:
+    """The chunks at the hash this crawl read were cut from text since replaced."""
+    from packages.crawler.crawl import _same_description
+
+    _, posting = await _stored(db_session)
+    # Another worker stored a new hash after this crawl read "first".
+    posting.content_hash = "someone-else"
+    await db_session.flush()
+
+    edit = _listing(location="San Jose, CA", content_hash="second")
+    assert await _same_description(db_session, {posting.id: ("first", edit)}) == []

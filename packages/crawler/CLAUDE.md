@@ -744,6 +744,8 @@ the same chunks today.
 `_store` now reads an edited posting's old description before the upsert, and when the
 normalized text is unchanged moves the chunks cut from the replaced version to the new hash, in
 the same transaction (`_same_description`, `_keep_chunks`). Chunks are cut from the description
-alone, so their bge-small and Qwen vectors stay right. Chunks already stale before the edit stay
+alone, so their bge-small and Qwen vectors stay right. The old text is read with its hash and
+trusted only when that hash is still the one `_store` read: another worker may have stored an
+edit in between, and the chunks at the old hash were cut from the text before it. Chunks already stale before the edit stay
 stale. The postings already stale on 2026-11-18 are not repaired: nothing stored their old text,
 so they are re-cut and re-embedded once. `tests/test_chunks_survive_listing_edits.py`.

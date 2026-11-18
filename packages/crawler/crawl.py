@@ -452,17 +452,23 @@ async def _same_description(
     from packages.matching.chunks import normalize
 
     ids = list(edited)
-    before: dict[uuid.UUID, str | None] = {}
+    before: dict[uuid.UUID, tuple[str | None, str | None]] = {}
     for first in range(0, len(ids), ASYNCPG_PARAMETER_LIMIT):
         rows = await session.execute(
-            select(Posting.id, Posting.description_raw).where(
+            select(Posting.id, Posting.content_hash, Posting.description_raw).where(
                 Posting.id.in_(ids[first : first + ASYNCPG_PARAMETER_LIMIT])
             )
         )
-        before.update({row.id: row.description_raw for row in rows})
+        before.update({row.id: (row.content_hash, row.description_raw) for row in rows})
     moves: list[dict[str, object]] = []
     for posting_id, (old_hash, item) in edited.items():
-        old, new = before.get(posting_id), item.description_raw
+        stored_hash, old = before.get(posting_id, (None, None))
+        new = item.description_raw
+        # Read with its hash: another worker may have edited the posting since
+        # `existing` was read, and then this text is not what the chunks at
+        # `old_hash` were cut from.
+        if stored_hash != old_hash:
+            continue
         if old and new and old.strip() and normalize(old) == normalize(new):
             moves.append({"posting": posting_id, "old": old_hash, "new": item.content_hash})
     return moves
