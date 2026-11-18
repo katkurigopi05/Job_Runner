@@ -184,6 +184,8 @@ class StoreResult:
     #: (`locality.wholly_abroad`) while `Settings.search_us_only` is on, and
     #: they were not already held.
     abroad: int = 0
+    #: New postings positively outside the configured search area, when opted in.
+    outside_area: int = 0
 
     @property
     def changed(self) -> list[uuid.UUID]:
@@ -350,6 +352,50 @@ async def _store(
         if result.abroad:
             log.info("abroad_postings_not_stored", company=company.name, skipped=result.abroad)
         extracted = domestic
+        if not extracted:
+            return result
+
+    from packages.core.config import get_settings
+    from packages.matching.locality import Locality, area_exclusion, locality_of
+    from packages.matching.location_fields import office_facts
+
+    settings = get_settings()
+    if us_only and settings.crawler_store_search_area_only:
+        admitted = []
+        for item in extracted:
+            reading = location_fields[item.external_id]
+            offices = office_facts(reading["locations_json"])
+            # Search can hide a mixed known/unknown location. Admission must
+            # retain it: the unknown office could be in the owner's area.
+            uncertain = not offices or any(
+                country is None and locality_of(raw) in {Locality.UNKNOWN, Locality.UNPLACED}
+                for raw, country, _, _ in offices
+            )
+            if (
+                item.external_id in existing
+                or uncertain
+                or area_exclusion(
+                    item.location,
+                    title=item.title,
+                    description=item.description_raw,
+                    remote_outside_california=settings.search_remote_outside_california,
+                    allow_unknown_location=True,
+                    country_code=reading["country_code"],
+                    state_code=reading["state_code"],
+                    is_remote=reading["is_remote"],
+                    offices=offices,
+                )
+                is None
+            ):
+                admitted.append(item)
+        result.outside_area = len(extracted) - len(admitted)
+        if result.outside_area:
+            log.info(
+                "outside_area_postings_not_stored",
+                company=company.name,
+                skipped=result.outside_area,
+            )
+        extracted = admitted
         if not extracted:
             return result
 

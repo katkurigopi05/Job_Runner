@@ -403,6 +403,11 @@ class Settings(BaseSettings):
     #: to relocate wants the first without the second.
     search_remote_outside_california: bool = True
 
+    #: Opt-in admission: skip only NEW postings positively outside the search
+    #: area. Unknown offices and held postings remain; disabling takes effect
+    #: on the next poll. Uses the standing search settings, never deletes rows.
+    crawler_store_search_area_only: bool = False
+
     #: Which embedder scores the feed — "lexical" or "sentence-transformers".
     #: Read here rather than from os.environ for the same reason the provider
     #: credentials above are: `.env` is loaded into *this object*, never into
