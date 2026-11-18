@@ -13,6 +13,7 @@ import uuid
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 from sqlalchemy import select, update
 
 from packages.core.models import Candidate, Posting, Project, Resume, User
@@ -458,3 +459,43 @@ async def test_coverage_says_how_much_of_the_open_corpus_is_linked(db_session) -
     assert coverage.unreadable >= 1
     assert coverage.stale >= 1
     assert coverage.open == coverage.linked + coverage.stale
+
+
+@pytest.mark.parametrize("held_count", [1, 2])
+async def test_new_jobs_are_linked_when_a_board_replaces_or_reduces_its_list(
+    db_session, held_count
+) -> None:
+    from packages.core.models import Company
+    from packages.crawler.crawl import _store
+    from packages.crawler.extract import ExtractedPosting
+
+    company = Company(name="Changing board")
+    db_session.add(company)
+    await db_session.flush()
+
+    def listing(external_id: str) -> ExtractedPosting:
+        return ExtractedPosting(
+            ats_type="greenhouse",
+            external_id=external_id,
+            url=f"https://boards.greenhouse.io/acme/jobs/{external_id}",
+            title="Backend Engineer",
+            location="San Francisco, CA",
+            description_raw=JOB,
+            content_hash=f"hash-{external_id}",
+        )
+
+    await _store(
+        db_session,
+        company,
+        [listing(f"old-{i}") for i in range(held_count)],
+        us_only=False,
+        max_age_days=0,
+    )
+    result = await _store(db_session, company, [listing("new")], us_only=False, max_age_days=0)
+    posting = await db_session.scalar(
+        select(Posting).where(Posting.company_id == company.id, Posting.external_id == "new")
+    )
+    assert posting is not None
+    assert result.new == [posting.id]
+    assert "python" in await _links(db_session, posting)
+    assert await _read(db_session, posting) is not None
