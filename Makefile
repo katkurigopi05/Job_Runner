@@ -1,5 +1,5 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
-        check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
+        check-crawler-locations check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
         bench-matching eval-retrieval eval-paraphrased judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings export-chunk-vectors-pending import-chunk-vectors query-embedder-check backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
@@ -185,7 +185,15 @@ GATE3_TESTS := tests/test_no_fabrication.py tests/test_cover_letter.py \
   tests/test_apply_uploads_tailored.py
 GATE4_TESTS := tests/test_mcp.py tests/test_mcp_tracking.py tests/test_mcp_ids.py \
   tests/test_mcp_status.py tests/test_mcp_grading.py
-GATE5_TESTS := tests/test_icims_reader.py tests/test_oracle_reader.py tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
+CRAWLER_LOCATION_TESTS := tests/test_structured_locations.py tests/test_workday_country_locations.py \
+  tests/test_crawl_skips_abroad.py tests/test_crawl_search_area.py \
+  tests/test_location_area.py tests/test_remote_declared.py
+
+# The suite refuses the live database and requires the jobrunner:test mark.
+check-crawler-locations:
+	REQUIRE_DB=1 $(PY)/pytest -q $(CRAWLER_LOCATION_TESTS)
+
+GATE5_TESTS := $(CRAWLER_LOCATION_TESTS) tests/test_icims_reader.py tests/test_oracle_reader.py tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
   tests/test_bespoke_probe.py tests/test_labeling_loop.py \
   tests/test_crawl_status.py tests/test_crawler_spider_ui.py \
   tests/test_posting_url_is_reachable.py \
