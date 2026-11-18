@@ -14,6 +14,14 @@ a later export picks it up.
 
 The vectors file is read row by row in the export's order: posting after
 posting, each posting's chunks in reading order.
+
+**One text is embedded once** (2026-11-18). Boards list one job many times
+word for word (Accenture's "AI Native Software Engineer" 49 times), and 1,502
+open postings had been embedded again for text already embedded, about 23,000
+vectors. The export now sends each text once and leaves out text another
+posting already has vectors for; `copy_vectors` gives the others the same
+vectors, with no model, only when the descriptions are equal and every chunk
+sits at the same offsets in both.
 """
 
 from __future__ import annotations
@@ -26,13 +34,17 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import structlog
-from sqlalchemy import and_, exists, func, or_, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import String, and_, column, exists, func, literal, or_, select, values
+from sqlalchemy.dialects.postgresql import UUID, insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import CursorResult
 
 from packages.core.models import Posting
 from packages.core.models_chunks import LARGE_EMBEDDING_DIM, PostingChunk, PostingChunkVector
@@ -46,6 +58,8 @@ QWEN_4B = "Qwen/Qwen3-Embedding-4B"
 #: Postings checked and written per transaction, so a stopped import keeps
 #: what it wrote and a second run carries on.
 BATCH_POSTINGS = 200
+#: Pairs copied per statement (two bound parameters each).
+COPY_BATCH = 1000
 #: Postings that already have vectors, put first in an export so the import
 #: can compare a new batch with what is stored before it writes anything.
 CALIBRATION_POSTINGS = 10
@@ -291,6 +305,10 @@ class PendingReport:
     out_of_scope: int = 0
     #: Postings with vectors already, put first for the import's check.
     calibration: int = 0
+    #: Left out: another posting's vectors are for the same text (`copy_vectors`).
+    copyable: int = 0
+    #: Left out: the same text as a posting this export already holds.
+    repeats: int = 0
 
 
 #: Which postings an export may hold, read from title, location and description.
@@ -394,8 +412,18 @@ async def pending(
         for row in found
         if _keeps(scope, row.title, row.location, row.description_raw)
     ]
+    # A text already embedded is copied, and one text is sent once: the
+    # import's `copy_vectors` gives the repeats the vectors made for it.
+    copyable = await _copy_targets(session, model)
+    seen: set[str | None] = set()
+    unique: list[tuple[uuid.UUID, str | None]] = []
+    for posting_id, description in waiting:
+        if posting_id not in copyable and description not in seen:
+            seen.add(description)
+            unique.append((posting_id, description))
+    copies = sum(1 for posting_id, _ in waiting if posting_id in copyable)
     calibration = await _calibration(session, model, calibrate)
-    exported = await _chunk_texts(session, [*calibration, *waiting])
+    exported = await _chunk_texts(session, [*calibration, *unique])
     covered = await session.scalar(
         select(func.count()).where(_with_text(), _chunked(), ~_missing_vector(model))
     )
@@ -408,6 +436,8 @@ async def pending(
         not_chunked=not_chunked,
         out_of_scope=len(found) - len(waiting) + unchunked_out,
         calibration=len(calibration),
+        copyable=copies,
+        repeats=len(waiting) - copies - len(unique),
     )
     return exported, report
 
@@ -459,6 +489,162 @@ async def _chunk_texts(
     return tuple(exported)
 
 
+def _copy_pairs(model: str) -> Any:
+    """(target, donor): a posting missing vectors, and one with them for the same text.
+
+    The donor's description equals the target's, its current chunks all have a
+    vector, and every target chunk has a donor chunk at the same ordinal and
+    offsets. The oldest such donor is chosen.
+    """
+    target = (
+        select(
+            Posting.id, Posting.description_raw, func.md5(Posting.description_raw).label("digest")
+        )
+        .where(_with_text(), _chunked(), _missing_vector(model))
+        .cte("copy_target")
+    )
+    donor = (
+        select(
+            Posting.id,
+            Posting.description_raw,
+            Posting.first_seen_at,
+            func.md5(Posting.description_raw).label("digest"),
+        )
+        .where(
+            Posting.description_raw.is_not(None),
+            func.md5(Posting.description_raw).in_(select(target.c.digest)),
+            _chunked(),
+            ~_missing_vector(model),
+        )
+        .cte("copy_donor")
+    )
+    target_chunk, donor_chunk = aliased(PostingChunk), aliased(PostingChunk)
+    donor_vector = aliased(PostingChunkVector)
+    twin = (
+        select(1)
+        .select_from(donor_chunk)
+        .join(
+            donor_vector,
+            and_(donor_vector.chunk_id == donor_chunk.id, donor_vector.embedding_model == model),
+        )
+        .where(
+            donor_chunk.posting_id == donor.c.id,
+            donor_chunk.ordinal == target_chunk.ordinal,
+            donor_chunk.start == target_chunk.start,
+            donor_chunk.length == target_chunk.length,
+        )
+        .correlate_except(donor_chunk, donor_vector)
+    )
+    unmatched = (
+        select(1)
+        .select_from(target_chunk)
+        .where(target_chunk.posting_id == target.c.id, ~twin.exists())
+        .correlate_except(target_chunk)
+    )
+    same_text = and_(
+        donor.c.digest == target.c.digest,
+        donor.c.description_raw == target.c.description_raw,
+        donor.c.id != target.c.id,
+    )
+    return (
+        select(target.c.id.label("target_id"), donor.c.id.label("donor_id"))
+        .select_from(target.join(donor, same_text))
+        .where(~unmatched.exists())
+        .distinct(target.c.id)
+        .order_by(target.c.id, donor.c.first_seen_at, donor.c.id)
+    )
+
+
+async def _copy_targets(session: AsyncSession, model: str) -> set[uuid.UUID]:
+    pairs = _copy_pairs(model).subquery("pairs")
+    return set((await session.scalars(select(pairs.c.target_id))).all())
+
+
+@dataclass(frozen=True)
+class CopyReport:
+    postings: int = 0
+    chunks: int = 0
+
+
+async def copy_vectors(
+    session: AsyncSession,
+    *,
+    model: str = QWEN_4B,
+    scope: Scope | None = None,
+    dry_run: bool = False,
+) -> CopyReport:
+    """Give each posting missing vectors those of a posting with the same text. Does not commit.
+
+    `scope` copies only onto what the export would send (`OWNER_AREA`). A dry
+    run counts and writes nothing.
+    """
+    pairs = _copy_pairs(model).subquery("pairs")
+    found = (
+        await session.execute(
+            select(
+                pairs.c.target_id,
+                pairs.c.donor_id,
+                Posting.title,
+                Posting.location,
+                Posting.description_raw,
+            ).join(Posting, Posting.id == pairs.c.target_id)
+        )
+    ).all()
+    kept = [
+        (row.target_id, row.donor_id)
+        for row in found
+        if _keeps(scope, row.title, row.location, row.description_raw)
+    ]
+    chunks = 0
+    for first in range(0, len(kept), COPY_BATCH):
+        chosen = values(
+            column("target_id", UUID(as_uuid=True)),
+            column("donor_id", UUID(as_uuid=True)),
+            name="chosen",
+        ).data(kept[first : first + COPY_BATCH])
+        target_chunk, donor_chunk = aliased(PostingChunk), aliased(PostingChunk)
+        donor_vector, own = aliased(PostingChunkVector), aliased(PostingChunkVector)
+        has_own = (
+            select(1)
+            .where(own.chunk_id == target_chunk.id, own.embedding_model == model)
+            .correlate_except(own)
+        )
+        rows = (
+            select(target_chunk.id, literal(model, String), donor_vector.embedding)
+            .select_from(chosen)
+            .join(target_chunk, target_chunk.posting_id == chosen.c.target_id)
+            .join(
+                donor_chunk,
+                and_(
+                    donor_chunk.posting_id == chosen.c.donor_id,
+                    donor_chunk.ordinal == target_chunk.ordinal,
+                    donor_chunk.start == target_chunk.start,
+                    donor_chunk.length == target_chunk.length,
+                ),
+            )
+            .join(
+                donor_vector,
+                and_(
+                    donor_vector.chunk_id == donor_chunk.id,
+                    donor_vector.embedding_model == model,
+                ),
+            )
+            .where(~has_own.exists())
+        )
+        if dry_run:
+            chunks += int(
+                await session.scalar(select(func.count()).select_from(rows.subquery())) or 0
+            )
+            continue
+        result = await session.execute(
+            insert(PostingChunkVector)
+            .from_select(["chunk_id", "embedding_model", "embedding"], rows)
+            .on_conflict_do_nothing()
+        )
+        chunks += int(cast("CursorResult[Any]", result).rowcount)
+    return CopyReport(postings=len(kept), chunks=chunks)
+
+
 def write_export(path: Path, exported: Sequence[Exported]) -> None:
     """The file the Colab notebook embeds and `import_vectors` checks against."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -476,9 +662,11 @@ def write_export(path: Path, exported: Sequence[Exported]) -> None:
 __all__ = [
     "BATCH_POSTINGS",
     "QWEN_4B",
+    "CopyReport",
     "Exported",
     "ImportReport",
     "PendingReport",
+    "copy_vectors",
     "import_vectors",
     "load_export",
     "pending",

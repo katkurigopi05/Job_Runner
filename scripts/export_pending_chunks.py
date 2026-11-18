@@ -66,6 +66,12 @@ async def main(argv: list[str] | None = None) -> None:
         f"({report.chunks:,} chunks); {report.not_chunked:,} wait for chunking first "
         "(the matching pass, or `make chunk-postings`)"
     )
+    if report.copyable or report.repeats:
+        print(
+            f"{report.copyable:,} repeat text that already has vectors and "
+            f"{report.repeats:,} repeat text this batch sends: left out, and the import "
+            "copies their vectors (or `make copy-chunk-vectors`)"
+        )
     if report.out_of_scope:
         print(
             f"{report.out_of_scope:,} more are outside California and US-remote and are left "

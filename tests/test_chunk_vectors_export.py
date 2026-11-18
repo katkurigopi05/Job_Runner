@@ -9,6 +9,7 @@ importer already checks against today's text.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
 import numpy as np
@@ -81,7 +82,10 @@ async def test_postings_that_need_chunking_first_are_counted_not_exported(db_ses
 
 
 async def _at(session, location: str | None, *, chunked: bool = True):
-    posting = await _posting(session, chunked=chunked)
+    # Each its own text: postings that repeat one text are exported once.
+    posting = await _posting(
+        session, f"{BODY} Requisition {uuid.uuid4().hex[:8]}.", chunked=chunked
+    )
     posting.location = location
     await session.flush()
     return posting
@@ -133,7 +137,7 @@ async def test_export_then_import_leaves_nothing_pending(db_session, tmp_path):
 async def test_calibration_postings_come_first_and_are_not_counted_as_new(db_session):
     covered = await _posting(db_session)
     await _cover(db_session, covered)
-    new = await _posting(db_session)
+    new = await _posting(db_session, BODY + " Kafka too.")
 
     exported, report = await CV.pending(db_session, calibrate=3)
 

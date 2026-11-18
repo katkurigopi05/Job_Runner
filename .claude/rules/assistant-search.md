@@ -1392,3 +1392,21 @@ could undo, each held by `tests/test_qwen_only_search.py`:
 On the live database that day: 14,542 open postings in the owner's area had Qwen vectors, 45 did
 not, and 1,833 were waiting to be chunked (`make export-chunk-vectors-pending dry=1`). The feed's
 match scores are a separate system and still bge-small.
+
+## One text is embedded once (2026-11-18)
+
+Boards list one job many times word for word. On 2026-11-18, 1,502 open postings with Qwen vectors
+repeated another's description (Accenture's "AI Native Software Engineer" 49 times), so about
+23,000 vectors, 6% of them, had been made on a GPU for text already embedded. Of the 3,523
+postings then waiting to be chunked, 243 repeated embedded text and 144 repeated each other.
+
+- **The export sends each text once.** `pending()` leaves out a posting whose text another
+  posting already has vectors for (`copyable`) and every repeat after the first in the batch
+  (`repeats`); the notebooks are unchanged.
+- **`copy_vectors` gives the repeats the same vectors, with no model**: only when the
+  descriptions are equal and every chunk of the posting has a chunk of the donor at the same
+  ordinal and offsets with a vector. All or nothing per posting; the oldest donor is used.
+  `make import-chunk-vectors` runs it after each batch, `make copy-chunk-vectors` alone, both
+  in the owner's area unless `all=1`.
+
+`tests/test_chunk_vector_copies.py`.
