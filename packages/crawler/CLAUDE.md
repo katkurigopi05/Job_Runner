@@ -758,3 +758,25 @@ additional skips, 15 excluded by the pre-existing foreign gate in both cases.
 rows: enabling the flag on the live database would retain all existing rows.
 The original main vocabulary is used for this measurement; the separate foreign
 vocabulary PR has its own audit counts. Live configuration stays unchanged.
+
+## Oracle Recruiting public reader (2026-11-18)
+
+The report names 33 Oracle Recruiting companies. An explicit HTTPS
+`*.oraclecloud.com/hcmUI/CandidateExperience/{locale}/sites/{site}` URL is
+required; host and site form the board identity. No guessed site, account,
+application, internal requisition or secured endpoint is read.
+
+Camden's own public JavaScript names the requisition list/detail APIs.
+Polite probes read three list pages (all 54 distinct jobs, no truncation) and
+one public detail; all returned HTTP 200. Before: unsupported. After:
+discovery can verify that representative board with one list request. This
+is not verification of all 33 companies or a live registry/posting import.
+
+Crawls read at most 100 pages of 25. Totals, offsets and distinct IDs must agree;
+otherwise the existing truncated-board path closes nothing. Descriptions use
+`details.hydrate`, five requests per crawl and existing rotating caches.
+A refused or malformed detail stops the board. Source primary country and
+all secondary offices survive normalization; locale is never country evidence.
+All requests go through PoliteFetcher, with no new shared-host exception.
+`tests/test_oracle_reader.py` and `tests/fixtures/oracle/README.md` contain the
+recorded public proof; the tests run in gate 5. Applying remains unsupported.

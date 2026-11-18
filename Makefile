@@ -193,7 +193,7 @@ CRAWLER_LOCATION_TESTS := tests/test_structured_locations.py tests/test_workday_
 check-crawler-locations:
 	REQUIRE_DB=1 $(PY)/pytest -q $(CRAWLER_LOCATION_TESTS)
 
-GATE5_TESTS := $(CRAWLER_LOCATION_TESTS) tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
+GATE5_TESTS := $(CRAWLER_LOCATION_TESTS) tests/test_oracle_reader.py tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
   tests/test_bespoke_probe.py tests/test_labeling_loop.py \
   tests/test_crawl_status.py tests/test_crawler_spider_ui.py \
   tests/test_posting_url_is_reachable.py \
