@@ -202,3 +202,54 @@ def test_the_title_is_read_only_when_the_location_says_nothing(title: str, locat
         area_exclusion(location, title=title, description="", remote_outside_california=True)
         is None
     )
+
+
+# Literal labels printed by the 2026-11-18 audit, plus the owner's Regina case.
+AUDIT_FOREIGN = [
+    "Chihuahua",
+    "DLF CYBERCITY 12B",
+    "Cork",
+    "Ranjangaon",
+    "Baja",
+    "Guangzhou Juncheng",
+    "Gratkorn",
+    "Sysco Regina",
+]
+
+
+@pytest.mark.parametrize("location", AUDIT_FOREIGN)
+def test_audited_foreign_labels_are_excluded_even_when_remote(location):
+    from packages.matching.locality import wholly_abroad
+
+    assert locality_of(location) is Locality.ELSEWHERE
+    assert wholly_abroad(location)
+    assert (
+        area_exclusion(
+            location,
+            title="Remote Software Engineer",
+            description="This is a remote role.",
+            remote_outside_california=True,
+        )
+        is not None
+    )
+
+
+@pytest.mark.parametrize("location", AUDIT_FOREIGN)
+def test_audited_foreign_labels_keep_a_california_office(location):
+    assert _excluded(f"{location}; San Francisco, CA") is None
+
+
+@pytest.mark.parametrize("location", ["Regina, NM", "Cork, KY", "Paris, TX", "Vancouver, WA"])
+def test_an_explicit_us_state_overrides_a_foreign_city_name(location):
+    assert locality_of(location) is Locality.UNITED_STATES
+    assert _excluded(f"Remote - {location}") is None
+
+
+@pytest.mark.parametrize(
+    "location", ["2 Locations", "Sysco Corporate", "In-Office", "Unknown Office"]
+)
+def test_audit_does_not_turn_an_unreadable_label_into_foreign_evidence(location):
+    from packages.matching.locality import wholly_abroad
+
+    assert not wholly_abroad(location)
+    assert _excluded(location) is None
