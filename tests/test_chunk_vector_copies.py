@@ -155,3 +155,96 @@ async def test_a_closed_posting_takes_no_copy(db_session) -> None:
     await db_session.flush()
 
     assert (await CV.copy_vectors(db_session)).postings == 0
+
+
+async def test_a_repeat_whose_original_was_skipped_stays_pending(db_session) -> None:
+    """The text was edited before the import: nothing is copied, and the repeat goes next time."""
+    first = await _posting(db_session)
+    repeat = await _posting(db_session)
+    exported, _ = await CV.pending(db_session)
+    first.content_hash = "edited since the export"
+    await db_session.flush()
+
+    report = await CV.import_vectors(db_session, exported, _vectors(len(exported[0].chunks)))
+
+    assert report.changed == 1
+    assert (await CV.copy_vectors(db_session)).postings == 0
+    assert str(repeat.id) in {posting.id for posting in (await CV.pending(db_session))[0]}
+
+
+async def test_the_oldest_donor_is_copied(db_session) -> None:
+    older = await _posting(db_session)
+    older.first_seen_at = datetime.now(UTC) - timedelta(days=2)
+    newer = await _posting(db_session)
+    await db_session.flush()
+    await _cover(db_session, older, seed=1)
+    await _cover(db_session, newer, seed=2)
+    repeat = await _posting(db_session)
+
+    await CV.copy_vectors(db_session)
+
+    stored = await _stored(db_session)
+    assert all(
+        np.array_equal(a, b) for a, b in zip(_of(stored, repeat), _of(stored, older), strict=True)
+    )
+
+
+async def test_a_partly_covered_posting_keeps_its_own_vectors(db_session) -> None:
+    donor = await _posting(db_session)
+    await _cover(db_session, donor, seed=1)
+    partial = await _posting(db_session)
+    await _cover(db_session, partial, seed=2)
+    first = await db_session.scalar(
+        select(PostingChunk.id).where(
+            PostingChunk.posting_id == partial.id, PostingChunk.ordinal == 0
+        )
+    )
+    await db_session.execute(delete(PostingChunkVector).where(PostingChunkVector.chunk_id == first))
+    own = _of(await _stored(db_session), partial)
+
+    copied = await CV.copy_vectors(db_session)
+
+    assert (copied.postings, copied.chunks) == (1, 1)
+    after = _of(await _stored(db_session), partial)
+    assert np.array_equal(after[0], _of(await _stored(db_session), donor)[0])
+    assert all(np.array_equal(a, b) for a, b in zip(after[1:], own, strict=True))
+
+
+async def test_the_write_checks_the_text_again(db_session, monkeypatch) -> None:
+    """A pair chosen before a same-length edit must not be written."""
+    from sqlalchemy import literal
+    from sqlalchemy.dialects.postgresql import UUID
+
+    donor = await _posting(db_session)
+    await _cover(db_session, donor)
+    edited_body = BODY.replace("Python", "Golang")
+    assert len(edited_body) == len(BODY)
+    edited = await _posting(db_session, edited_body)
+
+    def stale_pair(model: str):  # noqa: ANN202 - the pair an earlier read chose
+        return select(
+            literal(edited.id, UUID(as_uuid=True)).label("target_id"),
+            literal(donor.id, UUID(as_uuid=True)).label("donor_id"),
+        )
+
+    monkeypatch.setattr(CV, "_copy_pairs", stale_pair)
+
+    copied = await CV.copy_vectors(db_session)
+
+    assert copied.chunks == 0
+    assert _of(await _stored(db_session), edited) == []
+
+
+def test_an_export_records_its_scope(tmp_path) -> None:
+    import gzip
+    import json
+
+    wide, narrow, old = tmp_path / "wide.json.gz", tmp_path / "narrow.json.gz", tmp_path / "old.gz"
+    CV.write_export(wide, (), scope=CV.ALL_SCOPE)
+    CV.write_export(narrow, ())
+    with gzip.open(old, "wt", encoding="utf-8") as handle:
+        json.dump({"postings": []}, handle)
+
+    assert CV.export_scope(wide) == CV.ALL_SCOPE
+    assert CV.export_scope(narrow) == CV.OWNER_AREA_SCOPE
+    assert CV.export_scope(old) == CV.OWNER_AREA_SCOPE

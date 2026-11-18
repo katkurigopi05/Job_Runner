@@ -1408,5 +1408,13 @@ postings then waiting to be chunked, 243 repeated embedded text and 144 repeated
   ordinal and offsets with a vector. All or nothing per posting; the oldest donor is used.
   `make import-chunk-vectors` runs it after each batch, `make copy-chunk-vectors` alone, both
   in the owner's area unless `all=1`.
+- **The write checks the text again.** The pairs are read in one statement and written in
+  another, and a crawl may edit either posting between them, so the insert itself requires equal
+  descriptions, an open target, and both postings' chunks current. A same-length edit between
+  the two would otherwise have put a vector on other text.
+- **An export records its scope** (`"scope"` in the file), and the import copies as widely as
+  the export left out: an `all=1` export's repeats are copied without `all=1` on the import.
+- **A repeat is not always covered after one import.** When the posting the batch carried for
+  its text was edited before the import, nothing is copied and the repeat goes in the next export.
 
 `tests/test_chunk_vector_copies.py`.

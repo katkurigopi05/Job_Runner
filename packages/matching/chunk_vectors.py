@@ -604,6 +604,7 @@ async def copy_vectors(
         ).data(kept[first : first + COPY_BATCH])
         target_chunk, donor_chunk = aliased(PostingChunk), aliased(PostingChunk)
         donor_vector, own = aliased(PostingChunkVector), aliased(PostingChunkVector)
+        target, donor = aliased(Posting), aliased(Posting)
         has_own = (
             select(1)
             .where(own.chunk_id == target_chunk.id, own.embedding_model == model)
@@ -612,11 +613,31 @@ async def copy_vectors(
         rows = (
             select(target_chunk.id, literal(model, String), donor_vector.embedding)
             .select_from(chosen)
-            .join(target_chunk, target_chunk.posting_id == chosen.c.target_id)
+            # Checked again in the write itself: the pairs were read in an
+            # earlier statement, and a crawl may have edited either posting
+            # since. A vector goes only onto the text it was made from.
+            .join(target, target.id == chosen.c.target_id)
+            .join(
+                donor,
+                and_(
+                    donor.id == chosen.c.donor_id,
+                    donor.description_raw == target.description_raw,
+                ),
+            )
+            .join(
+                target_chunk,
+                and_(
+                    target_chunk.posting_id == target.id,
+                    target_chunk.content_hash.is_not_distinct_from(target.content_hash),
+                    target_chunk.overlap == OVERLAP,
+                ),
+            )
             .join(
                 donor_chunk,
                 and_(
-                    donor_chunk.posting_id == chosen.c.donor_id,
+                    donor_chunk.posting_id == donor.id,
+                    donor_chunk.content_hash.is_not_distinct_from(donor.content_hash),
+                    donor_chunk.overlap == OVERLAP,
                     donor_chunk.ordinal == target_chunk.ordinal,
                     donor_chunk.start == target_chunk.start,
                     donor_chunk.length == target_chunk.length,
@@ -629,7 +650,7 @@ async def copy_vectors(
                     donor_vector.embedding_model == model,
                 ),
             )
-            .where(~has_own.exists())
+            .where(target.closed_at.is_(None), ~has_own.exists())
         )
         if dry_run:
             chunks += int(
@@ -645,13 +666,26 @@ async def copy_vectors(
     return CopyReport(postings=len(kept), chunks=chunks)
 
 
-def write_export(path: Path, exported: Sequence[Exported]) -> None:
+#: What an export's postings were chosen from, recorded so the import's copies match it.
+OWNER_AREA_SCOPE, ALL_SCOPE = "owner_area", "all"
+
+
+def export_scope(path: Path) -> str:
+    """The scope an export was written for. Older files were all the owner's area."""
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        return str(json.load(handle).get("scope") or OWNER_AREA_SCOPE)
+
+
+def write_export(
+    path: Path, exported: Sequence[Exported], *, scope: str = OWNER_AREA_SCOPE
+) -> None:
     """The file the Colab notebook embeds and `import_vectors` checks against."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "made": datetime.now(UTC).isoformat(timespec="seconds"),
         "about": "Chunks of open postings without a Qwen vector, cut 500/25 as the app "
         "cuts them. Public posting text only.",
+        "scope": scope,
         "postings": [{"id": posting.id, "chunks": list(posting.chunks)} for posting in exported],
         "questions": [],
     }
@@ -667,6 +701,7 @@ __all__ = [
     "ImportReport",
     "PendingReport",
     "copy_vectors",
+    "export_scope",
     "import_vectors",
     "load_export",
     "pending",

@@ -8,7 +8,7 @@ so stopping keeps what was written and running again carries on.
 
     make import-chunk-vectors dry=1   # check and count, write nothing
     make import-chunk-vectors         # write
-    make import-chunk-vectors all=1   # copy onto postings outside the owner's area too
+    make import-chunk-vectors all=1   # copy outside the owner's area too (an all=1 export does)
 
 Then each posting that repeats the text of one with vectors, in this batch or
 before it, takes those vectors (`chunk_vectors.copy_vectors`): the export sends
@@ -26,11 +26,13 @@ import numpy as np
 
 from packages.core import db as core_db
 from packages.matching.chunk_vectors import (
+    ALL_SCOPE,
     MIN_AGREEMENT,
     OWNER_AREA,
     QWEN_4B,
     DisagreementError,
     copy_vectors,
+    export_scope,
     import_vectors,
     load_export,
 )
@@ -73,10 +75,12 @@ async def main(argv: list[str] | None = None) -> None:
         except DisagreementError as error:
             await session.rollback()
             raise SystemExit(f"not imported: {error}") from error
+        # As wide as the export: a repeat it left out must be copied onto.
+        everywhere = args.all or export_scope(args.export) == ALL_SCOPE
         copied = await copy_vectors(
             session,
             model=args.model,
-            scope=None if args.all else OWNER_AREA,
+            scope=None if everywhere else OWNER_AREA,
             dry_run=args.dry_run,
         )
         if not args.dry_run:

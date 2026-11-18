@@ -21,8 +21,10 @@ from pathlib import Path
 
 from packages.core import db as core_db
 from packages.matching.chunk_vectors import (
+    ALL_SCOPE,
     CALIBRATION_POSTINGS,
     OWNER_AREA,
+    OWNER_AREA_SCOPE,
     pending,
     write_export,
 )
@@ -83,7 +85,7 @@ async def main(argv: list[str] | None = None) -> None:
         return
     folder = args.out or BATCHES / datetime.now(UTC).strftime("%Y-%m-%d-%H%M")
     path = folder / EXPORT_NAME
-    write_export(path, exported)
+    write_export(path, exported, scope=ALL_SCOPE if args.all else OWNER_AREA_SCOPE)
     minutes = report.chunks / TPU_CHUNKS_PER_S / 60
     print(f"wrote {path} ({path.stat().st_size / 1e6:.1f} MB); about {minutes:.0f} min on the TPU")
     print("next:")
