@@ -113,6 +113,18 @@ def _api_is_board(response: FetchResult, ats: str) -> bool:
     """
     if not response.ok:
         return False
+    if ats == "icims":
+        from urllib.parse import urlparse
+
+        from packages.crawler.icims import IcimsBoardError
+        from packages.crawler.icims import parse_page as parse_icims_page
+
+        try:
+            parsed = urlparse(response.url)
+            parse_icims_page(response.text, f"{parsed.scheme}://{parsed.netloc}")
+            return True
+        except (ValueError, IcimsBoardError):
+            return False
     if ats == "oracle":
         # The API response URL does not carry a /sites segment. The envelope
         # carries the site and the response's host is the requested tenant.
