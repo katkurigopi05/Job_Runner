@@ -746,6 +746,11 @@ class Retrieval:
     #: Qwen vector coverage; None when Qwen was not used.
     qwen_searched: int | None = None
     bge_fallback_searched: int = 0
+    #: CHAT_QWEN_ONLY: no other model ordered or found postings, and how many
+    #: postings bge-small has vectors for and Qwen has none, so nothing ranked
+    #: them by meaning.
+    qwen_only: bool = False
+    qwen_uncovered: int = 0
     #: Why the opt-in Qwen query failed; surfaced in context and the reply.
     embedding_fallback: str | None = None
 
@@ -2933,21 +2938,10 @@ async def _retrieve(
             place_filter=place_filter,
             remote_only=remote_only,
         )
-    space_rows = (
-        await session.execute(
-            select(Posting.embedding_model, Posting.embedding_revision, func.count())
-            .where(
-                Posting.closed_at.is_(None),
-                Posting.description_embedding.is_not(None),
-                Posting.embedding_model.is_not(None),
-            )
-            .group_by(Posting.embedding_model, Posting.embedding_revision)
-            # Largest first, so rank ties go to the space holding more of the
-            # corpus and the merge order is reproducible.
-            .order_by(func.count().desc(), Posting.embedding_model)
-        )
-    ).all()
-    spaces = [(str(model), revision) for model, revision, _ in space_rows]
+    # CHAT_QWEN_ONLY: no bge-small or lexical space is encoded or scanned.
+    # Qwen orders what the keywords find and finds what they do not.
+    strict = get_settings().chat_qwen_only
+    spaces = [] if strict else await _posting_spaces(session)
     # Off the event loop: the first call loads bge-small, which takes seconds,
     # and every encode is CPU work. §10 wants nothing blocking a handler.
     encoders = await asyncio.to_thread(_encoders, spaces, frequencies, active_revision)
@@ -2960,14 +2954,7 @@ async def _retrieve(
     # Chunk vectors, where the corpus has them (`matching/chunks.py`): one
     # posting is about fourteen 500-character windows, so a skill named in the
     # requirements is visible here and not to the posting's single vector.
-    chunk_models = (
-        await session.scalars(
-            select(PostingChunk.embedding_model)
-            .join(Posting, Posting.id == PostingChunk.posting_id)
-            .where(Posting.closed_at.is_(None))
-            .distinct()
-        )
-    ).all()
+    chunk_models = [] if strict else await _chunk_models(session)
     chunk_encoders = await asyncio.to_thread(
         _encoders, [(str(model), None) for model in chunk_models], frequencies, active_revision
     )
@@ -2982,9 +2969,10 @@ async def _retrieve(
             discovery_queries = await search.queries(
                 await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, question),
                 question,
-                enabled=get_settings().chat_qwen_search,
+                enabled=chunk_search.qwen_enabled(get_settings()),
                 session=session,
                 posting_spaces=list(vectors),
+                strict=strict,
             )
             chunk_queries = discovery_queries
         return discovery_queries
@@ -3307,7 +3295,7 @@ async def _retrieve(
             get_settings().chat_semantic_candidates
             and role_pool is None
             and not only_names_a_company
-            and (bool(keyword) or not get_settings().chat_qwen_search)
+            and (bool(keyword) or not chunk_search.qwen_enabled(get_settings()))
         ):
             # Unlike the lexical subject, sentence meaning includes the
             # relationships between words. Preserve those for discovery.
@@ -3331,7 +3319,10 @@ async def _retrieve(
         # What the keywords found, in the order they are given with the
         # experiment off: the keyword rank fused with each posting's vector
         # rank among themselves. Semantic candidates are merged in below, and
-        # never into this.
+        # never into this. Qwen-only orders them by the question's one Qwen
+        # vector, the one discovery uses; a match with none takes the middle.
+        if strict and keyword_ids:
+            chunk_vectors = (await discovery()).vectors
         by_space = [
             await _order_in_space(session, space, vector, keyword_ids)
             for space, vector in vectors.items()
@@ -3418,7 +3409,9 @@ async def _retrieve(
         # postings, counted and listed by kind.
         added: list[_Hit] = []
         if reranker is not None and reranker.judges and role_pool is None and keyword:
-            unfound = await discovery() if get_settings().chat_qwen_search else chunk_queries
+            unfound = (
+                await discovery() if chunk_search.qwen_enabled(get_settings()) else chunk_queries
+            )
             added, added_spans = await _nearest_unfound(
                 session,
                 unfound.vectors,
@@ -3488,9 +3481,10 @@ async def _retrieve(
         chunk_queries = await search.queries(
             keyword_vectors,
             subject,
-            enabled=get_settings().chat_qwen_search,
+            enabled=chunk_search.qwen_enabled(get_settings()),
             session=session,
             posting_spaces=list(vectors),
+            strict=strict,
         )
         chunk_vectors = chunk_queries.vectors
         for model, vector in chunk_vectors.items():
@@ -3667,10 +3661,12 @@ async def _retrieve(
         )
         for index, hit in enumerate(chosen, start=1)
     )
-    qwen_searched, bge_fallback = (
+    qwen_searched, without_qwen = (
         chunk_queries.covered
         if chunk_queries.covered is not None
-        else await chunk_search.coverage(session, chunk_queries.vectors, list(vectors))
+        else await chunk_search.coverage(
+            session, chunk_queries.vectors, list(vectors), uncovered=strict
+        )
         if chunk_queries.qwen
         else (None, 0)
     )
@@ -3678,7 +3674,10 @@ async def _retrieve(
         attempted=True,
         passages=passages,
         qwen_searched=qwen_searched,
-        bge_fallback_searched=bge_fallback,
+        # Under Qwen-only nothing searched them; they are counted, not searched.
+        bge_fallback_searched=0 if strict else without_qwen,
+        qwen_only=strict,
+        qwen_uncovered=without_qwen if strict else 0,
         embedding_fallback=chunk_queries.fallback_reason,
         searched=searched,
         unsearchable=unsearchable,
@@ -3743,6 +3742,36 @@ async def _retrieve(
             )
         ),
     )
+
+
+async def _posting_spaces(session: AsyncSession) -> list[tuple[str, int | None]]:
+    """The open postings' one-vector spaces, largest first.
+
+    Largest first, so rank ties go to the space holding more of the corpus and
+    the merge order is reproducible.
+    """
+    rows = await session.execute(
+        select(Posting.embedding_model, Posting.embedding_revision, func.count())
+        .where(
+            Posting.closed_at.is_(None),
+            Posting.description_embedding.is_not(None),
+            Posting.embedding_model.is_not(None),
+        )
+        .group_by(Posting.embedding_model, Posting.embedding_revision)
+        .order_by(func.count().desc(), Posting.embedding_model)
+    )
+    return [(str(model), revision) for model, revision, _ in rows.all()]
+
+
+async def _chunk_models(session: AsyncSession) -> list[str]:
+    """The models open postings' chunks were embedded with."""
+    rows = await session.scalars(
+        select(PostingChunk.embedding_model)
+        .join(Posting, Posting.id == PostingChunk.posting_id)
+        .where(Posting.closed_at.is_(None))
+        .distinct()
+    )
+    return [str(model) for model in rows.all()]
 
 
 async def _reachable(

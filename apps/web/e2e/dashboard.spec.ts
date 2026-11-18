@@ -54,6 +54,17 @@ test("crawl and rescore show worker feedback and completion", async ({ page }) =
   await page.goto("/matches");
   await page.getByRole("button", { name: "Run Crawl", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "No live worker" })).toBeVisible();
+  await page.getByRole("button", { name: "Pause Crawl", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Crawler paused" })).toBeVisible();
+  await page.getByRole("button", { name: "Resume Crawl", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Crawler resumed" })).toBeVisible();
+  await page.getByRole("button", { name: "Stop Crawl", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Crawler stopped (2 pending tasks cancelled)." })).toBeVisible();
+  await page.getByRole("button", { name: /Workers \(/ }).click();
+  const region = page.getByRole("region", { name: "Worker controls" });
+  await expect(region).toBeVisible();
+  await region.getByRole("combobox", { name: "Max workers" }).selectOption("4");
+  await expect(page.getByRole("status").filter({ hasText: "max 4 workers" })).toBeVisible();
   await page.getByRole("button", { name: "Rescore Matches", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Worker is alive" })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Rescore complete" })).toBeVisible();
@@ -87,11 +98,19 @@ test("matches filters reach server requests and validation stays beside controls
 test("Studio saves confirmed evidence, synthesizes a traced draft, and saves a version", async ({ page, request }) => {
   await page.goto("/resumes/studio");
   await page.getByRole("button", { name: /Add internship/i }).click();
+  await page.getByRole("button", { name: "Save internships and certifications", exact: true }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Enter a company." })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "Enter a role." })).toBeVisible();
+  expect((await (await request.get(`${apiOrigin}/__calls`)).json()).filter((call: { method: string }) => call.method === "PUT")).toHaveLength(0);
   await page.getByLabel("Company", { exact: true }).fill("Example Labs");
   await page.getByLabel("Role", { exact: true }).fill("Engineering Intern");
   await page.getByLabel("Started", { exact: true }).fill("Jun 2025");
   await page.getByLabel(/What you did/).fill("Built a test harness that cut flaky runs by 30%.");
   await page.getByLabel(/I confirm this is accurate/).check();
+  await page.getByRole("button", { name: /Add certification/i }).click();
+  await page.getByRole("button", { name: "Save internships and certifications", exact: true }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Enter a certification name." })).toBeVisible();
+  await page.getByLabel("Certification", { exact: true }).fill("Cloud Fundamentals");
   await page.getByRole("button", { name: "Save internships and certifications", exact: true }).click();
   await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
 
@@ -124,11 +143,47 @@ test("profile accepts fractional scores and rejects out-of-range input", async (
   await score.fill("1.5");
   await page.getByRole("button", { name: "save", exact: true }).click();
   expect(await score.evaluate((input: HTMLInputElement) => input.validity.rangeOverflow)).toBeTruthy();
+  // Exercise the schema too, even if native browser validation is bypassed.
+  await score.evaluate((input: HTMLInputElement) => { input.form!.noValidate = true; });
+  await page.getByRole("button", { name: "save", exact: true }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Minimum match score" })).toHaveText("Minimum match score must be a number from 0 to 1.");
+  expect((await (await request.get(`${apiOrigin}/__calls`)).json()).filter((call: { method: string }) => call.method === "PATCH")).toHaveLength(0);
   await score.fill("0.25");
   await page.getByRole("button", { name: "save", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: /saved/i })).toBeVisible();
   const calls = await (await request.get(`${apiOrigin}/__calls`)).json();
   const updates = calls.filter((call: { method: string }) => call.method === "PATCH");
   expect(updates).toHaveLength(1);
-  expect(updates[0].body.min_match_score).toBe(0.25);
+  expect(updates[0].body).toMatchObject({ min_match_score: 0.25, max_required_experience_years: null, work_auth: "Authorized", auto_submit: false });
+});
+
+
+test("application and tracker tables sort and filter without losing detail links or outcomes", async ({ page, request }) => {
+  expect((await request.post(`${apiOrigin}/__table-fixtures`)).ok()).toBeTruthy();
+  await page.goto("/applications");
+  const pipeline = page.getByRole("table");
+  await expect(pipeline.getByRole("link")).toHaveCount(2);
+  await page.getByRole("button", { name: "Company / Role" }).click();
+  await expect(pipeline.getByRole("link").first()).toHaveAttribute("href", "/applications/synthetic-second");
+  await page.getByRole("button", { name: "Created" }).click();
+  await expect(pipeline.getByRole("columnheader", { name: "Created" })).toHaveAttribute("aria-sort", "descending");
+  await expect(pipeline.getByRole("link").first()).toHaveAttribute("href", "/applications/synthetic-application");
+  await page.getByRole("searchbox", { name: "Search applications" }).fill("ALPHA");
+  await expect(pipeline.getByRole("link")).toHaveCount(1);
+  await page.getByRole("searchbox").fill("not-a-company");
+  await expect(pipeline.getByText("No matching applications.")).toBeVisible();
+  await page.getByRole("searchbox").clear();
+  await expect(pipeline.getByRole("link")).toHaveCount(2);
+
+  await page.goto("/tracker");
+  const tracker = page.getByRole("table");
+  await page.getByRole("button", { name: "Match Score" }).click();
+  await expect(tracker.getByRole("link").first()).toHaveAttribute("href", "/applications/synthetic-application");
+  await expect(tracker.getByText("0.300", { exact: true })).toBeVisible();
+  await expect(tracker.getByText("Not available", { exact: true })).toBeVisible();
+  await page.getByRole("searchbox", { name: "Search tracker" }).fill("rejected");
+  await expect(tracker.getByRole("link")).toHaveCount(1);
+  await expect(tracker.getByRole("link")).toHaveAttribute("href", "/applications/synthetic-second");
+  await expect(page.getByRole("heading", { name: "Interview", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Rejection", exact: true })).toBeVisible();
 });

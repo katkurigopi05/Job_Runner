@@ -716,7 +716,13 @@ def _postings_section(
     lines = [f"POSTINGS: searched {found.searched} of {total} open postings"]
     if found.unsearchable:
         lines[0] += f" ({found.unsearchable} are not searchable yet)"
-    if found.qwen_searched is not None:
+    if found.qwen_searched is not None and found.qwen_only:
+        lines.append(
+            f"  vector coverage — Qwen3-Embedding-4B only: {found.qwen_searched} open postings; "
+            f"{found.qwen_uncovered} have no Qwen vectors yet, so keywords can find them "
+            "but nothing ranked them by meaning"
+        )
+    elif found.qwen_searched is not None:
         lines.append(
             f"  vector coverage — Qwen3-Embedding-4B: {found.qwen_searched} open postings; "
             f"bge-small: {found.bge_fallback_searched} without Qwen vectors"
@@ -1047,11 +1053,14 @@ async def prepare(
 
     owner_facts = await _read_context(session, body.application_id, include_mail=include_mail)
     context = owner_facts.context
-    found = (
-        await retrieve(session, question, free_embedder=selected == LOCAL_PROVIDER)
-        if get_settings().chat_qwen_search
-        else await retrieve(session, question)
-    )
+    try:
+        found = (
+            await retrieve(session, question, free_embedder=selected == LOCAL_PROVIDER)
+            if chunk_search.qwen_enabled(get_settings())
+            else await retrieve(session, question)
+        )
+    except chunk_search.QwenSearchUnavailable as exc:
+        raise qwen_search_unavailable(exc) from exc
     # A rate of the owner's applications is computed here and handed over. If
     # retrieval also took "what percentage" as a posting share it could not
     # count, its "percentage unavailable" line would contradict the rates.
@@ -1213,7 +1222,7 @@ async def prepare(
             if not selection_evidence:
                 factual_answer = selection_summary
     if (
-        get_settings().chat_qwen_search
+        chunk_search.qwen_enabled(get_settings())
         and factual_answer is None
         and selected == LOCAL_PROVIDER
         and found.qwen_searched is None
@@ -1305,6 +1314,16 @@ def selection_instead_of_answer(selected: str, model: str | None) -> ApiError:
         ErrorCode.INTERNAL_ERROR,
         f"{model or selected} replied with an evidence selection instead of an answer. "
         "Nothing fell back to another model. Ask again, or start a new conversation.",
+    )
+
+
+def qwen_search_unavailable(exc: chunk_search.QwenSearchUnavailable) -> ApiError:
+    """What the owner is told when the Qwen-only search cannot embed a question."""
+    return ApiError(
+        ErrorCode.INTERNAL_ERROR,
+        f"The search is set to Qwen3-Embedding-4B only (CHAT_QWEN_ONLY), and it could "
+        f"not embed this question: {exc} Nothing was searched with bge-small, and no "
+        "model was asked.",
     )
 
 

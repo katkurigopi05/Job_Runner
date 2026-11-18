@@ -563,14 +563,17 @@ def _no_qwen_search():
     """A developer's opt-in must never load the real query model in tests."""
     from packages.core.config import get_settings
 
-    previous = os.environ.get("CHAT_QWEN_SEARCH")
-    os.environ["CHAT_QWEN_SEARCH"] = "false"
+    names = ("CHAT_QWEN_SEARCH", "CHAT_QWEN_ONLY")
+    previous = {name: os.environ.get(name) for name in names}
+    for name in names:
+        os.environ[name] = "false"
     get_settings.cache_clear()
     yield
-    if previous is None:
-        os.environ.pop("CHAT_QWEN_SEARCH", None)
-    else:
-        os.environ["CHAT_QWEN_SEARCH"] = previous
+    for name, value in previous.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
     get_settings.cache_clear()
 
 

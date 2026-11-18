@@ -64,3 +64,12 @@ def test_browser_tests_use_an_isolated_api_and_pinned_dev_dependency() -> None:
     steps = _frontend_job()["steps"]
     e2e = next(step for step in steps if step.get("run") == "npm run test:e2e")
     assert e2e["env"]["E2E_MODE"] == "start"
+
+
+def test_dashboard_declares_required_ui_dependencies() -> None:
+    import json
+    import re
+
+    package = json.loads((ROOT / "apps/web/package.json").read_text())
+    for name in ("@tanstack/react-table", "zod", "react-hook-form", "@hookform/resolvers"):
+        assert re.fullmatch(r"\d+\.\d+\.\d+", package["dependencies"][name]), name
