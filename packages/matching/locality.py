@@ -719,7 +719,9 @@ _NON_US_CITIES_RE = re.compile(
     r"reykjavik|reykjanesbaer|brussel|antwerp|ghent|basel|lausanne|"
     r"cdmx\d*|monterrey|sao jose dos campos|one[- ]north|"
     r"wuxi|rungis|limonest|penang|manaus|toulouse|ho chi minh city|vadodara|hangzhou|"
-    r"bandung|kaohsiung|hsinchu|yokohama|suzhou|ahmedabad)\b",
+    r"bandung|kaohsiung|hsinchu|yokohama|suzhou|ahmedabad|"
+    # Literal gaps in the 2026-11-18 location audit (see test_location_area).
+    r"chihuahua|dlf cybercity 12b|cork|ranjangaon|baja|guangzhou|gratkorn|regina)\b",
     re.I,
 )
 
