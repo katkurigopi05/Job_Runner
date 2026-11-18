@@ -113,6 +113,17 @@ def _api_is_board(response: FetchResult, ats: str) -> bool:
     """
     if not response.ok:
         return False
+    if ats == "icims":
+        from urllib.parse import urlparse
+
+        from packages.crawler.icims import IcimsBoardError, parse_page
+
+        try:
+            parsed = urlparse(response.url)
+            parse_page(response.text, f"{parsed.scheme}://{parsed.netloc}")
+            return True
+        except (ValueError, IcimsBoardError):
+            return False
     if ats == "rippling":
         # A page with the board's list embedded, not a JSON API.
         from packages.crawler.rippling import is_board_page

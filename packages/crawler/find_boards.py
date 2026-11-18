@@ -272,6 +272,10 @@ async def _probe(
     if vendor == "workday":
         postings, url, blocked, total = await _workday_probe(fetcher, slug)
         return total if postings is not None else None, url, blocked
+    if vendor == "icims":
+        from packages.crawler.icims import probe
+
+        return await probe(fetcher, slug)
     if vendor == "rippling":
         return await _rippling_probe(fetcher, slug)
     postings, url, blocked = await fetch_board(fetcher, vendor, slug)
@@ -670,7 +674,7 @@ async def from_url(url: str, fetcher: PoliteFetcher) -> SiteReading:
     if not response.ok:
         return SiteReading(unreachable=f"HTTP {response.status}")
 
-    home = _read_page(response.text, url)
+    home = _read_page(response.text, response.url)
     if home.board:
         return SiteReading(board=home.board, read=True)
     named, network = home.named, home.network
@@ -834,7 +838,11 @@ def _read_page(html: str, site_url: str) -> _Page:
     a network board system (`job_systems.NETWORK_BOARDS`), whose first screen
     may show one company's jobs and still be a portfolio.
     """
+    from packages.crawler.icims import from_page
+
     boards = _boards_in(html)
+    if origin := from_page(html, site_url):
+        boards.append(("icims", origin))
     named = tuple(f"{vendor}/{slug}" for vendor, slug in boards)
     network = network_board(html)
     if network or not boards:

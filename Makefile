@@ -185,7 +185,7 @@ GATE3_TESTS := tests/test_no_fabrication.py tests/test_cover_letter.py \
   tests/test_apply_uploads_tailored.py
 GATE4_TESTS := tests/test_mcp.py tests/test_mcp_tracking.py tests/test_mcp_ids.py \
   tests/test_mcp_status.py tests/test_mcp_grading.py
-GATE5_TESTS := tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
+GATE5_TESTS := tests/test_icims_reader.py tests/test_crawler.py tests/test_matching.py tests/test_jsonld.py \
   tests/test_bespoke_probe.py tests/test_labeling_loop.py \
   tests/test_crawl_status.py tests/test_crawler_spider_ui.py \
   tests/test_posting_url_is_reachable.py \
