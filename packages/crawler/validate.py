@@ -125,6 +125,24 @@ def _api_is_board(response: FetchResult, ats: str) -> bool:
             return True
         except (ValueError, IcimsBoardError):
             return False
+    if ats == "oracle":
+        # The API response URL does not carry a /sites segment. The envelope
+        # carries the site and the response's host is the requested tenant.
+        from urllib.parse import urlparse
+
+        from packages.crawler.oracle import OracleBoardError, parse_page, slug_for
+
+        try:
+            payload = json.loads(response.text)
+            site = payload["items"][0]["SiteNumber"]
+            host = urlparse(response.url).hostname
+            slug = slug_for(f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}")
+            if slug is None:
+                return False
+            parse_page(response.text, slug)
+            return True
+        except (ValueError, KeyError, TypeError, IndexError, OracleBoardError):
+            return False
     if ats == "rippling":
         # A page with the board's list embedded, not a JSON API.
         from packages.crawler.rippling import is_board_page

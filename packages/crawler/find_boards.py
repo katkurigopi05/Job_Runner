@@ -273,7 +273,11 @@ async def _probe(
         postings, url, blocked, total = await _workday_probe(fetcher, slug)
         return total if postings is not None else None, url, blocked
     if vendor == "icims":
-        from packages.crawler.icims import probe
+        from packages.crawler.icims import probe as icims_probe
+
+        return await icims_probe(fetcher, slug)
+    if vendor == "oracle":
+        from packages.crawler.oracle import probe
 
         return await probe(fetcher, slug)
     if vendor == "rippling":
@@ -431,7 +435,7 @@ def board_root(url: str) -> tuple[str, str] | None:
     """`(vendor, slug)` when the URL is a board's front page."""
     # Read-only board recognition is deliberately independent of ATS form
     # detection: no Workday URL becomes supported by the apply path.
-    from packages.crawler import breezy, rippling
+    from packages.crawler import breezy, oracle, rippling
     from packages.crawler.workday import slug_for
 
     workday_slug = slug_for(url)
@@ -439,7 +443,11 @@ def board_root(url: str) -> tuple[str, str] | None:
         return "workday", workday_slug
     # Any page on a Breezy subdomain, or under a Rippling board, names the
     # board: a careers page links to one posting more often than to the list.
-    for vendor, read in (("breezy", breezy.slug_for), ("rippling", rippling.slug_for)):
+    for vendor, read in (
+        ("breezy", breezy.slug_for),
+        ("rippling", rippling.slug_for),
+        ("oracle", oracle.slug_for),
+    ):
         slug = read(url)
         if slug:
             return vendor, slug
@@ -751,6 +759,7 @@ _ATS_URL_IN_PAGE_RE = re.compile(
         |[a-z0-9-]+\.wd[0-9]+\.myworkdayjobs\.com
         |[a-z0-9-]+\.breezy\.hr
         |ats\.rippling\.com
+        |[a-z0-9.-]+\.oraclecloud\.com(?::443)?
     )/[^\s"'<>\\)\]]*""",
     re.I | re.X,
 )

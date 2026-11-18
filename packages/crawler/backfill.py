@@ -37,7 +37,7 @@ from sqlalchemy import ColumnElement, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Company, Posting
-from packages.crawler import breezy, rippling, workday
+from packages.crawler import breezy, oracle, rippling, workday
 from packages.crawler.crawl import _store
 from packages.crawler.details import ReadDetail
 from packages.crawler.extract import ExtractedPosting
@@ -55,6 +55,7 @@ READERS: dict[str, tuple[DetailUrlFor, ReadDetail]] = {
     "workday": (workday.detail_url_for, workday.read_detail),
     "rippling": (rippling.detail_url_for, rippling.read_detail),
     "breezy": (breezy.detail_url_for, breezy.read_detail),
+    "oracle": (oracle.detail_url_for, oracle.read_detail),
 }
 
 #: Hosts read at once. Each waits a minute between its own requests, so this

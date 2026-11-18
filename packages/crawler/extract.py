@@ -555,6 +555,10 @@ def _detail_board(ats: str) -> PostingExtractor | None:
             from packages.crawler.icims import IcimsExtractor
 
             _DETAIL_BOARDS[ats] = IcimsExtractor()
+        elif ats == "oracle":
+            from packages.crawler.oracle import OracleExtractor
+
+            _DETAIL_BOARDS[ats] = OracleExtractor()
         elif ats == "breezy":
             from packages.crawler.breezy import BreezyExtractor
 
@@ -569,7 +573,7 @@ def _detail_board(ats: str) -> PostingExtractor | None:
 
 
 def extractor_for(ats: str) -> PostingExtractor | None:
-    if ats in {"workday", "breezy", "rippling", "icims"}:
+    if ats in {"workday", "breezy", "rippling", "icims", "oracle"}:
         return _detail_board(ats)
     global _jsonld_extractor
     if ats == JSONLD_ATS:
