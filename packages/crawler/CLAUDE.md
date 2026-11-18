@@ -777,6 +777,28 @@ rows: enabling the flag on the live database would retain all existing rows.
 The original main vocabulary is used for this measurement; the separate foreign
 vocabulary PR has its own audit counts. Live configuration stays unchanged.
 
+## iCIMS/Jibe public careers reader (2026-11-18)
+
+The discovery report names 37 iCIMS companies. This reader supports the Jibe
+public careers variant actually observed at Aon, not every legacy iCIMS portal.
+A fetched page must contain both its `window._jibe` tenant configuration and
+an actual `app.jibecdn.com` script before discovery probes that origin's
+`/api/jobs`. A privacy link or a vendor name in prose is not a board.
+
+Live polite probes: two 10-job pages returned HTTP 200 and different IDs;
+the API advertised 1,073 jobs. This verifies one representative board, not
+all 37 companies or a full import. Before: no supported reader for this
+board. After: discovery can verify it with one API page after reading its
+career page. No live registry/posting changes were made.
+
+Lists carry descriptions and source dates. Primary and every additional
+location are preserved, with source country facts. Up to 200 ten-row pages
+per crawl; short, repeated, changing-total, malformed, refused or capped
+reads never authorize closing missing postings. All requests use PoliteFetcher
+and the existing host floor. No shared-host exception was added. Forms and
+login endpoints remain unsupported. Tests/provenance: `tests/test_icims_reader.py`
+and `tests/fixtures/icims/README.md`; included in gate 5.
+
 ## Oracle Recruiting public reader (2026-11-18)
 
 The report names 33 Oracle Recruiting companies. An explicit HTTPS
