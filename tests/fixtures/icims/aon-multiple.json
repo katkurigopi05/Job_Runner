@@ -1,0 +1,89 @@
+{
+  "totalCount": 1073,
+  "jobs": [
+    {
+      "data": {
+        "slug": "107033",
+        "req_id": "107033",
+        "title": "Account Executive- Small and Medium Enterprise",
+        "description": "As an Account Executive/Broker with Small and Medium Enterprise you will engage with existing clients and prospects to ensure appropriate coverage for their needs and recommend additional solutions, where warranted. Aon is a leader in the Insuretech space and this is a unique opportunity for your input as an Account Executive to contribute to the strategic direction of the company. If a client-focused, technology-driven, and fast-paced environment are something you\u2019re looking for, look no further. Apply to join our team today! Currently seeking candidates in multple locations. Aon is in the business of better decisions At Aon, we shape decisions for the better to protect and enrich the lives of people around the world. As an organization, we are united through trust as one inclusive team and we are passionate about helping our colleagues and clients succeed. What the day will look like: Implement your organizational skills by handling incoming tasks for your assigned book of business Display your customer service skills through high-quality customer interactions as you acclimate to and evolve your book of business Showcase your adaptability as you present additional products to existing customers Collaborate with external partners and your assigned client service team members to coordinate and develop sales and retention strategies Enjoy your success as you match and exceed company revenue targets through renewals, cross-sell/up-sell, and new business Expand your knowledge through daily training and professional development opportunities Skills and experience that will lead to success: Must have a valid Property and Casualty license Commercial Insurance experience 2-3 years experience in broking and placing all lines of P&C coverage for commercial clients Ability to advise, recommend and explain P&C products to meet client's insurance needs Strong communication skills Proficiency and comfort with the Microsoft Office Suite products, GSuite, Salesforce experience a plus Education: Bachelor's degree or applicable experience How we support our colleagues: In addition to our comprehensive benefits package, we encourage an inclusive workforce. Plus, our agile environment allows you to manage your wellbeing and work/life balance, ensuring you can be your best self at Aon. Furthermore, all colleagues enjoy two \u201cGlobal Wellbeing Days\u201d each year, encouraging you to take time to focus on yourself. We offer a variety of working style solutions for our colleagues as well. Our continuous learning culture inspires and equips you to learn, share and grow, helping you achieve your fullest potential. As a result, at Aon, you are more connected, more relevant, and more valued. Aon values an innovative and inclusive workplace where all colleagues feel empowered to be their authentic selves. Aon is proud to be an equal opportunity workplace. Aon provides equal employment opportunities to all employees and applicants for employment without regard to race, color, religion, creed, sex, sexual orientation, gender identity, national origin, age, disability, veteran, marital, domestic partner status, or other legally protected status. People with criminal histories are encouraged to apply. We welcome applications from all and provide individuals with disabilities with reasonable adjustments to participate in the job application, interview process and to perform essential job functions once onboard. If you would like to learn more about the reasonable accommodations we provide, email ReasonableAccommodations@Aon.com For positions in San Francisco and Los Angeles, we will consider for employment qualified applicants with arrest and conviction record in accordance with local Fair Chance ordinances. Aon is not accepting unsolicited resumes from search firms for this position. If you are a search firm, you will not be compensated in any way for your submission of a candidate, even if Aon hires that candidate. Nothing in this job description restricts management's right to assign or reassign duties and responsibilities to this job at any time. The salary range for this position (intended for U.S. applicants) is $75,000 to $105,000 annually. The actual salary will vary based on applicant\u2019s education, experience, skills, and abilities, as well as internal equity and alignment with market data. The salary may also be adjusted based on applicant\u2019s geographic location. This position is eligible to participate in one of Aon\u2019s annual incentive plans to receive an annual discretionary bonus in addition to base salary. The amount of any bonus varies and is subject to the terms and conditions of the applicable incentive plan. A summary of all the benefits offered for this position: Aon offers a comprehensive package of benefits for full-time and regular part-time colleagues, including, but not limited to: a 401(k) savings plan with employer contributions; an employee stock purchase plan; consideration for long-term incentive awards at Aon\u2019s discretion; medical, dental and vision insurance, various types of leaves of absence, paid time off, including 12 paid holidays throughout the calendar year, 15 days of paid vacation per year, paid sick leave as provided under state and local paid sick leave laws, short-term disability and optional long-term disability, health savings account, health care and dependent care reimbursement accounts, employee and dependent life insurance and supplemental life and AD&D insurance; optional personal insurance policies, adoption assistance, tuition assistance, commuter benefits, and an employee assistance program that includes free counseling sessions. Eligibility for benefits is governed by the applicable plan documents and policies. #LI-KH2 #LI-HYBRID 2586833",
+        "city": "New York",
+        "state": "New York",
+        "country": "United States",
+        "country_code": "US",
+        "location_name": "Aon US-NY-New York-165 Broadway",
+        "additional_locations": [
+          {
+            "location_name": "Aon US-NJ-Berkeley Heights-200 Con",
+            "street_address": "200 Connell Drive\n5th floor",
+            "city": "Berkeley Heights",
+            "state": "New Jersey",
+            "country": "United States",
+            "country_code": "US",
+            "postal_code": "07922",
+            "latitude": 40.6639592,
+            "longitude": -74.41504619999999
+          },
+          {
+            "location_name": "Aon US-FL-Jacksonville-4651 Salisb",
+            "street_address": "4651 Salisbury Rd.",
+            "city": "Jacksonville",
+            "state": "Florida",
+            "country": "United States",
+            "country_code": "US",
+            "postal_code": "32256",
+            "latitude": 30.2501147,
+            "longitude": -81.5888927
+          },
+          {
+            "location_name": "Aon US-NY-Victor -7910 Lehigh Cros",
+            "street_address": "7910 Lehigh Crossing Rd.\nSuite 1",
+            "city": "Victor",
+            "state": "New York",
+            "country": "United States",
+            "country_code": "US",
+            "postal_code": "14564",
+            "latitude": 43.0041541,
+            "longitude": -77.47313539999999
+          },
+          {
+            "location_name": "Aon US-IL-Chicago-200 E Randolph",
+            "street_address": "200 E Randolph",
+            "city": "Chicago",
+            "state": "Illinois",
+            "country": "United States",
+            "country_code": "US",
+            "postal_code": "60601",
+            "latitude": 41.8854847,
+            "longitude": -87.6214146
+          },
+          {
+            "location_name": "Aon US-IL-Bannockburn-3000 Lakesid",
+            "street_address": "3000 Lakeside Dr.\nSuite 200 S",
+            "city": "Bannockburn",
+            "state": "Illinois",
+            "country": "United States",
+            "country_code": "US",
+            "postal_code": "60015",
+            "latitude": 42.2019791,
+            "longitude": -87.8818761
+          },
+          {
+            "location_name": "Aon US-Houston-1300 Post Oak Blvd",
+            "street_address": "1300 Post Oak Blvd.\n14th floor",
+            "city": "Houston",
+            "state": "Texas",
+            "country": "United States",
+            "country_code": "US",
+            "postal_code": "77056",
+            "latitude": 29.7530059,
+            "longitude": -95.46034619999999
+          }
+        ],
+        "posted_date": "2026-09-15T14:59:00+0000",
+        "internal": false,
+        "multipleLocations": true
+      }
+    }
+  ]
+}
