@@ -372,8 +372,11 @@ def test_both_search_filters_have_a_control_on_the_profile_page() -> None:
     rather than trusting that anyone will notice.
     """
     form = (WEB / "profile-form.tsx").read_text(encoding="utf-8")
-    assert 'name="target_seniority"' in form
-    assert 'name="max_required_experience_years"' in form
+    assert 'name="target_seniority"' in form or 'register("target_seniority")' in form
+    assert (
+        'name="max_required_experience_years"' in form
+        or 'register("max_required_experience_years")' in form
+    )
 
     action = (WEB / "actions.ts").read_text(encoding="utf-8")
     assert "target_seniority" in action

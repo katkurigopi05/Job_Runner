@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { TrackerTable } from "./tracker-table";
 import {
   API_BASE,
   ApiError,
@@ -6,6 +7,7 @@ import {
   type Application,
   type Classification,
   type InboundMessage,
+  type Match,
   type UpcomingTask,
 } from "@/lib/api";
 import { ErrorPanel } from "@/components/error-panel";
@@ -132,12 +134,14 @@ export default async function TrackerPage() {
   let messages: InboundMessage[];
   let unrouted: InboundMessage[];
   let upcoming: UpcomingTask[];
+  let matches: Match[];
   try {
-    [applications, messages, unrouted, upcoming] = await Promise.all([
+    [applications, messages, unrouted, upcoming, matches] = await Promise.all([
       api.applications(),
       api.inbox(),
       api.unrouted(),
       api.upcomingTasks(14),
+      api.matches(true).catch(() => []),
     ]);
   } catch (error) {
     if (error instanceof ApiError) return <ErrorPanel error={error} />;
@@ -211,6 +215,8 @@ export default async function TrackerPage() {
           </ul>
         )}
       </section>
+
+      {tracked.length > 0 ? <TrackerTable applications={tracked} matches={matches} /> : null}
 
       {tracked.length === 0 ? (
         <p className="border border-dashed border-rule px-6 py-16 text-center text-sm text-ink-faint">

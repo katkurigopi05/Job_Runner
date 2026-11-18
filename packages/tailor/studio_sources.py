@@ -11,7 +11,10 @@ they stated and confirmed on the dashboard (`packages/core/models_evidence.py`):
 - **A certification** becomes a Certifications line, and the skills it covers
   that the Skills section does not already list become one Skills line. A
   skill in Skills counts as covered for a posting term, so targeted tailoring
-  never rewrites a bullet to claim it (`targeted.classify`).
+  never rewrites a bullet to claim it (`targeted.classify`). Both lines are
+  tagged `certification` (`Source.kinds`), and the guard lets that kind back
+  Certifications and Skills only: passing an exam is not using a tool at a
+  job (`guard.MAY_BACK`).
 
 Nothing here writes a word the owner did not type. An internship or a
 certification already on the base résumé is left where it is and reported as
@@ -24,11 +27,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Literal
 
 from packages.tailor.bullets import LineKind, classify
-from packages.tailor.guard import line_key, normalize
+from packages.tailor.guard import SourceKind, line_key, normalize
 from packages.tailor.parse import ParsedResume
 from packages.tailor.skills import _split_label, _split_skills
+
+#: The kinds a draft line can come from. A subset of `guard.SourceKind`: a
+#: repository's facts print in the generated Projects section and are never a
+#: line of the source.
+LineOrigin = Literal["resume", "internship", "certification"]
 
 #: The Skills label the certified skills are listed under.
 CERTIFIED_LABEL = "Certified:"
@@ -69,8 +78,7 @@ class CertificationFacts:
 class Origin:
     """Where one line of the draft came from."""
 
-    #: `resume`, `internship` or `certification`.
-    kind: str
+    kind: LineOrigin
     #: The company or certification it belongs to; empty for the base résumé.
     label: str = ""
 
@@ -91,6 +99,16 @@ class Source:
 
     def origin_of(self, line: str) -> Origin:
         return self.origins.get(line_key(line), Origin("resume"))
+
+    @property
+    def kinds(self) -> Mapping[str, SourceKind]:
+        """Each added line's source kind, for `guard.SourceCorpus.from_resume(kinds=)`.
+
+        What keeps a confirmed certification's skills off an employer's
+        bullet: without it the guard reads them as the résumé's own shared
+        Skills (`guard.MAY_BACK`).
+        """
+        return {key: origin.kind for key, origin in self.origins.items()}
 
 
 def _clean(values: Sequence[str]) -> list[str]:

@@ -75,6 +75,19 @@ original bullet, which looks like the tailorer doing nothing.
 The table lives in `packages/llm/router.py::TEMPERATURES`. `complete_json` is
 pinned to 0.0 regardless — the answer has to parse against a schema.
 
+`structured.complete_structured` (2026-11-15) is the same contract for a
+provider with no JSON mode: it asks through `complete`, finds the JSON in a
+fence or in prose, validates it with Pydantic and, on a parse or validation
+error, asks again with the previous answer and the errors (field and message,
+never the input value). `max_retries` defaults to 2, so up to three calls, each
+counted against the provider's allowance; a provider's own failure is not
+retried. Exhausted, it raises `StructuredOutputError`, an `LLMError`. Through
+`build_provider` the echoed answer is masked again like any prompt. No
+production caller uses it yet: tailoring and cover letters ask for plain
+text, and the JSON parses of model output (`apps/api/chat_selection.py`,
+`answer_harness._parse_guidance`) are strict on purpose, since a parse failure
+is what they record.
+
 **Local or cloud is now the owner's choice, per task.** The provider column
 above was not settable: `best_available()` walks a hardcoded `QUALITY_ORDER`
 and picks the strongest *configured* provider, so a Gemini key made every

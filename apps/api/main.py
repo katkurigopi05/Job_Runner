@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 
 from apps.api.errors import register_error_handlers
 from apps.api.middleware import LocalhostOnlyMiddleware, TraceContextMiddleware
@@ -36,6 +37,11 @@ from apps.api.routers import (
     tracking,
 )
 from packages.core.config import get_settings
+from packages.core.metrics import (
+    PROMETHEUS_CONTENT_TYPE,
+    MetricsMiddleware,
+    get_metrics_registry,
+)
 
 app = FastAPI(
     title="Jobrunner",
@@ -43,6 +49,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
+app.add_middleware(MetricsMiddleware)
 app.add_middleware(LocalhostOnlyMiddleware, allow_non_local=get_settings().allow_non_local)
 # Added last so it wraps the boundary guard too: refused requests still get an
 # identifier the caller can use when reporting what happened.
@@ -97,8 +104,18 @@ async def index() -> dict[str, str]:
         "docs": "/docs",
         "openapi": "/openapi.json",
         "health": "/health",
+        "metrics": "/metrics",
         "dashboard": get_settings().dashboard_url,
     }
+
+
+@app.get("/metrics", tags=["meta"], response_class=PlainTextResponse)
+async def metrics() -> PlainTextResponse:
+    """Loopback-only Prometheus / OpenMetrics telemetry endpoint."""
+    return PlainTextResponse(
+        get_metrics_registry().render_prometheus(),
+        media_type=PROMETHEUS_CONTENT_TYPE,
+    )
 
 
 @app.get("/health", tags=["meta"])

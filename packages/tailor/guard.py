@@ -48,10 +48,48 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
+from typing import Literal
 
 from packages.tailor.chunk import available as chunker_available
 from packages.tailor.chunk import claim_words
 from packages.tailor.parse import ParsedResume
+
+#: Where a fact came from (BACKLOG P5). The résumé the owner uploaded; an
+#: internship or a certification the owner typed and confirmed on the
+#: dashboard (`studio_sources`); or what a GitHub repository reports of itself
+#: in structured fields (language, topics, declared dependencies), never a
+#: README's prose.
+SourceKind = Literal["resume", "internship", "certification", "github_repo"]
+
+#: The sections a fact of each kind may back. `None` is any section.
+#:
+#: The résumé's own facts keep the entry scoping `SourceCorpus.supports`
+#: applies to every line: an employer's metric still never moves to another
+#: employer. The other kinds are narrower than that, by what they are:
+#:
+#: - an internship is evidence for its own lines, which sit in Experience, and
+#:   for Skills. Which Experience lines are its own is the entry scope's
+#:   question (`from_resume`, `verified`), not this table's;
+#: - a certification says the owner passed an exam, not that they used the
+#:   tool at a job or in a project, so it never backs Experience or Projects;
+#: - a repository is evidence for its Projects entry and for Skills, and never
+#:   for an employer.
+MAY_BACK: Mapping[SourceKind, frozenset[str] | None] = MappingProxyType(
+    {
+        "resume": None,
+        "internship": frozenset({"experience", "skills"}),
+        "certification": frozenset({"certifications", "skills"}),
+        "github_repo": frozenset({"projects", "skills"}),
+    }
+)
+
+
+def may_back(kind: SourceKind, section: str) -> bool:
+    """Whether a fact of `kind` may support a line in `section` (`MAY_BACK`)."""
+    sections = MAY_BACK[kind]
+    return sections is None or section in sections
+
 
 # A number keeps its unit: 40TB, 800ms and 2M are single claims, not a
 # number sitting next to an unrelated acronym.
@@ -478,6 +516,21 @@ class CorpusItem:
     #: For a Projects line, the `entry_key` of the title it sits under. Every
     #: line under one title carries the same key and the same evidence.
     entry: str = ""
+    #: The section the unit sits in, as `ParsedResume.sections` names it.
+    #: Empty for outside material and for a unit built by hand.
+    section: str = ""
+    #: Where the unit's own text came from. Its own words always back a
+    #: rewrite of itself; the kind decides which sections a section-wide check
+    #: (`SourceCorpus.section_tokens`) may draw them into.
+    source_kind: SourceKind = "resume"
+    #: Where `evidence` came from: a linked repository (`github_repo`) or an
+    #: internship's confirmed tools (`internship`).
+    evidence_kind: SourceKind = "resume"
+
+    @property
+    def usable_evidence(self) -> frozenset[str]:
+        """`evidence`, when its kind may back this unit's section (`may_back`)."""
+        return self.evidence if may_back(self.evidence_kind, self.section) else frozenset()
 
 
 def _index(text: str) -> set[str]:
@@ -607,6 +660,41 @@ class SourceCorpus:
     #: not silently drop. Empty for a flat corpus, which disables that check
     #: rather than guessing at an inventory from unstructured text.
     technologies: frozenset[str] = frozenset()
+    #: Tokens of the shared sections that came from something other than the
+    #: résumé, by kind: a confirmed certification's line and the skills it
+    #: covers. Kept out of `shared`, which backs every line, because these may
+    #: back only the sections `may_back` names (`shared_for`).
+    shared_by_kind: Mapping[SourceKind, frozenset[str]] = field(default_factory=dict)
+
+    def shared_for(self, section: str) -> frozenset[str]:
+        """The shared tokens a line in `section` may draw on.
+
+        The résumé's own shared sections, and another kind's only where
+        `may_back` allows it. Without that split, a certification the owner
+        confirmed backed "Deployed reports on AWS Lambda" on an employer's
+        bullet, because its line sat in a shared section that nothing
+        attributed (2026-11-15).
+        """
+        allowed = [
+            tokens for kind, tokens in self.shared_by_kind.items() if may_back(kind, section)
+        ]
+        return self.shared.union(*allowed) if allowed else self.shared
+
+    def section_tokens(self, section: str) -> frozenset[str]:
+        """Every token a line in `section` may draw on, with no entry scope.
+
+        For a line that belongs to no entry, such as Skills or
+        Certifications. It answers "is this true of the owner, from material
+        that may back this section?", so it is as wide as an unscoped check,
+        less what `MAY_BACK` withholds from `section`.
+        """
+        tokens = set(self.shared_for(section))
+        for item in self.items:
+            if may_back(item.source_kind, section):
+                tokens |= item.tokens
+            if may_back(item.evidence_kind, section):
+                tokens |= item.evidence
+        return frozenset(tokens)
 
     @property
     def attributed(self) -> frozenset[str]:
@@ -645,6 +733,7 @@ class SourceCorpus:
         *extra_texts: str,
         linked: Mapping[str, str] | None = None,
         verified: Mapping[str, str] | None = None,
+        kinds: Mapping[str, SourceKind] | None = None,
     ) -> SourceCorpus:
         """Index a parsed résumé, keeping each job and project separable.
 
@@ -665,9 +754,18 @@ class SourceCorpus:
         purpose: a name would reach every bullet under a heading that merely
         resembles it, and a line reaches only itself. A Projects line never
         takes it.
+
+        `kinds` maps a line, as written, to where it came from when that is
+        not the résumé (`studio_sources.Source.kinds`). A line it does not
+        name is the résumé's, so a caller that passes nothing gets the corpus
+        it always got. Linked evidence is `github_repo` and confirmed tools
+        are `internship`, whatever `kinds` says; `MAY_BACK` decides where each
+        may be used.
         """
         items: list[CorpusItem] = []
         shared_texts: list[str] = [*resume.preamble]
+        by_kind: dict[SourceKind, list[str]] = {}
+        kind_of = {line_key(line): kind for line, kind in (kinds or {}).items()}
 
         contact = resume.contact
         shared_texts += [v for v in (contact.name, contact.email, contact.phone) if v]
@@ -687,7 +785,12 @@ class SourceCorpus:
 
         for name, lines in resume.sections.items():
             if name not in _ATTRIBUTED_SECTIONS:
-                shared_texts.extend(lines)
+                for line in lines:
+                    kind = kind_of.get(line_key(line), "resume")
+                    if kind == "resume":
+                        shared_texts.append(line)
+                    else:
+                        by_kind.setdefault(kind, []).append(line)
                 continue
             # A parsed bullet carries no glyph, so `_split_entries` makes each
             # line its own item. Which project a line belongs to is the title
@@ -717,16 +820,30 @@ class SourceCorpus:
                         evidence=frozenset(_index(evidence)) if evidence else frozenset(),
                         evidence_text=evidence or "",
                         entry=title if name == "projects" or evidence else "",
+                        section=name,
+                        source_kind=kind_of.get(line_key(entry.split("\n", 1)[0]), "resume"),
+                        evidence_kind="github_repo" if name == "projects" else "internship",
                     )
                 )
 
+        # Outside material is a GitHub project's own record, attributed to that
+        # project like a Projects entry.
         for position, extra in enumerate(t for t in extra_texts if t):
             items.append(
-                CorpusItem(ref=f"external:{position}", text=extra, tokens=frozenset(_index(extra)))
+                CorpusItem(
+                    ref=f"external:{position}",
+                    text=extra,
+                    tokens=frozenset(_index(extra)),
+                    section="projects",
+                    source_kind="github_repo",
+                )
             )
 
         shared = frozenset(_index("\n".join(shared_texts)))
-        tokens = set(shared)
+        shared_by_kind = {
+            kind: frozenset(_index("\n".join(texts))) for kind, texts in by_kind.items()
+        }
+        tokens = set(shared).union(*shared_by_kind.values())
         for item in items:
             tokens |= item.tokens | item.evidence
 
@@ -738,6 +855,7 @@ class SourceCorpus:
             items=tuple(items),
             shared=shared,
             technologies=listed,
+            shared_by_kind=MappingProxyType(shared_by_kind),
         )
 
     def locate(self, snippet: str) -> CorpusItem | None:
@@ -756,8 +874,21 @@ class SourceCorpus:
                 return item
         return None
 
-    def supports(self, entity: Entity, scope: CorpusItem | None = None) -> bool:
+    def supports(
+        self, entity: Entity, scope: CorpusItem | None = None, *, section: str | None = None
+    ) -> bool:
         """Whether `entity` is backed by the source, within `scope` if given.
+
+        `section` names the section of a line that has no entry, such as a
+        Skills line, and holds it to `section_tokens`. A `scope` carries its
+        own section and overrides it.
+
+        ## A fact backs only the sections its kind may
+
+        Within a scope, a unit's evidence counts only where `MAY_BACK` lets its
+        kind back the unit's section, and the shared material is
+        `shared_for(scope.section)`: a confirmed certification's skills are
+        shared for Skills and Certifications and absent for an employer.
 
         ## Shared material does not launder a sibling's claim
 
@@ -789,11 +920,16 @@ class SourceCorpus:
         An unscoped check is unchanged: it asks whether the fact is true of the
         owner at all, and the answer does not depend on attribution.
         """
-        available = (
-            self.tokens
-            if scope is None
-            else (scope.tokens | scope.evidence | (self.shared - self.attributed))
-        )
+        if scope is not None:
+            available = (
+                scope.tokens
+                | scope.usable_evidence
+                | (self.shared_for(scope.section) - self.attributed)
+            )
+        elif section is not None:
+            available = self.section_tokens(section)
+        else:
+            available = frozenset(self.tokens)
 
         if entity.normalized in available or singular(entity.normalized) in available:
             return True
@@ -832,7 +968,7 @@ def _split_entries(lines: list[str]) -> list[str]:
 
 
 def _spelled_out_forms(
-    output: str, corpus: SourceCorpus, scope: CorpusItem | None
+    output: str, corpus: SourceCorpus, scope: CorpusItem | None, section: str | None = None
 ) -> frozenset[str]:
     """Words the output may use because it wrote out what the source shortened.
 
@@ -861,7 +997,12 @@ def _spelled_out_forms(
     if not normalized:
         return frozenset()
 
-    available = corpus.tokens if scope is None else (scope.tokens | scope.evidence | corpus.shared)
+    if scope is not None:
+        available = scope.tokens | scope.usable_evidence | corpus.shared_for(scope.section)
+    elif section is not None:
+        available = corpus.section_tokens(section)
+    else:
+        available = frozenset(corpus.tokens)
     covered: set[str] = set()
     for phrase, forms in phrase_groups():
         if phrase not in normalized:
@@ -871,25 +1012,36 @@ def _spelled_out_forms(
     return frozenset(covered)
 
 
-def check(output: str, corpus: SourceCorpus, *, scope: CorpusItem | None = None) -> GuardReport:
+def check(
+    output: str,
+    corpus: SourceCorpus,
+    *,
+    scope: CorpusItem | None = None,
+    section: str | None = None,
+) -> GuardReport:
     """Verify every claim in `output` traces to `corpus`.
 
     With a `scope`, each claim must trace to that item or to the shared
     material, not merely to somewhere in the document. That is the difference
     between "the owner did this" and "the owner did this *here*", and only the
     second is what a rewritten bullet asserts.
+
+    With a `section` and no scope, each claim must trace to material whose
+    kind may back that section (`SourceCorpus.section_tokens`).
     """
     entities = extract_entities(output)
-    reason = (
-        "does not appear in the source material"
-        if scope is None
-        else f"does not appear in {scope.ref} or the shared sections"
-    )
-    spelled_out = _spelled_out_forms(output, corpus, scope)
+    if scope is not None:
+        reason = f"does not appear in {scope.ref} or the shared sections"
+    elif section is not None:
+        reason = f"does not appear in material that may back {section}"
+    else:
+        reason = "does not appear in the source material"
+    spelled_out = _spelled_out_forms(output, corpus, scope, section)
     violations = [
         Violation(entity=entity, reason=reason)
         for entity in entities
-        if not corpus.supports(entity, scope) and entity.normalized not in spelled_out
+        if not corpus.supports(entity, scope, section=section)
+        and entity.normalized not in spelled_out
     ]
     return GuardReport(
         ok=not violations,
