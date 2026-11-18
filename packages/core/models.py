@@ -1151,4 +1151,5 @@ from packages.core import models_judgments as _models_judgments  # noqa: E402, F
 from packages.core import models_ops as _models_ops  # noqa: E402, F401
 from packages.core import models_ranking as _models_ranking  # noqa: E402, F401
 from packages.core import models_search as _models_search  # noqa: E402, F401
+from packages.core import models_skill_links as _models_skill_links  # noqa: E402, F401
 from packages.core import models_tracking as _models_tracking  # noqa: E402, F401

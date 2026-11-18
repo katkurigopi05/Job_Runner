@@ -28,6 +28,7 @@ from packages.core.schemas import (
 )
 from packages.core.storage import get_storage, resume_key
 from packages.github.select import select_projects
+from packages.matching.skill_links import link_resume
 from packages.tailor.assemble import describe
 from packages.tailor.docx_export import render_docx
 from packages.tailor.layout import measure, section_headings
@@ -103,6 +104,8 @@ async def upload_resume(
         is_default=is_default,
     )
     session.add(resume)
+    await session.flush()
+    await link_resume(session, resume)
     await session.commit()
     await session.refresh(resume)
     return resume

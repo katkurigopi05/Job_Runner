@@ -15,6 +15,7 @@ from pypdf import PdfReader
 from sqlalchemy import func, select
 
 from packages.core.models import Project
+from packages.core.models_skill_links import ResumeSkill
 
 INTERNSHIP = {
     "company": "Acme Robotics",
@@ -170,6 +171,13 @@ async def test_a_saved_draft_is_a_new_rendered_version_and_can_be_adopted(
     parsed = (await client.get(f"/resumes/{resume['id']}/parsed")).json()["parsed"]
     assert "Mentored two new hires." in parsed["raw_lines"]
     assert parsed["resume_studio"]["project_ids"] == [repo_id]
+
+    # A saved Studio version is a base résumé, so the skill graph links it.
+    async with committing_sessionmaker() as session:
+        linked = await session.scalars(
+            select(ResumeSkill.skill).where(ResumeSkill.resume_id == uuid.UUID(resume["id"]))
+        )
+        assert "python" in set(linked)
 
 
 async def test_a_line_nothing_backs_is_refused_and_nothing_is_saved(

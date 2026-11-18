@@ -430,6 +430,12 @@ async def _store(
 
     await assign(session, [*result.new, *result.updated])
 
+    # The skill graph's links come from the text just read, so they change
+    # with it, in the same transaction (`matching/skill_links.py`).
+    from packages.matching.skill_links import link_postings
+
+    await link_postings(session, [*result.new, *result.updated])
+
     await session.flush()
     return result
 
