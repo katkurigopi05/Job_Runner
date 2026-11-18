@@ -1360,3 +1360,33 @@ What a later change could undo:
   code can run side by side: whichever runs `chunk_postings` with today's `OVERLAP` re-cuts the rest.
 - **Re-cutting deletes a posting's Qwen vectors** with its old chunks (`ON DELETE CASCADE`), so the
   switch is followed by a Qwen batch of every re-cut posting. About a quarter more chunks.
+
+## Qwen only, by the owner's word (2026-11-17)
+
+The owner asked why the search used bge-small when the Qwen vectors were there, and for the search
+to use Qwen3-Embedding-4B only. With `CHAT_QWEN_SEARCH` on, bge-small still took part three ways: it
+ordered every keyword match (the 2026-11-02 review above), it searched postings with no Qwen vectors,
+and it took over the whole search whenever the question could not be embedded. That last one is what
+the owner saw: Ollama was not running, and a question went out "searched with bge-small".
+
+`CHAT_QWEN_ONLY` (off as shipped, implies `CHAT_QWEN_SEARCH`) removes all three. What a later change
+could undo, each held by `tests/test_qwen_only_search.py`:
+
+- **No other model is loaded or scanned.** No bge-small or lexical encoder is built, and no SQL
+  touches `posting_chunks.embedding` or `postings.description_embedding`.
+- **Qwen orders the keyword matches**, by the question's one Qwen vector, the same one discovery
+  uses: one embedding a question. A match with no Qwen vectors still counts, keywords decide
+  relevance (§14), and takes the middle rank. This reverses the 2026-11-02 review's choice for
+  this setting only: that review measured Qwen ordering as no better (natural 44/56 to 43/56,
+  paraphrased 4/56 to 5/56) and changing 178 of 195 saved heads. The owner chose it knowing that.
+- **A question Qwen cannot embed is refused, never searched another way**
+  (`chunk_search.QwenSearchUnavailable`). The chat says the embedder's own reason, which names the
+  remedy (`ollama serve`, `ollama pull …`), and that nothing was searched with bge-small and no model
+  was asked. A question that needs no vector (a count, "hello") is answered with Ollama down.
+- **What Qwen cannot rank is counted, not searched**: `Retrieval.qwen_uncovered` is the chunked open
+  postings with no Qwen vectors, and the context says keywords can find them but nothing ranked them
+  by meaning. A vector-only question cannot reach them, and `unsearchable` counts them.
+
+On the live database that day: 14,542 open postings in the owner's area had Qwen vectors, 45 did
+not, and 1,833 were waiting to be chunked (`make export-chunk-vectors-pending dry=1`). The feed's
+match scores are a separate system and still bge-small.
