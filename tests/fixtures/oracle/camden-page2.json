@@ -1,0 +1,30 @@
+{
+  "items": [
+    {
+      "Offset": 25,
+      "Limit": 25,
+      "TotalJobsCount": 54,
+      "SiteNumber": "CX",
+      "requisitionList": [
+        {
+          "Id": "260525",
+          "Title": "Maintenance Technician | Camden World Gateway/Town Square",
+          "PostedDate": "2026-09-03",
+          "PrimaryLocationCountry": "US",
+          "PrimaryLocation": "Orlando, FL, United States",
+          "WorkplaceType": "",
+          "secondaryLocations": []
+        },
+        {
+          "Id": "260530",
+          "Title": "Sales Manager | Camden Belleview Station/Caley",
+          "PostedDate": "2026-09-02",
+          "PrimaryLocationCountry": "US",
+          "PrimaryLocation": "Denver, CO, United States",
+          "WorkplaceType": "",
+          "secondaryLocations": []
+        }
+      ]
+    }
+  ]
+}
