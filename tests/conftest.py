@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
@@ -578,7 +578,7 @@ def _no_qwen_search():
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _crawler_stores_every_area():
+def _crawler_stores_every_area() -> Iterator[None]:
     """The owner's `CRAWLER_STORE_SEARCH_AREA_ONLY` must not decide what a test stores.
 
     With it set in `.env`, `_store` skipped a fixture's Arizona posting and an
