@@ -210,6 +210,11 @@ async def sync_from_github(
     read, skipped = await read_dependency_evidence(
         session, candidate_id, repositories, github, force=force_evidence
     )
+    # A project's skill links are its language and dependency declarations,
+    # both just written (`matching/skill_links.py`).
+    from packages.matching.skill_links import link_projects
+
+    await link_projects(session, candidate_id)
     return SyncResult(
         added=result.added,
         updated=result.updated,

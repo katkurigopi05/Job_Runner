@@ -458,13 +458,12 @@ async def _store(
     # New rows have no id until the insert lands, so they are read back rather
     # than guessed at.
     new_ids: dict[str, uuid.UUID] = {}
-    if len(existing) < len(extracted):
+    new_external_ids = [item.external_id for item in extracted if item.external_id not in existing]
+    if new_external_ids:
         inserted = await session.execute(
             select(Posting.id, Posting.external_id).where(
                 Posting.company_id == company.id,
-                Posting.external_id.in_(
-                    [item.external_id for item in extracted if item.external_id not in existing]
-                ),
+                Posting.external_id.in_(new_external_ids),
             )
         )
         new_ids = {external_id: posting_id for posting_id, external_id in inserted.all()}
@@ -475,6 +474,12 @@ async def _store(
     from packages.matching.canonical import assign
 
     await assign(session, [*result.new, *result.updated])
+
+    # The skill graph's links come from the text just read, so they change
+    # with it, in the same transaction (`matching/skill_links.py`).
+    from packages.matching.skill_links import link_postings
+
+    await link_postings(session, [*result.new, *result.updated])
 
     await session.flush()
     return result
