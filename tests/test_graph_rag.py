@@ -85,13 +85,14 @@ def posting(body="Requirements\nPython and PostgreSQL are required.", **changes)
         ("Which skills do my top matches ask for that I am missing in London?", None),
         ("Which skill gaps recur across my strongest matches at Acme?", None),
         ("Which jobs require Python skills?", None),
-        ("Which jobs match my projects in London?", None),
+        ("Which jobs match my projects in London?", "projects"),
         ("Which jobs match my projects at Acme?", None),
         ("What needs me?", None),
     ],
 )
-def test_graph_questions_do_not_swallow_unhandled_constraints(question, intent):
-    assert graph_intent(question) == intent
+async def test_graph_questions_do_not_swallow_unhandled_constraints(question, intent):
+    query = await graph_intent(question)
+    assert (query.intent if query else None) == intent
 
 
 def test_multi_hop_graph_has_source_references_and_private_safe_selection_context():

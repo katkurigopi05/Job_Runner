@@ -6,6 +6,19 @@ questions, available as prompt buttons in the dashboard:
 - **Jobs from my projects:** “Which jobs match skills from my projects?”
 - **What am I lagging on?:** “Which skill gaps recur across jobs in my area?” (“…across my strongest matches?” is read the same way)
 
+The projects question also accepts one fully recognized suffix: `in California`,
+`in the Bay Area`, `in San Francisco`, `in London`, `at Acme` (when the registry
+knows that employer), or `for backend engineer roles`. Place names use the shared
+locality vocabulary and office rules; companies use the assistant's existing name
+resolver; role aliases come from `roles.py`. Unknown names, additional skill or
+level constraints, and mixed suffixes keep normal retrieval. No part of a suffix
+is silently discarded. The gaps question remains unchanged.
+
+Both the saved-link path and the top-100 fallback apply the constraint before
+selecting results. Answers name the applied scope; a place abroad waives the
+standing search area, and a recognized employer with no matching open jobs gets
+a scoped empty answer. These are retrieval constraints, never match scores.
+
 The earlier prompt, “Compared with my résumés, which skills do my top matches ask
 for that I am missing?”, also routes through the graph. Graph answers show a
 **GraphRAG** label above their evidence details. Existing saved answers retain
@@ -145,11 +158,11 @@ wording even if a later GitHub sync changes the imported descriptions.
 This first version requires exactly one candidate; it refuses to combine multiple
 candidates' evidence. Both questions read every linked open posting in the search area; before
 `make skill-links` has run they read the top 100 scored matches. The two explicit standalone questions
-activate graph retrieval; questions with additional employer, location or skill constraints keep
-the existing retrieval path. Community summaries, graph visualization and
+activate graph retrieval, including the supported project-question suffixes above.
+Unsupported constraints keep the existing retrieval path. Community summaries, graph visualization and
 arbitrary graph questions are outside this version.
 
-Validate with `.venv/bin/pytest -q tests/test_graph_rag.py tests/test_github_live.py tests/test_github_tool_chat.py`. Database tests use the
+Validate with `.venv/bin/pytest -q tests/test_graph_rag.py tests/test_graph_constraints.py tests/test_graph_rag_saved_links.py tests/test_github_live.py tests/test_github_tool_chat.py`. Database tests use the
 suite's separate marked test database; they never reset the live database.
 
 ## Extractor version 5

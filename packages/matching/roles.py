@@ -204,6 +204,12 @@ def canonical(title: str) -> str | None:
     return _lookup(_surface(title)) or _lookup(normalize(title))
 
 
+def exact_role(text: str) -> str | None:
+    """A complete role alias, without discarding level or skill constraints."""
+    surface = _SPACE_RE.sub(" ", _PUNCT_RE.sub(" ", text.lower())).strip()
+    return _ALIAS_TO_ROLE.get(surface)
+
+
 def roles_in(text: str) -> set[str]:
     """Every canonical role named anywhere in a block of text.
 
