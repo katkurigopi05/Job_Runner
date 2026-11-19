@@ -21,10 +21,12 @@ from packages.core.schemas import (
     SyncGitHubRequest,
     SyncResultOut,
 )
+from packages.core.schemas_graph import ProjectJobOut, ProjectJobsOut
 from packages.github.client import GitHubError, RateLimited
 from packages.github.live import LiveProjectEvidence, read_live_project
 from packages.github.select import score, select_projects
 from packages.github.sync import sync_from_github
+from packages.matching.graph_rag import retrieve_graph
 from packages.tailor.evidence import matched_job_terms, suggest_links
 from packages.tailor.guard import project_names
 from packages.tailor.parse import ParsedResume
@@ -122,6 +124,35 @@ async def update_project(
     await session.commit()
     await session.refresh(project)
     return project
+
+
+@router.get("/job-matches", response_model=ProjectJobsOut)
+async def project_job_matches(session: SessionDep) -> ProjectJobsOut:
+    """Open jobs that directly require a technology the owner's projects declare.
+
+    The assistant's graph answer to "Which jobs match skills from my projects?",
+    without a model: the best five with their source-backed evidence. Only
+    public, non-fork, included projects take part. Read-only.
+    """
+    result = await retrieve_graph(session, "projects")
+    jobs = [
+        ProjectJobOut(
+            posting_id=passage.posting_id,
+            title=passage.title,
+            company=passage.company,
+            location=passage.location,
+            url=passage.url,
+            evidence=item.text,
+        )
+        for passage, item in zip(result.found.passages, result.evidence, strict=True)
+    ]
+    return ProjectJobsOut(
+        scope=result.scope,
+        searched=result.found.searched,
+        summary=result.summary,
+        note=result.answer_note,
+        jobs=jobs,
+    )
 
 
 #: Seconds a live check may take before it is reported as unavailable.
