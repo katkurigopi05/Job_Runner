@@ -30,8 +30,8 @@ async def corpus(session, title="Data Engineer"):
         "London, UK",
     )
     return [
-        await _posting(session, company, place, title, "Build Kafka pipelines.")
-        for place in locations
+        await _posting(session, company, place, title, f"Build Kafka pipelines. Team {index}.")
+        for index, place in enumerate(locations)
     ]
 
 
@@ -270,7 +270,7 @@ async def test_city_alias_and_full_office_name_exclude_south_sf(db_session):
     company = await _company(db_session)
     here = await _posting(db_session, company, "SF, CA", "Data Engineer", "Kafka")
     multi = await _posting(
-        db_session, company, "Toronto, ON; San Francisco, CA", "Data Engineer", "Kafka"
+        db_session, company, "Toronto, ON; San Francisco, CA", "Data Engineer", "Kafka pipelines"
     )
     await _posting(db_session, company, "South San Francisco, CA", "Data Engineer", "Kafka")
     await _posting(db_session, company, "San Jose, CA", "Data Engineer", "Kafka")
