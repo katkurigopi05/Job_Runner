@@ -17,6 +17,7 @@ from typing import Literal
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from packages.core.config import get_settings
 from packages.core.models import Candidate, Company, Match, Posting, Profile, Project, Resume
@@ -219,10 +220,14 @@ def graph_result(
     resume_nodes = [e.target for e in graph.links(owner, "has_resume")]
     listed = {edge.target for node in resume_nodes for edge in graph.links(node, "lists")}
     every = scope == "open_postings"
+    found_what = (
+        "directly require a technology your projects declare"
+        if intent == "projects"
+        else "state at least one direct requirement"
+    )
     reach = (
         "Graph retrieval read the saved requirements of every open, unskipped posting in the "
-        f"configured search area and found {len(postings)} that directly require a technology "
-        "your projects declare. "
+        f"configured search area and found {len(postings)} that {found_what}. "
         + (
             f"{unlinked} open postings have no saved requirements yet and were not read. "
             if unlinked
@@ -339,21 +344,29 @@ def graph_result(
             ]
             gaps = [(skill, edges) for skill, edges in gaps if len(edges) >= 2]
             gaps.sort(key=lambda item: (-len(item[1]), item[0].key))
+            where = "across open jobs in your area" if every else "in your top matches"
             answer_summary = (
-                "These skills recur in your top matches but are not listed on your base résumés:"
+                f"These skills are directly required {where} but are not listed on your "
+                "base résumés:"
                 if gaps
-                else "No recurring résumé skill gaps were found in the top matches reviewed."
+                else f"No recurring résumé skill gaps were found {where}."
             )
             summary += (
                 f" {len(gaps)} skills absent from base résumé skill lists recur in at least "
-                "two sampled jobs. Absence from a résumé is not proof you lack a skill."
+                f"two {'open' if every else 'sampled'} jobs. "
+                "Absence from a résumé is not proof you lack a skill."
+            )
+            jobs_read = (
+                "open jobs in your area that state a direct requirement"
+                if every
+                else "sampled jobs"
             )
             by_id = {str(posting.id): (posting, company) for posting, company in postings}
             for skill, edges in gaps[:RESULT_LIMIT]:
                 posting, company = by_id[edges[0].source.key]
                 text = (
                     f"{BY_KEY[skill.key].label}: directly required by {len(edges)} of "
-                    f"{len(postings)} sampled jobs; absent from base résumé skill lists. "
+                    f"{len(postings)} {jobs_read}; absent from base résumé skill lists. "
                     + (
                         "A public project declares this technology; keep that evidence attributed "
                         "to its project. "
@@ -364,7 +377,7 @@ def graph_result(
                 )
                 human = (
                     f"**{BY_KEY[skill.key].label}** — directly required by {len(edges)} of "
-                    f"{len(postings)} reviewed jobs. "
+                    f"{len(postings)} {'open jobs in your area' if every else 'reviewed jobs'}. "
                     + (
                         "An available project also declares this technology."
                         if skill in project_skills
@@ -396,9 +409,12 @@ def graph_result(
         scope=scope,
         answer_note=(
             (
-                f"Based on all {len(postings)} open jobs "
-                f"{population} that directly "
-                "require one of your project technologies. "
+                f"Based on all {len(postings)} open jobs {population} that "
+                + (
+                    "directly require one of your project technologies. "
+                    if intent == "projects"
+                    else "state a direct requirement. "
+                )
                 + (
                     f"{unlinked} open jobs are not linked yet (`make skill-links`). "
                     if unlinked
@@ -504,21 +520,24 @@ async def retrieve_graph(
     )
     if live_projects is not None:
         projects = list(live_projects)
-    if intent == "projects":
-        wide = await _project_jobs_from_saved_links(session, candidate_id, projects, constraint)
-        if wide is not None:
-            postings, links, unlinked = wide
-            return graph_result(
-                candidate_id,
-                resumes,
-                projects,
-                postings,
-                intent,
-                links=links,
-                scope="open_postings",
-                unlinked=unlinked,
-                constraint=constraint,
-            )
+    wide = (
+        await _project_jobs_from_saved_links(session, candidate_id, projects, constraint)
+        if intent == "projects"
+        else await _gap_jobs_from_saved_links(session, candidate_id)
+    )
+    if wide is not None:
+        postings, links, unlinked = wide
+        return graph_result(
+            candidate_id,
+            resumes,
+            projects,
+            postings,
+            intent,
+            links=links,
+            scope="open_postings",
+            unlinked=unlinked,
+            constraint=constraint,
+        )
     best = (
         select(Match.posting_id, func.max(Match.score).label("score"))
         .join(Profile, Profile.id == Match.profile_id)
@@ -561,21 +580,112 @@ def _in_scope(posting: Posting, constraint: GraphConstraint | None) -> bool:
 
 def _outside_area(posting: Posting) -> bool:
     """The feed's search-area rule (`locality.area_exclusion`), when it is on."""
+    return _area_reason(posting, posting.description_raw) is not None
+
+
+def _area_reason(posting: Posting, description: str | None) -> str | None:
+    """Why the search area leaves a posting out, or None to keep it."""
     settings = get_settings()
-    return bool(
-        settings.search_us_only
-        and area_exclusion(
-            posting.location,
-            title=posting.title,
-            description=posting.description_raw,
-            remote_outside_california=settings.search_remote_outside_california,
-            country_code=posting.country_code,
-            state_code=posting.state_code,
-            is_remote=posting.is_remote,
-            offices=office_facts(posting.locations_json),
-        )
-        is not None
+    if not settings.search_us_only:
+        return None
+    return area_exclusion(
+        posting.location,
+        title=posting.title,
+        description=description,
+        remote_outside_california=settings.search_remote_outside_california,
+        country_code=posting.country_code,
+        state_code=posting.state_code,
+        is_remote=posting.is_remote,
+        offices=office_facts(posting.locations_json),
     )
+
+
+#: A posting's description only ever admits it, as remote; so only postings the
+#: location fields leave out as on-site elsewhere are read again with it, the
+#: rule `retrieve._matching_totals` follows.
+_ONSITE_ELSEWHERE = " is on-site outside California"
+
+
+async def _gap_jobs_from_saved_links(
+    session: AsyncSession, candidate_id: uuid.UUID
+) -> tuple[list[tuple[Posting, str | None]], dict[uuid.UUID, SavedLinks], int] | None:
+    """Every open, unskipped posting in the area that states a direct requirement.
+
+    Read from the saved links over all open postings rather than a sample of the
+    owner's matches. None until a posting has been linked (`make skill-links`).
+    Descriptions are not loaded except to admit an on-site posting as remote.
+    """
+    current_open = and_(Posting.closed_at.is_(None), skill_links.is_current())
+    linked = await session.scalar(
+        select(func.count())
+        .select_from(PostingSkillRead)
+        .join(Posting, Posting.id == PostingSkillRead.posting_id)
+        .where(current_open)
+    )
+    if not linked:
+        return None
+    skipped = (
+        select(Match.posting_id)
+        .join(Profile, Profile.id == Match.profile_id)
+        .where(Profile.candidate_id == candidate_id, Match.decision == "skipped")
+    )
+    ids = list(
+        (
+            await session.scalars(
+                select(PostingSkill.posting_id)
+                .join(Posting, Posting.id == PostingSkill.posting_id)
+                .join(PostingSkillRead, PostingSkillRead.posting_id == Posting.id)
+                .where(
+                    current_open,
+                    skill_links.is_direct_requirement(),
+                    Posting.id.not_in(skipped),
+                )
+                .distinct()
+            )
+        ).all()
+    )
+    kept: list[tuple[Posting, str | None]] = []
+    recheck: list[tuple[Posting, str | None]] = []
+    for first in range(0, len(ids), LOAD_BATCH):
+        rows = await session.execute(
+            select(Posting, Company.name)
+            .outerjoin(Company, Company.id == Posting.company_id)
+            .options(
+                defer(Posting.description_raw, raiseload=True),
+                defer(Posting.description_embedding, raiseload=True),
+            )
+            .where(Posting.id.in_(ids[first : first + LOAD_BATCH]))
+        )
+        for posting, company in rows:
+            reason = _area_reason(posting, None)
+            if reason is None:
+                kept.append((posting, company))
+            elif reason.endswith(_ONSITE_ELSEWHERE):
+                recheck.append((posting, company))
+    for first in range(0, len(recheck), LOAD_BATCH):
+        batch = recheck[first : first + LOAD_BATCH]
+        rows = await session.execute(
+            select(Posting.id, Posting.description_raw).where(
+                Posting.id.in_([posting.id for posting, _ in batch])
+            )
+        )
+        bodies: dict[uuid.UUID, str | None] = {row[0]: row[1] for row in rows}
+        kept.extend(
+            (posting, company)
+            for posting, company in batch
+            if _area_reason(posting, bodies.get(posting.id)) is None
+        )
+    kept.sort(
+        key=lambda row: (
+            -(row[0].first_seen_at.timestamp() if row[0].first_seen_at else 0.0),
+            str(row[0].id),
+        )
+    )
+    open_total = await session.scalar(
+        select(func.count()).select_from(Posting).where(Posting.closed_at.is_(None))
+    )
+    links = await saved_links(session, [posting.id for posting, _ in kept])
+    return kept, links, max(int(open_total or 0) - int(linked), 0)
 
 
 async def saved_links(

@@ -4,7 +4,7 @@ The assistant can traverse a source-backed knowledge graph for two standalone
 questions, available as prompt buttons in the dashboard:
 
 - **Jobs from my projects:** “Which jobs match skills from my projects?”
-- **What am I lagging on?:** “Which skill gaps recur across my strongest matches?”
+- **What am I lagging on?:** “Which skill gaps recur across jobs in my area?” (“…across my strongest matches?” is read the same way)
 
 The projects question also accepts one fully recognized suffix: `in California`,
 `in the Bay Area`, `in San Francisco`, `in London`, `at Acme` (when the registry
@@ -93,8 +93,9 @@ projects question reads every open, unskipped posting in the configured search a
 requires a technology the projects declare, ordered by how many it shares and then the newest, and
 says how many open postings are not linked yet. Both questions then read a linked posting's
 requirements from the saved links instead of extracting them again; a link made from older text or
-by another extractor is not trusted and that posting is read as before. Until links exist, and
-always for the gaps question, retrieval examines at most the top 100 open, unskipped matches in the
+by another extractor is not trusted and that posting is read as before. The gaps question likewise reads every linked open posting in the area that states a
+direct requirement, loading a description only to admit an on-site posting as remote. Until
+links exist, retrieval examines at most the top 100 open, unskipped matches in the
 configured search area. A posting matched under multiple profiles counts once at its best
 score. Results are explicitly described as a sample. Area filtering happens
 before taking 100 eligible postings, using the feed's shared location rules.
@@ -155,9 +156,8 @@ wording even if a later GitHub sync changes the imported descriptions.
 ## Current limits
 
 This first version requires exactly one candidate; it refuses to combine multiple
-candidates' evidence. The projects question reads every linked open posting in the
-search area; the gaps question, and the projects question before `make skill-links`
-has run, read the top 100 scored matches. The two explicit standalone questions
+candidates' evidence. Both questions read every linked open posting in the search area; before
+`make skill-links` has run they read the top 100 scored matches. The two explicit standalone questions
 activate graph retrieval, including the supported project-question suffixes above.
 Unsupported constraints keep the existing retrieval path. Community summaries, graph visualization and
 arbitrary graph questions are outside this version.

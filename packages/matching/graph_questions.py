@@ -22,6 +22,7 @@ _PROJECT_QUESTION = re.compile(
 )
 _GAP_QUESTION = re.compile(
     r"which skill gaps recur across my (?:strongest|top) matches"
+    r"|which skill gaps recur across (?:all )?(?:open )?jobs in my (?:search )?area"
     r"|(?:compared with my r[ée]sum[ée]s,? )?"
     r"which skills do my top matches ask for that i am missing",
     re.I,
