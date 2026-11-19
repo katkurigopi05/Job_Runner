@@ -8,6 +8,11 @@ so stopping keeps what was written and running again carries on.
 
     make import-chunk-vectors dry=1   # check and count, write nothing
     make import-chunk-vectors         # write
+    make import-chunk-vectors all=1   # copy outside the owner's area too (an all=1 export does)
+
+Then each posting that repeats the text of one with vectors, in this batch or
+before it, takes those vectors (`chunk_vectors.copy_vectors`): the export sends
+one text once.
 """
 
 from __future__ import annotations
@@ -21,9 +26,13 @@ import numpy as np
 
 from packages.core import db as core_db
 from packages.matching.chunk_vectors import (
+    ALL_SCOPE,
     MIN_AGREEMENT,
+    OWNER_AREA,
     QWEN_4B,
     DisagreementError,
+    copy_vectors,
+    export_scope,
     import_vectors,
     load_export,
 )
@@ -40,6 +49,9 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--vectors", type=Path, default=DEFAULT_VECTORS, help="the .npy vectors")
     parser.add_argument("--model", default=QWEN_4B, help="stamp to store them under")
     parser.add_argument("--dry-run", action="store_true", help="check and count; write nothing")
+    parser.add_argument(
+        "--all", action="store_true", help="copy onto every posting, not only the owner's area"
+    )
     return parser.parse_args(argv)
 
 
@@ -63,6 +75,16 @@ async def main(argv: list[str] | None = None) -> None:
         except DisagreementError as error:
             await session.rollback()
             raise SystemExit(f"not imported: {error}") from error
+        # As wide as the export: a repeat it left out must be copied onto.
+        everywhere = args.all or export_scope(args.export) == ALL_SCOPE
+        copied = await copy_vectors(
+            session,
+            model=args.model,
+            scope=None if everywhere else OWNER_AREA,
+            dry_run=args.dry_run,
+        )
+        if not args.dry_run:
+            await session.commit()
     verb = "would import" if args.dry_run else "imported"
     print(
         f"{verb} {report.chunks_imported:,} chunk vectors for {report.imported:,} postings "
@@ -71,6 +93,10 @@ async def main(argv: list[str] | None = None) -> None:
     print(
         f"skipped: {report.changed:,} changed since the export, {report.not_chunked:,} not "
         f"chunked yet, {report.absent:,} closed or gone"
+    )
+    print(
+        f"{'would copy' if args.dry_run else 'copied'} {copied.chunks:,} chunk vectors onto "
+        f"{copied.postings:,} postings that repeat text with vectors (no model)"
     )
     if report.agreement_chunks:
         print(

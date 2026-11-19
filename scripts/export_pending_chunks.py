@@ -21,8 +21,10 @@ from pathlib import Path
 
 from packages.core import db as core_db
 from packages.matching.chunk_vectors import (
+    ALL_SCOPE,
     CALIBRATION_POSTINGS,
     OWNER_AREA,
+    OWNER_AREA_SCOPE,
     pending,
     write_export,
 )
@@ -66,6 +68,12 @@ async def main(argv: list[str] | None = None) -> None:
         f"({report.chunks:,} chunks); {report.not_chunked:,} wait for chunking first "
         "(the matching pass, or `make chunk-postings`)"
     )
+    if report.copyable or report.repeats:
+        print(
+            f"{report.copyable:,} repeat text that already has vectors and "
+            f"{report.repeats:,} repeat text this batch sends: left out, and the import "
+            "copies their vectors (or `make copy-chunk-vectors`)"
+        )
     if report.out_of_scope:
         print(
             f"{report.out_of_scope:,} more are outside California and US-remote and are left "
@@ -77,7 +85,7 @@ async def main(argv: list[str] | None = None) -> None:
         return
     folder = args.out or BATCHES / datetime.now(UTC).strftime("%Y-%m-%d-%H%M")
     path = folder / EXPORT_NAME
-    write_export(path, exported)
+    write_export(path, exported, scope=ALL_SCOPE if args.all else OWNER_AREA_SCOPE)
     minutes = report.chunks / TPU_CHUNKS_PER_S / 60
     print(f"wrote {path} ({path.stat().st_size / 1e6:.1f} MB); about {minutes:.0f} min on the TPU")
     print("next:")
