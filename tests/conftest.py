@@ -578,6 +578,28 @@ def _no_qwen_search():
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _crawler_stores_every_area():
+    """The owner's `CRAWLER_STORE_SEARCH_AREA_ONLY` must not decide what a test stores.
+
+    With it set in `.env`, `_store` skipped a fixture's Arizona posting and an
+    Oracle reader test failed on the owner's machine while passing in CI. A test
+    of the opt-in sets it itself.
+    """
+    from packages.core.config import get_settings
+
+    name = "CRAWLER_STORE_SEARCH_AREA_ONLY"
+    previous = os.environ.get(name)
+    os.environ[name] = "false"
+    get_settings.cache_clear()
+    yield
+    if previous is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = previous
+    get_settings.cache_clear()
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _postings_of_any_age():
     """Store postings of any age unless a test asks for a limit.
 
