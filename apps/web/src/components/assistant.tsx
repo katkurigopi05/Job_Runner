@@ -15,8 +15,8 @@ import { ReplyText } from "@/components/reply-text";
 import { historyFrom } from "@/lib/chat-history";
 import { newChatId } from "@/lib/chat-recents";
 import { readFrames } from "@/lib/chat-stream";
-import { POSTING_LINK } from "@/lib/external";
 import { AssistantEvidence } from "@/components/assistant-evidence";
+import { PostingLink } from "@/components/assistant-posting-link";
 
 /**
  * A posting retrieved for a question. `cited` is read out of the reply. The
@@ -105,29 +105,6 @@ interface Turn {
   unsupportedCitations?: string[];
   /** A chart the API drew from the database for a chart request. No model wrote it. */
   chart?: Chart | null;
-}
-
-function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
-  return (
-    <li>
-      {source.label ? (
-        <>
-          <span className="text-ink-faint">{source.label}</span>{" "}
-        </>
-      ) : null}
-      <Link
-        href={`/postings/${source.posting_id}`}
-        {...POSTING_LINK}
-        className={`${muted ? "text-ink-soft" : "text-ink"} underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft`}
-      >
-        {source.title}
-      </Link>
-      {source.company ? <span className="text-ink-faint"> · {source.company}</span> : null}
-      {(source.listing_count ?? 1) > 1 ? (
-        <span className="text-ink-faint"> · listed {source.listing_count} times · {source.locations?.join("; ")}</span>
-      ) : source.location ? <span className="text-ink-faint"> · {source.location}</span> : null}
-    </li>
-  );
 }
 
 const LINK =
