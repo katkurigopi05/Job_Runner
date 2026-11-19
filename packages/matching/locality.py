@@ -702,7 +702,7 @@ _NON_US_SUBDIVISION_RE = re.compile(r",\s*(?:ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|NT|YT
 #: has claimed it — `Vancouver, WA` is in Washington.
 _NON_US_CITIES_RE = re.compile(
     r"\b(?:toronto|vancouver|montreal|montréal|ottawa|calgary|edmonton|winnipeg|halifax|"
-    r"waterloo|mississauga|london|dublin|edinburgh|manchester|bristol|cambridge|"
+    r"waterloo|mississauga|london|dublin|belfast|edinburgh|manchester|bristol|cambridge|"
     r"bengaluru|bangalore|hyderabad|mumbai|pune|chennai|delhi|gurgaon|gurugram|noida|mohali|"
     r"berlin|munich|hamburg|paris|lyon|madrid|barcelona|lisbon|amsterdam|rotterdam|"
     r"brussels|zurich|geneva|vienna|warsaw|krakow|bucharest|prague|budapest|"
