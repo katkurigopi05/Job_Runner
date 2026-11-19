@@ -167,7 +167,7 @@ def test_undescribed_project_is_ineligible_by_default() -> None:
 
 
 def test_owner_choice_overrides_the_rules() -> None:
-    assert is_eligible(make_project(is_fork=True, include=True))
+    assert is_eligible(make_project(is_archived=True, include=True))
     assert not is_eligible(make_project(include=False))
 
 

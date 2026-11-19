@@ -21,8 +21,9 @@ white-on-white text. That is the classic ATS keyword-stuffing trick, it is
 detectable, and it misrepresents the document — the same reason §2.5 rules out
 bot-detection evasion.
 
-All text rendered here comes from the project record verbatim. Descriptions
-are never generated: a project with none renders with none.
+All text rendered here comes from the supplied project verbatim. Studio may
+supply a transient project with a guarded, job-specific description. A project
+without a source description renders with none.
 """
 
 from __future__ import annotations

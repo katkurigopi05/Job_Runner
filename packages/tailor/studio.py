@@ -5,14 +5,15 @@ Built 2026-11-14 at the owner's asking. Everything on the draft is one of:
 - **The base résumé**, as uploaded.
 - **What the owner confirmed on the dashboard**: internships and
   certifications (`studio_sources.py`).
-- **GitHub projects**, printed by the existing generated Projects section
-  (`projects.render_section_html`): name, description, language and topics as
-  GitHub reports them, never a sentence about them. A private repository is
+- **GitHub projects**, ranked by directly required technology coverage. Their
+  descriptions may be rewritten against the posting when requested, checked
+  against that project's own description and technology evidence. A private repository is
   printed only once the owner includes or pins it (`select.is_listed`), and
   never with its address.
 - **A targeted revision** of a bullet that can truthfully gain a posting
   term (`targeted.revise`), held to `rewrite.vet` and the rest of the
-  targeted checks. Only those bullets reach a model, and only when asked.
+  targeted checks. Selected project descriptions and eligible bullets reach a
+  model only when asked.
 
 The role preset never reaches the page. Its words help rank projects for a
 short posting, nothing more: a headline written from a preset would be a claim
@@ -28,14 +29,21 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from packages.core.models import Project
-from packages.github.select import is_eligible, score, select_projects
+from packages.github.select import (
+    is_eligible,
+    matched_requirements,
+    required_skills,
+    score,
+    select_projects,
+)
 from packages.llm.provider import LLMProvider
 from packages.tailor import ats
 from packages.tailor.assemble import AssemblyOptions, assemble_html
 from packages.tailor.edit import rebuild_raw_lines
-from packages.tailor.evidence import comparable_name, matched_job_terms
+from packages.tailor.evidence import comparable_name
 from packages.tailor.guard import SourceCorpus, line_key, project_names
 from packages.tailor.parse import ParsedResume
+from packages.tailor.project_rewrite import ProjectRewrite, rewrite_project, with_description
 from packages.tailor.projects import ProjectEntry
 from packages.tailor.publish import apply_rewrites
 from packages.tailor.rewrite import BulletRewrite, TailorResult, vet
@@ -112,13 +120,22 @@ def pick_projects(
     *,
     selected_ids: Sequence[str] | None = None,
     limit: int = 4,
+    replace_source_projects: bool = False,
 ) -> list[ProjectPick]:
     """Rank every project; choose the owner's selection, or the best eligible ones."""
+    projects = [project for project in projects if not project.is_fork]
     on_resume = {comparable_name(name) for name in project_names(base)}
-    text = ranking_text(job_description, track)
+    text = (
+        job_description
+        if required_skills(job_description)
+        else ranking_text(job_description, track)
+    )
 
     def held_back(project: Project) -> str:
-        if comparable_name(project.name) in on_resume:
+        if (
+            not replace_source_projects
+            and comparable_name(project.resume_entry or project.name) in on_resume
+        ):
             return "on the résumé"
         if project.include is False:
             return "excluded"
@@ -132,14 +149,17 @@ def pick_projects(
         by_id = {str(p.id): p for p in usable if is_eligible(p, require_description=False)}
         chosen = [by_id[i] for i in wanted if i in by_id][:limit]
     else:
-        chosen = select_projects(usable, text, limit=limit)
+        candidates = usable
+        if required_skills(job_description):
+            candidates = [p for p in usable if p.pinned or matched_requirements(p, job_description)]
+        chosen = select_projects(candidates, text, limit=limit)
     chosen_ids = {p.id for p in chosen}
-    ranked = sorted(projects, key=lambda p: score(p, text), reverse=True)
+    ranked = sorted(projects, key=lambda p: (bool(p.pinned), score(p, text)), reverse=True)
     return [
         ProjectPick(
             project=project,
             score=round(score(project, text), 4),
-            matched_terms=tuple(matched_job_terms(project, job_description)),
+            matched_terms=tuple(matched_requirements(project, job_description)),
             chosen=project.id in chosen_ids,
             held_back=held_back(project),
         )
@@ -174,6 +194,7 @@ class Draft:
     tailored_by: str | None = None
     calls: int = 0
     picks: tuple[ProjectPick, ...] = field(default_factory=tuple)
+    project_rewrites: tuple[ProjectRewrite, ...] = ()
 
 
 def _status(rewrite: BulletRewrite, asked: bool) -> str:
@@ -254,6 +275,7 @@ async def synthesize(
     selected_project_ids: Sequence[str] | None = None,
     project_limit: int = 4,
     provider: LLMProvider | None = None,
+    replace_source_projects: bool = False,
 ) -> Draft:
     """A draft for one posting. Calls `provider` only for bullets that can gain a term."""
     picks = pick_projects(
@@ -263,17 +285,23 @@ async def synthesize(
         track,
         selected_ids=selected_project_ids,
         limit=project_limit,
+        replace_source_projects=replace_source_projects,
     )
     chosen = [pick.project for pick in picks if pick.chosen]
     corpus = SourceCorpus.from_resume(
         source.resume, linked=linked, verified=source.verified, kinds=source.kinds
     )
+    working = source.resume.model_copy(deep=True)
+    # Replaced only by something: with no project chosen (none matches, all
+    # held back, or every live check failed) the résumé keeps its own section.
+    if replace_source_projects and chosen:
+        working.sections.pop("projects", None)
 
     revision: Revision | None = None
     if provider is not None:
         revision = await revise(
             provider,
-            source.resume,
+            working,
             job_description,
             projects=chosen,
             linked=linked,
@@ -283,7 +311,7 @@ async def synthesize(
         plan, result = revision.plan, revision.result
     else:
         plan = classify(
-            source.resume,
+            working,
             job_description,
             projects=chosen,
             linked=linked,
@@ -292,8 +320,16 @@ async def synthesize(
         )
         result = TailorResult(bullets=[BulletRewrite(original=b, tailored=b) for b in plan.bullets])
 
-    resume = apply_rewrites(source.resume, result, posting_text=job_description)
+    project_rewrites = []
+    if provider is not None:
+        for project in chosen:
+            project_rewrites.append(await rewrite_project(provider, project, job_description))
+        descriptions = {item.project_id: item.tailored for item in project_rewrites}
+        chosen = [with_description(project, descriptions[project.id]) for project in chosen]
+
+    resume = apply_rewrites(working, result, posting_text=job_description)
     calls = revision.calls if revision else 0
+    calls += sum(bool(item.original.strip()) for item in project_rewrites)
     answered = getattr(provider, "answered_by", None) or getattr(provider, "name", None)
     return Draft(
         source=source,
@@ -307,6 +343,7 @@ async def synthesize(
         tailored_by=str(answered) if calls and answered else None,
         calls=calls,
         picks=tuple(picks),
+        project_rewrites=tuple(project_rewrites),
     )
 
 

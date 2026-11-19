@@ -120,6 +120,7 @@ from packages.llm.provider import (
 )
 from packages.matching import chunk_search
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
+from packages.matching.graph_rag import GraphResult, graph_intent, retrieve_graph
 from packages.matching.level import LevelCount
 from packages.matching.retrieve import Passage, Retrieval, asks_about_own_applications, retrieve
 from packages.matching.roles import display_name
@@ -989,16 +990,21 @@ class Ready:
     selection_evidence: tuple[EvidenceItem, ...] | None = None
     selection_summary: str = ""
     question: str = ""
+    #: Keep the same privacy-wrapped provider and pinned model across tool and answer rounds.
+    selection_provider: Any | None = None
+    selection_model: str | None = None
+    graph_result: GraphResult | None = None
 
 
 async def prepare(
     body: ChatRequest, session: AsyncSession, *, context_budget: PromptBudget | None = None
 ) -> ChatReply | Ready:
-    """Everything that happens before a model is asked, for both routes.
+    """Prepare context and any live graph checks for both routes.
 
     The refusals and the crawl command answer here, with no model. Anything
     else comes back with its context built and nothing left to read from the
-    database.
+    database. Kaggle graph questions first use a bounded MCP tool-planning
+    round; that same provider is retained for the final evidence selection.
     """
     question = body.message.strip()
     if not question:
@@ -1035,6 +1041,70 @@ async def prepare(
         raise ApiError(
             ErrorCode.INVALID_REQUEST,
             f"unknown chat provider {selected!r}; expected one of {', '.join(ALLOWED_PROVIDERS)}",
+        )
+
+    # Explicit personal relationship questions traverse current source facts.
+    # The model selects only existing paths; local rendering restores project
+    # attribution without uploading project names or résumé prose.
+    intent = graph_intent(question)
+    if intent is not None and body.application_id is None:
+        graph_provider, graph_model = None, None
+        if selected == "kaggle":
+            from apps.api.github_tools import live_projects_for_graph
+
+            try:
+                provider, model = provider_for(selected)
+                live = await live_projects_for_graph(session, question, provider)
+            except LLMError as exc:
+                raise did_not_answer(selected, exc) from exc
+            graph = await retrieve_graph(session, intent, live_projects=live.projects)
+            graph = replace(
+                graph,
+                summary=live.notice + "\n\n" + graph.summary,
+                answer_note=graph.answer_note + " " + (live.brief or live.notice),
+            )
+            if live.model_used:
+                graph_provider, graph_model = provider, getattr(provider, "model", model)
+        else:
+            graph = await retrieve_graph(session, intent)
+        evidence = tuple(
+            EvidenceItem(id=item.label, text=item.text, source_label=item.label)
+            for item in graph.evidence
+        )
+
+        def render_graph(excerpt_labels: frozenset[str] | None = None) -> str:
+            return graph.prompt(question, excerpt_labels)
+
+        graph_budget = None
+        if context_budget is None:
+            prompt = render_graph()
+        else:
+            prompt, graph_budget = pack(
+                system=SELECTION_SYSTEM,
+                render=render_graph,
+                labels=[p.label for p in graph.found.passages],
+                budget=context_budget,
+                answer_tokens=ANSWER_TOKENS,
+            )
+            removed = set(graph_budget.removed_excerpts)
+            evidence = tuple(item for item in evidence if item.id not in removed)
+        return Ready(
+            selected=selected,
+            include_mail=False,
+            prompt=prompt,
+            found=graph.found,
+            factual_answer=(
+                (graph.answer_summary or graph.summary) + "\n\n" + graph.answer_note
+                if not evidence
+                else None
+            ),
+            selection_evidence=evidence or None,
+            selection_summary=graph.summary,
+            question=question,
+            budget=graph_budget,
+            selection_provider=graph_provider,
+            selection_model=graph_model,
+            graph_result=graph,
         )
 
     # Resolved before the context is built, because it decides what goes into
@@ -1384,6 +1454,17 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
         answer = fallback + "\n\n" + answer
     return ChatReply(
         reply=answer,
+        postings_scope=(
+            ready.graph_result.scope if ready.graph_result is not None else "open_postings"
+        ),
+        retrieval_method="graph" if ready.graph_result is not None else "standard",
+        retrieval_details=(
+            ready.graph_result.summary
+            + "\n\n"
+            + "\n\n".join(f"{item.label}: {item.text}" for item in ready.graph_result.evidence)
+            if ready.graph_result is not None
+            else None
+        ),
         count_facts=list(count_facts(found)),
         provider=selected,
         model=model,
@@ -1472,6 +1553,10 @@ def fixed_reply(ready: Ready) -> ChatReply | None:
     """Same source metadata as model answers, truthful local/provider labels."""
     if ready.factual_answer is None:
         return None
+    if ready.selection_provider is not None:
+        # An empty live check still sent a tool-planning prompt to Kaggle.
+        # Keep that remote provenance even though the final explanation is factual.
+        return reply_for(ready, ready.selection_model, ready.factual_answer)
     return reply_for(ready, None, ready.factual_answer).model_copy(
         update={
             "provider": "facts",
@@ -1488,7 +1573,10 @@ async def selected_reply(ready: Ready) -> ChatReply:
     evidence = ready.selection_evidence
     assert evidence is not None
     try:
-        provider, model = provider_for(ready.selected)
+        if ready.selection_provider is not None:
+            provider, model = ready.selection_provider, ready.selection_model
+        else:
+            provider, model = provider_for(ready.selected)
         raw = await provider.complete(
             SELECTION_SYSTEM, ready.prompt, max_tokens=180, temperature=0.0
         )
@@ -1513,11 +1601,15 @@ def selection_reply_for(ready: Ready, model: str | None, raw: str) -> ChatReply:
             "Selected source excerpts follow. They do not establish an exhaustive list "
             "or independently verify the requested task."
         )
-    answer = "\n\n".join(
-        (
-            ready.selection_summary or render_postings(ready.found, include_sources=False),
-            lead,
-            render_selection(selection),
+    answer = (
+        ready.graph_result.answer(selection.ids)
+        if ready.graph_result is not None
+        else "\n\n".join(
+            (
+                ready.selection_summary or render_postings(ready.found, include_sources=False),
+                lead,
+                render_selection(selection),
+            )
         )
     )
     reply = reply_for(ready, model, answer)

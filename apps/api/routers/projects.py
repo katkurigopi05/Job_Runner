@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from fastapi import APIRouter
@@ -21,6 +22,7 @@ from packages.core.schemas import (
     SyncResultOut,
 )
 from packages.github.client import GitHubError, RateLimited
+from packages.github.live import LiveProjectEvidence, read_live_project
 from packages.github.select import score, select_projects
 from packages.github.sync import sync_from_github
 from packages.tailor.evidence import matched_job_terms, suggest_links
@@ -120,6 +122,36 @@ async def update_project(
     await session.commit()
     await session.refresh(project)
     return project
+
+
+#: Seconds a live check may take before it is reported as unavailable.
+LIVE_CHECK_TIMEOUT_S = 60
+
+
+@router.get("/{project_id}/live-evidence", response_model=LiveProjectEvidence)
+async def live_project_evidence(project_id: uuid.UUID, session: SessionDep) -> LiveProjectEvidence:
+    """Check an imported public GitHub project now, at its current commit. Never writes.
+
+    The jobrunner MCP server's `github_project_evidence` reaches this through the
+    API like every other tool. Cached evidence is never substituted for a failed
+    check.
+    """
+    try:
+        async with asyncio.timeout(LIVE_CHECK_TIMEOUT_S):
+            return await read_live_project(session, project_id)
+    except RateLimited as exc:
+        raise ApiError(
+            ErrorCode.RATE_LIMITED,
+            "GitHub rate limit reached. Retry after the quota resets or configure "
+            "GITHUB_TOKEN on the host. No cached evidence was substituted.",
+        ) from exc
+    except GitHubError as exc:
+        raise ApiError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
+    except TimeoutError as exc:
+        raise ApiError(
+            ErrorCode.INTERNAL_ERROR,
+            "Live GitHub evidence is unavailable; cached evidence was not substituted.",
+        ) from exc
 
 
 @router.post("/preview", response_model=list[ProjectPreview])

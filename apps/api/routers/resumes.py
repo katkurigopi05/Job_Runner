@@ -317,6 +317,18 @@ async def download_resume_docx(resume_id: uuid.UUID, session: SessionDep) -> Res
     owned = await candidate_projects(session, resume.candidate_id) if wanted else []
     by_id = {str(p.id): p for p in owned if p.resume_listed}
     projects = [by_id[i] for i in wanted if i in by_id]
+    snapshots = stamp.get("project_snapshots") or {}
+    projects = [
+        Project(
+            **{column.key: getattr(project, column.key) for column in Project.__table__.columns}
+            | {
+                key: value
+                for key, value in snapshots.get(str(project.id), {}).items()
+                if key in {"name", "description", "url", "language", "topics_json"}
+            }
+        )
+        for project in projects
+    ]
     docx_bytes = await asyncio.to_thread(render_docx, parsed, projects)
     return Response(
         content=docx_bytes,

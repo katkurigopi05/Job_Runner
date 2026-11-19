@@ -239,6 +239,11 @@ async def link_postings(session: AsyncSession, posting_ids: Sequence[uuid.UUID])
     return (await write_links(session, await read_postings(session, posting_ids))).linked
 
 
+def is_current() -> ColumnElement[bool]:
+    """A posting's read row was made from its current text by today's extractor."""
+    return _is_current()
+
+
 def _is_current() -> ColumnElement[bool]:
     return and_(
         PostingSkillRead.extractor_version == EXTRACTOR_VERSION,
@@ -460,6 +465,7 @@ __all__ = [
     "RefreshReport",
     "coverage",
     "is_base",
+    "is_current",
     "is_direct_requirement",
     "link_postings",
     "link_projects",

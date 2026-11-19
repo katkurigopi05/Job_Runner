@@ -104,7 +104,10 @@ export function Readout({ preview }: { preview: StudioPreview }) {
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-xs text-ink-soft">Projects printed</h3>
+        <h3 className="text-xs text-ink-soft">Projects ranked for this job</h3>
+        <p className="text-xs text-ink-faint">{preview.project_evidence}</p>
+        <p className="text-xs text-ink-faint">Direct required technologies first; pins take priority.
+          When none are stated, ranking uses posting relevance and recency.</p>
         {chosen.length === 0 ? (
           <p className="text-xs text-ink-faint">None.</p>
         ) : (
@@ -112,7 +115,7 @@ export function Readout({ preview }: { preview: StudioPreview }) {
             {chosen.map((project) => (
               <li
                 key={project.id}
-                className="flex flex-wrap items-center gap-2"
+                className="space-y-2 border-l-2 border-rule pl-3"
               >
                 {project.is_private ? (
                   <Lock
@@ -120,16 +123,32 @@ export function Readout({ preview }: { preview: StudioPreview }) {
                     aria-label="private"
                   />
                 ) : null}
-                <span>{project.name}</span>
+                <span className="font-medium">{chosen.indexOf(project) + 1}. {project.name}</span>
                 {project.matched_terms.length > 0 ? (
                   <span className="font-mono text-[11px] text-ink-faint">
-                    {project.matched_terms.slice(0, 5).join(", ")}
+                    {" "}{project.matched_terms.length} required: {project.matched_terms.join(", ")}
                   </span>
                 ) : null}
+                <div className="text-xs text-ink-soft">
+                  <p>Original: {project.original_description || "No source description."}</p>
+                  <p className="mt-1 text-ink">For this job: {project.tailored_description || "No source description."}</p>
+                  <p className="mt-1 text-ink-faint">{project.rewrite_status}
+                    {project.rewrite_reason ? `: ${project.rewrite_reason}` : ""}</p>
+                </div>
               </li>
             ))}
           </ul>
         )}
+        <details className="text-xs text-ink-soft">
+          <summary className="cursor-pointer">All project rankings</summary>
+          <ol className="mt-2 space-y-1">
+            {preview.projects.map((p) => <li key={p.id}>
+              {p.name} — {p.matched_terms.length} direct required technologies
+              {p.matched_terms.length ? ` (${p.matched_terms.join(", ")})` : ""}
+              {p.held_back ? ` · ${p.held_back}` : p.chosen ? " · selected" : ""}
+            </li>)}
+          </ol>
+        </details>
         {held.length > 0 ? (
           <ul className="space-y-0.5 text-xs text-ink-faint">
             {held.map((project) => (

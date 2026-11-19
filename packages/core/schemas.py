@@ -912,6 +912,10 @@ class ChatReply(BaseModel):
     postings_work_mode: Literal["remote"] | None = None
     postings_searched: int = 0
     postings_unsearchable: int = 0
+    postings_scope: Literal["open_postings", "top_matches"] = "open_postings"
+    retrieval_method: Literal["standard", "graph"] = "standard"
+    #: Source-derived diagnostics shown separately from the readable answer.
+    retrieval_details: str | None = None
     #: The local model that re-ordered `sources`, or None when the search's
     #: own order stands (`matching/rerank.py`).
     postings_reranked_by: str | None = None

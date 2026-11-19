@@ -5,7 +5,8 @@ const PROMPTS = [
   { icon: "pipeline", label: "How's it going?", text: "Summarize where my applications stand." },
   { icon: "mail", label: "Any replies?", text: "Have I had any replies, and what did they say?" },
   { icon: "matches", label: "Find new jobs", text: "Find new jobs" },
-  { icon: "compass", label: "What am I lagging on?", text: "Compared with my résumés, which skills do my top matches ask for that I am missing?" },
+  { icon: "compass", label: "What am I lagging on?", text: "Which skill gaps recur across my strongest matches?" },
+  { icon: "matches", label: "Jobs from my projects", text: "Which jobs match skills from my projects?" },
 ] as const;
 
 export function AssistantPrompts({ busy, onPrompt }: { busy: boolean; onPrompt: (text: string) => void }) {

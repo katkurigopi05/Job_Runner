@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.deps import SessionDep
 from apps.api.errors import ApiError
+from apps.api.studio_projects import refresh_projects
 from packages.core.enums import ErrorCode
 from packages.core.models import Project, Resume
 from packages.core.schemas import ResumeContactEdit, ResumeOut
@@ -35,12 +36,14 @@ from packages.core.schemas_studio import (
 )
 from packages.core.storage import get_storage, resume_key
 from packages.llm import router as llm_router
+from packages.llm.provider import LLMError
 from packages.matching.skill_links import link_resume
 from packages.tailor.assemble import assemble_pdf
 from packages.tailor.ats import AtsReport
 from packages.tailor.evidence import linked_evidence
 from packages.tailor.guard import line_key
 from packages.tailor.parse import Contact, ParsedResume
+from packages.tailor.project_rewrite import validate_description, with_description
 from packages.tailor.publish import house_options
 from packages.tailor.studio import (
     ROLE_PRESETS,
@@ -93,6 +96,7 @@ def _lines(draft: Draft) -> dict[str, list[StudioLine]]:
 
 
 def preview_of(draft: Draft, base: Resume, track: RoleTrack) -> StudioPreview:
+    rewrites = {item.project_id: item for item in draft.project_rewrites}
     return StudioPreview(
         role_track=track.value,
         role_label=ROLE_PRESETS[track].label,
@@ -126,6 +130,18 @@ def preview_of(draft: Draft, base: Resume, track: RoleTrack) -> StudioPreview:
                 matched_terms=list(pick.matched_terms),
                 chosen=pick.chosen,
                 held_back=pick.held_back,
+                original_description=pick.project.description or "",
+                tailored_description=(
+                    rewrites[pick.project.id].tailored
+                    if pick.project.id in rewrites
+                    else pick.project.description or ""
+                ),
+                rewrite_status=(
+                    rewrites[pick.project.id].status if pick.project.id in rewrites else "not asked"
+                ),
+                rewrite_reason=(
+                    rewrites[pick.project.id].reason if pick.project.id in rewrites else None
+                ),
             )
             for pick in draft.picks
         ],
@@ -159,12 +175,26 @@ async def synthesize_draft(body: StudioRequest, session: SessionDep) -> StudioPr
         certification_ids=body.selected_certification_ids,
     )
     track = RoleTrack(body.role_track)
+    projects = await candidate_projects(session, body.candidate_id)
+    notice = "Imported GitHub metadata; live checking was not requested."
+    if body.live_projects:
+        try:
+            projects, notice = await refresh_projects(projects)
+        except LLMError as exc:
+            raise ApiError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
+    provider = None
+    if body.use_model:
+        provider = (
+            llm_router.build_provider("kaggle")
+            if body.model_provider == "kaggle"
+            else llm_router.tailor_resume()
+        )
     draft = await synthesize(
         base,
         source,
         body.job_description,
         track,
-        projects=await candidate_projects(session, body.candidate_id),
+        projects=projects,
         linked=await linked_evidence(session, body.candidate_id),
         selected_project_ids=(
             None
@@ -172,9 +202,10 @@ async def synthesize_draft(body: StudioRequest, session: SessionDep) -> StudioPr
             else [str(i) for i in body.selected_project_ids]
         ),
         project_limit=body.project_limit,
-        provider=llm_router.tailor_resume() if body.use_model else None,
+        provider=provider,
+        replace_source_projects=body.replace_source_projects,
     )
-    return preview_of(draft, base_row, track)
+    return preview_of(draft, base_row, track).model_copy(update={"project_evidence": notice})
 
 
 async def _printable(
@@ -187,6 +218,8 @@ async def _printable(
         project = owned.get(project_id)
         if project is None:
             raise ApiError(ErrorCode.INVALID_REQUEST, "a selected project is not this candidate's")
+        if project.is_fork:
+            raise ApiError(ErrorCode.INVALID_REQUEST, "Forked projects cannot be selected.")
         if not project.resume_listed or project.include is False:
             raise ApiError(
                 ErrorCode.INVALID_REQUEST,
@@ -227,6 +260,29 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
         certification_ids=body.selected_certification_ids,
     )
     projects = await _printable(session, body.candidate_id, body.selected_project_ids)
+    if body.live_projects and projects:
+        try:
+            checked, _ = await refresh_projects(projects)
+        except LLMError as exc:
+            raise ApiError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
+        by_id = {project.id: project for project in checked}
+        if set(by_id) != {project.id for project in projects}:
+            raise ApiError(
+                ErrorCode.INVALID_REQUEST,
+                "A selected project could not be checked. Generate a new preview.",
+            )
+        projects = [by_id[project.id] for project in projects]
+    by_id = {project.id: project for project in projects}
+    rewritten_ids = [item.project_id for item in body.project_rewrites]
+    if len(set(rewritten_ids)) != len(rewritten_ids) or not set(rewritten_ids) <= set(by_id):
+        raise ApiError(ErrorCode.INVALID_REQUEST, "Invalid project rewrite selection.")
+    for item in body.project_rewrites:
+        project = by_id[item.project_id]
+        reason = validate_description(project, item.original, item.tailored)
+        if reason:
+            raise ApiError(ErrorCode.INVALID_REQUEST, reason)
+        by_id[project.id] = with_description(project, item.tailored)
+    projects = [by_id[project.id] for project in projects]
     sections = {
         name: [line.strip() for line in lines if line.strip()]
         for name, lines in body.sections.items()
@@ -282,6 +338,20 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
     stored[STUDIO_STAMP] = {
         "role_track": body.role_track,
         "project_ids": [str(p.id) for p in projects],
+        "project_snapshots": {
+            str(p.id): {
+                key: getattr(p, key)
+                for key in (
+                    "name",
+                    "description",
+                    "url",
+                    "language",
+                    "topics_json",
+                    "is_private",
+                )
+            }
+            for p in projects
+        },
     }
     resume = Resume(
         candidate_id=body.candidate_id,
@@ -289,7 +359,7 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
         storage_ref=key,
         parsed_json=stored,
         is_default=False,
-        tailored_by=body.tailored_by if body.rewrites else None,
+        tailored_by=body.tailored_by if body.rewrites or body.project_rewrites else None,
     )
     session.add(resume)
     await session.flush()
