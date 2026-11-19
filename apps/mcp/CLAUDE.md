@@ -6,6 +6,7 @@ the root file, which keeps every heading and says where each section went.
 
 - A grade's offer (§27) is in `packages/core/CLAUDE.md`.
 - The feed over MCP, `my_matches` (§18), is in `packages/matching/CLAUDE.md`.
+- `project_matches` is the assistant's graph answer to "Which jobs match skills from my projects?" without a model, through `GET /projects/job-matches`; `docs/GRAPH_RAG.md` has the graph. Like `list_projects`, it sends the names and URLs of public projects to the client's model, and no private or forked one.
 
 ## §9, Phase 4: the MCP tools
 
