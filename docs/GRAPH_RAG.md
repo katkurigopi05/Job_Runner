@@ -153,6 +153,19 @@ Saving rechecks descriptions against their sources and stores a separate résum�
 version; imported projects are unchanged. Saved PDF and DOCX retain the approved
 wording even if a later GitHub sync changes the imported descriptions.
 
+## A project question about a topic
+
+"Which jobs match my projects related to RAG pipelines?" (or "…about fraud detection for
+payments") finds the jobs by meaning. The topic is embedded on this machine with
+Qwen3-Embedding-4B (`query_vectors.embed_question`, unloaded at once), the 200 open postings
+nearest to it (`graph_questions.TOPIC_NEAREST`, through `chunk_search.ShortlistRanking`) become
+the constraint, and the graph keeps those that directly require a project technology, listing
+the most related first. A posting about the topic need not use its words. When Qwen cannot
+embed the topic the question is refused with the reason, and nothing is searched another way.
+A topic ending in a known place, employer or role ("…related to RAG in London") is not a topic
+question, since that part would be searched by meaning and never enforced. On 2026-11-19, RAG
+pipelines: 41 of the 200 nearest need a project technology, 3.8 s including the model load.
+
 ## Current limits
 
 This first version requires exactly one candidate; it refuses to combine multiple

@@ -268,7 +268,12 @@ def graph_result(
             shared = [edge for edge in demands if edge.target in project_skills]
             if shared:
                 candidates.append((posting, company, shared, rank))
-        candidates.sort(key=lambda item: (-len(item[2]), item[3]))
+        if constraint is not None and constraint.ranked:
+            # A topic question lists the jobs most related to the topic first.
+            nearness = {posting_id: rank for rank, posting_id in enumerate(constraint.ranked)}
+            candidates.sort(key=lambda item: nearness.get(item[0].id, len(nearness)))
+        else:
+            candidates.sort(key=lambda item: (-len(item[2]), item[3]))
         summary += (
             f" {len(candidates)} {'open' if every else 'sampled'} jobs share a directly "
             "required project technology."
