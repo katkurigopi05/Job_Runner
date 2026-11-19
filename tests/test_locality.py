@@ -21,6 +21,33 @@ from packages.matching.locality import (
     reads_as_remote,
 )
 
+
+def test_belfast_office_is_abroad_but_explicit_maine_is_not():
+    assert locality_of("Belfast - Millennium House") is Locality.ELSEWHERE
+    assert locality_of("Belfast, ME") is Locality.UNITED_STATES
+    assert (
+        _locality.area_exclusion(
+            "Belfast - Millennium House",
+            title="Platform Engineer II",
+            description=None,
+            remote_outside_california=True,
+        )
+        is not None
+    )
+    assert (
+        _locality.area_exclusion(
+            "Belfast, ME",
+            title="Engineer",
+            description=None,
+            remote_outside_california=True,
+            country_code="US",
+            state_code="ME",
+            is_remote=True,
+        )
+        is None
+    )
+
+
 # --------------------------------------------------------------------------
 # The two-letter problems
 # --------------------------------------------------------------------------
