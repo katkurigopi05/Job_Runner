@@ -50,7 +50,7 @@ export function ResumeUpload({
           name="file"
           accept=".pdf,.docx,.txt,.md"
           required
-          className="max-w-full text-sm file:mr-3 file:rounded-[var(--radius)] file:border file:border-rule file:bg-paper-high file:px-3 file:py-1.5 file:file:text-xs file:text-ink"
+          className="max-w-full text-sm file:mr-3 file:rounded-[var(--radius)] file:border file:border-rule file:bg-paper-high file:px-3 file:py-1.5 file:text-xs file:text-ink"
         />
         <Submit />
       </div>
