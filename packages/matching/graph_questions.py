@@ -24,10 +24,9 @@ from packages.matching.retrieve import resolve_company_name
 #: Open postings nearest a topic that a topic question reads, nearest first.
 TOPIC_NEAREST = 200
 _TOPIC = re.compile(r"(?:related to|about) (.+)", re.I)
-#: Endings that make a topic carry a second constraint; the last "in", "at" or "for" counts.
-_IN_PLACE = re.compile(r".*\bin\s+(.+)$", re.I)
-_AT_COMPANY = re.compile(r".*\bat\s+(.+)$", re.I)
-_FOR_ROLE = re.compile(r".*\bfor\s+(.+?)\s+roles?$", re.I)
+#: A topic is a few words. A longer suffix is not a topic question, which also
+#: bounds what is embedded and what the checks below read.
+TOPIC_MAX_CHARS = 200
 
 
 class TopicUnavailable(chunk_search.QwenSearchUnavailable):
@@ -144,7 +143,11 @@ async def graph_intent(
             constraint = GraphConstraint(f"at {company[1]}", company_ids=company[0])
         elif (match := _TOPIC.fullmatch(suffix)) and session is not None:
             topic = match[1].strip()
-            if topic and not await _carries_another_constraint(session, topic):
+            if (
+                topic
+                and len(topic) <= TOPIC_MAX_CHARS
+                and not await _carries_another_constraint(session, topic)
+            ):
                 nearest = await _nearest_postings(session, topic)
                 constraint = GraphConstraint(
                     f"related to {topic}", posting_ids=frozenset(nearest), ranked=tuple(nearest)
@@ -152,15 +155,33 @@ async def graph_intent(
     return GraphQuestion("projects", constraint) if constraint is not None else None
 
 
+def _after_last(words: list[str], word: str) -> list[str]:
+    """The words after the last `word` (any case); [] when it is absent or last.
+
+    A scan over the words, not a regex: the topic is the owner's typed text,
+    and a backtracking pattern over it can take seconds (CodeQL, PR #331).
+    """
+    for index in range(len(words) - 2, -1, -1):
+        if words[index].lower() == word:
+            return words[index + 1 :]
+    return []
+
+
 async def _carries_another_constraint(session: AsyncSession, topic: str) -> bool:
     """A topic ending in a known place, employer or role names a second constraint."""
-    if (match := _IN_PLACE.search(topic)) and locality.explicit_place_name(match[1]):
+    words = topic.split()
+    place = _after_last(words, "in")
+    if place and locality.explicit_place_name(" ".join(place)):
         return True
-    if (match := _FOR_ROLE.search(topic)) and roles.exact_role(match[1]):
+    role = _after_last(words, "for")
+    if (
+        len(role) > 1
+        and role[-1].lower() in {"role", "roles"}
+        and roles.exact_role(" ".join(role[:-1]))
+    ):
         return True
-    return bool(
-        (match := _AT_COMPANY.search(topic)) and await resolve_company_name(session, match[1])
-    )
+    company = _after_last(words, "at")
+    return bool(company and await resolve_company_name(session, " ".join(company)))
 
 
 async def _nearest_postings(session: AsyncSession, topic: str) -> list[uuid.UUID]:

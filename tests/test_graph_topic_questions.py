@@ -145,3 +145,23 @@ async def test_a_topic_answer_lists_the_most_related_jobs_first(
     result = await retrieve_graph(worker_session, question)
 
     assert [p.posting_id for p in result.found.passages] == [shares_one.id, shares_two.id]
+
+
+@pytest.mark.parametrize("filler", ["a" * 3900, " in" * 1300, "  " * 1950, " for x" * 650])
+async def test_a_long_or_pathological_topic_returns_at_once(
+    db_session, monkeypatch, filler
+) -> None:
+    """The question is typed text up to 4,000 characters (`ChatRequest`)."""
+    import time
+
+    async def never(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("a topic this long must not be embedded")
+
+    monkeypatch.setattr(graph_questions, "embed_question", never)
+    question = f"Which jobs match my projects related to {filler}"[:4000]
+
+    started = time.perf_counter()
+    found = await graph_intent(question, session=db_session)
+
+    assert found is None
+    assert time.perf_counter() - started < 0.5
