@@ -812,3 +812,27 @@ strings, plus the owner's Regina example. The 1,825 remaining labels are not
 all foreign: count labels, US places, ambiguous names and unreviewed foreign
 places still need source evidence. `tests/test_location_area.py` covers each
 added label, remote foreign rejection, mixed offices, and unchanged unknowns.
+
+## §16: additions of 2026-09-14, and what must not be undone
+
+Moved here from the root `CLAUDE.md` on 2026-10-26, word for word, so it
+loads only when work touches this directory. The root file keeps the
+section heading and its safety rules.
+
+Built against `docs/PROJECT_AUDIT_2026-09-14.md`. Each line is a property a
+later change could quietly break.
+
+- **Unknown is never satisfied.** No pay, a figure with no period, a skill
+  outside a requirements heading, or no education: each fails its filter
+  unless its `include_unknown_*` switch is set. Extractor v2 exists because
+  sampling the live corpus found benefit budgets read as pay and `€95.000`
+  read as 95; 6,465 of 14,892 postings state pay after the fix.
+- **Search preferences are not profile answers.** `search_preferences` is its
+  own table and `FILTER_KEYS` refuses anything the feed does not read.
+- **Merging is conservative.** Never across companies, never within one
+  source, never with differing requisition ids, never after an owner split.
+  Grouping adds a link; no posting, match or application row changes.
+- **Base and personalized scores stay separate.** `Match.score` is never
+  rewritten; `personalized_score` is computed on read and every adjustment is
+  explained. `/ranking/evaluation` reports no learned model and refuses
+  promotion below 100 owner grades from two streams.
