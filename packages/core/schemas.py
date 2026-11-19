@@ -1012,6 +1012,13 @@ class KeywordHitOut(BaseModel):
     after: str
 
 
+class ProjectCoverageOut(BaseModel):
+    """Current direct requirements covered by source-declared project skills."""
+
+    covered: list[str]
+    missing: list[str]
+
+
 class MatchOut(BaseModel):
     """A scored posting, with the breakdown that produced the score.
 
@@ -1103,6 +1110,8 @@ class MatchOut(BaseModel):
     #: Where each keyword of the search matched, in the order typed. Empty
     #: when the search has no keywords.
     keyword_hits: list[KeywordHitOut] = Field(default_factory=list)
+    #: Display only; absent for unread or stale requirements. Never changes scores.
+    project_coverage: ProjectCoverageOut | None = None
 
 
 class PacketPosting(BaseModel):

@@ -180,7 +180,7 @@ def build_graph(
         for key in sorted(resume_skills(text)):
             graph.add(Edge(node, "lists", Entity("skill", key), node.key))
     for project in projects:
-        if not _is_eligible(project, candidate_id):
+        if not is_eligible(project, candidate_id):
             continue
         node = Entity("project", str(project.id))
         graph.add(Edge(owner, "has_project", node, project.url))
@@ -619,7 +619,7 @@ async def _project_jobs_from_saved_links(
         {
             key
             for project in projects
-            if _is_eligible(project, candidate_id)
+            if is_eligible(project, candidate_id)
             for key in project_keys(project)
         }
     )
@@ -678,7 +678,7 @@ async def _project_jobs_from_saved_links(
     return kept, links, max(int(open_total or 0) - int(linked), 0)
 
 
-def _is_eligible(project: Project, candidate_id: uuid.UUID) -> bool:
+def is_eligible(project: Project, candidate_id: uuid.UUID) -> bool:
     """The projects `build_graph` connects: the owner's public, included, non-fork GitHub ones."""
     return (
         project.candidate_id == candidate_id
