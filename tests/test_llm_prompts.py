@@ -35,6 +35,7 @@ PINNED = [
         2,
         "3a00a4ce53d027f6f49c22a14cabd1e9e0c240cbd7aebea762d4109b14eb7e3e",
     ),
+    ("assistant.prose", 1, "21d30546169cf1754439ae80c0505d1b28a63b3fcb3420db4ac03c4469ebb8a0"),
     (
         "tailor.cover_letter.system",
         1,
