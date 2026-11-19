@@ -12,15 +12,17 @@ import json
 import re
 import uuid
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.config import get_settings
 from packages.core.models import Candidate, Company, Match, Posting, Profile, Project, Resume
+from packages.core.models_skill_links import PostingSkill, PostingSkillRead
+from packages.matching import skill_links
 from packages.matching.evidence import Strength, skill_evidence
 from packages.matching.gaps import resume_skills
 from packages.matching.locality import area_exclusion
@@ -30,9 +32,14 @@ from packages.matching.retrieve import Passage, Retrieval
 from packages.matching.skill_vocab import BY_KEY, normalize_skill
 
 TARGET_LIMIT = 100
+#: Postings read per query when the saved links widen the search to every open job.
+LOAD_BATCH = 5000
 RESULT_LIMIT = 8
 PROJECT_RESULT_LIMIT = 5
 GraphIntent = Literal["projects", "gaps"]
+#: What a graph answer read: a sample of the owner's best matches, or every open
+#: posting in the search area through the saved links (`skill_links.py`).
+GraphScope = Literal["top_matches", "open_postings"]
 
 # Full questions deliberately avoid silently swallowing employer, place or skill
 # constraints this first graph slice cannot apply. Other questions keep normal RAG.
@@ -97,12 +104,22 @@ class GraphEvidence:
 
 
 @dataclass(frozen=True)
+class SavedLinks:
+    """A posting's saved direct requirements, read from its current text (`skill_links.py`)."""
+
+    readable: bool
+    #: (skill key, the posting's quote), direct requirements only.
+    required: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
 class GraphResult:
     found: Retrieval
     summary: str
     evidence: tuple[GraphEvidence, ...] = ()
     answer_summary: str = ""
     answer_note: str = ""
+    scope: GraphScope = "top_matches"
 
     def answer(self, labels: Sequence[str]) -> str:
         by_label = {item.label: item for item in self.evidence}
@@ -133,11 +150,19 @@ class GraphResult:
         )
 
 
+def project_keys(project: Project) -> set[str]:
+    """Skills a project's source declares: primary language and dependency files only."""
+    names = [project.language or "", *(project.dependency_technologies or [])]
+    return {normalized for name in names if (normalized := normalize_skill(name)) is not None}
+
+
 def build_graph(
     candidate_id: uuid.UUID,
     resumes: Sequence[Resume],
     projects: Sequence[Project],
     postings: Sequence[tuple[Posting, str | None]],
+    *,
+    links: Mapping[uuid.UUID, SavedLinks] | None = None,
 ) -> KnowledgeGraph:
     """Build only declared relationships; descriptions never imply project skills."""
     graph = KnowledgeGraph()
@@ -155,21 +180,13 @@ def build_graph(
         for key in sorted(resume_skills(text)):
             graph.add(Edge(node, "lists", Entity("skill", key), node.key))
     for project in projects:
-        if (
-            project.candidate_id != candidate_id
-            or project.source != "github"
-            or project.is_fork
-            or project.is_private
-            or project.include is False
-        ):
+        if not _is_eligible(project, candidate_id):
             continue
         node = Entity("project", str(project.id))
         graph.add(Edge(owner, "has_project", node, project.url))
         # Primary language and manifest declarations are source facts. Prose,
         # topics and repository names do not establish use of a technology.
-        names = [project.language or "", *(project.dependency_technologies or [])]
-        keys = {normalized for name in names if (normalized := normalize_skill(name)) is not None}
-        for key in sorted(keys):
+        for key in sorted(project_keys(project)):
             graph.add(Edge(node, "declares", Entity("skill", key), project.url))
     for posting, _ in postings:
         node = Entity("posting", str(posting.id))
@@ -177,6 +194,13 @@ def build_graph(
             graph.add(
                 Edge(node, "posted_by", Entity("company", str(posting.company_id)), posting.url)
             )
+        saved = (links or {}).get(posting.id)
+        if saved is not None:
+            # Read and filtered when the posting was linked: no extraction here.
+            for key, quote in saved.required:
+                if key in BY_KEY:
+                    graph.add(Edge(node, "requires", Entity("skill", key), posting.url, quote))
+            continue
         requirements = fresh_requirements(
             posting.requirements_json, posting.requirements_version, posting.description_raw
         )
@@ -202,8 +226,12 @@ def graph_result(
     projects: Sequence[Project],
     postings: Sequence[tuple[Posting, str | None]],
     intent: GraphIntent,
+    *,
+    links: Mapping[uuid.UUID, SavedLinks] | None = None,
+    scope: GraphScope = "top_matches",
+    unlinked: int = 0,
 ) -> GraphResult:
-    graph = build_graph(candidate_id, resumes, projects, postings)
+    graph = build_graph(candidate_id, resumes, projects, postings, links=links)
     owner = Entity("candidate", str(candidate_id))
     project_nodes = [e.target for e in graph.links(owner, "has_project")]
     project_by_id = {str(p.id): p for p in projects}
@@ -213,15 +241,31 @@ def graph_result(
             project_skills[edge.target].append(node)
     resume_nodes = [e.target for e in graph.links(owner, "has_resume")]
     listed = {edge.target for node in resume_nodes for edge in graph.links(node, "lists")}
-    summary = (
-        f"Graph retrieval examined {len(postings)} of your highest-scoring open, unskipped "
+    every = scope == "open_postings"
+    reach = (
+        "Graph retrieval read the saved requirements of every open, unskipped posting in the "
+        f"configured search area and found {len(postings)} that directly require a technology "
+        "your projects declare. "
+        + (
+            f"{unlinked} open postings have no saved requirements yet and were not read. "
+            if unlinked
+            else ""
+        )
+        if every
+        else f"Graph retrieval examined {len(postings)} of your highest-scoring open, unskipped "
         "matches in the configured search area (at most 100; each job counted once). "
-        "This is a bounded sample, not all available jobs. Only direct required skills count; "
+        "This is a bounded sample, not all available jobs. "
+    )
+    summary = (
+        reach + "Only direct required skills count; "
         "preferences, alternatives and stack mentions are excluded. "
         "A shared technology does not establish proficiency or full job eligibility."
     )
+    saved = links or {}
     read = sum(
-        fresh_requirements(p.requirements_json, p.requirements_version, p.description_raw)
+        saved[p.id].readable
+        if p.id in saved
+        else fresh_requirements(p.requirements_json, p.requirements_version, p.description_raw)
         is not None
         for p, _ in postings
     )
@@ -243,11 +287,17 @@ def graph_result(
             if shared:
                 candidates.append((posting, company, shared, rank))
         candidates.sort(key=lambda item: (-len(item[2]), item[3]))
-        summary += f" {len(candidates)} sampled jobs share a directly required project technology."
+        summary += (
+            f" {len(candidates)} {'open' if every else 'sampled'} jobs share a directly "
+            "required project technology."
+        )
         summary += " Each result shows up to five shared technologies and three projects per skill."
         answer_summary = (
             "These jobs share technologies with your projects:"
             if candidates
+            else "No open job in your search area directly requires a technology your "
+            "projects declare."
+            if every
             else f"No direct job requirements matched your project technologies in the "
             f"{len(postings)} top matches reviewed."
         )
@@ -352,8 +402,19 @@ def graph_result(
         summary=summary,
         evidence=tuple(items),
         answer_summary=answer_summary,
+        scope=scope,
         answer_note=(
-            f"Based on {len(postings)} of your top open job matches. "
+            (
+                f"Based on all {len(postings)} open jobs in your search area that directly "
+                "require one of your project technologies. "
+                + (
+                    f"{unlinked} open jobs are not linked yet (`make skill-links`). "
+                    if unlinked
+                    else ""
+                )
+                if every
+                else f"Based on {len(postings)} of your top open job matches. "
+            )
             + (
                 f"Requirements were unreadable for {len(postings) - read} jobs. "
                 if read < len(postings)
@@ -444,6 +505,20 @@ async def retrieve_graph(
     )
     if live_projects is not None:
         projects = list(live_projects)
+    if intent == "projects":
+        wide = await _project_jobs_from_saved_links(session, candidate_id, projects)
+        if wide is not None:
+            postings, links, unlinked = wide
+            return graph_result(
+                candidate_id,
+                resumes,
+                projects,
+                postings,
+                intent,
+                links=links,
+                scope="open_postings",
+                unlinked=unlinked,
+            )
     best = (
         select(Match.posting_id, func.max(Match.score).label("score"))
         .join(Profile, Profile.id == Match.profile_id)
@@ -454,7 +529,6 @@ async def retrieve_graph(
         .group_by(Match.posting_id)
         .subquery()
     )
-    settings = get_settings()
     rows = await session.stream(
         select(Posting, Company.name)
         .join(best, best.c.posting_id == Posting.id)
@@ -466,24 +540,150 @@ async def retrieve_graph(
     kept: list[tuple[Posting, str | None]] = []
     try:
         async for posting, company in rows:
-            if (
-                settings.search_us_only
-                and area_exclusion(
-                    posting.location,
-                    title=posting.title,
-                    description=posting.description_raw,
-                    remote_outside_california=settings.search_remote_outside_california,
-                    country_code=posting.country_code,
-                    state_code=posting.state_code,
-                    is_remote=posting.is_remote,
-                    offices=office_facts(posting.locations_json),
-                )
-                is not None
-            ):
+            if _outside_area(posting):
                 continue
             kept.append((posting, company))
             if len(kept) == TARGET_LIMIT:
                 break
     finally:
         await rows.close()
-    return graph_result(candidate_id, resumes, projects, kept, intent)
+    links = await saved_links(session, [posting.id for posting, _ in kept])
+    return graph_result(candidate_id, resumes, projects, kept, intent, links=links)
+
+
+def _outside_area(posting: Posting) -> bool:
+    """The feed's search-area rule (`locality.area_exclusion`), when it is on."""
+    settings = get_settings()
+    return bool(
+        settings.search_us_only
+        and area_exclusion(
+            posting.location,
+            title=posting.title,
+            description=posting.description_raw,
+            remote_outside_california=settings.search_remote_outside_california,
+            country_code=posting.country_code,
+            state_code=posting.state_code,
+            is_remote=posting.is_remote,
+            offices=office_facts(posting.locations_json),
+        )
+        is not None
+    )
+
+
+async def saved_links(
+    session: AsyncSession, posting_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, SavedLinks]:
+    """Saved direct requirements of postings linked from their current text.
+
+    A posting with no current link row is left out, and the graph reads it as
+    before. Never writes.
+    """
+    found: dict[uuid.UUID, list[tuple[str, str]]] = {}
+    readable: dict[uuid.UUID, bool] = {}
+    for first in range(0, len(posting_ids), LOAD_BATCH):
+        ids = list(posting_ids[first : first + LOAD_BATCH])
+        reads = await session.execute(
+            select(PostingSkillRead.posting_id, PostingSkillRead.readable)
+            .join(Posting, Posting.id == PostingSkillRead.posting_id)
+            .where(PostingSkillRead.posting_id.in_(ids), skill_links.is_current())
+        )
+        for posting_id, is_readable in reads:
+            readable[posting_id] = is_readable
+            found[posting_id] = []
+        rows = await session.execute(
+            select(PostingSkill.posting_id, PostingSkill.skill, PostingSkill.quote)
+            .where(
+                PostingSkill.posting_id.in_([i for i in ids if i in readable]),
+                skill_links.is_direct_requirement(),
+            )
+            .order_by(PostingSkill.posting_id, PostingSkill.skill)
+        )
+        for posting_id, skill, quote in rows:
+            found[posting_id].append((skill, quote))
+    return {
+        posting_id: SavedLinks(readable[posting_id], tuple(required))
+        for posting_id, required in found.items()
+    }
+
+
+async def _project_jobs_from_saved_links(
+    session: AsyncSession, candidate_id: uuid.UUID, projects: Sequence[Project]
+) -> tuple[list[tuple[Posting, str | None]], dict[uuid.UUID, SavedLinks], int] | None:
+    """Every open, unskipped posting in the area directly requiring a project technology.
+
+    Read from the saved links over all open postings rather than a sample of the
+    owner's matches. None when there is nothing to read them with: no project
+    declares a technology, or no posting has been linked yet (`make skill-links`).
+    """
+    keys = sorted(
+        {
+            key
+            for project in projects
+            if _is_eligible(project, candidate_id)
+            for key in project_keys(project)
+        }
+    )
+    if not keys:
+        return None
+    current_open = and_(Posting.closed_at.is_(None), skill_links.is_current())
+    linked = await session.scalar(
+        select(func.count())
+        .select_from(PostingSkillRead)
+        .join(Posting, Posting.id == PostingSkillRead.posting_id)
+        .where(current_open)
+    )
+    if not linked:
+        return None
+    skipped = (
+        select(Match.posting_id)
+        .join(Profile, Profile.id == Match.profile_id)
+        .where(Profile.candidate_id == candidate_id, Match.decision == "skipped")
+    )
+    counted = (
+        await session.execute(
+            select(PostingSkill.posting_id, func.count())
+            .join(Posting, Posting.id == PostingSkill.posting_id)
+            .join(PostingSkillRead, PostingSkillRead.posting_id == Posting.id)
+            .where(
+                current_open,
+                skill_links.is_direct_requirement(),
+                PostingSkill.skill.in_(keys),
+                Posting.id.not_in(skipped),
+            )
+            .group_by(PostingSkill.posting_id)
+        )
+    ).all()
+    shared: dict[uuid.UUID, int] = {row[0]: int(row[1]) for row in counted}
+    kept: list[tuple[Posting, str | None]] = []
+    ids = list(shared)
+    for first in range(0, len(ids), LOAD_BATCH):
+        rows = await session.execute(
+            select(Posting, Company.name)
+            .outerjoin(Company, Company.id == Posting.company_id)
+            .where(Posting.id.in_(ids[first : first + LOAD_BATCH]))
+        )
+        kept.extend((posting, company) for posting, company in rows if not _outside_area(posting))
+    # Most shared technologies first, then the newest.
+    kept.sort(
+        key=lambda row: (
+            -shared[row[0].id],
+            -(row[0].first_seen_at.timestamp() if row[0].first_seen_at else 0.0),
+            str(row[0].id),
+        )
+    )
+    open_total = await session.scalar(
+        select(func.count()).select_from(Posting).where(Posting.closed_at.is_(None))
+    )
+    links = await saved_links(session, [posting.id for posting, _ in kept])
+    return kept, links, max(int(open_total or 0) - int(linked), 0)
+
+
+def _is_eligible(project: Project, candidate_id: uuid.UUID) -> bool:
+    """The projects `build_graph` connects: the owner's public, included, non-fork GitHub ones."""
+    return (
+        project.candidate_id == candidate_id
+        and project.source == "github"
+        and not project.is_fork
+        and not project.is_private
+        and project.include is not False
+    )

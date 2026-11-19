@@ -1454,7 +1454,9 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
         answer = fallback + "\n\n" + answer
     return ChatReply(
         reply=answer,
-        postings_scope="top_matches" if ready.graph_result is not None else "open_postings",
+        postings_scope=(
+            ready.graph_result.scope if ready.graph_result is not None else "open_postings"
+        ),
         retrieval_method="graph" if ready.graph_result is not None else "standard",
         retrieval_details=(
             ready.graph_result.summary
