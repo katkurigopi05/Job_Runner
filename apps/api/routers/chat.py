@@ -1046,7 +1046,7 @@ async def prepare(
     # Explicit personal relationship questions traverse current source facts.
     # The model selects only existing paths; local rendering restores project
     # attribution without uploading project names or résumé prose.
-    intent = graph_intent(question)
+    intent = await graph_intent(question, session=session)
     if intent is not None and body.application_id is None:
         graph_provider, graph_model = None, None
         if selected == "kaggle":

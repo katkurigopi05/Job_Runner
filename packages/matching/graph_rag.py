@@ -9,7 +9,6 @@ the selection prompt; local rendering restores the project's source attribution.
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -25,6 +24,8 @@ from packages.core.models_skill_links import PostingSkill, PostingSkillRead
 from packages.matching import skill_links
 from packages.matching.evidence import Strength, skill_evidence
 from packages.matching.gaps import resume_skills
+from packages.matching.graph_questions import GraphConstraint, GraphIntent, GraphQuestion
+from packages.matching.graph_questions import graph_intent as graph_intent
 from packages.matching.locality import area_exclusion
 from packages.matching.location_fields import office_facts
 from packages.matching.required_skills import fresh_requirements
@@ -36,34 +37,9 @@ TARGET_LIMIT = 100
 LOAD_BATCH = 5000
 RESULT_LIMIT = 8
 PROJECT_RESULT_LIMIT = 5
-GraphIntent = Literal["projects", "gaps"]
 #: What a graph answer read: a sample of the owner's best matches, or every open
 #: posting in the search area through the saved links (`skill_links.py`).
 GraphScope = Literal["top_matches", "open_postings"]
-
-# Full questions deliberately avoid silently swallowing employer, place or skill
-# constraints this first graph slice cannot apply. Other questions keep normal RAG.
-_PROJECT_QUESTION = re.compile(
-    r"(?:which|what) (?:jobs|roles)(?: in my top matches)? match "
-    r"(?:the )?(?:skills (?:demonstrated in|from|on) )?my projects"
-    r"|how do my projects connect to my job matches",
-    re.I,
-)
-_GAP_QUESTION = re.compile(
-    r"which skill gaps recur across my (?:strongest|top) matches"
-    r"|(?:compared with my r[ée]sum[ée]s,? )?"
-    r"which skills do my top matches ask for that i am missing",
-    re.I,
-)
-
-
-def graph_intent(question: str) -> GraphIntent | None:
-    clean = " ".join(question.strip().rstrip("?.!").split())
-    if _PROJECT_QUESTION.fullmatch(clean):
-        return "projects"
-    if _GAP_QUESTION.fullmatch(clean):
-        return "gaps"
-    return None
 
 
 @dataclass(frozen=True)
@@ -230,6 +206,7 @@ def graph_result(
     links: Mapping[uuid.UUID, SavedLinks] | None = None,
     scope: GraphScope = "top_matches",
     unlinked: int = 0,
+    constraint: GraphConstraint | None = None,
 ) -> GraphResult:
     graph = build_graph(candidate_id, resumes, projects, postings, links=links)
     owner = Entity("candidate", str(candidate_id))
@@ -395,6 +372,20 @@ def graph_result(
                     )
                 )
                 _append_evidence(passages, items, posting, company, text, text, answer=human)
+    population = "in your search area"
+    if constraint is not None:
+        population = constraint.label
+        if not constraint.waives_area and get_settings().search_us_only:
+            population += " within your search area"
+        scope_note = f"Project search {constraint.label}: {len(postings)} jobs reviewed. "
+        if constraint.waives_area:
+            scope_note += "Explicit place; standing search area waived. "
+        summary = scope_note + summary.replace("in the configured search area", population)
+        answer_summary = f"Project matches {constraint.label}.\n\n" + answer_summary.replace(
+            "in your search area", population
+        )
+        if not postings and project_skills:
+            answer_summary = f"No open project matches found {constraint.label}."
     return GraphResult(
         found=Retrieval(
             attempted=True, passages=tuple(passages), searched=len(postings), ranked=len(items)
@@ -405,7 +396,8 @@ def graph_result(
         scope=scope,
         answer_note=(
             (
-                f"Based on all {len(postings)} open jobs in your search area that directly "
+                f"Based on all {len(postings)} open jobs "
+                f"{population} that directly "
                 "require one of your project technologies. "
                 + (
                     f"{unlinked} open jobs are not linked yet (`make skill-links`). "
@@ -413,7 +405,9 @@ def graph_result(
                     else ""
                 )
                 if every
-                else f"Based on {len(postings)} of your top open job matches. "
+                else f"Based on {len(postings)} of your top open job matches"
+                + (f" {population}" if constraint else "")
+                + ". "
             )
             + (
                 f"Requirements were unreadable for {len(postings) - read} jobs. "
@@ -459,9 +453,14 @@ def _append_evidence(
 
 
 async def retrieve_graph(
-    session: AsyncSession, intent: GraphIntent, *, live_projects: Sequence[Project] | None = None
+    session: AsyncSession,
+    intent: GraphIntent | GraphQuestion,
+    *,
+    live_projects: Sequence[Project] | None = None,
 ) -> GraphResult:
     """Read current facts without indexing, migrations, provider calls or writes."""
+    constraint = intent.constraint if isinstance(intent, GraphQuestion) else None
+    intent = intent.intent if isinstance(intent, GraphQuestion) else intent
     candidates = list((await session.scalars(select(Candidate.id).limit(2))).all())
     if len(candidates) != 1:
         return GraphResult(
@@ -506,7 +505,7 @@ async def retrieve_graph(
     if live_projects is not None:
         projects = list(live_projects)
     if intent == "projects":
-        wide = await _project_jobs_from_saved_links(session, candidate_id, projects)
+        wide = await _project_jobs_from_saved_links(session, candidate_id, projects, constraint)
         if wide is not None:
             postings, links, unlinked = wide
             return graph_result(
@@ -518,6 +517,7 @@ async def retrieve_graph(
                 links=links,
                 scope="open_postings",
                 unlinked=unlinked,
+                constraint=constraint,
             )
     best = (
         select(Match.posting_id, func.max(Match.score).label("score"))
@@ -540,7 +540,7 @@ async def retrieve_graph(
     kept: list[tuple[Posting, str | None]] = []
     try:
         async for posting, company in rows:
-            if _outside_area(posting):
+            if not _in_scope(posting, constraint):
                 continue
             kept.append((posting, company))
             if len(kept) == TARGET_LIMIT:
@@ -548,7 +548,15 @@ async def retrieve_graph(
     finally:
         await rows.close()
     links = await saved_links(session, [posting.id for posting, _ in kept])
-    return graph_result(candidate_id, resumes, projects, kept, intent, links=links)
+    return graph_result(
+        candidate_id, resumes, projects, kept, intent, links=links, constraint=constraint
+    )
+
+
+def _in_scope(posting: Posting, constraint: GraphConstraint | None) -> bool:
+    if constraint is not None and not constraint.keeps(posting):
+        return False
+    return bool(constraint and constraint.waives_area) or not _outside_area(posting)
 
 
 def _outside_area(posting: Posting) -> bool:
@@ -607,7 +615,10 @@ async def saved_links(
 
 
 async def _project_jobs_from_saved_links(
-    session: AsyncSession, candidate_id: uuid.UUID, projects: Sequence[Project]
+    session: AsyncSession,
+    candidate_id: uuid.UUID,
+    projects: Sequence[Project],
+    constraint: GraphConstraint | None = None,
 ) -> tuple[list[tuple[Posting, str | None]], dict[uuid.UUID, SavedLinks], int] | None:
     """Every open, unskipped posting in the area directly requiring a project technology.
 
@@ -662,7 +673,9 @@ async def _project_jobs_from_saved_links(
             .outerjoin(Company, Company.id == Posting.company_id)
             .where(Posting.id.in_(ids[first : first + LOAD_BATCH]))
         )
-        kept.extend((posting, company) for posting, company in rows if not _outside_area(posting))
+        kept.extend(
+            (posting, company) for posting, company in rows if _in_scope(posting, constraint)
+        )
     # Most shared technologies first, then the newest.
     kept.sort(
         key=lambda row: (

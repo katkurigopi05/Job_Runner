@@ -1226,6 +1226,32 @@ async def _named_companies(
     return named, naming, names, not_hiring
 
 
+async def resolve_company_name(
+    session: AsyncSession, name: str
+) -> tuple[tuple[uuid.UUID, ...], str] | None:
+    """Resolve a complete employer name with the normal assistant's reader.
+
+    Exact surface/alias consumption is stricter than free-form retrieval: a
+    graph suffix may not hide additional words after a recognized employer.
+    """
+    frequencies, _ = await idf.load_active(session)
+    question = f"jobs at {name}"
+    words = {word.rstrip(".") for word in _RAW_WORD.findall(question.lower())}
+    ids, _, names, _ = await _named_companies(session, words, frequencies, question)
+    surface = " ".join(re.findall(r"\w+", name.casefold()))
+    kept = []
+    labels = []
+    for ident, label in zip(ids, names, strict=True):
+        surfaces = {" ".join(re.findall(r"\w+", part.casefold())) for part in _name_parts(label)}
+        surfaces.update(" ".join(alias) for alias in _company_aliases(label, frequencies))
+        if alias := _framed_alias(label, words, frequencies):
+            surfaces.add(alias)
+        if surface in surfaces:
+            kept.append(ident)
+            labels.append(label)
+    return (tuple(kept), " or ".join(dict.fromkeys(labels))) if kept else None
+
+
 async def _said_as_its_name(
     session: AsyncSession, hits: list[tuple[str, ...]], company_id: uuid.UUID, question: str
 ) -> bool:
