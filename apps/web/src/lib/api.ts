@@ -612,6 +612,8 @@ export interface Match {
   adjustments: RankingAdjustment[];
   /** Where each of the search's keywords matched; empty when it has none. */
   keyword_hits: KeywordHit[];
+  /** Display-only source declarations, separate from scores. */
+  project_coverage?: { covered: string[]; missing: string[] } | null;
 }
 
 /** Where one keyword matched, with the two words either side of it. */

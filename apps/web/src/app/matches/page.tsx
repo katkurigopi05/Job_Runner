@@ -412,6 +412,15 @@ export default async function MatchesPage({
                   </div>
                 ) : null}
 
+                {match.project_coverage && (match.project_coverage.covered.length + match.project_coverage.missing.length > 0) ? (
+                  <p className="mt-3 text-xs text-ink-soft">
+                    Your projects cover {match.project_coverage.covered.length} of{" "}
+                    {match.project_coverage.covered.length + match.project_coverage.missing.length} required
+                    {match.project_coverage.covered.length > 0 ? `: ${match.project_coverage.covered.join(", ")}` : ""}
+                    {match.project_coverage.missing.length > 0 ? ` · missing ${match.project_coverage.missing.join(", ")}` : ""}
+                  </p>
+                ) : null}
+
                 <RequirementsPanel
                   compensation={match.compensation}
                   requirements={match.requirements}
