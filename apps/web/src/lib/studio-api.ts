@@ -64,6 +64,9 @@ export interface StudioRequest {
   selected_certification_ids: string[] | null;
   include_internships: boolean;
   use_model: boolean;
+  live_projects?: boolean;
+  model_provider?: "configured" | "kaggle";
+  replace_source_projects?: boolean;
 }
 
 export interface StudioTarget {
@@ -105,6 +108,10 @@ export interface StudioProject {
   matched_terms: string[];
   chosen: boolean;
   held_back: string;
+  original_description: string;
+  tailored_description: string;
+  rewrite_status: string;
+  rewrite_reason: string | null;
 }
 
 export interface StudioContact {
@@ -132,6 +139,7 @@ export interface StudioPreview {
   skipped: string[];
   tailored_by: string | null;
   calls: number;
+  project_evidence: string;
 }
 
 export interface StudioSave {
@@ -140,6 +148,8 @@ export interface StudioSave {
   base_resume_id: string;
   role_track: RoleTrack;
   selected_project_ids: string[];
+  project_rewrites?: { project_id: string; original: string; tailored: string }[];
+  live_projects?: boolean;
   selected_certification_ids: string[] | null;
   include_internships: boolean;
   contact: StudioContact;

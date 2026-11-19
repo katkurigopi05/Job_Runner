@@ -27,6 +27,8 @@ PostgreSQL is the system of record. Résumés, browser sessions, and screenshots
 - **Adversarial Tailoring Guard:** source-scoped evidence checks reject invented skills, dates, credentials, metrics, and claims borrowed from another résumé entry. Tests include adversarial rewrites; review exposes accepted changes and rejected attempts.
 - **ATS Contract:** adapters in `packages/ats/` share inspection, field mapping, fill reports, and explicit failure reasons. Unknown answers park the application with the employer's exact question. CAPTCHA and unsupported flows require manual completion.
 - **Grounded Q&A:** keyword constraints, model-specific chunk retrieval, reciprocal rank fusion, and citations tie answers to stored postings. Counts and application states come from SQL. Retrieval benchmarks measure fidelity separately from human relevance.
+- **Graph retrieval:** project technologies connect to directly required job skills, with source-backed paths and recurring résumé skill gaps in the assistant. See [GraphRAG scope and sources](docs/GRAPH_RAG.md).
+- **Job-first project tailoring:** Resume Studio can check current public projects through GitHub MCP, rank by direct requirement coverage, and preview guarded description rewrites using Kaggle 27B. Saving retains the approved wording for PDF and DOCX without changing imported project records.
 - **Durable execution:** PostgreSQL leases and `FOR UPDATE SKIP LOCKED` support retries; a state machine and append-only events record progress. A submission ledger fences duplicate attempts.
 - **Replaceable model providers:** local and explicitly selected remote providers share routing and audit boundaries. No production request silently falls back to test stubs.
 

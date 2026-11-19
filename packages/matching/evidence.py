@@ -69,6 +69,7 @@ _EXAMPLE_BEFORE = re.compile(
 _CLAUSE_END = re.compile(r"[.;!?]")
 #: Its full stops are not the end of a clause.
 _EG = re.compile(r"\be\.\s?g\.?", re.IGNORECASE)
+_AND_OR = re.compile(r"\band\s*/\s*or\b", re.IGNORECASE)
 #: A dotted release number immediately after a skill is part of its name,
 #: not sentence punctuation or another list item: "PyTorch 2.0 or TensorFlow".
 #: Leave any following full stop in place so "PyTorch 2.0. Or ..." stays two clauses.
@@ -143,7 +144,7 @@ def is_option(quote: str, skill: Skill) -> bool:
     Read inside the clause the skill is in: "Python or Go required; Kafka a
     plus" offers Python and does not offer Kafka.
     """
-    quote = _EG.sub("eg", quote)
+    quote = _AND_OR.sub("or", _EG.sub("eg", quote))
     quantified_choices = []
     for heading in _QUANTIFIED_LIST.finditer(quote):
         end = quote.find(")", heading.end())

@@ -16,6 +16,7 @@ import { historyFrom } from "@/lib/chat-history";
 import { newChatId } from "@/lib/chat-recents";
 import { readFrames } from "@/lib/chat-stream";
 import { POSTING_LINK } from "@/lib/external";
+import { AssistantEvidence } from "@/components/assistant-evidence";
 
 /**
  * A posting retrieved for a question. `cited` is read out of the reply. The
@@ -52,7 +53,6 @@ interface PostingShare {
   scope: string;
 }
 
-/** How many further matches one click reveals. */
 const MORE_PAGE = 10;
 
 /** The two buttons under the list: the next page, and everything at once. */
@@ -96,6 +96,9 @@ interface Turn {
   /** Open postings the search covered, and the ones it could not reach. */
   searched?: number;
   unsearchable?: number;
+  postingsScope?: "open_postings" | "top_matches";
+  retrievalMethod?: "standard" | "graph";
+  retrievalDetails?: string | null;
   /** Labels the answer cites that were never among its sources: "P7" over five. */
   unsupportedCitations?: string[];
   /** A chart the API drew from the database for a chart request. No model wrote it. */
@@ -290,7 +293,6 @@ function RetrievedPostings({ turn }: { turn: Turn }) {
   if (sources.length === 0 && !turn.postingsShare) return null;
   const cited = sources.filter((source) => source.cited);
   const uncited = sources.filter((source) => !source.cited);
-  const total = (turn.searched ?? 0) + (turn.unsearchable ?? 0);
 
   return (
     <div className="mt-1.5 max-w-[90%] space-y-2 text-left text-xs">
@@ -323,9 +325,8 @@ function RetrievedPostings({ turn }: { turn: Turn }) {
         </div>
       ) : null}
       <MoreMatches turn={turn} shownAbove={sources.length} />
-      <p className="text-ink-faint">
-        From a search of {(turn.searched ?? 0).toLocaleString("en-US")} of {total.toLocaleString("en-US")} open postings
-      </p>
+      <AssistantEvidence searched={turn.searched} unsearchable={turn.unsearchable}
+        scope={turn.postingsScope} details={turn.retrievalDetails} method={turn.retrievalMethod} />
     </div>
   );
 }
@@ -376,6 +377,9 @@ interface Reply {
   postings_related_total?: number;
   postings_searched?: number;
   postings_unsearchable?: number;
+  postings_scope?: "open_postings" | "top_matches";
+  retrieval_method?: "standard" | "graph";
+  retrieval_details?: string | null;
   unsupported_citations?: string[];
   chart?: Chart | null;
 }
@@ -404,6 +408,9 @@ function turnFrom(body: Reply): Turn {
     relatedTotal: body.postings_related_total,
     searched: body.postings_searched,
     unsearchable: body.postings_unsearchable,
+    postingsScope: body.postings_scope,
+    retrievalMethod: body.retrieval_method,
+    retrievalDetails: body.retrieval_details,
     unsupportedCitations: body.unsupported_citations,
     chart: body.chart,
   };
@@ -588,78 +595,81 @@ export function Assistant({ applicationId }: { applicationId?: string }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--radius-panel)] border border-rule bg-paper-raised">
-      <AssistantRecents
-        recents={recents}
-        openId={chatId}
-        busy={busy}
-        fresh={turns.length === 0}
-        onNew={() => show(newChatId(), [], "new chat · nothing carried over")}
-        onOpen={(kept) => show(kept.id, kept.turns, "reopened · remembered from here on")}
-        onDelete={(id) => {
-          recents.forget(id);
-          if (id === null || id === chatId) show(newChatId(), [], "deleted · new chat");
-          else setStatus("deleted one kept chat");
-        }}
-      />
+      {/* Keep long provider controls from collapsing the answer viewport. */}
+      <div className="max-h-[55%] shrink-0 overflow-y-auto">
+        <AssistantRecents
+          recents={recents}
+          openId={chatId}
+          busy={busy}
+          fresh={turns.length === 0}
+          onNew={() => show(newChatId(), [], "new chat · nothing carried over")}
+          onOpen={(kept) => show(kept.id, kept.turns, "reopened · remembered from here on")}
+          onDelete={(id) => {
+            recents.forget(id);
+            if (id === null || id === chatId) show(newChatId(), [], "deleted · new chat");
+            else setStatus("deleted one kept chat");
+          }}
+        />
 
-      {/* Who answers. Above the prompts because it changes what they cost. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-3 py-2">
-        <label htmlFor="assistant-provider" className="text-xs text-ink-faint">
-          Model
-        </label>
-        <select
-          id="assistant-provider"
-          value={provider}
-          disabled={busy}
-          onChange={(event) => setProvider(event.target.value)}
-          className="rounded-lg border border-rule bg-paper px-2 py-1 text-xs text-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
-        >
-          {PROVIDERS.map((entry) => (
-            <option key={entry.value} value={entry.value}>
-              {entry.label}
-            </option>
-          ))}
-        </select>
-        <p
-          className={`min-w-0 flex-1 text-xs ${chosen.local ? "text-ink-faint" : "text-attn"}`}
-        >
-          {chosen.hint}{!chosen.local && " Known profile names and email/phone patterns are masked before cloud calls. Other identifying context may remain."}
-        </p>
-      </div>
-
-      {provider === "kaggle" ? <KaggleConnection /> : null}
-
-      {/* The mail gate. Shown only for a remote model, because for the local
-          one there is no boundary to gate: it always sees the mail and saying
-          "always on" beside a control that does nothing would be worse than
-          not showing a control. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule px-3 py-2">
-        {chosen.local ? (
-          <p className="text-xs text-ink-faint">
-            Recruiter mail: included. It never leaves this machine.
+        {/* Who answers. Above the prompts because it changes what they cost. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-3 py-2">
+          <label htmlFor="assistant-provider" className="text-xs text-ink-faint">
+            Model
+          </label>
+          <select
+            id="assistant-provider"
+            value={provider}
+            disabled={busy}
+            onChange={(event) => setProvider(event.target.value)}
+            className="rounded-lg border border-rule bg-paper px-2 py-1 text-xs text-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
+          >
+            {PROVIDERS.map((entry) => (
+              <option key={entry.value} value={entry.value}>
+                {entry.label}
+              </option>
+            ))}
+          </select>
+          <p
+            className={`min-w-0 flex-1 text-xs ${chosen.local ? "text-ink-faint" : "text-attn"}`}
+          >
+            {chosen.hint}{!chosen.local && " Known profile names and email/phone patterns are masked before cloud calls. Other identifying context may remain."}
           </p>
-        ) : (
-          <>
-            <label className="flex items-center gap-2 text-xs text-ink">
-              <input
-                type="checkbox"
-                checked={shareMail}
-                disabled={busy}
-                onChange={(event) => setShareMail(event.target.checked)}
-                className="accent-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
-              />
-              Send recruiter mail to {chosen.label}
-            </label>
-            <p className="min-w-0 flex-1 text-xs text-ink-faint">
-              {shareMail
-                ? "Their emails about you go with the question."
-                : "Withheld. Replies stay on this machine; the rest of the context still goes."}
-            </p>
-          </>
-        )}
-      </div>
+        </div>
 
-      <AssistantPrompts busy={busy} onPrompt={(text) => void send(text)} />
+        {provider === "kaggle" ? <KaggleConnection /> : null}
+
+        {/* The mail gate. Shown only for a remote model, because for the local
+            one there is no boundary to gate: it always sees the mail and saying
+            "always on" beside a control that does nothing would be worse than
+            not showing a control. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule px-3 py-2">
+          {chosen.local ? (
+            <p className="text-xs text-ink-faint">
+              Recruiter mail: included. It never leaves this machine.
+            </p>
+          ) : (
+            <>
+              <label className="flex items-center gap-2 text-xs text-ink">
+                <input
+                  type="checkbox"
+                  checked={shareMail}
+                  disabled={busy}
+                  onChange={(event) => setShareMail(event.target.checked)}
+                  className="accent-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft"
+                />
+                Send recruiter mail to {chosen.label}
+              </label>
+              <p className="min-w-0 flex-1 text-xs text-ink-faint">
+                {shareMail
+                  ? "Their emails about you go with the question."
+                  : "Withheld. Replies stay on this machine; the rest of the context still goes."}
+              </p>
+            </>
+          )}
+        </div>
+
+        <AssistantPrompts busy={busy} onPrompt={(text) => void send(text)} />
+      </div>
 
       {/* The grey canvas. */}
       <div

@@ -1377,6 +1377,17 @@ async def curate_project(
     return await _call("PATCH", f"/projects/{_id(project_id, 'project_id')}", json=body)
 
 
+@server.tool()
+async def github_project_evidence(project_id: str) -> dict[str, Any]:
+    """Check an imported public GitHub project now, reading declarations at its current commit.
+
+    Returns commit SHA, check time, primary language, declared technologies,
+    evidence file paths and coverage. Private, forked and excluded repositories
+    are refused. GitHub credentials stay on the host. This tool never writes.
+    """
+    return await _call("GET", f"/projects/{_id(project_id, 'project_id')}/live-evidence")
+
+
 def main() -> None:
     """Run over stdio, which is how Claude Code connects."""
     server.run()

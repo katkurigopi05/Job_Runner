@@ -4,10 +4,9 @@ Deliberately deterministic — no model call. Two reasons: the owner runs their
 own LLM and this should work without it, and a ranking you cannot predict is
 one you cannot trust to be stable across every résumé you send.
 
-The ordering rule: pinned first, then by score. Score rewards recency, then
-relevance to the posting, then modest signals of substance. Stars are
-intentionally a weak signal; a well-matched project with two stars should beat
-an unrelated one with two hundred.
+The ordering rule: pinned first, then directly required technology coverage.
+Recency, vocabulary overlap and modest substance signals break coverage ties.
+When no direct requirements are readable, use vocabulary overlap and recency.
 """
 
 from __future__ import annotations
@@ -17,6 +16,8 @@ from datetime import UTC, datetime
 
 from packages.core.models import Project
 from packages.matching.embed import Embedder, cosine
+from packages.matching.requirements import Requirement, extract
+from packages.matching.skill_vocab import normalize_skill
 from packages.tailor.keywords import job_terms
 
 #: How many projects a résumé section should carry by default. More than this
@@ -42,8 +43,8 @@ def is_listed(project: Project) -> bool:
 def is_eligible(project: Project, *, require_description: bool = True) -> bool:
     """Whether a project may appear at all.
 
-    An excluded project is never eligible; an explicitly included one always
-    is. Otherwise: no forks, no archived repos, and — by default — nothing
+    Forks and excluded projects are never eligible. Explicit inclusion can
+    override the other rules: no archived repos, and — by default — nothing
     without a description, because the alternative is either a bare repo name
     or an invented summary, and §2.1 rules out the second.
 
@@ -52,13 +53,13 @@ def is_eligible(project: Project, *, require_description: bool = True) -> bool:
     includes or pins it (`is_listed`). Until then it is evidence only: it can
     back a Projects entry the owner links it to, and nothing prints it.
     """
-    if project.include is False:
+    if project.is_fork or project.include is False:
         return False
     if project.include is True:
         return True
     if not is_listed(project):
         return False
-    if project.is_fork or project.is_archived:
+    if project.is_archived:
         return False
     return not (require_description and not (project.description or "").strip())
 
@@ -127,6 +128,16 @@ def substance(project: Project) -> float:
 def score(project: Project, job_text: str = "", *, now: datetime | None = None) -> float:
     """Weighted rank. Relevance dominates once a posting is known."""
     if job_text.strip():
+        required = required_skills(job_text)
+        if required:
+            # One more supported requirement always beats every tie breaker.
+            matched = required.keys() & project_skills(project)
+            tie = (
+                0.5 * relevance(project, job_text)
+                + 0.3 * recency(project, now=now)
+                + 0.2 * substance(project)
+            )
+            return (len(matched) + 0.1 * tie) / (len(required) + 0.1)
         return (
             0.50 * relevance(project, job_text)
             + 0.30 * recency(project, now=now)
@@ -134,6 +145,29 @@ def score(project: Project, job_text: str = "", *, now: datetime | None = None) 
         )
     # No posting to match against: lead with what is recent and substantial.
     return 0.60 * recency(project, now=now) + 0.40 * substance(project)
+
+
+def required_skills(job_text: str) -> dict[str, str]:
+    """Direct required technologies only; alternatives and preferences stay out."""
+    return {
+        item.skill: item.label
+        for item in extract(job_text).skills
+        if item.requirement is Requirement.REQUIRED and not item.option
+    }
+
+
+def project_skills(project: Project) -> set[str]:
+    """Repository declarations, never names, description prose or topic tags."""
+    return {
+        key
+        for name in [project.language or "", *(project.dependency_technologies or [])]
+        if (key := normalize_skill(name)) is not None
+    }
+
+
+def matched_requirements(project: Project, job_text: str) -> list[str]:
+    required = required_skills(job_text)
+    return [required[key] for key in sorted(required.keys() & project_skills(project))]
 
 
 def select_projects(

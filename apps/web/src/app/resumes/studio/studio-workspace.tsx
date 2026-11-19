@@ -54,6 +54,9 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
   const [skippedCerts, setSkippedCerts] = useState<string[]>([]);
   const [pickedProjects, setPickedProjects] = useState<string[]>([]);
   const [useModel, setUseModel] = useState(false);
+  const [liveProjects, setLiveProjects] = useState(true);
+  const [replaceProjects, setReplaceProjects] = useState(true);
+  const [modelProvider, setModelProvider] = useState<"configured" | "kaggle">("kaggle");
   const [asked, setAsked] = useState<StudioRequest | null>(null);
   const [preview, setPreview] = useState<StudioPreview | null>(null);
   const [sections, setSections] = useState<Record<string, string[]>>({});
@@ -97,6 +100,12 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
           .filter((p) => p.chosen)
           .map((p) => p.id),
         selected_certification_ids: asked.selected_certification_ids,
+        live_projects: asked.live_projects,
+        project_rewrites: preview.projects.filter((p) => p.chosen).map((p) => ({
+          project_id: p.id,
+          original: p.original_description,
+          tailored: p.tailored_description,
+        })),
         include_internships: asked.include_internships,
         contact: preview.contact,
         sections,
@@ -134,6 +143,9 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
         .filter((id) => !skippedCerts.includes(id)),
       include_internships: includeInternships,
       use_model: useModel,
+      live_projects: liveProjects,
+      model_provider: modelProvider,
+      replace_source_projects: replaceProjects,
     });
 
   const toggle = (list: string[], id: string) =>
@@ -172,8 +184,8 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
             ))}
           </div>
           <p className="text-xs text-ink-faint">
-            A preset ranks your projects for that kind of role. It never writes
-            a word on the page.
+            The job’s direct requirements rank projects first. The preset helps
+            with postings that do not state requirements clearly.
           </p>
           <label className="grid gap-1 text-xs text-ink-soft">
             Paste the job description
@@ -247,9 +259,9 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
           </fieldset>
           <fieldset className="space-y-1">
             <legend className="text-xs text-ink-soft">
-              Projects (none ticked: ranked for the posting)
+              Projects (forks excluded; none ticked: ranked for the posting)
             </legend>
-            {projects.map((project) => (
+            {projects.filter((project) => !project.is_fork).map((project) => (
               <label
                 key={project.id}
                 className={`flex items-center gap-2 text-xs ${printable(project) ? "" : "text-ink-faint"}`}
@@ -274,6 +286,19 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
             ))}
           </fieldset>
           <label className="flex items-start gap-2 text-xs">
+            <input type="checkbox" className="mt-0.5 accent-go" checked={replaceProjects}
+              onChange={(e) => setReplaceProjects(e.target.checked)} />
+            <span>Use ranked GitHub projects as this draft’s Projects section.
+              This replaces the base résumé’s project entries with the selected descriptions.
+              Review the print preview before saving.</span>
+          </label>
+          <label className="flex items-start gap-2 text-xs">
+            <input type="checkbox" className="mt-0.5 accent-go" checked={liveProjects}
+              onChange={(e) => setLiveProjects(e.target.checked)} />
+            <span>Check current public GitHub projects before ranking (up to 20).
+              Failed checks are left out. Private projects are available with live checking off.</span>
+          </label>
+          <label className="flex items-start gap-2 text-xs">
             <input
               type="checkbox"
               className="mt-0.5 accent-go"
@@ -281,11 +306,20 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
               onChange={(e) => setUseModel(e.target.checked)}
             />
             <span>
-              Ask the tailoring model to revise bullets that can gain a term.
-              Only those bullets are sent, to the provider set for tailoring,
-              and the audit trail records it.
+              Rewrite selected project descriptions for this job and revise supported résumé bullets.
+              Each rewrite is checked against its own source; unsupported claims keep the original.
             </span>
           </label>
+          {useModel ? (
+            <label className="block text-xs">Writing model
+              <select className="ml-2 rounded border border-rule bg-paper p-2"
+                value={modelProvider}
+                onChange={(e) => setModelProvider(e.target.value as "configured" | "kaggle")}>
+                <option value="kaggle">Kaggle 27B</option>
+                <option value="configured">Configured tailoring model</option>
+              </select>
+            </label>
+          ) : null}
           <Button
             variant="accent"
             size="lg"

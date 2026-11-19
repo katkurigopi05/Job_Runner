@@ -18,6 +18,13 @@ KAFKA = BY_KEY["kafka"]
 PYTHON = BY_KEY["python"]
 
 
+@pytest.mark.parametrize("skill", ["python", "go"])
+def test_and_or_is_an_alternative_without_weakening_a_separate_conjunction(skill):
+    assert is_option("Solid programming skills in Python and/or Golang", BY_KEY[skill])
+    assert is_option("Solid programming skills in Python and / or Golang", BY_KEY[skill])
+    assert not is_option("Strong Python and Golang are required", BY_KEY[skill])
+
+
 def _requirements(**by_strength: tuple[str, str]) -> dict:
     """`required=("kafka", "the line")` and so on, as `requirements.py` stores them."""
     skills: dict[str, list[dict[str, str]]] = {

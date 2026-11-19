@@ -62,9 +62,9 @@ export default async function ResumeStudioPage() {
         </h1>
         <p className="mt-3 max-w-prose text-ink-soft">
           A draft for one posting, made from your résumé, the internships and
-          certifications you confirm below, and your GitHub projects. Every line
-          says where it came from, and a model is asked only for bullets that
-          can truthfully gain a term the posting asks for.
+          certifications you confirm below, and your GitHub projects. Projects
+          rank by the job’s direct requirements. Turn on rewriting to tailor
+          selected descriptions and supported bullets, then review the changes.
         </p>
       </header>
 

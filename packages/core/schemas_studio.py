@@ -91,6 +91,9 @@ class StudioRequest(BaseModel):
     #: Off by default: it sends those bullets to the provider set for
     #: tailoring (CLAUDE.md §2.8).
     use_model: bool = False
+    live_projects: bool = False
+    model_provider: Literal["configured", "kaggle"] = "configured"
+    replace_source_projects: bool = False
 
 
 class StudioTarget(BaseModel):
@@ -132,6 +135,10 @@ class StudioProject(BaseModel):
     matched_terms: list[str]
     chosen: bool
     held_back: str = ""
+    original_description: str = ""
+    tailored_description: str = ""
+    rewrite_status: str = "not asked"
+    rewrite_reason: str | None = None
 
 
 class StudioAts(BaseModel):
@@ -161,11 +168,16 @@ class StudioPreview(BaseModel):
     skipped: list[str]
     tailored_by: str | None = None
     calls: int = 0
+    project_evidence: str = "Imported GitHub metadata; live checking was not requested."
 
 
 class StudioRewrite(BaseModel):
     original: Line
     tailored: Line
+
+
+class StudioProjectRewrite(StudioRewrite):
+    project_id: uuid.UUID
 
 
 class StudioSave(BaseModel):
@@ -176,6 +188,8 @@ class StudioSave(BaseModel):
     base_resume_id: uuid.UUID
     role_track: RoleTrackName = "swe"
     selected_project_ids: list[uuid.UUID] = Field(default_factory=list, max_length=8)
+    project_rewrites: list[StudioProjectRewrite] = Field(default_factory=list, max_length=8)
+    live_projects: bool = False
     selected_certification_ids: list[uuid.UUID] | None = Field(default=None, max_length=30)
     include_internships: bool = True
     contact: ResumeContactEdit
