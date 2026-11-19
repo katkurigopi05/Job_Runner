@@ -1264,6 +1264,36 @@ def locality_of(location: str | None) -> Locality:
     return Locality.UNPLACED
 
 
+def explicit_place_name(text: str) -> str | None:
+    """One complete known place; trailing constraints must not disappear.
+
+    Reuse the classifier's vocabulary, but require a full match rather than
+    treating a recognized city somewhere in arbitrary prose as the whole place.
+    """
+    clean = _fold(text.strip())
+    clean = re.sub(r"^the\s+", "", clean, flags=re.I)
+    if clean.upper() in STATE_BY_CODE:
+        return STATE_BY_CODE[clean.upper()].title()
+    if _US_COUNTRY_RE.fullmatch(clean):
+        return "United States"
+    patterns = (
+        _BAY_AREA_RE,
+        _CALIFORNIA_RE,
+        _CALIFORNIA_CITY_RE,
+        _US_STATE_NAME_RE,
+        _US_CITY_RE,
+        _NON_US_RE,
+        _NON_US_CITIES_RE,
+    )
+    if not any(pattern.fullmatch(clean) for pattern in patterns):
+        return None
+    if clean.casefold() in {"bay area", "silicon valley"}:
+        return "Bay Area"
+    if clean.casefold() == "sf":
+        return "San Francisco"
+    return clean.upper() if len(clean) <= 3 else clean.title()
+
+
 #: US macro-regions that are unambiguously *not* California. "West Coast",
 #: "Pacific" and "Southwest" are deliberately absent — each can include
 #: California, and under the on-site rule a wrong exclusion hides exactly the
