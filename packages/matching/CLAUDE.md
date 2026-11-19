@@ -6,6 +6,11 @@ the root file, which keeps every heading and says where each section went.
 
 - The assistant's search (`retrieve.py`, `rerank.py`, `roles.py`, `gaps.py`, `evidence.py`, `chunks.py`) is in `.claude/rules/assistant-search.md`, which loads with those files.
 - Hybrid retrieval, `hybrid.py` (§19), is in `docs/CLAUDE.md`.
+- The saved skill graph, `skill_links.py` (`make skill-links`, 2026-11-18): posting, project and
+  base résumé links to vocabulary skills, what each link means, when each is written, and why a
+  refresh skips postings a crawl holds, are in that module's docstring. A link must say what
+  `fresh_requirements` and `skill_evidence` say (`tests/test_skill_links.py`); after an
+  extractor version bump every posting is stale until `make skill-links` runs.
 
 ## From §15: What the gates do and do not prove
 

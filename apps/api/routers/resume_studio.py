@@ -35,6 +35,7 @@ from packages.core.schemas_studio import (
 )
 from packages.core.storage import get_storage, resume_key
 from packages.llm import router as llm_router
+from packages.matching.skill_links import link_resume
 from packages.tailor.assemble import assemble_pdf
 from packages.tailor.ats import AtsReport
 from packages.tailor.evidence import linked_evidence
@@ -292,6 +293,7 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
     )
     session.add(resume)
     await session.flush()
+    await link_resume(session, resume)
     if body.adopt and profile is not None:
         profile.base_resume_id = resume.id
     await session.commit()

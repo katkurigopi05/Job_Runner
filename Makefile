@@ -1,6 +1,6 @@
 .PHONY: install lock up down migrate revision test lint fmt typecheck check \
         check-crawler-locations check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
-        bench-matching eval-retrieval eval-paraphrased judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings export-chunk-vectors-pending import-chunk-vectors query-embedder-check backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
+        bench-matching eval-retrieval eval-paraphrased judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings export-chunk-vectors-pending import-chunk-vectors query-embedder-check backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements skill-links canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
 
 PY := .venv/bin
@@ -592,6 +592,13 @@ canonicalize:
 
 extract-requirements:
 	$(PY)/python -m scripts.extract_requirements $(if $(limit),--limit $(limit),)
+
+# make skill-links — save the skill graph: link every posting, project and base
+# résumé to the vocabulary skills it requires, declares or lists
+# (packages/matching/skill_links.py). Relinks only what is stale, so rerun it
+# after an extractor version bump. Safe beside a running crawl.
+skill-links:
+	$(PY)/python -m scripts.link_skills
 
 registry-sync:
 	$(PY)/python -m scripts.registry_sync $(if $(seeds),--seeds $(seeds),) $(if $(dry),--dry-run,)
