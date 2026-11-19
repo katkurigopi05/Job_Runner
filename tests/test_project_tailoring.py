@@ -322,3 +322,31 @@ async def test_studio_live_mcp_uses_current_description_and_declarations(
     monkeypatch.setattr(GitHubClient, "__init__", exhausted)
     with pytest.raises(LLMError, match="GitHub rate limit reached"):
         await refresh_projects([repo])
+
+
+async def test_a_private_project_is_printed_as_written_and_never_sent_to_a_model():
+    repo = make_project(description=ORIGINAL, is_private=True, include=True)
+    provider = Writer()
+
+    rewrite = await rewrite_project(provider, repo, JOB)
+
+    assert rewrite.status == "private project" and rewrite.tailored == ORIGINAL
+    assert not provider.calls
+
+
+async def test_replacing_with_nothing_keeps_the_source_projects_section():
+    base = base_resume()
+    base.sections["projects"] = ["Other project [GitHub]", "Rust", "Built a Rust service."]
+    unrelated = make_project(description="A Rust game.", language="Rust")
+
+    draft = await synthesize(
+        base,
+        build_source(base),
+        JOB,
+        RoleTrack.SWE,
+        projects=[unrelated],
+        replace_source_projects=True,
+    )
+
+    assert not any(pick.chosen for pick in draft.picks)
+    assert draft.resume.sections["projects"] == base.sections["projects"]

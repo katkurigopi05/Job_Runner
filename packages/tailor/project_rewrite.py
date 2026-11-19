@@ -59,6 +59,10 @@ async def rewrite_project(
     original = project.description or ""
     if project.is_fork:
         return ProjectRewrite(project.id, original, original, "excluded fork")
+    if project.is_private:
+        # A private repository's text stays on this machine: printed as the
+        # owner wrote it, never sent to a model to be rewritten.
+        return ProjectRewrite(project.id, original, original, "private project")
     if not original.strip():
         return ProjectRewrite(project.id, original, original, "no source description")
     corpus = corpus_for(project)

@@ -292,7 +292,9 @@ async def synthesize(
         source.resume, linked=linked, verified=source.verified, kinds=source.kinds
     )
     working = source.resume.model_copy(deep=True)
-    if replace_source_projects:
+    # Replaced only by something: with no project chosen (none matches, all
+    # held back, or every live check failed) the résumé keeps its own section.
+    if replace_source_projects and chosen:
         working.sections.pop("projects", None)
 
     revision: Revision | None = None
