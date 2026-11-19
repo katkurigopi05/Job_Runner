@@ -96,33 +96,25 @@ These are correctness requirements, not preferences. Violating any of them is a 
 
 ## 3. Stack (all free)
 
-| Layer | Choice | Notes |
-|---|---|---|
-| Language | Python 3.12 | services + workers |
-| API | FastAPI + Pydantic v2 | routes mirror the reference API shape |
-| DB | Postgres 16 + pgvector | Docker, localhost:5432 |
-| Queue | Postgres `FOR UPDATE SKIP LOCKED` | no Redis — one less service |
-| Browser | Playwright (Python, Chromium) | persistent context per ATS in `./storage/browser/` |
-| LLM | provider abstraction, see §7 | Ollama local / free tiers / Claude Code |
-| Embeddings | `sentence-transformers` BAAI/bge-small-en-v1.5 | local, CPU, 384-dim |
-| Storage | `./storage/` behind an S3-shaped interface | swap to S3 later without code change |
-| Frontend | Next.js 15 + Tailwind v4 | `next dev`, localhost only. Components are hand-rolled, not shadcn — see below |
-| Mail | IMAP poll, Gmail `+alias` addressing | `owner+app{id}@gmail.com` |
-| Migrations | Alembic | |
-| Tests | pytest + pytest-asyncio | |
-| Lint/format | ruff + ruff format | |
-| Types | mypy strict on `packages/core` and `packages/ats` | |
+Python 3.12 services and workers, a Next.js dashboard, Postgres with pgvector.
+Versions and tools are in `pyproject.toml`, `apps/web/package.json` and the
+`Makefile`. What those files do not say: the queue is Postgres
+`FOR UPDATE SKIP LOCKED` (no Redis, one less service); LLMs sit behind the
+provider abstraction (§7); embeddings run locally (bge-small, 384-dim);
+storage is `./storage/` behind an S3-shaped interface; dashboard components
+are hand-rolled, not shadcn; recruiter replies arrive through Gmail `+alias`
+addressing (`owner+app{id}@gmail.com`).
 
 No paid service is permitted in `requirements.txt` or `package.json` without asking the owner first.
 
-Postgres runs on **5433** on the owner's machine, not the 5432 in the row above:
+Postgres runs on **5433** on the owner's machine, not the compose default 5432:
 another project holds 5432. The remap lives in an uncommitted
 `docker-compose.override.yml`, and `.env` points at 5433 to match.
 Both files publish on **127.0.0.1** only: the role is a superuser with the
 compose default password, and a bare `5432:5432` put it on the network
 (`tests/test_database_binds_loopback.py`).
 
-`next dev` binds **127.0.0.1:3001**, not the localhost:3000 the row implies.
+`next dev` binds **127.0.0.1:3001**, not the default localhost:3000.
 Port 3001 because 3000 is taken. `next start` binds 127.0.0.1 too.
 
 The dashboard binds loopback by default and has to keep doing so. `/api/*` is
@@ -130,7 +122,7 @@ proxied to the API from 127.0.0.1, so the API's own loopback guard never sees
 a network client; binding the dashboard to the LAN put the whole API on it.
 `JOBRUNNER_WEB_HOST` is the typed-out opt-in, and
 `tests/test_dashboard_binds_loopback.py` holds the default. The measurements,
-and the notes on the frontend row and the two effect libraries, are in
+and the notes on the frontend stack and the two effect libraries, are in
 `apps/web/CLAUDE.md`.
 
 ---
@@ -151,8 +143,8 @@ of these loads only when work touches the directory or the files it names:
 | `packages/llm/CLAUDE.md` | providers, routing, OpenRouter, the fallback (§7); the local model and Ollama's hosted models (§14) |
 | `packages/tailor/CLAUDE.md` | comparing two models (§7); tailoring, the guard, the cover letter, the cache, editing at review (§15) |
 | `packages/ats/CLAUDE.md` | the adapter contract (§8); reaching and filling a form (§15) |
-| `packages/crawler/CLAUDE.md` | the registry (§9, Phase 5); bespoke pages and the shared rate limiter (§15); duplicate boards (§25); noted companies and the deep dive (§28) |
-| `packages/matching/CLAUDE.md` | the search area, eligibility, experience, labelling, résumé selection (§15); the feed's authorization filters (§18) |
+| `packages/crawler/CLAUDE.md` | the registry (§9, Phase 5); bespoke pages and the shared rate limiter (§15); duplicate boards (§25); noted companies and the deep dive (§28); registry repair and posting retention (§16) |
+| `packages/matching/CLAUDE.md` | the search area, eligibility, experience, labelling, résumé selection (§15); unknown values, search preferences, merging, base and personalized scores (§16); the feed's authorization filters (§18) |
 | `packages/inbox/CLAUDE.md` | the reply alias and duplicate mail (§15) |
 | `packages/core/CLAUDE.md` | the doorbell (§15); the queue's claim order and its producers (§24); races (§27); retries, cancelling, time limits, finish times and pruning (§29) |
 | `tests/CLAUDE.md` | what each gate proves, and the test database (§15) |
@@ -174,21 +166,10 @@ definition, and the summary that was here only repeated it.
 
 ## 6. Application state machine
 
-```
-queued ──> running ──> submitted        (terminal, success)
-             │  ▲
-             │  ├── needs_review ──approve──> running
-             │  │                └──reject──> failed[rejected_at_review]
-             │  └── needs_otp ────otp────────> running
-             └──────────────────────────────> failed  (terminal)
-```
-
-`failure_reason` ∈ `job_closed`, `unsupported_site`, `incomplete_candidate`,
-`manual_completion_required`, `rejected_at_review`, `site_error`.
-
 Transitions go through `packages/core/state.py::transition()` only. It validates the
 edge, writes an `ApplicationEvent`, and is the single place status changes. Direct
-assignment to `Application.status` anywhere else is a bug.
+assignment to `Application.status` anywhere else is a bug. The edges and the
+`failure_reason` values are defined there.
 
 ---
 
@@ -225,84 +206,10 @@ running the adapters against live boards found are in `packages/ats/CLAUDE.md`.
 Each phase has a gate. Do not start the next phase until the gate passes. Run
 `make gate-N` to check.
 
-### Phase 0 — Skeleton
-
-Build: docker-compose with Postgres+pgvector. Alembic migrations for the full schema.
-FastAPI with `/candidates`, `/profiles`, `/applications` (create/list/get),
-`/applications/{id}/review`. `packages/core/state.py` state machine. Postgres queue with
-`SKIP LOCKED`. Worker loop that picks up a task, sleeps 2s, transitions to `submitted`.
-Vault module. Storage module. `StubProvider`.
-
-**Gate 0:** `pytest` green. `POST /applications` → poll `GET /applications/{id}` reaches
-`submitted`. Invalid transition raises. Duplicate `(candidate_id, url)` returns 409.
-`ApplicationEvent` rows exist for every transition. ruff + mypy clean.
-
-### Phase 1 — First ATS, end to end
-
-Build: Playwright worker with persistent browser context. `packages/ats/base.py` +
-`greenhouse.py`. `POST /detect` (URL-pattern classifier). Real apply pipeline:
-`parse_posting` → `enumerate_fields` → `fill` → screenshot → `submit`. `AUTO_SUBMIT=false`
-default, so it parks at `needs_review` with the filled-form screenshot.
-
-**Gate 1:** against a live Greenhouse posting, `enumerate_fields` returns the real field
-list; `fill` populates them from a fixture profile; a screenshot lands in `storage/receipts/`;
-application reaches `needs_review`. A recorded-HAR replay test runs the same flow offline in CI.
-
-### Phase 2 — Profile and résumé
-
-Build: résumé upload, parse to structured JSON (`packages/tailor/parse.py`), profile
-answer store, field-to-profile-key mapping. Unmapped question → `needs_review` carrying the
-exact question. Dashboard: profile editor + review queue with approve/edit/reject.
-
-**Gate 2:** a real posting fills ≥80% of fields with zero manual input. Every unfilled field
-appears in the review queue with its original question text. Approving in the UI resumes
-the application.
-
-### Phase 3 — Tailoring
-
-Build: `packages/tailor/rewrite.py` — job description in, rewritten bullets out.
-`packages/tailor/guard.py` — the fabrication check. Diff generation. PDF render (WeasyPrint
-or ReportLab). Cover letter. Per-company caching of tailored versions.
-
-**Gate 3:** `tests/test_no_fabrication.py` passes — for 20 fixture job descriptions crossed
-with 3 fixture résumés, every noun-phrase entity in output traces to the source résumé.
-Diff renders in the UI before send. Tailored PDF is valid and ATS-parseable
-(round-trip through the parser and compare).
-
-### Phase 4 — MCP server
-
-Build: `apps/mcp/` exposing `search_postings`, `tailor_resume`, `detect_ats`,
-`apply_to_url`, `review_queue`, `approve_application`, `application_status`.
-
-**Gate 4:** Claude Code connects to the MCP server and drives a full apply-to-review cycle
-conversationally. Do this phase early even though it looks like polish — it makes every
-later phase testable by conversation instead of by curl.
-
-What the MCP tools do and what must not be undone in them (the tools that
-make the client ask, what the owner types, ids in paths, the tracker, status
-and grading tools) is in `apps/mcp/CLAUDE.md`.
-
-### Phase 5 — Discovery
-
-Build: company registry (hand-picked, seeded from a YAML file). Crawler with
-content-hash change detection and per-host rate limiting. Posting extraction per ATS.
-Embedding of postings and profile. Hard filters (location, seniority, work authorization,
-sponsorship). Cosine scoring. Match feed in the dashboard.
-
-The registry's history, and how to validate it before trusting a quiet crawl
-(`make validate-seeds`), is in `packages/crawler/CLAUDE.md`.
-
-**Gate 5:** crawler runs a full cycle over the seed list without exceeding rate limits;
-second run emits zero postings (change detection works); match scores are sane against a
-hand-labeled set of 20 postings — the ones you'd actually apply to rank in the top 10.
-
-### Phase 6 — Tracker
-
-Build: IMAP poll, `+alias` per application, inbound classification (interview / rejection /
-info request / noise), auto status routing, pipeline board.
-
-**Gate 6:** a test email to `owner+app{id}@gmail.com` lands on the right application and
-moves its status. Classification is ≥90% accurate on 30 hand-labeled real recruiter emails.
+The phases (0 skeleton, 1 first ATS, 2 profile and résumé, 3 tailoring,
+4 MCP server, 5 discovery, 6 tracker), what each built and the wording of
+each gate moved to `docs/BUILD_PHASES.md` on 2026-10-26. What each gate
+does and does not prove is in `tests/CLAUDE.md`.
 
 ---
 
@@ -405,20 +312,7 @@ live half stops at a captcha, which §2.5 makes the correct outcome. What each
 gate does and does not prove is in `tests/CLAUDE.md`.
 
 The rest of this section was a record, one incident at a time, of defects
-that passed every gate. Each now sits beside the code it is about:
-
-| Subject | File |
-|---|---|
-| tailoring, the guard, the cover letter, the cache, editing a résumé at review | `packages/tailor/CLAUDE.md` |
-| the search area, eligibility, experience, labelling, which résumé is picked | `packages/matching/CLAUDE.md` |
-| the reply alias, duplicate mail, a resent OTP | `packages/inbox/CLAUDE.md` |
-| bespoke careers pages, the shared rate limiter | `packages/crawler/CLAUDE.md` |
-| reaching and filling a form, what live runs cannot prove | `packages/ats/CLAUDE.md` |
-| which résumé is uploaded, the owner's pinned choice | `apps/worker/CLAUDE.md` |
-| the doorbell (`notify`) | `packages/core/CLAUDE.md` |
-| the feed's wording, the tracker, the design pass, the LAN bind | `apps/web/CLAUDE.md` |
-| the test database, real data for Gates 5 and 6 | `tests/CLAUDE.md` |
-| what outside repositories and specs were worth | `docs/CLAUDE.md` |
+that passed every gate. Each now sits beside the code it is about (§4's table).
 
 ---
 
@@ -427,56 +321,18 @@ that passed every gate. Each now sits beside the code it is about:
 Built against `docs/PROJECT_AUDIT_2026-09-14.md`. Each line is a property a
 later change could quietly break.
 
-- **Registry repair.** The 119 company rows predated `Company.slug`, so the
-  source-status migration backfilled all of them to `no_website` and the
-  dashboard asked for 119 URLs while 11,851 postings were open.
-  `sync_registry` now also reads `retired:` and marks those rows `failed`,
-  keeping earlier evidence under `previous`; `registry_health` diagnoses
-  drift read-only. Live preview on 2026-09-14: 74 created, 181 verified,
-  12 retired, Temporal and Runway moved boards. **Not applied** to the live
-  database — `/setup` offers it.
 - **Setup page never shows a secret.** `tests/test_setup_status.py` runs the
   real vault and inbox checks with sentinel values and asserts neither appears.
-- **Unknown is never satisfied.** No pay, a figure with no period, a skill
-  outside a requirements heading, or no education: each fails its filter
-  unless its `include_unknown_*` switch is set. Extractor v2 exists because
-  sampling the live corpus found benefit budgets read as pay and `€95.000`
-  read as 95; 6,465 of 14,892 postings state pay after the fix.
-- **Search preferences are not profile answers.** `search_preferences` is its
-  own table and `FILTER_KEYS` refuses anything the feed does not read.
-- **Merging is conservative.** Never across companies, never within one
-  source, never with differing requisition ids, never after an owner split.
-  Grouping adds a link; no posting, match or application row changes.
-- **Base and personalized scores stay separate.** `Match.score` is never
-  rewritten; `personalized_score` is computed on read and every adjustment is
-  explained. `/ranking/evaluation` reports no learned model and refuses
-  promotion below 100 owner grades from two streams.
 - **Nothing contacts an employer.** Tasks are local, reminders use the owner's
   own notification backends, and `.ics` files carry no contact details.
 - **Backups never contain the vault key**, exclude browser profiles by
   default, and verification refuses the live database and any directory
   overlapping `storage/`.
-- **Only the last month of postings is kept** (`POSTING_MAX_AGE_DAYS`, 30).
-  The crawler does not store an old posting *new* to the database; one
-  already held is still stamped as seen, because `_close_missing` closes
-  whatever a crawl did not stamp, and a still-listed posting would be closed.
-  `make prune-postings` deletes held postings that are closed or old, never
-  one the owner applied to, swiped on, tailored a résumé for, or graded:
-  `applications` and `resumes` point at postings `ON DELETE SET NULL`, and a
-  tailored résumé that loses its posting reads as a base résumé. An undated
-  posting is never deleted for its age. First run, 2026-09-30, after a
-  verified backup: 19,807 deleted, 7 kept for the owner, the postings table
-  226 MB to 39 MB, and chat search about 3x faster (940 to 329 ms).
 
-  **The prune now runs itself** (`POSTING_AUTO_PRUNE`, on), at the start of
-  every matching pass and by the same rules. The limit alone only stopped new
-  old postings arriving: the day after that first run, 222 held postings and
-  3,132 of their chunk vectors had aged out and were still searched. A
-  posting's vectors go with it — `description_embedding` is on the row and
-  `posting_chunks` cascades. The pass does not `VACUUM FULL`, which locks the
-  tables search reads; the command still does, and now for every table a
-  posting delete cascades into, read from the models. Its hand-written list
-  had missed `posting_chunks`, the largest of them.
+The other six moved on 2026-10-26, word for word: registry repair and
+posting retention to `packages/crawler/CLAUDE.md`; unknown values, search
+preferences, merging, and base versus personalized scores to
+`packages/matching/CLAUDE.md`.
 
 ---
 
@@ -583,11 +439,6 @@ approval gate's row lock, producers that look before they enqueue, a grade's
 offer) in `packages/core/CLAUDE.md`; routing and the semantic experiment in
 `.claude/rules/assistant-search.md`; what the model is handed and what the
 reply says for itself in `apps/api/CLAUDE.md`.
-
-Fixed: a retried `apply` task sending a form twice (#16, covered by `tests/test_submission_ledger.py`).
-Not fixed, and each is in the report: one-word company names read from ordinary words
-("Front Desk"); paraphrased questions, where bge-small's chunk search is the limit;
-and the role table reading a title only up to its first comma.
 
 ---
 
