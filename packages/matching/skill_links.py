@@ -251,6 +251,57 @@ def _is_current() -> ColumnElement[bool]:
     )
 
 
+async def linked_demand(
+    session: AsyncSession, posting_ids: Sequence[uuid.UUID], skill_key: str
+) -> dict[uuid.UUID, tuple[str, str | None]]:
+    """How each linked posting with text asks for one skill, from its saved links.
+
+    The classes and quotes are `required_skills.demand_class`'s: required,
+    options, preferred or named, where a posting read that does not list the
+    skill is named with no quote. Only postings linked from their current text
+    by today's extractor, with text, are answered; the caller reads the rest
+    itself. Never writes.
+    """
+    found: dict[uuid.UUID, tuple[str, str | None]] = {}
+    for ids in _batches(list(posting_ids), PARAMETER_LIMIT):
+        rows = await session.execute(
+            select(
+                PostingSkillRead.posting_id,
+                PostingSkill.strength,
+                PostingSkill.is_option,
+                PostingSkill.quote,
+            )
+            .join(Posting, Posting.id == PostingSkillRead.posting_id)
+            .outerjoin(
+                PostingSkill,
+                and_(
+                    PostingSkill.posting_id == PostingSkillRead.posting_id,
+                    PostingSkill.skill == skill_key,
+                ),
+            )
+            .where(
+                PostingSkillRead.posting_id.in_(ids),
+                PostingSkillRead.readable.is_(True),
+                _is_current(),
+            )
+        )
+        for posting_id, strength, is_option, quote in rows:
+            found[posting_id] = _demand(strength, is_option, quote)
+    return found
+
+
+def _demand(
+    strength: str | None, is_option: bool | None, quote: str | None
+) -> tuple[str, str | None]:
+    if strength is None:
+        return "named", None
+    if strength == Strength.REQUIRED.value:
+        return ("options" if is_option else "required"), quote
+    if strength == Strength.PREFERRED.value:
+        return "preferred", quote
+    return "named", quote
+
+
 @dataclass(frozen=True)
 class RefreshReport:
     linked: int
@@ -470,6 +521,7 @@ __all__ = [
     "link_postings",
     "link_projects",
     "link_resume",
+    "linked_demand",
     "posting_links",
     "project_job_overlap",
     "project_links",
