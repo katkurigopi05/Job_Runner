@@ -56,7 +56,7 @@ async def test_linked_postings_are_not_read_again(worker_session, monkeypatch) -
     gaps = await retrieve_graph(worker_session, "gaps")
 
     assert projects.evidence
-    assert gaps.scope == "top_matches"
+    assert gaps.scope == "open_postings"
 
 
 async def test_without_saved_links_the_sample_of_matches_is_read_as_before(
@@ -96,3 +96,47 @@ async def test_a_posting_linked_from_older_text_is_read_from_its_text(worker_ses
     links = await graph_rag.saved_links(worker_session, [matched.id])
 
     assert matched.id not in links
+
+
+async def test_gaps_read_every_open_posting_in_the_area(worker_session) -> None:
+    matched = await seed(worker_session)
+    # Never scored, so no sample of matches could hold it. Both ask for PostgreSQL,
+    # which the seeded résumé does not list.
+    unscored = make_posting(company_id=matched.company_id, title="Platform Engineer")
+    worker_session.add(unscored)
+    await worker_session.commit()
+    await _link_everything(worker_session)
+
+    result = await retrieve_graph(worker_session, "gaps")
+
+    assert result.scope == "open_postings"
+    # The closed, the London and the skipped postings from `seed` stay out.
+    assert result.found.searched == 2
+    assert "state at least one direct requirement" in result.summary
+    assert any(
+        "PostgreSQL" in item.text and "2 of 2 open jobs" in item.text for item in result.evidence
+    )
+    assert "Based on all 2 open jobs in your search area that state a direct requirement" in (
+        result.answer_note
+    )
+
+
+async def test_an_on_site_posting_elsewhere_counts_when_its_text_says_remote(
+    worker_session,
+) -> None:
+    matched = await seed(worker_session)
+    body = "Requirements\nPython and PostgreSQL are required.\n"
+    remote = make_posting(
+        company_id=matched.company_id,
+        location="Austin, TX",
+        body=body + "This is a fully remote position.",
+    )
+    onsite = make_posting(company_id=matched.company_id, location="Dallas, TX", body=body)
+    worker_session.add_all([remote, onsite])
+    await worker_session.commit()
+    await _link_everything(worker_session)
+
+    result = await retrieve_graph(worker_session, "gaps")
+
+    # The seeded in-area job and the remote Austin one; on-site Dallas stays out.
+    assert result.found.searched == 2

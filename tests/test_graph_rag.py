@@ -71,6 +71,8 @@ def posting(body="Requirements\nPython and PostgreSQL are required.", **changes)
         ("Which roles match my projects?", "projects"),
         ("Which jobs match skills demonstrated in my projects?", "projects"),
         ("Which skill gaps recur across my strongest matches?", "gaps"),
+        ("Which skill gaps recur across jobs in my area?", "gaps"),
+        ("Which skill gaps recur across all open jobs in my search area?", "gaps"),
         (
             "Compared with my résumés, which skills do my top matches ask for that I am missing?",
             "gaps",
