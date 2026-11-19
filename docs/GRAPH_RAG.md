@@ -155,10 +155,11 @@ wording even if a later GitHub sync changes the imported descriptions.
 ## Current limits
 
 This first version requires exactly one candidate; it refuses to combine multiple
-candidates' evidence. It uses existing scored matches rather than searching the
-entire posting corpus. The two explicit standalone questions activate graph
-retrieval, including the supported project-question suffixes above. Unsupported
-constraints keep the existing retrieval path. Community summaries, graph visualization and
+candidates' evidence. The projects question reads every linked open posting in the
+search area; the gaps question, and the projects question before `make skill-links`
+has run, read the top 100 scored matches. The two explicit standalone questions
+activate graph retrieval, including the supported project-question suffixes above.
+Unsupported constraints keep the existing retrieval path. Community summaries, graph visualization and
 arbitrary graph questions are outside this version.
 
 Validate with `.venv/bin/pytest -q tests/test_graph_rag.py tests/test_graph_constraints.py tests/test_graph_rag_saved_links.py tests/test_github_live.py tests/test_github_tool_chat.py`. Database tests use the

@@ -37,7 +37,9 @@ from packages.core.schemas import (
     MatchDecisionOut,
     MatchOut,
     MatchSummaryOut,
+    ProjectCoverageOut,
 )
+from packages.matching import project_coverage
 from packages.matching.filters import eligibility_of, experience_of
 from packages.matching.keywords import find as find_keyword
 from packages.matching.keywords import parse as parse_keyword
@@ -367,6 +369,7 @@ async def list_matches(
     )
 
     unanswered = await _boards_unanswered(session, page)
+    coverage = await project_coverage.for_page(session, page)
 
     feed: list[MatchOut] = []
     for (match, posting), (authorization, demanded, hits) in zip(page, readings, strict=True):
@@ -419,6 +422,11 @@ async def list_matches(
                 personalized_score=personal[match.id][0] if personal else None,
                 adjustments=[item.as_dict() for item in personal[match.id][1]] if personal else [],
                 keyword_hits=hits,
+                project_coverage=(
+                    ProjectCoverageOut(**asdict(coverage[match.id]))
+                    if match.id in coverage
+                    else None
+                ),
             )
         )
     return feed

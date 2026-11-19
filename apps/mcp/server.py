@@ -1378,6 +1378,19 @@ async def curate_project(
 
 
 @server.tool()
+async def project_matches() -> dict[str, Any]:
+    """Open jobs that directly require a technology the owner's GitHub projects declare.
+
+    The dashboard's "Jobs from my projects" answer: the best five, each with the
+    shared technologies, the public projects that declare them, and the job's own
+    requirement line. Once skill links are saved (`make skill-links`) it reads
+    every open posting in the search area; before that, the 100 best matches.
+    A shared technology is not proof of proficiency. Read-only.
+    """
+    return await _call("GET", "/projects/job-matches")
+
+
+@server.tool()
 async def github_project_evidence(project_id: str) -> dict[str, Any]:
     """Check an imported public GitHub project now, reading declarations at its current commit.
 

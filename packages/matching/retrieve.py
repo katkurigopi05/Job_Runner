@@ -93,7 +93,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.config import get_settings
 from packages.core.models import Application, Company, Posting
 from packages.core.models_chunks import PostingChunk
-from packages.matching import chunk_search, idf, tiers
+from packages.matching import chunk_search, idf, skill_links, tiers
 from packages.matching.chunk_search import Space
 from packages.matching.eligibility import Sponsorship
 from packages.matching.embed import (
@@ -2733,11 +2733,16 @@ async def _requiring_skill(
     employers: set[uuid.UUID] = set()
     required_employers: set[uuid.UUID] = set()
     names: set[str] = set()
+    # A posting linked from its current text by today's extractor is answered
+    # by its saved link (`skill_links.py`); only the rest are read here.
+    linked = await skill_links.linked_demand(session, [hit.posting_id for hit in inside], skill.key)
     for hit in inside:
         stored, version, company_id = metadata[hit.posting_id]
         if company_id is not None:
             employers.add(company_id)
-        reading, quote = demand_class(fresh_requirements(stored, version, hit.description), skill)
+        reading, quote = linked.get(hit.posting_id) or demand_class(
+            fresh_requirements(stored, version, hit.description), skill
+        )
         counts[reading] += 1
         if reading == "required":
             required.append(hit)
