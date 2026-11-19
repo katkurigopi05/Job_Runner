@@ -10,9 +10,10 @@ questions answer exactly as before.
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import select
 
-from packages.core.models import Posting
+from packages.core.models import Match, Posting, Profile
 from packages.matching import graph_rag, skill_links
 from packages.matching.graph_rag import retrieve_graph
 from tests.test_graph_rag import posting as make_posting
@@ -114,9 +115,9 @@ async def test_gaps_read_every_open_posting_in_the_area(worker_session) -> None:
     assert result.found.searched == 2
     assert "state at least one direct requirement" in result.summary
     assert any(
-        "PostgreSQL" in item.text and "2 of 2 open jobs" in item.text for item in result.evidence
+        "PostgreSQL" in item.text and "2 of 2 open IT jobs" in item.text for item in result.evidence
     )
-    assert "Based on all 2 open jobs in your search area that state a direct requirement" in (
+    assert "Based on all 2 open IT jobs in your area that state a direct requirement" in (
         result.answer_note
     )
 
@@ -140,3 +141,57 @@ async def test_an_on_site_posting_elsewhere_counts_when_its_text_says_remote(
 
     # The seeded in-area job and the remote Austin one; on-site Dallas stays out.
     assert result.found.searched == 2
+
+
+@pytest.mark.parametrize("linked", [False, True])
+async def test_gaps_only_count_it_and_owner_adjacent_roles(worker_session, linked):
+    matched = await seed(worker_session)
+    titles = [
+        "Sales Manager",
+        "Office Assistant",
+        "UX Designer",
+        "Hardware Engineer",
+        "Platform Engineer",
+        "Product Manager",
+        "Technical Program Manager",
+        "Sales Engineer",
+    ]
+    jobs = [
+        make_posting(
+            company_id=matched.company_id,
+            title=title,
+            body="Requirements\nPostgreSQL and Excel are required.",
+        )
+        for title in titles
+    ]
+    worker_session.add_all(jobs)
+    await worker_session.flush()
+    profile = await worker_session.scalar(select(Profile).where(Profile.id.is_not(None)))
+    worker_session.add_all(Match(profile_id=profile.id, posting_id=p.id, score=1.0) for p in jobs)
+    await worker_session.commit()
+    if linked:
+        await _link_everything(worker_session)
+    result = await retrieve_graph(worker_session, "gaps")
+    assert result.found.searched == 5
+    assert result.scope == ("open_postings" if linked else "top_matches")
+    assert "IT jobs" in result.summary and "IT jobs" in result.answer_note
+    assert any("PostgreSQL" in e.text and "5 of 5" in e.text for e in result.evidence)
+    assert all(p.title not in titles[:4] for p in result.found.passages)
+    projects = await retrieve_graph(worker_session, "projects")
+    assert projects.found.searched == 9
+
+
+async def test_gap_it_filter_precedes_top_100_cap(worker_session):
+    matched = await seed(worker_session)
+    sales = [
+        make_posting(company_id=matched.company_id, title="Sales Representative")
+        for _ in range(101)
+    ]
+    worker_session.add_all(sales)
+    await worker_session.flush()
+    profile = await worker_session.scalar(select(Profile).where(Profile.id.is_not(None)))
+    worker_session.add_all(Match(profile_id=profile.id, posting_id=p.id, score=1.0) for p in sales)
+    await worker_session.commit()
+    result = await retrieve_graph(worker_session, "gaps")
+    assert result.found.searched == 1
+    assert "1" in result.answer_note and "IT jobs" in result.answer_note
