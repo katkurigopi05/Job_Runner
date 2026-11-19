@@ -75,8 +75,14 @@ retriever, not an installation of Microsoft's GraphRAG pipeline. Its graph and
 document evidence combination follows the general
 [local graph search approach](https://microsoft.github.io/graphrag/query/local_search/).
 
-Retrieval examines at most the top 100 open, unskipped matches in the configured
-search area. A posting matched under multiple profiles counts once at its best
+Once the skill links are saved (`make skill-links`, `packages/matching/skill_links.py`), the
+projects question reads every open, unskipped posting in the configured search area that directly
+requires a technology the projects declare, ordered by how many it shares and then the newest, and
+says how many open postings are not linked yet. Both questions then read a linked posting's
+requirements from the saved links instead of extracting them again; a link made from older text or
+by another extractor is not trusted and that posting is read as before. Until links exist, and
+always for the gaps question, retrieval examines at most the top 100 open, unskipped matches in the
+configured search area. A posting matched under multiple profiles counts once at its best
 score. Results are explicitly described as a sample. Area filtering happens
 before taking 100 eligible postings, using the feed's shared location rules.
 
