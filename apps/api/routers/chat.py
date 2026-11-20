@@ -120,6 +120,7 @@ from packages.llm.provider import (
 )
 from packages.matching import chunk_search
 from packages.matching.gaps import GapReport, asked_and_unmet, skill_label, target_gaps
+from packages.matching.graph_questions import TopicUnavailable
 from packages.matching.graph_rag import GraphResult, graph_intent, retrieve_graph
 from packages.matching.level import LevelCount
 from packages.matching.retrieve import Passage, Retrieval, asks_about_own_applications, retrieve
@@ -1057,7 +1058,15 @@ async def prepare(
     # Explicit personal relationship questions traverse current source facts.
     # The model selects only existing paths; local rendering restores project
     # attribution without uploading project names or résumé prose.
-    intent = await graph_intent(question, session=session)
+    try:
+        intent = await graph_intent(question, session=session)
+    except TopicUnavailable as exc:
+        raise ApiError(
+            ErrorCode.INTERNAL_ERROR,
+            "A topic in a project question is found with Qwen3-Embedding-4B on this machine, "
+            f"and it could not embed this one: {exc} Nothing was searched, and no model was "
+            "asked.",
+        ) from exc
     if intent is not None and body.application_id is None:
         graph_provider, graph_model = None, None
         if selected == "kaggle":

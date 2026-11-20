@@ -1,4 +1,11 @@
-"""Complete graph questions with one known place, employer, or role suffix."""
+"""Complete graph questions with one known place, employer, role, or topic suffix.
+
+A topic ("related to RAG pipelines", "about retrieval systems") is found by
+meaning: the topic is embedded on this machine with Qwen3-Embedding-4B and the
+`TOPIC_NEAREST` open postings nearest to it become the constraint. A topic
+that ends in a place, an employer or a role is not a topic question, because
+that part would be searched by meaning and never enforced.
+"""
 
 from __future__ import annotations
 
@@ -10,8 +17,21 @@ from typing import Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Posting
-from packages.matching import locality, location_fields, roles
+from packages.matching import chunk_search, locality, location_fields, roles
+from packages.matching.query_vectors import QueryEmbeddingError, embed_question
 from packages.matching.retrieve import resolve_company_name
+
+#: Open postings nearest a topic that a topic question reads, nearest first.
+TOPIC_NEAREST = 200
+_TOPIC = re.compile(r"(?:related to|about) (.+)", re.I)
+#: A topic is a few words. A longer suffix is not a topic question, which also
+#: bounds what is embedded and what the checks below read.
+TOPIC_MAX_CHARS = 200
+
+
+class TopicUnavailable(chunk_search.QwenSearchUnavailable):
+    """Qwen could not embed a topic, so the topic question is refused, not searched another way."""
+
 
 GraphIntent = Literal["projects", "gaps"]
 _PROJECT_QUESTION = re.compile(
@@ -35,6 +55,10 @@ class GraphConstraint:
     place: str | None = None
     company_ids: tuple[uuid.UUID, ...] = ()
     role: str | None = None
+    #: The open postings nearest a topic, by meaning; None for no topic.
+    posting_ids: frozenset[uuid.UUID] | None = None
+    #: Those postings nearest first: a topic answer lists the most related jobs first.
+    ranked: tuple[uuid.UUID, ...] = ()
 
     @property
     def waives_area(self) -> bool:
@@ -44,6 +68,8 @@ class GraphConstraint:
         )
 
     def keeps(self, posting: Posting) -> bool:
+        if self.posting_ids is not None and posting.id not in self.posting_ids:
+            return False
         if self.company_ids and posting.company_id not in self.company_ids:
             return False
         if self.role and roles.canonical(posting.title or "") != self.role:
@@ -115,4 +141,59 @@ async def graph_intent(
             and (company := await resolve_company_name(session, match[1]))
         ):
             constraint = GraphConstraint(f"at {company[1]}", company_ids=company[0])
+        elif (match := _TOPIC.fullmatch(suffix)) and session is not None:
+            topic = match[1].strip()
+            if (
+                topic
+                and len(topic) <= TOPIC_MAX_CHARS
+                and not await _carries_another_constraint(session, topic)
+            ):
+                nearest = await _nearest_postings(session, topic)
+                constraint = GraphConstraint(
+                    f"related to {topic}", posting_ids=frozenset(nearest), ranked=tuple(nearest)
+                )
     return GraphQuestion("projects", constraint) if constraint is not None else None
+
+
+def _after_last(words: list[str], word: str) -> list[str]:
+    """The words after the last `word` (any case); [] when it is absent or last.
+
+    A scan over the words, not a regex: the topic is the owner's typed text,
+    and a backtracking pattern over it can take seconds (CodeQL, PR #331).
+    """
+    for index in range(len(words) - 2, -1, -1):
+        if words[index].lower() == word:
+            return words[index + 1 :]
+    return []
+
+
+async def _carries_another_constraint(session: AsyncSession, topic: str) -> bool:
+    """A topic ending in a known place, employer or role names a second constraint."""
+    words = topic.split()
+    place = _after_last(words, "in")
+    if place and locality.explicit_place_name(" ".join(place)):
+        return True
+    role = _after_last(words, "for")
+    if (
+        len(role) > 1
+        and role[-1].lower() in {"role", "roles"}
+        and roles.exact_role(" ".join(role[:-1]))
+    ):
+        return True
+    company = _after_last(words, "at")
+    return bool(company and await resolve_company_name(session, " ".join(company)))
+
+
+async def _nearest_postings(session: AsyncSession, topic: str) -> list[uuid.UUID]:
+    """The open postings nearest the topic by Qwen, nearest first.
+
+    The topic is embedded here and the model unloaded at once, so a topic
+    question never holds it beside a local chat model.
+    """
+    try:
+        vector = await embed_question(topic, keep_alive="0")
+    except QueryEmbeddingError as exc:
+        raise TopicUnavailable(str(exc)) from exc
+    ranking = chunk_search.ShortlistRanking(list(vector.values))
+    rows, _ = await ranking.read(session, among=None, companies=None, limit=TOPIC_NEAREST)
+    return [posting_id for posting_id, _, _ in rows[:TOPIC_NEAREST]]
