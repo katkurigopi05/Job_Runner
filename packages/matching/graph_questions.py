@@ -23,7 +23,6 @@ from packages.matching.retrieve import resolve_company_name
 
 #: Open postings nearest a topic that a topic question reads, nearest first.
 TOPIC_NEAREST = 200
-_TOPIC = re.compile(r"(?:related to|about) (.+)", re.I)
 #: A topic is a few words. A longer suffix is not a topic question, which also
 #: bounds what is embedded and what the checks below read.
 TOPIC_MAX_CHARS = 200
@@ -134,23 +133,43 @@ async def graph_intent(
     return None
 
 
+def _after(suffix: str, *prefixes: str) -> str | None:
+    """What follows the first of `prefixes` (any case) the suffix starts with, else None.
+
+    Prefix and word checks, not patterns: the suffix is the owner's typed text,
+    and CodeQL flags a pattern with a repeat over it (PRs #331, #333).
+    """
+    for prefix in prefixes:
+        if suffix[: len(prefix)].lower() == prefix and len(suffix) > len(prefix):
+            return suffix[len(prefix) :]
+    return None
+
+
+def _role_words(suffix: str) -> str | None:
+    """The role named in "for data engineer roles" ("data engineer"), else None."""
+    words = suffix.split()
+    if len(words) > 2 and words[0].lower() == "for" and words[-1].lower() in {"role", "roles"}:
+        return " ".join(words[1:-1])
+    return None
+
+
 async def _constraint(suffix: str, session: AsyncSession | None) -> GraphConstraint | None:
     """The one place, employer, role or topic a whole suffix names, else None."""
-    if match := re.fullmatch(r"in (.+)", suffix, re.I):
-        if place := locality.explicit_place_name(match[1]):
+    if (where := _after(suffix, "in ")) is not None:
+        if place := locality.explicit_place_name(where):
             label = "in the Bay Area" if place == "Bay Area" else f"in {place}"
             return GraphConstraint(label, place=place)
-    elif match := re.fullmatch(r"for (.+) roles?", suffix, re.I):
-        if role := roles.exact_role(match[1]):
+    elif (role_words := _role_words(suffix)) is not None:
+        if role := roles.exact_role(role_words):
             return GraphConstraint(f"for {roles.display_name(role)} roles", role=role)
     elif (
-        (match := re.fullmatch(r"at (.+)", suffix, re.I))
+        (employer := _after(suffix, "at ")) is not None
         and session is not None
-        and (company := await resolve_company_name(session, match[1]))
+        and (company := await resolve_company_name(session, employer))
     ):
         return GraphConstraint(f"at {company[1]}", company_ids=company[0])
-    elif (match := _TOPIC.fullmatch(suffix)) and session is not None:
-        topic = match[1].strip()
+    elif (about := _after(suffix, "related to ", "about ")) is not None and session is not None:
+        topic = about.strip()
         if (
             topic
             and len(topic) <= TOPIC_MAX_CHARS

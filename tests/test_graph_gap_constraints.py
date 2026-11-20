@@ -138,3 +138,41 @@ async def test_chat_answers_a_constrained_gaps_question_from_the_graph(
     assert result["retrieval_method"] == "graph"
     assert "for backend engineer roles" in result["reply"]
     assert "directly required by 3 of 3" in result["reply"]
+
+
+@pytest.mark.parametrize("base", [GAPS, "Which jobs match my projects"])
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "for " + "for a" * 780,
+        "for " + "for a" * 779 + " role",
+        "in " + "in a" * 990,
+        "at " + "a" * 3900,
+    ],
+)
+async def test_a_pathological_suffix_returns_at_once(worker_session, base, suffix) -> None:
+    """CodeQL flagged the suffix patterns on typed text (`ChatRequest` takes 4,000 characters)."""
+    import time
+
+    question = f"{base} {suffix}"[:4000]
+
+    started = time.perf_counter()
+    found = await graph_rag.graph_intent(question, session=worker_session)
+
+    assert found is None
+    assert time.perf_counter() - started < 0.5
+
+
+@pytest.mark.parametrize(
+    "suffix,label",
+    [
+        ("For Data Engineer Roles", "for data engineer roles"),
+        ("for data engineer role", "for data engineer roles"),
+        ("IN California", "in California"),
+    ],
+)
+async def test_suffix_words_are_read_in_any_case(suffix, label) -> None:
+    query = await graph_rag.graph_intent(f"{GAPS} {suffix}?")
+
+    assert query is not None and query.constraint is not None
+    assert query.constraint.label == label
