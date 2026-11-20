@@ -82,7 +82,7 @@ def posting(body="Requirements\nPython and PostgreSQL are required.", **changes)
             "gaps",
         ),
         ("Which skills do my top matches ask for that I am missing?", "gaps"),
-        ("Which skills do my top matches ask for that I am missing in London?", None),
+        ("Which skills do my top matches ask for that I am missing in London?", "gaps"),
         ("Which skill gaps recur across my strongest matches at Acme?", None),
         ("Which jobs require Python skills?", None),
         ("Which jobs match my projects in London?", "projects"),

@@ -166,16 +166,42 @@ A topic ending in a known place, employer or role ("…related to RAG in London"
 question, since that part would be searched by meaning and never enforced. On 2026-11-19, RAG
 pipelines: 41 of the 200 nearest need a project technology, 3.8 s including the model load.
 
+## The skill-gaps question takes the same constraints (2026-11-19)
+
+"Which skill gaps recur across jobs in my area for data engineer roles?" counts the gaps over
+the IT jobs the constraint keeps. Both questions share one suffix parser
+(`graph_questions._constraint`): a place, an employer, a role from the role table, or a topic,
+and a suffix it cannot read in full is not a graph question. The gaps search applies
+`GraphConstraint.keeps`, which reads no description, before the area rule, and a place abroad
+waives the area as it does for projects. A topic lists its most related jobs first, so each
+gap's example requirement comes from one of them.
+
+Measured read-only on the live database, 2026-11-19 (warm):
+
+| Suffix | IT jobs read | Top gaps (jobs) | Time |
+|---|---|---|---|
+| none | 2,151 | Kubernetes 283, GCP 201, Go 69 | 2.1 s (cold) |
+| for data engineer roles | 65 | Databricks 7, dbt 6, Kubernetes 6 | 0.44 s |
+| for backend engineer roles | 19 | DynamoDB, GCP, Go, Ruby (2 each) | 0.48 s |
+| in California | 758 | Kubernetes 109, Go 32, Terraform 27 | 0.48 s |
+| in the Bay Area | 682 | Kubernetes 95, Go 31, PyTorch 25 | 0.41 s |
+| at NVIDIA | 402 | Kubernetes 74, Bash / shell 23, PyTorch 23 | 1.47 s |
+| in London | 0 | none of its 31 open postings states a direct requirement | 0.41 s |
+
+A role counts titles the role table reads as exactly that role, so "backend engineer" is
+narrow. Not measured live: a topic, which loads Qwen3-Embedding-4B; it is the projects topic
+path, measured above.
+
 ## Current limits
 
 This first version requires exactly one candidate; it refuses to combine multiple
 candidates' evidence. Both questions read every linked open posting in the search area; before
 `make skill-links` has run they read the top 100 scored matches. The two explicit standalone questions
-activate graph retrieval, including the supported project-question suffixes above.
+activate graph retrieval, including the supported suffixes above on either question.
 Unsupported constraints keep the existing retrieval path. Community summaries, graph visualization and
 arbitrary graph questions are outside this version.
 
-Validate with `.venv/bin/pytest -q tests/test_graph_rag.py tests/test_graph_constraints.py tests/test_graph_rag_saved_links.py tests/test_github_live.py tests/test_github_tool_chat.py`. Database tests use the
+Validate with `.venv/bin/pytest -q tests/test_graph_rag.py tests/test_graph_constraints.py tests/test_graph_gap_constraints.py tests/test_graph_topic_questions.py tests/test_graph_rag_saved_links.py tests/test_github_live.py tests/test_github_tool_chat.py`. Database tests use the
 suite's separate marked test database; they never reset the live database.
 
 ## Extractor version 5

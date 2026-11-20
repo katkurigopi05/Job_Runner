@@ -1063,9 +1063,9 @@ async def prepare(
     except TopicUnavailable as exc:
         raise ApiError(
             ErrorCode.INTERNAL_ERROR,
-            "A topic in a project question is found with Qwen3-Embedding-4B on this machine, "
-            f"and it could not embed this one: {exc} Nothing was searched, and no model was "
-            "asked.",
+            "A topic in a project or skill-gap question is found with Qwen3-Embedding-4B on "
+            f"this machine, and it could not embed this one: {exc} Nothing was searched, and "
+            "no model was asked.",
         ) from exc
     if intent is not None and body.application_id is None:
         graph_provider, graph_model = None, None

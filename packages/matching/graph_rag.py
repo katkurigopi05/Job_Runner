@@ -223,6 +223,12 @@ def graph_result(
     resume_nodes = [e.target for e in graph.links(owner, "has_resume")]
     listed = {edge.target for node in resume_nodes for edge in graph.links(node, "lists")}
     every = scope == "open_postings"
+    population = "in your search area"
+    if constraint is not None:
+        population = constraint.label
+        if not constraint.waives_area and get_settings().search_us_only:
+            population += " within your search area"
+    gap_area = population if constraint is not None else "in your area"
     found_what = (
         "directly require a technology your projects declare"
         if intent == "projects"
@@ -244,7 +250,7 @@ def graph_result(
     if intent == "gaps":
         reach += (
             f"Gap scope: across {len(postings)} "
-            f"{'open' if every else 'sampled'} IT jobs in your area "
+            f"{'open' if every else 'sampled'} IT jobs {gap_area} "
             "(including product/program and technical pre-sales, excluding sales). "
         )
     summary = (
@@ -359,9 +365,9 @@ def graph_result(
             gaps = [(skill, edges) for skill, edges in gaps if len(edges) >= 2]
             gaps.sort(key=lambda item: (-len(item[1]), item[0].key))
             where = (
-                f"across {len(postings)} open IT jobs in your area"
+                f"across {len(postings)} open IT jobs {gap_area}"
                 if every
-                else "in your top IT job matches"
+                else "in your top IT job matches" + (f" {population}" if constraint else "")
             )
             answer_summary = (
                 f"These skills are directly required {where} but are not listed on your "
@@ -375,9 +381,9 @@ def graph_result(
                 "Absence from a résumé is not proof you lack a skill."
             )
             jobs_read = (
-                "open IT jobs in your area that state a direct requirement"
+                f"open IT jobs {gap_area} that state a direct requirement"
                 if every
-                else "sampled IT jobs"
+                else "sampled IT jobs" + (f" {population}" if constraint else "")
             )
             by_id = {str(posting.id): (posting, company) for posting, company in postings}
             for skill, edges in gaps[:RESULT_LIMIT]:
@@ -396,7 +402,7 @@ def graph_result(
                 human = (
                     f"**{BY_KEY[skill.key].label}** — directly required by {len(edges)} of "
                     f"{len(postings)} "
-                    f"{'open IT jobs in your area' if every else 'reviewed IT jobs'}. "
+                    f"{f'open IT jobs {gap_area}' if every else 'reviewed IT jobs'}. "
                     + (
                         "An available project also declares this technology."
                         if skill in project_skills
@@ -404,20 +410,18 @@ def graph_result(
                     )
                 )
                 _append_evidence(passages, items, posting, company, text, text, answer=human)
-    population = "in your search area"
     if constraint is not None:
-        population = constraint.label
-        if not constraint.waives_area and get_settings().search_us_only:
-            population += " within your search area"
-        scope_note = f"Project search {constraint.label}: {len(postings)} jobs reviewed. "
+        search = "Project search" if intent == "projects" else "Skill-gap search"
+        scope_note = f"{search} {constraint.label}: {len(postings)} jobs reviewed. "
         if constraint.waives_area:
             scope_note += "Explicit place; standing search area waived. "
         summary = scope_note + summary.replace("in the configured search area", population)
-        answer_summary = f"Project matches {constraint.label}.\n\n" + answer_summary.replace(
-            "in your search area", population
-        )
-        if not postings and project_skills:
-            answer_summary = f"No open project matches found {constraint.label}."
+        if intent == "projects":
+            answer_summary = f"Project matches {constraint.label}.\n\n" + answer_summary.replace(
+                "in your search area", population
+            )
+            if not postings and project_skills:
+                answer_summary = f"No open project matches found {constraint.label}."
     return GraphResult(
         found=Retrieval(
             attempted=True, passages=tuple(passages), searched=len(postings), ranked=len(items)
@@ -429,7 +433,7 @@ def graph_result(
         answer_note=(
             (
                 f"Based on all {len(postings)} open{' IT' if intent == 'gaps' else ''} jobs "
-                f"{'in your area' if intent == 'gaps' else population} that "
+                f"{gap_area if intent == 'gaps' else population} that "
                 + (
                     "directly require one of your project technologies. "
                     if intent == "projects"
@@ -443,11 +447,10 @@ def graph_result(
                 if every
                 else f"Based on {len(postings)} "
                 + (
-                    "sampled IT jobs in your area"
+                    f"sampled IT jobs {gap_area}"
                     if intent == "gaps"
-                    else "of your top open job matches"
+                    else "of your top open job matches" + (f" {population}" if constraint else "")
                 )
-                + (f" {population}" if constraint else "")
                 + ". "
             )
             + (
@@ -548,7 +551,7 @@ async def retrieve_graph(
     wide = (
         await _project_jobs_from_saved_links(session, candidate_id, projects, constraint)
         if intent == "projects"
-        else await _gap_jobs_from_saved_links(session, candidate_id)
+        else await _gap_jobs_from_saved_links(session, candidate_id, constraint)
     )
     if wide is not None:
         postings, links, unlinked = wide
@@ -634,13 +637,17 @@ _ONSITE_ELSEWHERE = " is on-site outside California"
 
 
 async def _gap_jobs_from_saved_links(
-    session: AsyncSession, candidate_id: uuid.UUID
+    session: AsyncSession,
+    candidate_id: uuid.UUID,
+    constraint: GraphConstraint | None = None,
 ) -> tuple[list[tuple[Posting, str | None]], dict[uuid.UUID, SavedLinks], int] | None:
     """Every open, unskipped posting in the area that states a direct requirement.
 
     Read from the saved links over all open postings rather than a sample of the
     owner's matches. None until a posting has been linked (`make skill-links`).
     Descriptions are not loaded except to admit an on-site posting as remote.
+    A constraint keeps only its postings (`GraphConstraint.keeps` reads no
+    description), and a place abroad waives the area.
     """
     current_open = and_(Posting.closed_at.is_(None), skill_links.is_current())
     linked = await session.scalar(
@@ -686,7 +693,10 @@ async def _gap_jobs_from_saved_links(
         for posting, company in rows:
             if not is_it_role(posting.title, include=GAP_ADJACENT):
                 continue
-            reason = _area_reason(posting, None)
+            if constraint is not None and not constraint.keeps(posting):
+                continue
+            waived = constraint is not None and constraint.waives_area
+            reason = None if waived else _area_reason(posting, None)
             if reason is None:
                 kept.append((posting, company))
             elif reason.endswith(_ONSITE_ELSEWHERE):
@@ -704,8 +714,12 @@ async def _gap_jobs_from_saved_links(
             for posting, company in batch
             if _area_reason(posting, bodies.get(posting.id)) is None
         )
+    # A topic's most related jobs first, so a gap's example comes from one of them.
+    ranked = constraint.ranked if constraint is not None else ()
+    nearness = {posting_id: rank for rank, posting_id in enumerate(ranked)}
     kept.sort(
         key=lambda row: (
+            nearness.get(row[0].id, len(nearness)),
             -(row[0].first_seen_at.timestamp() if row[0].first_seen_at else 0.0),
             str(row[0].id),
         )
