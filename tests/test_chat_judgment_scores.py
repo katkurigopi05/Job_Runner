@@ -101,7 +101,7 @@ async def _graded(session, grades: dict[str, int]) -> dict[str, Posting]:
             url=f"https://x.test/{name}",
             title="Engineer",
             location=location,
-            description_raw="Kafka pipelines.",
+            description_raw=f"Kafka pipelines. Team {name}.",
             content_hash="h1",
             first_seen_at=NOW - timedelta(minutes=n),
         )

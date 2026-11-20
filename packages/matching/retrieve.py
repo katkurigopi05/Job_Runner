@@ -595,6 +595,10 @@ class Passage:
     application_status: str | None
     #: The kind of role its title names ("AI engineer"), when a role was asked for.
     kind: str | None = None
+    listing_count: int = 1
+    locations: tuple[str, ...] = ()
+    #: Presentation only; preserves which tiers may enter the model prompt.
+    tier: int = 0
 
 
 @dataclass(frozen=True)
@@ -607,6 +611,13 @@ class Listed:
     location: str | None
     url: str
     kind: str | None = None
+    listing_count: int = 1
+    locations: tuple[str, ...] = ()
+    #: Presentation only; preserves which tiers may enter the model prompt.
+    tier: int = 0
+
+    #: Internal evidence for promotion into the five excerpts after collapsing.
+    excerpt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -636,6 +647,9 @@ class Retrieval:
     #: False when nothing was searched: the question was not about postings,
     #: or (`unnamed`) it was and named nothing to look for.
     attempted: bool
+    #: Presentation counts for the returned ranked/further list, not corpus totals.
+    job_total: int | None = None
+    listing_total: int | None = None
     passages: tuple[Passage, ...] = ()
     #: Open postings the search could reach. The keyword scan reaches all of
     #: them; a vector-only search reaches the ones embedded in a space this
@@ -2665,6 +2679,7 @@ async def _stating_sponsorship(
                 company=hit.company,
                 location=hit.location,
                 url=hit.url,
+                excerpt=sentence_that_says_so(hit.description),
             )
             for hit in offering[limit:]
         ),
@@ -2784,7 +2799,14 @@ async def _requiring_skill(
             for index, hit in enumerate(chosen, 1)
         ),
         more=tuple(
-            Listed(hit.posting_id, hit.title or "(untitled)", hit.company, hit.location, hit.url)
+            Listed(
+                hit.posting_id,
+                hit.title or "(untitled)",
+                hit.company,
+                hit.location,
+                hit.url,
+                excerpt=quotes[hit.posting_id],
+            )
             for hit in required[limit:]
         ),
         ranked=len(required),
@@ -2807,7 +2829,10 @@ async def retrieve(
 ) -> Retrieval:
     """The open postings `question` is about, and how much of the corpus was read."""
     async with chunk_search.Question(free_embedder=free_embedder) as search:
-        return await _retrieve(session, question, limit=limit, search=search)
+        found = await _retrieve(session, question, limit=limit, search=search)
+    from packages.matching.repeats import collapse
+
+    return await collapse(session, found, question, limit)
 
 
 async def _retrieve(
@@ -3665,6 +3690,17 @@ async def _retrieve(
                 open_total=denominator,
                 scope=scope,
             )
+
+    def snippet(hit: _Hit) -> str:
+        if hit.posting_id in chunk_spans:
+            return _chunk_excerpt(hit.description or "", *chunk_spans[hit.posting_id])
+        return excerpt(
+            hit.description or "",
+            question,
+            ignore=company_words,
+            terms=terms if (terms or role_pool is not None) else None,
+        )
+
     statuses = await _application_statuses(session, [hit.posting_id for hit in chosen])
     passages = tuple(
         Passage(
@@ -3674,21 +3710,10 @@ async def _retrieve(
             company=hit.company,
             location=hit.location,
             url=hit.url,
-            excerpt=(
-                _chunk_excerpt(hit.description or "", *chunk_spans[hit.posting_id])
-                if hit.posting_id in chunk_spans
-                else excerpt(
-                    hit.description or "",
-                    question,
-                    ignore=company_words,
-                    # For a role question the terms are what was asked beyond
-                    # the role, even when that is nothing: quoting on "AI"
-                    # finds the employer's own pitch, not the requirements.
-                    terms=terms if (terms or role_pool is not None) else None,
-                )
-            ),
+            excerpt=snippet(hit),
             application_status=statuses.get(hit.posting_id),
             kind=label_of.get(hit.posting_id),
+            tier=tier_of.get(hit.posting_id, 0),
         )
         for index, hit in enumerate(chosen, start=1)
     )
@@ -3757,6 +3782,8 @@ async def _retrieve(
                     location=hit.location,
                     url=hit.url,
                     kind=label_of.get(hit.posting_id),
+                    tier=tier_of.get(hit.posting_id, 0),
+                    excerpt=snippet(hit),
                 )
                 for hit in more_hits
             ),

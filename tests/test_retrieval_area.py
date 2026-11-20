@@ -78,7 +78,9 @@ async def test_a_posting_abroad_is_left_out_and_counted(db_session) -> None:
 async def test_on_site_in_another_state_is_left_out_and_remote_is_kept(db_session) -> None:
     company = await _company(db_session)
     remote = await _posting(db_session, company, "Remote, US", *ML)
-    california = await _posting(db_session, company, "San Jose, CA", *ML)
+    california = await _posting(
+        db_session, company, "San Jose, CA", ML[0], ML[1] + " Build models."
+    )
     await _posting(db_session, company, "Austin, TX", *ML)
 
     found = await retrieve(db_session, "machine learning engineer jobs")

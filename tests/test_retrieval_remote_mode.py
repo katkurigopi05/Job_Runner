@@ -122,7 +122,7 @@ async def test_bay_area_and_remote_are_both_constraints(db_session):
         db_session, company, "San Francisco, CA", "Data Engineer", "This role is remote."
     )
     await _posting(db_session, company, "Remote, US", "Data Engineer", "Build.")
-    await _posting(db_session, company, "San Jose, CA", "Data Engineer", "Build.")
+    await _posting(db_session, company, "San Jose, CA", "Data Engineer", "Build pipelines.")
     found = await module.retrieve(db_session, "remote data engineer jobs in the Bay Area")
     assert found.role_total == found.place_total == 1
     assert found.remote_or_unplaced_not_listed == 1
@@ -132,7 +132,9 @@ async def test_bay_area_and_remote_are_both_constraints(db_session):
 async def test_no_mode_preserves_nonremote_roles(db_session):
     company = await _company(db_session)
     remote = await _posting(db_session, company, "Remote, US", "Data Engineer", "Build.")
-    onsite = await _posting(db_session, company, "San Jose, CA", "Data Engineer", "Build.")
+    onsite = await _posting(
+        db_session, company, "San Jose, CA", "Data Engineer", "Build pipelines."
+    )
     found = await module.retrieve(db_session, "data engineer jobs")
     assert found.work_mode is None
     assert found.role_total == 2
@@ -142,7 +144,7 @@ async def test_no_mode_preserves_nonremote_roles(db_session):
 async def test_percentage_denominator_is_not_filtered_by_remote_mode(db_session):
     company = await _company(db_session)
     await _posting(db_session, company, "Remote, US", "Data Engineer", "Build.")
-    await _posting(db_session, company, "San Jose, CA", "Data Engineer", "Build.")
+    await _posting(db_session, company, "San Jose, CA", "Data Engineer", "Build pipelines.")
     found = await module.retrieve(db_session, "remote data engineer jobs what's the percentage")
     assert found.share.matching == 1
     assert found.share.open_total == 2
