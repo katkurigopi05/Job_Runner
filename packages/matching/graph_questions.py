@@ -1,4 +1,4 @@
-"""Complete graph questions with one known place, employer, role, or topic suffix.
+"""Complete graph questions, projects or skill gaps, with one place, employer, role or topic suffix.
 
 A topic ("related to RAG pipelines", "about retrieval systems") is found by
 meaning: the topic is embedded on this machine with Qwen3-Embedding-4B and the
@@ -117,42 +117,50 @@ async def graph_intent(
     question: str, *, session: AsyncSession | None = None
 ) -> GraphQuestion | None:
     clean = " ".join(question.strip().rstrip("?.!").split())
-    if _PROJECT_QUESTION.fullmatch(clean):
-        return GraphQuestion("projects")
-    if _GAP_QUESTION.fullmatch(clean):
-        return GraphQuestion("gaps")
-    base = _PROJECT_QUESTION.match(clean)
-    if base is None:
-        return None
-    suffix = clean[base.end() :]
-    constraint = None
-    if suffix.startswith(" "):
-        suffix = suffix.strip()
-        if match := re.fullmatch(r"in (.+)", suffix, re.I):
-            if place := locality.explicit_place_name(match[1]):
-                label = "in the Bay Area" if place == "Bay Area" else f"in {place}"
-                constraint = GraphConstraint(label, place=place)
-        elif match := re.fullmatch(r"for (.+) roles?", suffix, re.I):
-            if role := roles.exact_role(match[1]):
-                constraint = GraphConstraint(f"for {roles.display_name(role)} roles", role=role)
-        elif (
-            (match := re.fullmatch(r"at (.+)", suffix, re.I))
-            and session is not None
-            and (company := await resolve_company_name(session, match[1]))
+    questions: tuple[tuple[GraphIntent, re.Pattern[str]], ...] = (
+        ("projects", _PROJECT_QUESTION),
+        ("gaps", _GAP_QUESTION),
+    )
+    for intent, pattern in questions:
+        if pattern.fullmatch(clean):
+            return GraphQuestion(intent)
+    for intent, pattern in questions:
+        base = pattern.match(clean)
+        if base is None:
+            continue
+        suffix = clean[base.end() :]
+        constraint = await _constraint(suffix.strip(), session) if suffix.startswith(" ") else None
+        return GraphQuestion(intent, constraint) if constraint is not None else None
+    return None
+
+
+async def _constraint(suffix: str, session: AsyncSession | None) -> GraphConstraint | None:
+    """The one place, employer, role or topic a whole suffix names, else None."""
+    if match := re.fullmatch(r"in (.+)", suffix, re.I):
+        if place := locality.explicit_place_name(match[1]):
+            label = "in the Bay Area" if place == "Bay Area" else f"in {place}"
+            return GraphConstraint(label, place=place)
+    elif match := re.fullmatch(r"for (.+) roles?", suffix, re.I):
+        if role := roles.exact_role(match[1]):
+            return GraphConstraint(f"for {roles.display_name(role)} roles", role=role)
+    elif (
+        (match := re.fullmatch(r"at (.+)", suffix, re.I))
+        and session is not None
+        and (company := await resolve_company_name(session, match[1]))
+    ):
+        return GraphConstraint(f"at {company[1]}", company_ids=company[0])
+    elif (match := _TOPIC.fullmatch(suffix)) and session is not None:
+        topic = match[1].strip()
+        if (
+            topic
+            and len(topic) <= TOPIC_MAX_CHARS
+            and not await _carries_another_constraint(session, topic)
         ):
-            constraint = GraphConstraint(f"at {company[1]}", company_ids=company[0])
-        elif (match := _TOPIC.fullmatch(suffix)) and session is not None:
-            topic = match[1].strip()
-            if (
-                topic
-                and len(topic) <= TOPIC_MAX_CHARS
-                and not await _carries_another_constraint(session, topic)
-            ):
-                nearest = await _nearest_postings(session, topic)
-                constraint = GraphConstraint(
-                    f"related to {topic}", posting_ids=frozenset(nearest), ranked=tuple(nearest)
-                )
-    return GraphQuestion("projects", constraint) if constraint is not None else None
+            nearest = await _nearest_postings(session, topic)
+            return GraphConstraint(
+                f"related to {topic}", posting_ids=frozenset(nearest), ranked=tuple(nearest)
+            )
+    return None
 
 
 def _after_last(words: list[str], word: str) -> list[str]:
