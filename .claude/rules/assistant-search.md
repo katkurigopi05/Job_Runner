@@ -954,8 +954,11 @@ snapshot: all 207 benchmark and judged questions are unchanged.
   because "testing" is asked too. None of the 195 saved questions use it.
 - **One employer's repeats still take places among the five** (§26): Process
   Street lists "Senior Software Engineer | Remote | AI SaaS Software Role" six
-  times, and the newest-first order shows four of them. Collapsing them is
-  the owner's decision.
+  times. **Owner decision, 2026-11-19: collapse.** Presentation groups listings
+  only when company_id, normalized title, and the digest of whitespace-normalized
+  description agree. The group keeps its first search rank and displays the newest
+  listing, its listing count, and distinct locations. Both the five excerpts and
+  the further list use the same groups; source-search counts remain listing counts.
 
 `tests/test_chat_job_type_words.py`.
 

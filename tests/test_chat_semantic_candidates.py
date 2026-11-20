@@ -172,8 +172,10 @@ async def test_application_status_does_not_start_semantic_search(db_session, exp
 
 async def test_semantic_expansion_is_bounded(db_session, experiment):
     company = await _company(db_session)
-    for _ in range(R.KEYWORD_POOL + 5):
-        posting = await _posting(db_session, company, "Engineer", "Retrieval systems.")
+    for index in range(R.KEYWORD_POOL + 5):
+        posting = await _posting(
+            db_session, company, "Engineer", f"Retrieval systems. Team {index}."
+        )
         await _chunk(db_session, posting)
 
     found = await R.retrieve(db_session, "jobs grounding answers")

@@ -395,6 +395,8 @@ def render_postings(
             f"{level.unknown} name no level and {level.other} name a different level. "
             "Titles naming a different level are not listed."
         )
+    if found.job_total is not None and found.listing_total is not None:
+        lines.append(f"Returned list: {found.job_total} jobs ({found.listing_total} listings).")
     if not include_sources:
         return "\n".join(lines)
     if not found.passages:
@@ -411,6 +413,10 @@ def render_postings(
             metadata = " — ".join(
                 one_line(v) for v in (passage.title, passage.company, passage.location) if v
             )
+            if passage.listing_count > 1:
+                metadata += f" · listed {passage.listing_count} times · " + "; ".join(
+                    map(one_line, passage.locations)
+                )
             lines.append(label + metadata)
             lines.extend(one_line(line) for line in (evidence or {}).get(passage.posting_id, []))
             if (
