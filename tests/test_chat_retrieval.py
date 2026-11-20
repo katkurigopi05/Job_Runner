@@ -330,7 +330,7 @@ async def test_the_keyword_scan_reaches_postings_with_no_vector(db_session) -> N
     company = await _company(db_session)
     await _posting(db_session, company, *KAFKA, closed=True)
     unembedded = await _posting(db_session, company, *KAFKA, embedded=False)
-    embedded = await _posting(db_session, company, *KAFKA)
+    embedded = await _posting(db_session, company, KAFKA[0], KAFKA[1] + " Build pipelines.")
 
     found = await retrieve(db_session, "Kafka roles")
 

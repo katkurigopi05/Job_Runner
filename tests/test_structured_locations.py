@@ -101,7 +101,9 @@ async def test_chat_candidates_and_complete_counts_use_structured_locations(db_s
             title="Data Scientist",
             location="Office 123",
             url=f"https://example.test/{country}/{state}",
-            description_raw="Python data science",
+            # Each its own text: identical listings of one job are shown once
+            # (`matching/repeats.py`), and this test is about the location fields.
+            description_raw=f"Python data science for the {country} {state} team",
             country_code=country,
             state_code=state,
             is_remote=remote,

@@ -565,7 +565,8 @@ Seen and left alone:
 
 - **The employer's own repeats take places among the five.** Roku lists
   "Software Engineer" in San Jose three times, as three requisitions. §25
-  leaves them as rows; showing one of them is a decision for the owner.
+  leaves them as rows. Owner decision 2026-11-19: collapse exact repeats in
+  assistant presentation, with the newest representative, listing count and locations.
 - **"jobs at ZEIT" says there are none.** The row was set aside for Vercel's
   board (§25) and the assistant does not follow that to Vercel.
 - **The picker offers providers that are not set up.** Anthropic has no key

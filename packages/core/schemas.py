@@ -803,6 +803,8 @@ class ChatSource(BaseModel):
     #: The kind of role the title names ("AI engineer"), when the question
     #: asked for a role. The dashboard groups the list under these.
     kind: str | None = None
+    listing_count: int = 1
+    locations: list[str] = Field(default_factory=list)
 
 
 class ChatKind(BaseModel):

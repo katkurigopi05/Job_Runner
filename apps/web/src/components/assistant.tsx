@@ -15,8 +15,8 @@ import { ReplyText } from "@/components/reply-text";
 import { historyFrom } from "@/lib/chat-history";
 import { newChatId } from "@/lib/chat-recents";
 import { readFrames } from "@/lib/chat-stream";
-import { POSTING_LINK } from "@/lib/external";
 import { AssistantEvidence } from "@/components/assistant-evidence";
+import { PostingLink } from "@/components/assistant-posting-link";
 
 /**
  * A posting retrieved for a question. `cited` is read out of the reply. The
@@ -32,6 +32,8 @@ interface Source {
   cited: boolean;
   /** The kind of role the title names ("AI engineer"), when a role was asked for. */
   kind?: string | null;
+  listing_count?: number;
+  locations?: string[];
 }
 
 /** One kind of title within the role asked for, and how many postings carry it. */
@@ -105,27 +107,6 @@ interface Turn {
   chart?: Chart | null;
 }
 
-function PostingLink({ source, muted }: { source: Source; muted?: boolean }) {
-  return (
-    <li>
-      {source.label ? (
-        <>
-          <span className="text-ink-faint">{source.label}</span>{" "}
-        </>
-      ) : null}
-      <Link
-        href={`/postings/${source.posting_id}`}
-        {...POSTING_LINK}
-        className={`${muted ? "text-ink-soft" : "text-ink"} underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft`}
-      >
-        {source.title}
-      </Link>
-      {source.company ? <span className="text-ink-faint"> · {source.company}</span> : null}
-      {source.location ? <span className="text-ink-faint"> · {source.location}</span> : null}
-    </li>
-  );
-}
-
 const LINK =
   "text-ink-soft underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-soft";
 
@@ -161,7 +142,7 @@ function groupByKind(items: Source[]): Array<{ kind: string; items: Source[] }> 
  * TensorFlow), so a single run-together list would hide the difference the
  * question was asking about.
  */
-function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
+function MoreMatches({ turn }: { turn: Turn }) {
   const more = turn.more ?? [];
   const kinds = turn.kinds ?? [];
   const related = turn.relatedRoles ?? [];
@@ -172,7 +153,8 @@ function MoreMatches({ turn, shownAbove }: { turn: Turn; shownAbove: number }) {
   const counted = countedMatches(turn);
   const remaining = more.length - Math.min(visible, more.length);
   // The reply carries a bounded list. Past it, the feed has the whole one.
-  const beyondTheList = total !== null ? total + (turn.relatedTotal ?? 0) - shownAbove - more.length : 0;
+  const represented = [...(turn.sources ?? []), ...more].reduce((sum, source) => sum + (source.listing_count ?? 1), 0);
+  const beyondTheList = total !== null ? Math.max(0, total + (turn.relatedTotal ?? 0) - represented) : 0;
   const shown = more.slice(0, visible);
   const countOf = new Map(kinds.map((kind) => [kind.label, kind.count]));
   const aboveOf = new Map<string, number>();
@@ -324,7 +306,7 @@ function RetrievedPostings({ turn }: { turn: Turn }) {
           </ul>
         </div>
       ) : null}
-      <MoreMatches turn={turn} shownAbove={sources.length} />
+      <MoreMatches turn={turn} />
       <AssistantEvidence searched={turn.searched} unsearchable={turn.unsearchable}
         scope={turn.postingsScope} details={turn.retrievalDetails} method={turn.retrievalMethod} />
     </div>

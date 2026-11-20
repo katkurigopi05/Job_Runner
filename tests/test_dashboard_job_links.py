@@ -36,7 +36,8 @@ SOURCES = {
 }
 
 POSTING_LINKS = [
-    "components/assistant.tsx",
+    # The assistant's posting links, moved out of assistant.tsx to keep it under 800 lines.
+    "components/assistant-posting-link.tsx",
     "components/swipe-deck.tsx",
     "components/judgment-deck.tsx",
     "components/label-deck.tsx",

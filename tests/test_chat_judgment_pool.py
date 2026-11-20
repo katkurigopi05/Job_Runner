@@ -60,7 +60,7 @@ async def _corpus(session) -> dict[str, Posting]:
             url=f"https://x.test/{name}",
             title="Pastry Chef" if name == "chef" else "Engineer",
             location=location,
-            description_raw="Croissants." if name == "chef" else "Kafka pipelines.",
+            description_raw="Croissants." if name == "chef" else f"Kafka pipelines. Team {name}.",
             content_hash=f"hash-{name}",
             first_seen_at=NOW - timedelta(minutes=n),
         )

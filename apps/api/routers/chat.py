@@ -904,12 +904,22 @@ def _postings_section(
             )
     if gaps is not None and gaps.across:
         lines.append(gaps.across)
+    if found.job_total is not None and found.listing_total is not None:
+        lines.append(
+            f"  presentation: {found.job_total} jobs "
+            f"({found.listing_total} listings) in the returned list."
+        )
     for passage in found.passages:
         # An employer's words, each kept to the line it is given (`_one_line`).
         where = " — ".join(_one_line(part) for part in (passage.company, passage.location) if part)
         lines.append(
             f"  [{passage.label}] {_one_line(passage.title)}" + (f" — {where}" if where else "")
         )
+        if passage.listing_count > 1:
+            lines.append(
+                f"       listed {passage.listing_count} times: "
+                + "; ".join(map(_one_line, passage.locations))
+            )
         if passage.application_status:
             lines.append(f"       you applied: {passage.application_status}")
         lines.append(
@@ -1494,6 +1504,8 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
                 url=passage.url,
                 cited=passage.label in cited,
                 kind=passage.kind,
+                listing_count=passage.listing_count,
+                locations=list(passage.locations),
             )
             # What the search found for this question, and of the postings
             # carried over from earlier answers only the ones this one cites.
@@ -1516,6 +1528,8 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
                 location=listed.location,
                 url=listed.url,
                 kind=listed.kind,
+                listing_count=listed.listing_count,
+                locations=list(listed.locations),
             )
             for listed in found.more
         ],
