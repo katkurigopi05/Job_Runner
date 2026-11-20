@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
-from sqlalchemy import String, cast, select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -261,16 +261,26 @@ async def due_companies(
     milliseconds — and the wrong one to revisit by narrowing the join back.
     """
     current = now or datetime.now(UTC)
+    # Companies with open jobs that directly require a technology the owner's
+    # projects declare go first, most such jobs first; the schedule orders the
+    # rest. Only the order changes, never how often a board is polled.
+    from packages.matching.skill_links import company_project_matches
+
+    matches = company_project_matches()
     rows = await session.scalars(
         select(Company)
         .outerjoin(CompanyCrawlState, CompanyCrawlState.company_id == Company.id)
+        .outerjoin(matches, matches.c.company_id == Company.id)
         .where(
             fetchable(),
             CompanyCrawlState.company_id.is_(None)
             | CompanyCrawlState.next_due_at.is_(None)
             | (CompanyCrawlState.next_due_at <= current),
         )
-        .order_by(CompanyCrawlState.next_due_at.asc().nullsfirst())
+        .order_by(
+            func.coalesce(matches.c.n, 0).desc(),
+            CompanyCrawlState.next_due_at.asc().nullsfirst(),
+        )
         .limit(limit)
     )
     return list(rows.all())

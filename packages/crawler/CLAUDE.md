@@ -820,3 +820,15 @@ all secondary offices survive normalization; locale is never country evidence.
 All requests go through PoliteFetcher, with no new shared-host exception.
 `tests/test_oracle_reader.py` and `tests/fixtures/oracle/README.md` contain the
 recorded public proof; the tests run in gate 5. Applying remains unsupported.
+
+## Companies that match the owner's projects are crawled first (2026-11-19)
+
+`runs.due_companies` orders due companies by how many of their open jobs directly require a
+technology the owner's public, included, non-fork projects declare
+(`skill_links.company_project_matches`), then by the schedule as before. `dispatch` gives each
+task its own `run_after`, a microsecond apart in that order, because one transaction stamps
+every task with the same `now()` and `claim_task` takes the oldest `run_after` first. Only the
+order changes: poll intervals, host floors, robots.txt and the claim order between kinds (§24)
+are untouched. With no saved links (before `make skill-links`), the schedule alone decides. On
+2026-11-19, 270 of 1,036 crawlable companies led (NVIDIA 245 matching jobs, Accenture 59, Cisco
+48); ranking the registry took 0.06 s. `tests/test_crawl_project_priority.py`.

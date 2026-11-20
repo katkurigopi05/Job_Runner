@@ -441,6 +441,40 @@ def is_direct_requirement() -> ColumnElement[bool]:
     )
 
 
+def company_project_matches() -> Any:
+    """(company_id, n): open jobs per company that directly require a project technology.
+
+    The owner's public, included, non-fork GitHub projects, and postings linked
+    from their current text. A subquery, for the crawl's dispatch order
+    (`crawler.runs.due_companies`).
+    """
+    declared = (
+        select(ProjectSkill.skill)
+        .join(Project, Project.id == ProjectSkill.project_id)
+        .where(
+            Project.source == "github",
+            Project.is_fork.is_(False),
+            Project.is_private.is_(False),
+            or_(Project.include.is_(None), Project.include.is_(True)),
+        )
+        .distinct()
+        .subquery()
+    )
+    return (
+        select(
+            Posting.company_id.label("company_id"),
+            func.count(func.distinct(Posting.id)).label("n"),
+        )
+        .select_from(PostingSkill)
+        .join(declared, declared.c.skill == PostingSkill.skill)
+        .join(Posting, Posting.id == PostingSkill.posting_id)
+        .join(PostingSkillRead, PostingSkillRead.posting_id == Posting.id)
+        .where(Posting.closed_at.is_(None), _is_current(), is_direct_requirement())
+        .group_by(Posting.company_id)
+        .subquery("project_matches")
+    )
+
+
 @dataclass(frozen=True)
 class OverlapJob:
     posting_id: uuid.UUID
@@ -511,6 +545,7 @@ __all__ = [
     "Link",
     "LinkReport",
     "Overlap",
+    "company_project_matches",
     "OverlapJob",
     "Reading",
     "RefreshReport",
