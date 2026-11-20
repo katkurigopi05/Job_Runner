@@ -1004,6 +1004,7 @@ class Ready:
     selection_provider: Any | None = None
     selection_model: str | None = None
     graph_result: GraphResult | None = None
+    prose_budget: PromptBudget | None = None
 
 
 async def prepare(
@@ -1115,6 +1116,7 @@ async def prepare(
             selection_provider=graph_provider,
             selection_model=graph_model,
             graph_result=graph,
+            prose_budget=context_budget,
         )
 
     # Resolved before the context is built, because it decides what goes into
@@ -1322,6 +1324,7 @@ async def prepare(
         factual_answer=factual_answer,
         selection_evidence=selection_evidence,
         selection_summary=selection_summary,
+        prose_budget=context_budget,
         question=question,
     )
 
@@ -1596,7 +1599,53 @@ async def selected_reply(ready: Ready) -> ChatReply:
         )
     except LLMError as exc:
         raise did_not_answer(ready.selected, exc) from exc
-    return selection_reply_for(ready, getattr(provider, "model", model), raw)
+    actual_model = getattr(provider, "model", model)
+    reply = selection_reply_for(ready, actual_model, raw)
+    if ready.selected != "kaggle" or not get_settings().chat_kaggle_prose:
+        return reply
+    selection = constrain_selection(parse_selection(raw, evidence), ready.question)
+    if not selection.valid or not selection.items:
+        return reply
+    from apps.api.chat_prose import NOTE, computed_context, generate_prose
+
+    # Graph local renderings restore repository attribution; only anonymous
+    # model_text is eligible for either outbound model call.
+    graph = ready.graph_result
+    if graph is not None:
+        texts = {item.label: item.model_text for item in graph.evidence}
+        prose_evidence = tuple(
+            item.model_copy(update={"text": texts[item.id]}) for item in selection.items
+        )
+        context = graph.summary
+    else:
+        passages = {item.label: item for item in ready.found.passages}
+        prose_items = []
+        for item in selection.items:
+            passage = passages.get(item.source_label or "")
+            text = item.text
+            if passage is not None:
+                company = passage.company or "(company not recorded)"
+                text = f"{passage.title} at {company}.\n{item.text}"
+            prose_items.append(item.model_copy(update={"text": text}))
+        prose_evidence = tuple(prose_items)
+        context = ready.selection_summary or render_postings(ready.found, include_sources=False)
+    prose = await generate_prose(
+        provider, prose_evidence, computed_context(ready.found), budget=ready.prose_budget
+    )
+    if prose is None:
+        return reply.model_copy(update={"reply": reply.reply + "\n\n" + NOTE})
+    # Keep computed coverage and diagnostics visible alongside validated prose.
+    answer = prose + "\n\n" + (graph.answer(selection.ids) if graph is not None else context)
+    labels = set(selection.source_labels)
+    return reply.model_copy(
+        update={
+            "reply": answer,
+            "sources": [
+                source.model_copy(update={"cited": source.label in labels})
+                for source in reply.sources
+            ],
+        }
+    )
 
 
 def selection_reply_for(ready: Ready, model: str | None, raw: str) -> ChatReply:
