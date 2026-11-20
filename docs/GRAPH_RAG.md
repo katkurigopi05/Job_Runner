@@ -184,3 +184,12 @@ Graph answers count only direct requirements, so "Python and/or Golang" must rea
 requiring Python (`evidence._AND_OR`, `requirements.EXTRACTOR_VERSION = 5`). The bump makes every stored
 reading at version 4 stale: readers re-extract it in memory until `make extract-requirements` rewrites it,
 and every saved skill link is stale until `make skill-links` runs again.
+
+
+## IT scope for recurring gaps (2026-11-19)
+
+The gaps question counts only IT jobs in the configured search area, including
+product/program and technical pre-sales through the shared `it_titles.is_it_role`
+reader. Sales, office administration, UX, and hardware roles are outside that
+scope. Both saved-link retrieval and the top-100 fallback apply it before
+counting or taking the sample. Jobs from projects keeps its existing scope.

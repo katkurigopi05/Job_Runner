@@ -105,6 +105,11 @@ async def dispatch(
 ) -> DispatchReport:
     """Enqueue one crawl task per company. Does not commit."""
     report = DispatchReport(run_id=run.id)
+    # One transaction stamps every task with the same `now()`, and the queue
+    # claims the oldest `run_after` first; a microsecond apart, in the order
+    # given (`due_companies` puts project-matching companies first), the tasks
+    # are claimed in that order.
+    start: datetime = await session.scalar(select(func.clock_timestamp())) or datetime.now(UTC)
 
     for company in companies:
         seed = seed_from(company)
@@ -115,6 +120,7 @@ async def dispatch(
             session,
             CRAWL_COMPANY_TASK_KIND,
             {"company_id": str(company.id), "run_id": str(run.id), "force": force},
+            run_after=start + timedelta(microseconds=report.enqueued),
         )
         report.enqueued += 1
 

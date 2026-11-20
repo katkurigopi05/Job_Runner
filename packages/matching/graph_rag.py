@@ -27,6 +27,7 @@ from packages.matching.evidence import Strength, skill_evidence
 from packages.matching.gaps import resume_skills
 from packages.matching.graph_questions import GraphConstraint, GraphIntent, GraphQuestion
 from packages.matching.graph_questions import graph_intent as graph_intent
+from packages.matching.it_titles import is_it_role
 from packages.matching.locality import area_exclusion
 from packages.matching.location_fields import office_facts
 from packages.matching.required_skills import fresh_requirements
@@ -38,6 +39,8 @@ TARGET_LIMIT = 100
 LOAD_BATCH = 5000
 RESULT_LIMIT = 8
 PROJECT_RESULT_LIMIT = 5
+#: Owner scope: IT plus product/program and technical pre-sales; never general sales.
+GAP_ADJACENT = ("product_program", "tech_sales_consulting")
 #: What a graph answer read: a sample of the owner's best matches, or every open
 #: posting in the search area through the saved links (`skill_links.py`).
 GraphScope = Literal["top_matches", "open_postings"]
@@ -238,6 +241,12 @@ def graph_result(
         "matches in the configured search area (at most 100; each job counted once). "
         "This is a bounded sample, not all available jobs. "
     )
+    if intent == "gaps":
+        reach += (
+            f"Gap scope: across {len(postings)} "
+            f"{'open' if every else 'sampled'} IT jobs in your area "
+            "(including product/program and technical pre-sales, excluding sales). "
+        )
     summary = (
         reach + "Only direct required skills count; "
         "preferences, alternatives and stack mentions are excluded. "
@@ -349,7 +358,11 @@ def graph_result(
             ]
             gaps = [(skill, edges) for skill, edges in gaps if len(edges) >= 2]
             gaps.sort(key=lambda item: (-len(item[1]), item[0].key))
-            where = "across open jobs in your area" if every else "in your top matches"
+            where = (
+                f"across {len(postings)} open IT jobs in your area"
+                if every
+                else "in your top IT job matches"
+            )
             answer_summary = (
                 f"These skills are directly required {where} but are not listed on your "
                 "base résumés:"
@@ -362,9 +375,9 @@ def graph_result(
                 "Absence from a résumé is not proof you lack a skill."
             )
             jobs_read = (
-                "open jobs in your area that state a direct requirement"
+                "open IT jobs in your area that state a direct requirement"
                 if every
-                else "sampled jobs"
+                else "sampled IT jobs"
             )
             by_id = {str(posting.id): (posting, company) for posting, company in postings}
             for skill, edges in gaps[:RESULT_LIMIT]:
@@ -382,7 +395,8 @@ def graph_result(
                 )
                 human = (
                     f"**{BY_KEY[skill.key].label}** — directly required by {len(edges)} of "
-                    f"{len(postings)} {'open jobs in your area' if every else 'reviewed jobs'}. "
+                    f"{len(postings)} "
+                    f"{'open IT jobs in your area' if every else 'reviewed IT jobs'}. "
                     + (
                         "An available project also declares this technology."
                         if skill in project_skills
@@ -414,7 +428,8 @@ def graph_result(
         scope=scope,
         answer_note=(
             (
-                f"Based on all {len(postings)} open jobs {population} that "
+                f"Based on all {len(postings)} open{' IT' if intent == 'gaps' else ''} jobs "
+                f"{'in your area' if intent == 'gaps' else population} that "
                 + (
                     "directly require one of your project technologies. "
                     if intent == "projects"
@@ -426,7 +441,12 @@ def graph_result(
                     else ""
                 )
                 if every
-                else f"Based on {len(postings)} of your top open job matches"
+                else f"Based on {len(postings)} "
+                + (
+                    "sampled IT jobs in your area"
+                    if intent == "gaps"
+                    else "of your top open job matches"
+                )
                 + (f" {population}" if constraint else "")
                 + ". "
             )
@@ -564,6 +584,8 @@ async def retrieve_graph(
     kept: list[tuple[Posting, str | None]] = []
     try:
         async for posting, company in rows:
+            if intent == "gaps" and not is_it_role(posting.title, include=GAP_ADJACENT):
+                continue
             if not _in_scope(posting, constraint):
                 continue
             kept.append((posting, company))
@@ -662,6 +684,8 @@ async def _gap_jobs_from_saved_links(
             .where(Posting.id.in_(ids[first : first + LOAD_BATCH]))
         )
         for posting, company in rows:
+            if not is_it_role(posting.title, include=GAP_ADJACENT):
+                continue
             reason = _area_reason(posting, None)
             if reason is None:
                 kept.append((posting, company))
