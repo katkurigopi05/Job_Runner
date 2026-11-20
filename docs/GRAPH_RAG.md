@@ -186,6 +186,25 @@ reading at version 4 stale: readers re-extract it in memory until `make extract-
 and every saved skill link is stale until `make skill-links` runs again.
 
 
+## Optional Kaggle source prose (2026-11-19)
+
+`CHAT_KAGGLE_PROSE=false` is the shipped default. When explicitly enabled, a
+valid nonempty Kaggle evidence selection may make one additional call through
+the same privacy-wrapped, pinned and audited provider. Other providers and
+refusals retain their existing paths. Only selected source evidence and code
+counts enter that call; graph evidence keeps anonymous project references.
+
+The answer is buffered and checked before either chat route displays it: each
+of at most six sentences cites a selected source, every number is already in
+the selected evidence or computed counts, and the factual wording is copied
+from those sources. Novel paraphrases are deliberately rejected because a
+capitalization-only name check cannot rule out invented company/job titles.
+On any validation, provider, or context-budget failure, the existing code
+answer appears with a fixed one-line note. This never invokes another model.
+The Kaggle helper checks actual prompt plus answer tokens against its 16,384
+token context. Explicit offline pack callers preserve all selected evidence or
+skip prose; the prose answer reserves 600 tokens. The flag is not enabled in
+the owner's environment by this change.
 ## IT scope for recurring gaps (2026-11-19)
 
 The gaps question counts only IT jobs in the configured search area, including
