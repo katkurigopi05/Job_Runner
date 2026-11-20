@@ -192,3 +192,10 @@ The Kaggle helper checks actual prompt plus answer tokens against its 16,384
 token context. Explicit offline pack callers preserve all selected evidence or
 skip prose; the prose answer reserves 600 tokens. The flag is not enabled in
 the owner's environment by this change.
+## IT scope for recurring gaps (2026-11-19)
+
+The gaps question counts only IT jobs in the configured search area, including
+product/program and technical pre-sales through the shared `it_titles.is_it_role`
+reader. Sales, office administration, UX, and hardware roles are outside that
+scope. Both saved-link retrieval and the top-100 fallback apply it before
+counting or taking the sample. Jobs from projects keeps its existing scope.
