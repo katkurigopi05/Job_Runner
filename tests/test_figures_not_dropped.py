@@ -30,6 +30,7 @@ refuses what was accepted before.
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -356,7 +357,9 @@ async def test_the_result_names_the_figure_and_the_log_does_not(corpus, capsys) 
 
     logged = capsys.readouterr().out
     assert "tailor_rejected" in logged
-    assert "0.72" not in logged
+    # Each line's timestamp is not what is checked: "…01:00:40.727591Z" holds
+    # "0.72" by chance, and failed CI on 2026-11-20.
+    assert "0.72" not in re.sub(r"\d{4}-\d{2}-\d{2}T[\d:.]+Z", "<time>", logged)
     assert "figures=1" in logged
 
 
