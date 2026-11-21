@@ -24,7 +24,8 @@ A draft is only a preview. Saving it is `saved_lines_check`, then the router.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import uuid
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -32,6 +33,7 @@ from packages.core.models import Project
 from packages.github.select import (
     is_eligible,
     matched_requirements,
+    projects_for_posting,
     required_skills,
     score,
     select_projects,
@@ -121,6 +123,7 @@ def pick_projects(
     selected_ids: Sequence[str] | None = None,
     limit: int = 4,
     replace_source_projects: bool = False,
+    declared: Mapping[uuid.UUID, Collection[str]] | None = None,
 ) -> list[ProjectPick]:
     """Rank every project; choose the owner's selection, or the best eligible ones."""
     projects = [project for project in projects if not project.is_fork]
@@ -149,17 +152,29 @@ def pick_projects(
         by_id = {str(p.id): p for p in usable if is_eligible(p, require_description=False)}
         chosen = [by_id[i] for i in wanted if i in by_id][:limit]
     else:
-        candidates = usable
         if required_skills(job_description):
-            candidates = [p for p in usable if p.pinned or matched_requirements(p, job_description)]
-        chosen = select_projects(candidates, text, limit=limit)
+            chosen = projects_for_posting(usable, text, limit=limit, declared=declared)
+        else:
+            chosen = select_projects(usable, text, limit=limit)
     chosen_ids = {p.id for p in chosen}
-    ranked = sorted(projects, key=lambda p: (bool(p.pinned), score(p, text)), reverse=True)
+
+    def rank(project: Project) -> float:
+        return score(
+            project, text, declared=None if declared is None else declared.get(project.id, ())
+        )
+
+    ranked = sorted(projects, key=lambda p: (bool(p.pinned), rank(p)), reverse=True)
     return [
         ProjectPick(
             project=project,
-            score=round(score(project, text), 4),
-            matched_terms=tuple(matched_requirements(project, job_description)),
+            score=round(rank(project), 4),
+            matched_terms=tuple(
+                matched_requirements(
+                    project,
+                    job_description,
+                    declared=None if declared is None else declared.get(project.id, ()),
+                )
+            ),
             chosen=project.id in chosen_ids,
             held_back=held_back(project),
         )
@@ -276,6 +291,7 @@ async def synthesize(
     project_limit: int = 4,
     provider: LLMProvider | None = None,
     replace_source_projects: bool = False,
+    declared: Mapping[uuid.UUID, Collection[str]] | None = None,
 ) -> Draft:
     """A draft for one posting. Calls `provider` only for bullets that can gain a term."""
     picks = pick_projects(
@@ -286,6 +302,7 @@ async def synthesize(
         selected_ids=selected_project_ids,
         limit=project_limit,
         replace_source_projects=replace_source_projects,
+        declared=declared,
     )
     chosen = [pick.project for pick in picks if pick.chosen]
     corpus = SourceCorpus.from_resume(

@@ -238,3 +238,42 @@ product/program and technical pre-sales through the shared `it_titles.is_it_role
 reader. Sales, office administration, UX, and hardware roles are outside that
 scope. Both saved-link retrieval and the top-100 fallback apply it before
 counting or taking the sample. Jobs from projects keeps its existing scope.
+
+## Saved project selection in apply (2026-11-21)
+
+Apply and batch tailoring read the owner's saved `project_skills` rows for
+job-first selection. Studio's saved-facts path reads the same rows; its live
+GitHub path continues to use the declarations returned by that live check.
+Both use `github.select.projects_for_posting`: pins first, then the number of
+direct requirements backed by language/dependency declarations, with the
+existing relevance/recency/substance tie breakers. Forks and excluded projects
+never qualify. Missing saved links do not fall back to project prose or topics.
+When direct requirements are readable, automatic selection drops zero-overlap
+projects except pins, before taking the limit. Explicit Studio selections stay
+the owner's choice. Without direct requirements, each caller retains its prior
+fallback (apply's optional semantic relevance, batch's salient terms, Studio's
+role-preset vocabulary). Selection reads no GitHub endpoint and needs no model
+when direct requirements are available.
+
+This changes selection and order only. It does not write a skill or widen the
+facts that may back any bullet; the existing per-project fabrication guard still
+decides. Cache identity now preserves project order, with a revision bump so an
+old PDF cannot silently bypass the new ordering.
+
+Read-only measurement against the live database, with worktree code explicitly
+selected through `PYTHONPATH`, 2026-11-21: first 100 posting UUIDs from the 2,151
+open, unskipped, in-area IT postings with current saved direct requirements.
+No GitHub, model, or embedding call; the previous pipeline's optional semantic
+rescue was disabled, so this is a lexical-path comparison rather than a claim
+about that rescue's results. The session was rolled back.
+
+| Metric over 100 postings | Before | After |
+|---|---:|---:|
+| Selected projects per posting, mean | 4.00 | 1.49 |
+| Direct requirements covered, summed per posting | 51 of 249 | 51 of 249 |
+| Fully covered postings | 7 | 7 |
+
+67 selections changed, all by removing zero-overlap projects: 251 project
+placements removed and none added. No direct requirement coverage was gained
+or lost. Reading and comparing the sample took 106.1 seconds; this includes
+both selectors and is not a feed/request latency measurement.

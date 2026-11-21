@@ -22,6 +22,7 @@ import pytest
 
 from packages.core.models import Application, Candidate, Posting, Profile, Project, Resume, User
 from packages.github.select import relevant_for_posting, select_projects
+from packages.matching.skill_links import link_projects
 
 JOB = (
     "Platform Engineer. You will run Kubernetes clusters, write Terraform "
@@ -140,9 +141,11 @@ async def test_the_apply_pipeline_attaches_them(db_session, monkeypatch) -> None
             name="k8s-homelab",
             description="Kubernetes homelab with Terraform and Helm charts",
             topics_json=["kubernetes", "terraform", "helm"],
+            dependency_technologies=["Docker"],
         )
     )
     await db_session.flush()
+    await link_projects(db_session, candidate.id)
 
     resume = Resume(
         candidate_id=candidate.id,
