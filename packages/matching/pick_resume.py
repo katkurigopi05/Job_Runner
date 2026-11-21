@@ -25,11 +25,23 @@ mean the document an employer receives changes between two runs that saw the
 same posting. Below `MIN_MARGIN` the profile's own `base_resume_id` wins if it
 is in the running — the owner's standing choice is the tie-break, not the
 float.
+
+## Requirements backed first, similarity second (2026-11-21)
+
+Similarity reads prose, and a posting states its stack in a line or two. The
+résumé that backs more of the posting's *direct* requirements (required, not
+one choice among several, quoted: `skill_links.direct_requirements`, the
+graph's own reading) is the one an ATS and a recruiter will match, so a whole
+requirement more decides before any cosine is read. Between résumés that back
+the same number, similarity decides as above; with no direct requirement read,
+it decides alone. Résumé skills are `gaps.resume_skills`, what
+`skill_links.link_resume` saves.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -37,6 +49,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Profile, Resume
 from packages.matching.embed import Embedder, cosine, get_embedder
+from packages.matching.gaps import resume_skills, skill_label
+from packages.matching.skill_links import direct_requirements
 
 #: A win narrower than this is not a win. Two résumés for adjacent roles score
 #: within noise of each other on most postings, and flip-flopping between them
@@ -62,6 +76,15 @@ MAX_PARSE_DEFICIT = 0.15
 
 
 @dataclass(frozen=True)
+class Considered:
+    version: int
+    score: float
+    #: How many of the posting's direct requirements this résumé backs; None
+    #: when the posting states none.
+    covered: int | None = None
+
+
+@dataclass(frozen=True)
 class ResumeChoice:
     """Which résumé to start from, and enough of why to render it."""
 
@@ -69,9 +92,12 @@ class ResumeChoice:
     version: int
     score: float
     reason: str
-    #: (version, score) for every résumé considered, best first. The review
-    #: screen shows this — a selection with no runners-up is unauditable.
-    considered: tuple[tuple[int, float], ...] = ()
+    #: Every résumé considered, best first. The review screen shows this — a
+    #: selection with no runners-up is unauditable.
+    considered: tuple[Considered, ...] = ()
+    #: The posting's direct requirements, and those the chosen résumé does not back.
+    required: tuple[str, ...] = ()
+    missing: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -80,14 +106,46 @@ class ResumeChoice:
             "score": round(self.score, 4),
             "reason": self.reason,
             "considered": [
-                {"version": version, "score": round(score, 4)} for version, score in self.considered
+                {"version": c.version, "score": round(c.score, 4)}
+                | ({"covered": c.covered} if c.covered is not None else {})
+                for c in self.considered
             ],
+            "required": [skill_label(key) for key in self.required],
+            "missing": [skill_label(key) for key in self.missing],
         }
 
 
 def _resume_text(resume: Resume) -> str:
     lines = (resume.parsed_json or {}).get("raw_lines") or []
     return "\n".join(str(line) for line in lines)
+
+
+def _choice(
+    chosen: Resume,
+    score: float,
+    reason: str,
+    ranked: Sequence[tuple[float, Resume]],
+    required: frozenset[str],
+) -> ResumeChoice:
+    """The choice, with each résumé's coverage of `required` beside its similarity."""
+    skills = {resume.id: resume_skills(_resume_text(resume)) for _, resume in ranked}
+    skills.setdefault(chosen.id, resume_skills(_resume_text(chosen)))
+    return ResumeChoice(
+        resume_id=chosen.id,
+        version=chosen.version,
+        score=score,
+        reason=reason,
+        considered=tuple(
+            Considered(
+                resume.version,
+                round(similarity, 6),
+                len(required & skills[resume.id]) if required else None,
+            )
+            for similarity, resume in ranked
+        ),
+        required=tuple(sorted(required, key=skill_label)),
+        missing=tuple(sorted(required - skills[chosen.id], key=skill_label)),
+    )
 
 
 async def base_resumes(session: AsyncSession, candidate_id: uuid.UUID) -> list[Resume]:
@@ -168,16 +226,11 @@ async def choose_base_resume(
     resumes = await base_resumes(session, profile.candidate_id)
     if not resumes:
         return None
+    required = direct_requirements(posting_text)
 
     if len(resumes) == 1:
         only = resumes[0]
-        return ResumeChoice(
-            resume_id=only.id,
-            version=only.version,
-            score=0.0,
-            reason="the only base résumé on file",
-            considered=((only.version, 0.0),),
-        )
+        return _choice(only, 0.0, "the only base résumé on file", [(0.0, only)], required)
 
     haystack = posting_text.strip()
     if not haystack:
@@ -195,16 +248,11 @@ async def choose_base_resume(
     if len(readable) == 1 and rejected:
         only = readable[0]
         worst = ", ".join(f"v{version} at {parse:.0%}" for version, parse in rejected)
-        return ResumeChoice(
-            resume_id=only.id,
-            version=only.version,
-            score=0.0,
-            reason=(
-                f"the only résumé an ATS reads cleanly — dropped {worst} "
-                f"against this one's {_parse_score(only):.0%}"
-            ),
-            considered=((only.version, 0.0),),
+        reason = (
+            f"the only résumé an ATS reads cleanly — dropped {worst} "
+            f"against this one's {_parse_score(only):.0%}"
         )
+        return _choice(only, 0.0, reason, [(0.0, only)], required)
     resumes = readable
 
     active = embedder or get_embedder()
@@ -218,33 +266,50 @@ async def choose_base_resume(
         reverse=True,
     )
 
-    best_score, best = scored[0]
-    runner_up = scored[1][0]
-    considered = tuple((resume.version, round(score, 6)) for score, resume in scored)
+    return _decide(scored, profile, required)
 
+
+def _decide(
+    scored: list[tuple[float, Resume]], profile: Profile, required: frozenset[str]
+) -> ResumeChoice:
+    """More direct requirements backed first; similarity among those that tie.
+
+    `scored` is every readable résumé, most similar first, at least two.
+    """
+    covered = {
+        resume.id: len(required & resume_skills(_resume_text(resume))) for _, resume in scored
+    }
+    # Stable: within one coverage, the most similar stays first.
+    ranked = sorted(scored, key=lambda pair: -covered[pair[1].id])
+    best_cover = covered[ranked[0][1].id]
+    leaders = [pair for pair in ranked if covered[pair[1].id] == best_cover]
+    of = f"{best_cover} of {len(required)} required skills"
+    if len(leaders) == 1:
+        score, best = leaders[0]
+        next_cover = covered[ranked[1][1].id]
+        reason = f"backs {of}, more than any other résumé (next {next_cover})"
+        return _choice(best, score, reason, ranked, required)
+
+    best_score, best = leaders[0]
+    runner_up = leaders[1][0]
     margin = best_score - runner_up
-    if margin < MIN_MARGIN and profile.base_resume_id is not None:
-        standing = next((r for _, r in scored if r.id == profile.base_resume_id), None)
-        if standing is not None:
-            standing_score = next(s for s, r in scored if r.id == standing.id)
-            return ResumeChoice(
-                resume_id=standing.id,
-                version=standing.version,
-                score=standing_score,
-                reason=(
-                    f"kept the profile's own résumé — the best match won by only "
-                    f"{margin:.3f}, which is inside the noise"
-                ),
-                considered=considered,
-            )
-
-    return ResumeChoice(
-        resume_id=best.id,
-        version=best.version,
-        score=best_score,
-        reason=(
-            f"closest of {len(resumes)} résumés to this posting "
-            f"({best_score:.3f}, next {runner_up:.3f})"
-        ),
-        considered=considered,
+    backing = f" that back {of}" if best_cover else ""
+    unbacked = (
+        f"; none backs any of its {len(required)} required skills"
+        if required and not best_cover
+        else ""
     )
+    if margin < MIN_MARGIN and profile.base_resume_id is not None:
+        standing = next((pair for pair in leaders if pair[1].id == profile.base_resume_id), None)
+        if standing is not None:
+            like = f", which backs {of} like the best match" if best_cover else ""
+            reason = (
+                f"kept the profile's own résumé{like} — the best match won by only "
+                f"{margin:.3f}, which is inside the noise{unbacked}"
+            )
+            return _choice(standing[1], standing[0], reason, ranked, required)
+    reason = (
+        f"closest of {len(leaders)} résumés{backing} to this posting "
+        f"({best_score:.3f}, next {runner_up:.3f}){unbacked}"
+    )
+    return _choice(best, best_score, reason, ranked, required)

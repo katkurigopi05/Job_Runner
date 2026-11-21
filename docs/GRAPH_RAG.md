@@ -192,6 +192,14 @@ A role counts titles the role table reads as exactly that role, so "backend engi
 narrow. Not measured live: a topic, which loads Qwen3-Embedding-4B; it is the projects topic
 path, measured above.
 
+## The graph picks the base résumé (2026-11-21)
+
+`pick_resume.choose_base_resume` starts from the readable base résumé that backs the most of a
+posting's direct requirements, read with the graph's own rule (`skill_links.direct_requirements`,
+`is_direct`), before similarity is consulted; ties fall back to similarity and the owner's
+standing choice. On 200 in-area IT postings the pick changed on 11 (6%), each gaining one
+backed requirement. Details in `packages/matching/CLAUDE.md`.
+
 ## Current limits
 
 This first version requires exactly one candidate; it refuses to combine multiple

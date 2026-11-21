@@ -225,7 +225,7 @@ async def test_a_margin_inside_the_noise_keeps_the_profiles_own_choice(db_sessio
     )
 
     assert choice is not None
-    scores = [score for _, score in choice.considered]
+    scores = [considered.score for considered in choice.considered]
     if scores[0] - scores[1] < MIN_MARGIN:
         assert choice.resume_id == first.id
         assert "inside the noise" in choice.reason
