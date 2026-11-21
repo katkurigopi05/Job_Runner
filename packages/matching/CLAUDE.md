@@ -353,6 +353,25 @@ this decides which document an employer reads first.
 The cover letter is written from the same document. A letter drafted off a
 different résumé than the one attached would contradict it.
 
+#### Requirements backed first (2026-11-21)
+
+Similarity reads prose, and a posting states its stack in a line or two, so
+`choose_base_resume` now asks first which readable base résumé backs the most
+of the posting's direct requirements (`skill_links.direct_requirements`: the
+graph's own reading, required, not one choice among several, quoted; résumé
+skills by `gaps.resume_skills`, what `link_resume` saves). A whole requirement
+more decides; between résumés that back the same number, similarity and the
+noise rule above decide as before, and with no direct requirement read,
+similarity decides alone. Sendability is still settled first, so a stub that
+lists every tool cannot win on coverage either. The review screen shows
+"Backs N of M required skills — not on it: …" and each runner-up's coverage.
+
+Measured read-only on 200 in-area IT postings, 2026-11-21, with the profile's
+v14 as standing choice: the pick changed on 11 (6%), every one v14 to v15 and
+one more requirement backed; postings fully backed 107 to 112, mean share
+backed 75% to 76%. Small because only v14, v15 and v2 pass the sendability
+gate and they list nearly the same skills. `tests/test_pick_resume_coverage.py`.
+
 ### One regex was answering three questions about work authorization
 
 Also reported from the source, also confirmed by running it. `filters.py` had a

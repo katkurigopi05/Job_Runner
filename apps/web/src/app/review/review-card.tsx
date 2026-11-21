@@ -306,10 +306,22 @@ export function ReviewCard({
               Résumé v{(review.base_resume.version).toLocaleString("en-US")}
               <span className="text-ink-soft"> — {review.base_resume.reason}</span>
             </p>
+            {review.base_resume.required && review.base_resume.required.length > 0 ? (
+              <p className="mt-1 text-xs text-ink-soft">
+                Backs {review.base_resume.required.length - (review.base_resume.missing?.length ?? 0)} of{" "}
+                {review.base_resume.required.length} required skills
+                {review.base_resume.missing && review.base_resume.missing.length > 0
+                  ? ` — not on it: ${review.base_resume.missing.join(", ")}`
+                  : ""}
+              </p>
+            ) : null}
             {review.base_resume.considered && review.base_resume.considered.length > 1 ? (
               <p className="mt-1 text-xs text-ink-soft">
                 {review.base_resume.considered
-                  .map((c) => `v${c.version} ${c.score.toFixed(3)}`)
+                  .map(
+                    (c) =>
+                      `v${c.version}${c.covered != null ? ` ${c.covered}/${review.base_resume?.required?.length ?? 0}` : ""} ${c.score.toFixed(3)}`,
+                  )
                   .join("  ·  ")}
               </p>
             ) : null}

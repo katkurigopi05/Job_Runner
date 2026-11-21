@@ -53,7 +53,7 @@ from packages.core.models_skill_links import (
 from packages.matching.evidence import Strength, skill_evidence
 from packages.matching.gaps import resume_skills
 from packages.matching.required_skills import fresh_requirements
-from packages.matching.requirements import EXTRACTOR_VERSION
+from packages.matching.requirements import EXTRACTOR_VERSION, extract
 from packages.matching.skill_vocab import BY_KEY, normalize_skill
 
 #: The strengths a posting link may hold, strongest first.
@@ -430,6 +430,24 @@ async def refresh_owner(session: AsyncSession) -> tuple[int, int]:
 
 
 # --- reading -----------------------------------------------------------------
+
+
+def is_direct(link: Link) -> bool:
+    """`is_direct_requirement` for a link read in memory rather than saved."""
+    return link.strength == Strength.REQUIRED.value and not link.is_option and link.quote != ""
+
+
+def direct_requirements(text: str) -> frozenset[str]:
+    """The skills a posting's text directly requires, as its saved links would say.
+
+    For text that is not a stored posting, such as the parsed page the apply
+    pipeline hands `pick_resume`.
+    """
+    if not text.strip():
+        return frozenset()
+    return frozenset(
+        link.skill for link in posting_links(extract(text).as_json()) if is_direct(link)
+    )
 
 
 def is_direct_requirement() -> ColumnElement[bool]:

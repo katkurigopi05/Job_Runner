@@ -233,7 +233,11 @@ export interface BaseResumeChoice {
   version: number;
   score: number;
   reason: string;
-  considered?: { version: number; score: number }[];
+  /** `covered`: how many of the posting's direct requirements that résumé backs. */
+  considered?: { version: number; score: number; covered?: number }[];
+  /** The posting's direct requirements, and those the chosen résumé does not back. */
+  required?: string[];
+  missing?: string[];
 }
 
 export interface ReviewRecord {
