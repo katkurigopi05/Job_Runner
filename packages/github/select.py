@@ -12,6 +12,8 @@ When no direct requirements are readable, use vocabulary overlap and recency.
 from __future__ import annotations
 
 import re
+import uuid
+from collections.abc import Collection, Mapping
 from datetime import UTC, datetime
 
 from packages.core.models import Project
@@ -125,13 +127,21 @@ def substance(project: Project) -> float:
     return min(score, 1.0)
 
 
-def score(project: Project, job_text: str = "", *, now: datetime | None = None) -> float:
+def score(
+    project: Project,
+    job_text: str = "",
+    *,
+    now: datetime | None = None,
+    declared: Collection[str] | None = None,
+) -> float:
     """Weighted rank. Relevance dominates once a posting is known."""
     if job_text.strip():
         required = required_skills(job_text)
         if required:
             # One more supported requirement always beats every tie breaker.
-            matched = required.keys() & project_skills(project)
+            matched = required.keys() & (
+                project_skills(project) if declared is None else set(declared)
+            )
             tie = (
                 0.5 * relevance(project, job_text)
                 + 0.3 * recency(project, now=now)
@@ -165,9 +175,12 @@ def project_skills(project: Project) -> set[str]:
     }
 
 
-def matched_requirements(project: Project, job_text: str) -> list[str]:
+def matched_requirements(
+    project: Project, job_text: str, *, declared: Collection[str] | None = None
+) -> list[str]:
     required = required_skills(job_text)
-    return [required[key] for key in sorted(required.keys() & project_skills(project))]
+    skills = project_skills(project) if declared is None else set(declared)
+    return [required[key] for key in sorted(required.keys() & skills)]
 
 
 def select_projects(
@@ -177,6 +190,7 @@ def select_projects(
     limit: int = DEFAULT_LIMIT,
     require_description: bool = True,
     now: datetime | None = None,
+    declared: Mapping[uuid.UUID, Collection[str]] | None = None,
 ) -> list[Project]:
     """The projects to put on one résumé, best first.
 
@@ -188,10 +202,46 @@ def select_projects(
     pinned = [p for p in eligible if p.pinned]
     rest = [p for p in eligible if not p.pinned]
 
-    pinned.sort(key=lambda p: score(p, job_text, now=now), reverse=True)
-    rest.sort(key=lambda p: score(p, job_text, now=now), reverse=True)
+    def rank(project: Project) -> float:
+        return score(
+            project,
+            job_text,
+            now=now,
+            declared=None if declared is None else declared.get(project.id, ()),
+        )
+
+    pinned.sort(key=rank, reverse=True)
+    rest.sort(key=rank, reverse=True)
 
     return (pinned + rest)[:limit]
+
+
+def projects_for_posting(
+    projects: list[Project],
+    job_text: str,
+    *,
+    declared: Mapping[uuid.UUID, Collection[str]] | None = None,
+    limit: int = DEFAULT_LIMIT,
+    now: datetime | None = None,
+    embedder: Embedder | None = None,
+) -> list[Project]:
+    """Job-specific selection shared by Studio and saved-fact pipeline callers.
+
+    A supplied declaration map is authoritative, including a missing/empty
+    entry. Never replace a missing saved edge with project prose or topics.
+    Without direct requirements, preserve the existing relevance fallback.
+    """
+    required = required_skills(job_text)
+    if not required:
+        return relevant_for_posting(projects, job_text, limit=limit, now=now, embedder=embedder)
+    candidates = [
+        project
+        for project in projects
+        if project.pinned
+        or required.keys()
+        & (project_skills(project) if declared is None else set(declared.get(project.id, ())))
+    ]
+    return select_projects(candidates, job_text, limit=limit, now=now, declared=declared)
 
 
 #: Cosine above which a project counts as related to a posting despite sharing

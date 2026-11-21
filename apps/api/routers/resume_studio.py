@@ -44,6 +44,7 @@ from packages.tailor.evidence import linked_evidence
 from packages.tailor.guard import line_key
 from packages.tailor.parse import Contact, ParsedResume
 from packages.tailor.project_rewrite import validate_description, with_description
+from packages.tailor.project_selection import saved_declarations
 from packages.tailor.publish import house_options
 from packages.tailor.studio import (
     ROLE_PRESETS,
@@ -204,6 +205,7 @@ async def synthesize_draft(body: StudioRequest, session: SessionDep) -> StudioPr
         project_limit=body.project_limit,
         provider=provider,
         replace_source_projects=body.replace_source_projects,
+        declared=None if body.live_projects else await saved_declarations(session, projects),
     )
     return preview_of(draft, base_row, track).model_copy(update={"project_evidence": notice})
 

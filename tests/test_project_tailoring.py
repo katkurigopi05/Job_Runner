@@ -12,6 +12,7 @@ from docx import Document
 from packages.core.models import Project
 from packages.github.select import matched_requirements, score, select_projects
 from packages.llm.provider import StubProvider
+from packages.matching.skill_links import link_projects
 from packages.tailor.project_rewrite import rewrite_project, validate_description
 from packages.tailor.studio import RoleTrack, pick_projects, synthesize
 from packages.tailor.studio_sources import build_source
@@ -215,6 +216,8 @@ async def test_studio_preview_save_and_docx_retain_approved_prose(
     async with committing_sessionmaker() as session:
         repo = make_project(candidate_id=uuid.UUID(candidate_id), description=ORIGINAL)
         session.add(repo)
+        await session.flush()
+        await link_projects(session, uuid.UUID(candidate_id))
         await session.commit()
         project_id = str(repo.id)
     writer = Writer()

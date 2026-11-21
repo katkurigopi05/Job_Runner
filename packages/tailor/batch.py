@@ -42,7 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.enums import TailorMode
 from packages.core.models import Match, Posting, Profile, Project, Resume
-from packages.github.select import select_projects
+from packages.github.select import required_skills, select_projects
 from packages.llm import quota
 from packages.llm.provider import LLMProvider
 from packages.tailor.bullets import tailorable_bullets
@@ -50,6 +50,7 @@ from packages.tailor.cache import find_cached, tailoring_key
 from packages.tailor.dispatch import active_mode, hold_to_pdf, plan_needed_calls, tailor
 from packages.tailor.evidence import evidence_digest, linked_evidence, matched_job_terms
 from packages.tailor.parse import ParsedResume
+from packages.tailor.project_selection import saved_projects_for
 from packages.tailor.publish import publish_tailored
 from packages.tailor.targeted import NO_GAIN
 
@@ -159,25 +160,26 @@ async def run(
             result.failed += 1
             continue
 
-        project_inventory = list(
-            (
-                await session.scalars(
-                    select(Project).where(Project.candidate_id == profile.candidate_id)
-                )
-            ).all()
-        )
-        ranked_projects = select_projects(
-            project_inventory,
-            posting.description_raw or "",
-        )
-        # Exact GitHub evidence (or an explicit pin) is required here. A recent
-        # but unrelated repository should not consume résumé space merely
-        # because the inventory has fewer than four projects.
-        relevant_projects = [
-            project
-            for project in ranked_projects
-            if project.pinned or matched_job_terms(project, posting.description_raw or "")
-        ]
+        posting_text = posting.description_raw or ""
+        if required_skills(posting_text):
+            relevant_projects = await saved_projects_for(
+                session, profile.candidate_id, posting_text
+            )
+        else:
+            # Preserve the batch's original salient-term fallback. Apply's
+            # semantic fallback and Studio's role-preset fallback are separate.
+            inventory = list(
+                (
+                    await session.scalars(
+                        select(Project).where(Project.candidate_id == profile.candidate_id)
+                    )
+                ).all()
+            )
+            relevant_projects = [
+                project
+                for project in select_projects(inventory, posting_text)
+                if project.pinned or matched_job_terms(project, posting_text)
+            ]
 
         linked = await linked_evidence(session, profile.candidate_id)
         needed_calls = plan_needed_calls(
