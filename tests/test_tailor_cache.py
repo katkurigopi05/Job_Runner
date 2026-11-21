@@ -76,10 +76,10 @@ def test_attaching_a_project_is_a_different_key() -> None:
     assert _key() != _key(projects=[_project()])
 
 
-def test_project_order_does_not_change_the_key() -> None:
-    """Ranking is not part of identity; the set of projects is."""
+def test_project_order_changes_the_key() -> None:
+    """A PDF must preserve the requirement-ranked Projects section order."""
     a, b = _project("one"), _project("two")
-    assert _key(projects=[a, b]) == _key(projects=[b, a])
+    assert _key(projects=[a, b]) != _key(projects=[b, a])
 
 
 def test_editing_the_prompt_invalidates_every_entry(monkeypatch) -> None:

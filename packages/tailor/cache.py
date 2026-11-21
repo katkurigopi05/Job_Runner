@@ -26,7 +26,7 @@ the output —
   different key;
 - **the prompt**, by `TAILOR_SYSTEM.digest` — editing the prompt invalidates
   every entry without anyone remembering to;
-- **the projects attached**, by id — `packages/tailor/evidence.py` chooses
+- **the projects attached**, by ordered id — `project_selection.py` chooses
   these per posting, and a GitHub sync that adds a repository changes the
   document;
 - **the provider and model**, because the same inputs through a different model
@@ -57,7 +57,9 @@ _SEP = "\x1f"
 # Earlier output may drop facts stated only inside a bullet, or turn work in
 # progress into "developed" or "implemented" (2026-10-25). Keep it available
 # for review, but require both tailoring modes to pass the current guard.
-TAILORING_REVISION = "claim-strength-v5"
+# Saved requirement coverage also changes project order; an unordered key from
+# before this ranking must not serve a PDF in the previous order.
+TAILORING_REVISION = "saved-project-order-v6"
 
 
 def tailoring_key(
@@ -92,7 +94,7 @@ def tailoring_key(
     if not content_hash:
         return None
 
-    project_ids = sorted(str(project.id) for project in (projects or []))
+    project_ids = [str(project.id) for project in (projects or [])]
     # A targeted document must never be served as an ordinary one, or the
     # reverse, so the two modes are written under different prompts and the
     # targeted key carries the mode and the practices table: a row there
