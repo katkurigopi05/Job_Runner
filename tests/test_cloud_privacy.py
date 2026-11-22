@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import time
 from typing import Literal
 
 import pytest
@@ -448,3 +450,43 @@ async def test_damaged_stream_markers_are_not_returned_as_contact_details(
                 async for chunk in stream_text(privacy.protect_provider(Damaged()), "system", EMAIL)
             ]
         )
+
+
+#: The pattern CodeQL flagged (alert #21): its local part restarts at every
+#: character of a long run with no "@", so a long text took quadratic time.
+#: Kept here as the reference the linear reader must agree with.
+_OLD_EMAIL = re.compile(r"[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+", re.UNICODE)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "a@b.com",
+        "x..y@z.co.uk and first.last+tag@sub.example.org.",
+        "a@b@c.com",
+        "a@b.com@c.org",
+        "t@t.t@u.u",
+        "mail <alex@x.io>, (bob@y.dev)",
+        "!!!@foo.bar",
+        "user@localhost",
+        "@example.com",
+        "a@-b.com",
+        "josé@exämple.com",
+        "a@b..com",
+        "a@b.c-d.e_f",
+        "",
+    ],
+)
+def test_emails_are_found_exactly_where_the_old_pattern_found_them(text) -> None:
+    assert privacy.email_spans(text) == [m.span() for m in _OLD_EMAIL.finditer(text)]
+
+
+@pytest.mark.parametrize("filler", ["!" * 40_000, "a" * 40_000, "a." * 20_000, "@" * 40_000])
+def test_a_long_run_with_no_address_is_masked_at_once(identities, filler) -> None:
+    redactor = privacy.Redactor(identities)
+
+    started = time.perf_counter()
+    masked = redactor.mask(filler)
+
+    assert masked == filler
+    assert time.perf_counter() - started < 0.5

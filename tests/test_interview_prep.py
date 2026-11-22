@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -381,3 +383,42 @@ async def test_supplied_public_url_retains_excerpt_and_scope(monkeypatch):
     assert source.retrieved and source.level.casefold() == "senior"
     assert source.round == "system design round"
     assert "Weak match" in source.caveat
+
+
+#: The pattern CodeQL flagged (alert #27): `^\s*` and `[- ]*` both take spaces,
+#: so a long run of them took quadratic time. The reference the line reader
+#: must agree with, up to trailing whitespace before the quoted reply.
+_OLD_QUOTE = r"(?im)^\s*(?:On .+ wrote:|[- ]*Original Message[- ]*|>)"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Hi\nOn Mon, Jan 5, Alex wrote:\n> old",
+        "Body\n\n-----Original Message-----\nFrom: x",
+        "Body\n> quoted",
+        "Body\n  > indented quote",
+        "Body\n\t- Original Message\nolder",
+        "Body\nORIGINAL MESSAGE\nolder",
+        "One wrote: nothing quoted",
+        "On  wrote: too short",
+        "On Tue wrote: quoted",
+        "see the Original Message below",
+        "Body\r\n> quoted\r\n",
+        "- \t- Original Message",
+        "Nothing quoted at all",
+        "",
+    ],
+)
+def test_a_quoted_reply_is_cut_where_the_old_pattern_cut_it(text) -> None:
+    from packages.interview.plan import without_quoted_reply
+
+    expected = re.split(_OLD_QUOTE, text, maxsplit=1)[0]
+    assert without_quoted_reply(text).rstrip() == expected.rstrip()
+
+
+@pytest.mark.parametrize("text", [" " * 40_000 + "x", ("\n" + " " * 50) * 800, "- " * 20_000 + "x"])
+def test_a_long_run_of_spaces_is_read_at_once(text) -> None:
+    started = time.perf_counter()
+    suggest(text)
+    assert time.perf_counter() - started < 0.5
