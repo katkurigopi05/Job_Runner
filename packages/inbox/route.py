@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import structlog
+from sqlalchemy import exists, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -185,6 +186,7 @@ async def route_message(
     #
     # Scoped to the candidate rather than the application: a message is the
     # same message wherever it linked, and the id is what says so.
+    message_row_id = None
     if email.message_id:
         claim = (
             pg_insert(InboundMessage)
@@ -195,7 +197,8 @@ async def route_message(
             )
             .returning(InboundMessage.id)
         )
-        if await session.scalar(claim) is None:
+        message_row_id = await session.scalar(claim)
+        if message_row_id is None:
             log.debug("inbound_duplicate_skipped", message_id=email.message_id)
             routing.unrouted_reason = "already recorded"
             return routing
@@ -262,7 +265,21 @@ async def route_message(
     if routing.outcome_set in ("interview", "assessment"):
         from packages.tracking.tasks import ensure_task_for_outcome
 
-        await ensure_task_for_outcome(session, application, routing.outcome_set)
+        # A redelivery can acquire a new Message-ID. Identical invitation content
+        # remains the same event, even after the owner completed the old task.
+        duplicate = message_row_id and await session.scalar(
+            select(
+                exists().where(
+                    InboundMessage.id != message_row_id,
+                    InboundMessage.application_id == application.id,
+                    InboundMessage.classification == verdict.classification.value,
+                    InboundMessage.subject == email.subject,
+                    InboundMessage.body == email.body,
+                )
+            )
+        )
+        if not duplicate:
+            await ensure_task_for_outcome(session, application, routing.outcome_set)
 
     await session.flush()
     log.info(

@@ -9,6 +9,7 @@ import { api, type CrawlStop, type QueueStart, type WorkerControls } from "@/lib
 const WORKER_KIND_GROUPS: { label: string; kinds: string[] }[] = [
   { label: "Crawl", kinds: ["crawl", "crawl_company"] },
   { label: "Discovery", kinds: ["discover", "discover_company", "deep_dive_company"] },
+  { label: "Interview prep", kinds: ["interview_prep"] },
   { label: "Apply", kinds: ["apply"] },
   { label: "Rescore", kinds: ["rescore"] },
   { label: "Inbox", kinds: ["inbox"] },
@@ -130,6 +131,7 @@ export function MatchControls() {
       "deep_dive_company",
       "discover",
       "inbox",
+      "interview_prep",
     ],
   );
 

@@ -97,13 +97,15 @@ def test_postings_share_one_tab_and_forms_get_a_new_one_with_no_way_back() -> No
         "globalThis.window = { open: (...args) => { calls.push(args); return null; } };"
         "ext.openApplyForm('https://boards.example/acme/apply');"
         "ext.openDocument('/api/resumes/1/download');"
-        "console.log(JSON.stringify({posting: ext.POSTING_LINK, apply: ext.APPLY_LINK, calls}));"
+        "console.log(JSON.stringify({posting: ext.POSTING_LINK, apply: ext.APPLY_LINK,"
+        " citation: ext.CITATION_LINK, calls}));"
     )
 
     # No `rel` on purpose: a tab opened with noopener is not found by name
     # again, so every click opened a new tab (measured in Chromium).
     assert result["posting"] == {"target": "jobrunner-form"}
     assert result["apply"] == {"target": "_blank", "rel": "noopener noreferrer"}
+    assert result["citation"] == result["apply"]
     assert result["calls"] == [
         ["https://boards.example/acme/apply", "_blank", "noopener,noreferrer"],
         ["/api/resumes/1/download", "jobrunner-doc"],
@@ -142,6 +144,10 @@ def test_a_posting_link_opens_in_the_posting_tab(name: str) -> None:
 @pytest.mark.parametrize("name", APPLY_LINKS)
 def test_an_application_form_link_opens_a_new_tab(name: str) -> None:
     assert "{...APPLY_LINK}" in SOURCES[name]
+
+
+def test_an_interview_citation_uses_an_isolated_tab() -> None:
+    assert "{...CITATION_LINK}" in SOURCES["app/applications/[id]/interview/interview.tsx"]
 
 
 @pytest.mark.parametrize("name", APPLY_BUTTONS)

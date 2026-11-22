@@ -25,6 +25,8 @@ LLM_TASK_COVER_LETTER=stub
 LLM_TASK_OPEN_ENDED=stub
 EMBEDDING_BACKEND=lexical
 VECTOR_BACKEND=pgvector
+QWEN_VECTOR_BACKEND=pgvector
+INTERVIEW_QWEN_EMBEDDINGS=false
 STORAGE_ROOT=$demo_root
 VAULT_ROOT=$demo_root/.secrets
 KAGGLE_CONNECTION_FILE=$demo_root/kaggle-connection.json
@@ -34,11 +36,18 @@ EOF
 export JOBRUNNER_ENV_FILE="$demo_root/demo.env"
 # Ignore credentials/URL overrides inherited from an owner's development shell.
 unset DATABASE_URL MAINTENANCE_DATABASE_URL AUTO_SUBMIT STORAGE_ROOT VAULT_ROOT LLM_PROVIDER VECTOR_BACKEND
+unset QWEN_VECTOR_BACKEND INTERVIEW_QWEN_EMBEDDINGS INTERVIEW_BRAVE_API_KEY
+export JOBRUNNER_WORKER_CONTROLS_FILE="$demo_root/worker-controls.json"
 .venv/bin/alembic upgrade head
 .venv/bin/python -m scripts.seed_demo
 printf '\nDemo database: jobrunner_demo (separate from your real profile).\n'
 printf 'Explore /matches, /review, and /tracker on the dashboard.\n'
-printf 'No worker is started. Ctrl-C stops the API and dashboard.\n'
+if [ "${DEMO_INTERVIEW:-0}" = 1 ]; then
+    .venv/bin/python -m scripts.seed_interview
+    printf 'Only the interview prep worker is enabled. Ctrl-C stops the demo processes.\n'
+else
+    printf 'No worker is started. Ctrl-C stops the API and dashboard.\n'
+fi
 if [ "${DEMO_PREPARE_ONLY:-0}" = 1 ]; then exit 0; fi
 api_port=${DEMO_API_PORT:-8000}
 web_port=${DEMO_WEB_PORT:-3001}
@@ -58,5 +67,10 @@ printf 'Demo dashboard: http://127.0.0.1:%s\n' "$web_port"
 api_pid=$!
 (cd apps/web && npm run dev) &
 web_pid=$!
-trap 'kill "$api_pid" "$web_pid" 2>/dev/null || true' EXIT INT TERM
-wait "$api_pid" "$web_pid"
+demo_pids=("$api_pid" "$web_pid")
+trap 'kill "${demo_pids[@]}" 2>/dev/null || true' EXIT INT TERM
+if [ "${DEMO_INTERVIEW:-0}" = 1 ]; then
+    WORKER_ID=interview-demo .venv/bin/python -m apps.worker.run --only interview_prep &
+    demo_pids+=("$!")
+fi
+wait "${demo_pids[@]}"

@@ -183,3 +183,141 @@ async def test_unsynced_redis_fails_visibly(db_session, redis_index):
         await search(
             db_session, vector(), "synthetic", backend="redis_hnsw", client=client, index=index
         )
+
+
+async def test_qwen_posting_sync_resume_update_delete(db_session, redis_index):
+    from sqlalchemy import update
+
+    from packages.core.models_chunks import PostingChunkVector
+    from packages.matching import qwen_redis
+    from packages.matching.chunk_vectors import QWEN_4B
+    from packages.matching.chunks import OVERLAP
+
+    client, index = redis_index
+    company = Company(name="Qwen cache benchmark fixture")
+    db_session.add(company)
+    await db_session.flush()
+    posting = Posting(
+        url="https://vector.example.com/qwen", company_id=company.id, content_hash="x"
+    )
+    db_session.add(posting)
+    await db_session.flush()
+    chunks = [
+        PostingChunk(
+            posting_id=posting.id,
+            ordinal=index_,
+            start=index_ * 20,
+            length=20,
+            content_hash="x",
+            overlap=OVERLAP,
+            embedding_model="fixture-small",
+            embedding=vector(),
+        )
+        for index_ in range(3)
+    ]
+    db_session.add_all(chunks)
+    await db_session.flush()
+    values = [[1.0, y] + [0.0] * 2558 for y in (0.0, 0.1, 0.4)]
+    db_session.add_all(
+        [
+            PostingChunkVector(chunk_id=chunk.id, embedding_model=QWEN_4B, embedding=embedding)
+            for chunk, embedding in zip(chunks, values, strict=True)
+        ]
+    )
+    await db_session.flush()
+    one = await qwen_redis.sync(db_session, client, index=index, batch_size=1, max_batches=1)
+    assert one["scanned"] == one["written"] == 1 and not one["complete"]
+    two = await qwen_redis.sync(db_session, client, index=index, batch_size=1)
+    assert two["scanned"] == two["written"] == 2 and two["complete"]
+    kwargs = {"filters": Filters(companies=(company.id,)), "client": client, "index": index}
+    exact = await qwen_redis.search(db_session, values[0], **kwargs)
+    approx = await qwen_redis.search(db_session, values[0], redis=True, **kwargs)
+    assert exact == approx and len(approx) == 3
+
+    await db_session.execute(update(Posting).where(Posting.id == posting.id).values(is_remote=True))
+    synced = await qwen_redis.sync(db_session, client, index=index)
+    assert synced["written"] == 3
+    await db_session.delete(chunks[0])
+    await db_session.flush()
+    stale = await qwen_redis.search(db_session, values[0], redis=True, **kwargs)
+    assert len(stale) == 2
+    assert (await qwen_redis.sync(db_session, client, index=index))["deleted"] == 1
+    result = await qwen_redis.sync(db_session, client, index=index, rebuild=True)
+    assert result["complete"] and result["written"] == 2
+
+
+async def test_qwen_evidence_filters_and_deletion(db_session, redis_index):
+    from packages.core.models import Application, Candidate, Profile, User
+    from packages.core.models_interview import InterviewPlan, InterviewRound, InterviewVector
+    from packages.interview import retrieval
+    from packages.matching.chunk_vectors import QWEN_4B
+
+    client, index = redis_index
+    user = User(email="qwen-cache@example.com")
+    db_session.add(user)
+    await db_session.flush()
+    candidate = Candidate(user_id=user.id, name="Cache fixture", email="cache@example.com")
+    company = Company(name="Qwen evidence fixture")
+    db_session.add_all([candidate, company])
+    await db_session.flush()
+    profile = Profile(candidate_id=candidate.id, label="Fixture")
+    posting = Posting(url="https://cache.example.com/job", company_id=company.id)
+    db_session.add_all([profile, posting])
+    await db_session.flush()
+    apps = [
+        Application(
+            candidate_id=candidate.id,
+            profile_id=profile.id,
+            posting_id=posting.id,
+            url=f"https://cache.example.com/{number}",
+        )
+        for number in range(2)
+    ]
+    db_session.add_all(apps)
+    await db_session.flush()
+    rounds = [InterviewRound(application_id=app.id) for app in (apps[0], apps[0], apps[1])]
+    db_session.add_all(rounds)
+    await db_session.flush()
+    vector = [1.0] + [0.0] * 2559
+    for number, round_ in enumerate(rounds):
+        plan = InterviewPlan(
+            round_id=round_.id,
+            request_id=uuid.uuid4(),
+            inputs={},
+            progress={},
+            status="local",
+        )
+        db_session.add(plan)
+        await db_session.flush()
+        db_session.add(
+            InterviewVector(
+                id=uuid.uuid4(),
+                plan_id=plan.id,
+                source_id=f"source-{number}",
+                kind="project",
+                model=QWEN_4B,
+                embedding=vector,
+            )
+        )
+    await db_session.flush()
+    batches = await retrieval.sync(db_session, client, index=index, batch_size=1, max_batches=2)
+    assert batches["scanned"] == 2 and not batches["complete"]
+    finished = await retrieval.sync(db_session, client, index=index)
+    assert finished["scanned"] == 1 and finished["complete"]
+    kwargs = {"application_id": apps[0].id, "client": client, "index": index}
+    for use_redis in (False, True):
+        visible = await retrieval.search(db_session, vector, redis=use_redis, **kwargs)
+        assert {source for _, source in visible} == {"source-0", "source-1"}
+        scoped = await retrieval.search(
+            db_session,
+            vector,
+            redis=use_redis,
+            **kwargs,
+            round_id=rounds[1].id,
+            company_id=company.id,
+        )
+        assert [source for _, source in scoped] == ["source-1"]
+    await db_session.delete(rounds[1])
+    await db_session.flush()
+    assert len(await retrieval.search(db_session, vector, redis=True, **kwargs)) == 1
+    assert (await retrieval.sync(db_session, client, index=index))["deleted"] == 1

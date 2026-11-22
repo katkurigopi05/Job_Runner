@@ -33,6 +33,7 @@ from packages.ats.answers import asks_for_cover_letter, build_answers
 from packages.ats.base import (
     FillReport,
     ManualCompletionRequired,
+    ParsedPosting,
     PostingGone,
     Question,
     SiteError,
@@ -47,12 +48,14 @@ from packages.core.enums import ApplicationStatus, FailureReason, TailorMode
 from packages.core.models import (
     Application,
     Candidate,
+    Company,
     Match,
     Posting,
     Profile,
     Project,
     Resume,
 )
+from packages.core.models_jobs import PostingVersion
 from packages.core.queue import ClaimedTask
 from packages.core.state import WorkClaim, begin_work, transition
 from packages.core.storage import get_storage, receipt_key
@@ -256,12 +259,13 @@ async def _run_pipeline(
         # letter.
         letter = await _cover_letter(session, application, profile, posting, questions)
 
+        resume_path, resume = await _resume_upload(session, application, profile)
         answers = build_answers(
             questions,
             candidate,
             profile,
             extra=owner_answers,
-            resume_path=await _resume_path(session, application, profile),
+            resume_path=resume_path,
             cover_letter_text=(letter or {}).get("text"),
             cover_letter_path=_letter_path(application),
             reply_to=_reply_to(candidate, application),
@@ -271,6 +275,17 @@ async def _run_pipeline(
         )
         report = await adapter.fill(page, answers)
 
+        source = {}
+        if resume is not None and any(
+            field.kind.value == "file" and answers.get(field.key) == resume_path
+            for field in report.filled
+        ):
+            source["resume"] = {
+                "id": str(resume.id),
+                "version": resume.version,
+                "parsed": resume.parsed_json,
+            }
+        source["posting"] = await _submission_posting(session, application, posting)
         report.screenshot_ref = await _capture(page, application, "filled-form.png")
 
         await _decide(
@@ -283,6 +298,7 @@ async def _run_pipeline(
             diff,
             screening=screening,
             cover_letter=letter,
+            submission_sources=source,
         )
 
 
@@ -310,6 +326,35 @@ async def _review_github_code(
     }
 
 
+async def _submission_posting(
+    session: AsyncSession,
+    application: Application,
+    posting: ParsedPosting,
+) -> dict[str, Any]:
+    saved = await session.get(Posting, application.posting_id) if application.posting_id else None
+    company = await session.get(Company, saved.company_id) if saved and saved.company_id else None
+    version = None
+    if saved and saved.description_raw == posting.description_raw and saved.content_hash:
+        version = await session.scalar(
+            select(PostingVersion.version)
+            .where(
+                PostingVersion.posting_id == saved.id,
+                PostingVersion.content_hash == saved.content_hash,
+            )
+            .order_by(PostingVersion.version.desc())
+            .limit(1)
+        )
+    return {
+        "id": str(saved.id) if saved else application.url,
+        "version": version,
+        "description": posting.description_raw,
+        "role": posting.title,
+        "location": posting.location,
+        "company": posting.company or (company.name if company else None),
+        "company_domain": company.domain if company else None,
+    }
+
+
 async def _posting_hash(session: AsyncSession, application: Application) -> str | None:
     """The stored posting's content hash, when the application names one.
 
@@ -327,6 +372,13 @@ async def _posting_hash(session: AsyncSession, application: Application) -> str 
 async def _resume_path(
     session: AsyncSession, application: Application, profile: Profile
 ) -> str | None:
+    path, _ = await _resume_upload(session, application, profile)
+    return path
+
+
+async def _resume_upload(
+    session: AsyncSession, application: Application, profile: Profile
+) -> tuple[str | None, Resume | None]:
     """Absolute path of the résumé to upload — the tailored one when there is one.
 
     The tailored document is the point of Phase 3. Uploading the base résumé
@@ -354,9 +406,9 @@ async def _resume_path(
             continue
         if kind == "base" and application.tailored_resume_id is not None:
             log.warning("uploading_base_resume_tailored_file_unusable")
-        return str(path)
+        return str(path), resume
 
-    return None
+    return None, None
 
 
 async def _prepared_resume(
@@ -1040,6 +1092,7 @@ async def _decide(
     resume_diff: dict[str, Any] | None = None,
     screening: ScreenReport | None = None,
     cover_letter: dict[str, Any] | None = None,
+    submission_sources: dict[str, Any] | None = None,
 ) -> None:
     """Park for review, or submit — the approval gate.
 
@@ -1098,7 +1151,7 @@ async def _decide(
     # AUTO_SUBMIT and the score threshold govern submitting *without* a human,
     # and re-applying them here would park an approved application forever.
     if (application.review_json or {}).get("owner_approved"):
-        await _submit(session, application, adapter, page)
+        await _submit(session, application, adapter, page, submission_sources=submission_sources)
         return
 
     # A knock-out is a question whose honest answer from this profile likely
@@ -1150,7 +1203,7 @@ async def _decide(
         )
         return
 
-    await _submit(session, application, adapter, page)
+    await _submit(session, application, adapter, page, submission_sources=submission_sources)
 
 
 async def _submit(
@@ -1158,6 +1211,8 @@ async def _submit(
     application: Application,
     adapter: Any,
     page: Any,
+    *,
+    submission_sources: dict[str, Any] | None = None,
 ) -> None:
     """Send the form and record the receipt. The only path that submits.
 
@@ -1329,6 +1384,7 @@ async def _submit(
         fence.state = "submitted"
         fence.confirmed_at = datetime.now(UTC)
         application.receipt_json = receipt.model_dump()
+        application.submission_sources = submission_sources
         await transition(
             session,
             application,

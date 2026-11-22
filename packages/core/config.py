@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from packages.core.database_access import async_database_url
@@ -423,12 +423,15 @@ class Settings(BaseSettings):
     # Optional acceleration for 384-dimensional posting chunks. PostgreSQL
     # remains authoritative; bounded keyword re-ranking stays exact.
     vector_backend: Literal["pgvector", "pgvector_hnsw", "redis_hnsw"] = "pgvector"
+    qwen_vector_backend: Literal["pgvector", "redis_hnsw"] = "pgvector"
+    interview_qwen_embeddings: bool = False
     redis_url: str = "redis://127.0.0.1:6379/0"
     vector_ef_search: int = Field(default=100, ge=10, le=10000)
     kaggle_qwen27_dataset: str | None = None
 
     #: Optional second Kaggle call, validated before exposure. Off by default.
     chat_kaggle_prose: bool = False
+    interview_brave_api_key: SecretStr | None = None
 
     #: A second model that re-orders the assistant's top search results
     #: (`matching/rerank.py`): an embedding model or a cross-encoder, and the
