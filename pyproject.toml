@@ -54,6 +54,12 @@ dependencies = [
     # of noun phrases, and a lowercase claim like "machine learning" is
     # invisible. The tagger *data* is a separate download — `make nltk-data`.
     "nltk>=3.9",
+    # Opt-in LangGraph pilot for resumable Resume Studio GitHub code-evidence
+    # checks (packages/tailor/studio_pilot.py). Uses a local PostgreSQL
+    # checkpointer only; no hosted LangSmith or cloud tracing.
+    "langgraph>=1.0,<2",
+    "langgraph-checkpoint-postgres>=3.0,<4",
+    "psycopg[binary,pool]>=3.2,<4",
 ]
 
 [project.optional-dependencies]

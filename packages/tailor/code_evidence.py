@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from packages.core.models import Project
 from packages.github.code_search import CodeFinding, SearchResult, search_code
 from packages.matching.experience import Demand, heading_kind, read_posting
-from packages.matching.requirements import Requirement, extract
+from packages.matching.requirements import Requirement, SkillMention, extract
 from packages.matching.skill_vocab import CODE_SKILLS, find_skills
 from packages.tailor.guard import SourceCorpus, entry_key, project_names
 from packages.tailor.parse import ParsedResume
@@ -94,8 +94,9 @@ def add_linked_claim(
     return True
 
 
-async def retrieve_evidence(job_description: str, projects: Sequence[Project]) -> SearchResult:
-    requirements = sorted(
+def extract_code_requirements(job_description: str) -> list[SkillMention]:
+    """Order extracted code skills identically for Studio and the LangGraph pilot."""
+    return sorted(
         extract(job_description, vocabulary=CODE_SKILLS).skills,
         key=lambda need: (
             need.requirement is not Requirement.REQUIRED or need.option,
@@ -103,7 +104,10 @@ async def retrieve_evidence(job_description: str, projects: Sequence[Project]) -
             need.skill not in {"aws_lambda", "fastapi", "kubernetes", "docker", "cicd"},
         ),
     )
-    return await search_code(projects, requirements)
+
+
+async def retrieve_evidence(job_description: str, projects: Sequence[Project]) -> SearchResult:
+    return await search_code(projects, extract_code_requirements(job_description))
 
 
 def review_evidence(

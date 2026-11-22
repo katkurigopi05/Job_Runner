@@ -58,6 +58,10 @@ class GitHubError(Exception):
     """The API call failed or was refused."""
 
 
+class TransientGitHubError(GitHubError):
+    """A transient upstream GitHub failure (5xx) that can be retried."""
+
+
 class RateLimited(GitHubError):
     """Out of API quota. Unauthenticated is 60/hour."""
 
@@ -251,4 +255,6 @@ class GitHubClient:
             raise GitHubError("GitHub account or endpoint not found")
         if response.status_code == 401:
             raise GitHubError("GITHUB_TOKEN was rejected")
+        if response.status_code in {500, 502, 503, 504}:
+            raise TransientGitHubError(f"GitHub returned {response.status_code}")
         raise GitHubError(f"GitHub returned {response.status_code}")
