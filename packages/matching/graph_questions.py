@@ -1,4 +1,4 @@
-"""Complete graph questions, projects or skill gaps, with one place, employer, role or topic suffix.
+"""Complete graph questions with a place, role, role and place, employer, or topic.
 
 A topic ("related to RAG pipelines", "about retrieval systems") is found by
 meaning: the topic is embedded on this machine with Qwen3-Embedding-4B and the
@@ -153,12 +153,39 @@ def _role_words(suffix: str) -> str | None:
     return None
 
 
+def _place_label(place: str) -> str:
+    return "in the Bay Area" if place == "Bay Area" else f"in {place}"
+
+
+def _role_and_place(suffix: str) -> GraphConstraint | None:
+    """Read both clauses in either order, requiring a complete role and place."""
+    suffix = suffix.lower()
+    if suffix.startswith("for "):
+        role_clause, separator, where = suffix.rpartition(" in ")
+    elif suffix.startswith("in "):
+        where, separator, role_tail = suffix.removeprefix("in ").rpartition(" for ")
+        role_clause = f"for {role_tail}"
+    else:
+        return None
+    if (
+        separator
+        and (role_words := _role_words(role_clause))
+        and (role := roles.exact_role(role_words))
+        and (place := locality.explicit_place_name(where))
+    ):
+        return GraphConstraint(
+            f"for {roles.display_name(role)} roles {_place_label(place)}", place=place, role=role
+        )
+    return None
+
+
 async def _constraint(suffix: str, session: AsyncSession | None) -> GraphConstraint | None:
-    """The one place, employer, role or topic a whole suffix names, else None."""
+    """Read the entire suffix as one supported constraint or a role and place."""
+    if compound := _role_and_place(suffix):
+        return compound
     if (where := _after(suffix, "in ")) is not None:
         if place := locality.explicit_place_name(where):
-            label = "in the Bay Area" if place == "Bay Area" else f"in {place}"
-            return GraphConstraint(label, place=place)
+            return GraphConstraint(_place_label(place), place=place)
     elif (role_words := _role_words(suffix)) is not None:
         if role := roles.exact_role(role_words):
             return GraphConstraint(f"for {roles.display_name(role)} roles", role=role)
