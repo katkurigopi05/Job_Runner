@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { StudioCodeApproval, StudioCodeReview } from "@/lib/studio-api";
+import { SOURCE_LINK } from "@/lib/external";
 
 export function CodeEvidenceReview({
   review,
@@ -45,7 +46,7 @@ export function CodeEvidenceReview({
                   return (
                     <li key={id} className="text-xs text-ink-soft">
                       {finding.permalink ? (
-                        <a className="underline" href={finding.permalink} target="_blank" rel="noreferrer">
+                        <a className="underline" href={finding.permalink} {...SOURCE_LINK}>
                           {location}
                         </a>
                       ) : <span>{location}</span>}

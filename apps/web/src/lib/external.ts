@@ -48,6 +48,9 @@ export const POSTING_LINK = { target: POSTING_WINDOW } as const;
 /** `<a {...APPLY_LINK}>`: a new tab for an application form, with no way back. */
 export const APPLY_LINK = { target: "_blank", rel: "noopener noreferrer" } as const;
 
+/** A cited source opens independently, with the same opener isolation as a form. */
+export const SOURCE_LINK = APPLY_LINK;
+
 /** `APPLY_LINK` for a button. */
 export function openApplyForm(url: string): void {
   window.open(url, "_blank", "noopener,noreferrer");
