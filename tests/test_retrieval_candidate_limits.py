@@ -22,9 +22,10 @@ import pytest
 
 from packages.core.config import Settings, get_settings
 from packages.core.models import Company, CorpusStats, Posting
-from packages.core.models_chunks import PostingChunk
+from packages.core.models_chunks import LARGE_EMBEDDING_DIM, PostingChunk, PostingChunkVector
+from packages.matching import chunk_search, query_vectors
 from packages.matching import retrieve as R
-from packages.matching.embed import EMBEDDING_DIM, SentenceTransformerEmbedder
+from packages.matching.chunk_vectors import QWEN_4B
 from tests.test_chat_cross_encoder import WordJudge
 
 NOW = datetime.now(UTC)
@@ -33,9 +34,15 @@ OLDER = NOW - timedelta(days=30)
 ABROAD = "UK - London"
 HERE = "San Francisco, CA"
 
-#: A chunk at the question, and one a little way from it.
-NEAREST = [1.0] + [0.0] * (EMBEDDING_DIM - 1)
-FARTHER = [0.8, 0.6] + [0.0] * (EMBEDDING_DIM - 2)
+#: Chunks of each foreign posting in the vector tests: 45 of them hold 810,
+#: more than the 800 the Qwen search reads first for a 200-chunk window
+#: (`chunk_search.SHORTLIST_FACTOR`, with the floor `chunk_space` lowers), so
+#: it has to read on past them.
+FOREIGN_CHUNKS = 18
+
+#: A chunk at the question, and one a little way from it, in Qwen's space.
+NEAREST = [1.0] + [0.0] * (LARGE_EMBEDDING_DIM - 1)
+FARTHER = [0.8, 0.6] + [0.0] * (LARGE_EMBEDDING_DIM - 2)
 
 
 @pytest.fixture(autouse=True)
@@ -50,25 +57,27 @@ def standing_area(monkeypatch):
     get_settings.cache_clear()
 
 
-class AtTheQuestion:
-    """Encodes every question to `NEAREST`. No model is loaded."""
-
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        return [list(NEAREST) for _ in texts]
-
-
 @pytest.fixture
 def chunk_space(monkeypatch):
-    """Questions encode into the bge-small chunk space, and nothing else."""
-    monkeypatch.setattr(
-        R,
-        "_encoders",
-        lambda spaces, *_: {
-            space: AtTheQuestion()
-            for space in spaces
-            if space[0] == SentenceTransformerEmbedder.name
-        },
-    )
+    """Questions embed into Qwen's chunk space at `NEAREST`. No model is loaded.
+
+    The Qwen shortlist's floor of 2,000 chunks is lowered to bge-small's old
+    200-chunk scan, so a first read is four times the window (800) and
+    `FOREIGN_CHUNKS` can fill it. Undone with the rest by `standing_area`,
+    which shares this monkeypatch.
+    """
+
+    async def embed(question, *, keep_alive=None):
+        return query_vectors.QueryVector(QWEN_4B, "fake-qwen", tuple(NEAREST), 0.0)
+
+    async def released():
+        pass
+
+    monkeypatch.setenv("CHAT_QWEN_SEARCH", "true")
+    get_settings.cache_clear()
+    monkeypatch.setattr(query_vectors, "embed_question", embed)
+    monkeypatch.setattr(query_vectors, "unload_embedder", released, raising=False)
+    monkeypatch.setattr(chunk_search, "SHORTLIST_CHUNKS", R._CHUNK_POOL)
 
 
 async def _company(session, name: str = "Acme") -> Company:
@@ -92,7 +101,7 @@ async def _postings(
 ) -> list[Posting]:
     """`count` postings, newest first. `{n}` in the title is the posting's number.
 
-    With `chunks`, each gets that many chunk vectors at `vector`.
+    With `chunks`, each gets that many chunks, each with a Qwen vector at `vector`.
     """
     made = [
         Posting(
@@ -110,18 +119,22 @@ async def _postings(
     session.add_all(made)
     await session.flush()
     if chunks:
-        session.add_all(
+        cut = [
             PostingChunk(
                 posting_id=posting.id,
                 ordinal=ordinal,
                 start=0,
                 length=len(body),
                 content_hash="h1",
-                embedding_model=SentenceTransformerEmbedder.name,
-                embedding=list(vector),
             )
             for posting in made
             for ordinal in range(chunks)
+        ]
+        session.add_all(cut)
+        await session.flush()
+        session.add_all(
+            PostingChunkVector(chunk_id=chunk.id, embedding_model=QWEN_4B, embedding=list(vector))
+            for chunk in cut
         )
         await session.flush()
     return made
@@ -252,9 +265,9 @@ async def test_vectors_alone_reach_an_in_area_posting_below_the_chunk_pool(
     db_session, chunk_space
 ) -> None:
     """No word of the question is rare enough to search for, and none is in a
-    title, so vectors answer (§14). Five chunks each from 45 foreign postings
-    are nearer than the one posting here: past both the 200-chunk scan and
-    the 40 postings it is cut to."""
+    title, so vectors answer (§14). Eighteen chunks each from 45 foreign
+    postings are nearer than the one posting here: past the 800 chunks the
+    Qwen shortlist reads first, and the 40 postings it is cut to."""
     db_session.add(
         CorpusStats(revision=1, total_documents=100, counts_json={"data": 90, "engineering": 90})
     )
@@ -267,7 +280,7 @@ async def test_vectors_alone_reach_an_in_area_posting_below_the_chunk_pool(
         location=ABROAD,
         title="Pipeline Specialist {n}",
         body=body,
-        chunks=5,
+        chunks=FOREIGN_CHUNKS,
     )
     (here,) = await _postings(
         db_session,
@@ -291,10 +304,14 @@ async def test_semantic_candidates_reach_an_in_area_posting_below_the_chunk_pool
     db_session, chunk_space, monkeypatch
 ) -> None:
     """The experiment (`CHAT_SEMANTIC_CANDIDATES`) read the 200 nearest
-    chunks of the whole corpus and only then the area."""
-    settings = Settings(_env_file=None, chat_semantic_candidates=True)
+    chunks of the whole corpus and only then the area. It joins what the
+    keywords found, so they find one posting here."""
+    settings = Settings(_env_file=None, chat_semantic_candidates=True, chat_qwen_search=True)
     monkeypatch.setattr(R, "get_settings", lambda: settings)
     company = await _company(db_session)
+    (literal,) = await _postings(
+        db_session, company, 1, location=HERE, title="Records Clerk", body="Grounding answers."
+    )
     body = "Build retrieval systems."
     await _postings(
         db_session,
@@ -303,7 +320,7 @@ async def test_semantic_candidates_reach_an_in_area_posting_below_the_chunk_pool
         location=ABROAD,
         title="Search Engineer {n}",
         body=body,
-        chunks=5,
+        chunks=FOREIGN_CHUNKS,
     )
     (here,) = await _postings(
         db_session,
@@ -319,7 +336,7 @@ async def test_semantic_candidates_reach_an_in_area_posting_below_the_chunk_pool
 
     found = await R.retrieve(db_session, "jobs grounding answers")
 
-    assert _shown(found) == [here.id]
+    assert _shown(found) == [literal.id, here.id]
 
 
 async def test_a_judge_is_handed_an_in_area_posting_below_the_unfound_pool(

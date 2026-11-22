@@ -53,8 +53,6 @@ async def _posting(session, body: str = BODY, *, chunked: bool = True) -> Postin
                     start=start,
                     length=length,
                     content_hash=posting.content_hash,
-                    embedding_model="sentence-transformers",
-                    embedding=[0.0] * 384,
                     overlap=OVERLAP,
                 )
             )

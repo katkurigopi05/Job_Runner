@@ -92,7 +92,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.config import get_settings
 from packages.core.models import Application, Company, Posting
-from packages.core.models_chunks import PostingChunk
 from packages.matching import chunk_search, idf, skill_links, tiers
 from packages.matching.chunk_search import Space
 from packages.matching.eligibility import Sponsorship
@@ -293,11 +292,6 @@ skill skills skilled needs needed needing them
 target targets targeted targeting
 """
 _FRAMING_WORDS = _POSTING_WORDS | frozenset(_FRAMING_WORDS_TEXT.split())
-
-#: bge's documented instruction for a short query against longer passages.
-#: Used on chunk searches only, where it was measured: with it, "RAG" found 4
-#: of the top 10 chunked postings.
-_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 #: Chunks read first per chunk-level search before keeping the best per
 #: posting. A posting has about fourteen, so this leaves room for `limit`
@@ -844,23 +838,6 @@ def _encode(
         for space, encoder in encoders.items()
         if any(vector := encoder.encode([subject])[0])
     }
-
-
-def _encode_chunk_queries(
-    encoders: dict[tuple[str, int | None], Embedder], subject: str
-) -> dict[str, list[float]]:
-    """The subject's vector per chunk model, with bge's search prefix where it applies."""
-    if not subject:
-        return {}
-    out: dict[str, list[float]] = {}
-    for (model, _), encoder in encoders.items():
-        text = (
-            _QUERY_PREFIX + subject if isinstance(encoder, SentenceTransformerEmbedder) else subject
-        )
-        vector = encoder.encode([text])[0]
-        if any(vector):
-            out[model] = vector
-    return out
 
 
 def _term_pattern(term: str) -> str:
@@ -2335,7 +2312,6 @@ async def _nearest_unfound(
         return not (in_area and _outside_area(hit)) and (in_place is None or in_place(hit))
 
     spans: dict[uuid.UUID, tuple[int, int]] = {}
-    hits: dict[uuid.UUID, _Hit] = {}
     per_space: list[list[_Hit]] = []
     for model, vector in chunk_vectors.items():
         # Read until `want` are in the area, not the first 200 and then the
@@ -2353,12 +2329,7 @@ async def _nearest_unfound(
         per_space.append([hit for hit in read if counts(hit)])
         for hit in read:
             spans.setdefault(hit.posting_id, nearest[hit.posting_id])
-            hits.setdefault(hit.posting_id, hit)
-    kept = (
-        chunk_search.interleave(per_space, key=lambda hit: hit.posting_id)
-        if any(isinstance(space, chunk_search.ChunkSpace) for space in chunk_vectors)
-        else [hits[posting_id] for posting_id in spans if counts(hits[posting_id])]
-    )[:want]
+    kept = chunk_search.interleave(per_space, key=lambda hit: hit.posting_id)[:want]
     return kept, {hit.posting_id: spans[hit.posting_id] for hit in kept}
 
 
@@ -2448,13 +2419,7 @@ async def _semantic_candidates(
     `_best_chunks` also excludes closed postings and stale chunks. Lexical
     hashes cannot recover semantic paraphrases and are deliberately excluded.
     """
-    spaces = [
-        space
-        for space in chunk_vectors
-        if space == SentenceTransformerEmbedder.name
-        or isinstance(space, chunk_search.ChunkSpace)
-        and space.model in {SentenceTransformerEmbedder.name, chunk_search.QWEN_4B}
-    ]
+    spaces = list(chunk_vectors)
     away: dict[uuid.UUID, bool] = {}
 
     def counts(hit: _Hit) -> bool:
@@ -3007,15 +2972,11 @@ async def _retrieve(
     subject = " ".join(subject_terms)
     vectors = await asyncio.to_thread(_encode, encoders, subject)
 
-    # Chunk vectors, where the corpus has them (`matching/chunks.py`): one
-    # posting is about fourteen 500-character windows, so a skill named in the
-    # requirements is visible here and not to the posting's single vector.
-    chunk_models = [] if strict else await _chunk_models(session)
-    chunk_encoders = await asyncio.to_thread(
-        _encoders, [(str(model), None) for model in chunk_models], frequencies, active_revision
-    )
-    keyword_vectors = await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, subject)
-    chunk_vectors: dict[Space, list[float]] = {model: v for model, v in keyword_vectors.items()}
+    # Chunk vectors (`matching/chunks.py`): one posting is about seventeen
+    # 500-character windows, so a skill named in the requirements is visible
+    # there and not to the posting's single vector. Chunks have Qwen vectors
+    # only, made from the question when a stage first needs them (`discovery`).
+    chunk_vectors: dict[Space, list[float]] = {}
     chunk_queries = chunk_search.ChunkQueries(chunk_vectors)
     discovery_queries: chunk_search.ChunkQueries | None = None
 
@@ -3023,7 +2984,6 @@ async def _retrieve(
         nonlocal discovery_queries, chunk_queries
         if discovery_queries is None:
             discovery_queries = await search.queries(
-                await asyncio.to_thread(_encode_chunk_queries, chunk_encoders, question),
                 question,
                 enabled=chunk_search.qwen_enabled(get_settings()),
                 session=session,
@@ -3351,7 +3311,11 @@ async def _retrieve(
             get_settings().chat_semantic_candidates
             and role_pool is None
             and not only_names_a_company
-            and (bool(keyword) or not chunk_search.qwen_enabled(get_settings()))
+            # Only beside what the keywords found (§20), and only by Qwen: the
+            # chunk vectors are Qwen's, and bge-small's, which once filled an
+            # empty keyword pool here, went on 2026-11-22.
+            and bool(keyword)
+            and chunk_search.qwen_enabled(get_settings())
         ):
             # Unlike the lexical subject, sentence meaning includes the
             # relationships between words. Preserve those for discovery.
@@ -3535,7 +3499,6 @@ async def _retrieve(
         # `limit` are ones the area and the level keep: forty postings abroad
         # are otherwise an answer of none.
         chunk_queries = await search.queries(
-            keyword_vectors,
             subject,
             enabled=chunk_search.qwen_enabled(get_settings()),
             session=session,
@@ -3720,9 +3683,7 @@ async def _retrieve(
     qwen_searched, without_qwen = (
         chunk_queries.covered
         if chunk_queries.covered is not None
-        else await chunk_search.coverage(
-            session, chunk_queries.vectors, list(vectors), uncovered=strict
-        )
+        else await chunk_search.coverage(session, list(vectors), uncovered=strict)
         if chunk_queries.qwen
         else (None, 0)
     )
@@ -3819,17 +3780,6 @@ async def _posting_spaces(session: AsyncSession) -> list[tuple[str, int | None]]
         .order_by(func.count().desc(), Posting.embedding_model)
     )
     return [(str(model), revision) for model, revision, _ in rows.all()]
-
-
-async def _chunk_models(session: AsyncSession) -> list[str]:
-    """The models open postings' chunks were embedded with."""
-    rows = await session.scalars(
-        select(PostingChunk.embedding_model)
-        .join(Posting, Posting.id == PostingChunk.posting_id)
-        .where(Posting.closed_at.is_(None))
-        .distinct()
-    )
-    return [str(model) for model in rows.all()]
 
 
 async def _reachable(

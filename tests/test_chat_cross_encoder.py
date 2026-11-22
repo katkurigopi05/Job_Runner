@@ -18,7 +18,8 @@ something, only for a posting the model itself calls an answer, never across
 a role's own list, never past the search area or a named company.
 
 No test here loads a model. The judge is a fake that calls a passage an answer
-when it says one word.
+when it says one word, and chunks are searched by a lexical stand-in for their
+Qwen vectors (`tests/fake_qwen.py`), the only chunk vectors since 2026-11-22.
 """
 
 from __future__ import annotations
@@ -32,11 +33,9 @@ from packages.core.config import Settings
 from packages.core.models import Company, CorpusStats, Posting
 from packages.matching import rerank
 from packages.matching import retrieve as R
-from packages.matching.chunks import chunk_postings
-from packages.matching.embed import LexicalEmbedder
 from packages.matching.retrieve import retrieve
+from tests.fake_qwen import embed_chunks, use_fake_qwen
 
-LEXICAL = LexicalEmbedder()
 #: What most of a real posting is. Five chunks of it before anything is said.
 FILLER = "Our team values ownership and curiosity in everything we ship. " * 40
 
@@ -77,6 +76,12 @@ class BrokenJudge:
 
     def scores(self, question: str, passages: list[str]) -> list[float]:
         raise RuntimeError("model fell over")
+
+
+@pytest.fixture(autouse=True)
+def fake_qwen(monkeypatch):
+    """Qwen search on, with questions and chunks embedded lexically."""
+    return use_fake_qwen(monkeypatch)
 
 
 @pytest.fixture
@@ -135,7 +140,7 @@ async def _corpus(session, *, elsewhere: str | None = None):
         session, other, "Video Producer", "Live streaming for the events team.", days_ago=2
     )
     chef = await _posting(session, other, "Pastry Chef", "Croissants.", days_ago=3)
-    await chunk_postings(session, embedder=LEXICAL)
+    await embed_chunks(session)
     return said, unsaid, near, chef
 
 
@@ -285,7 +290,7 @@ async def test_a_posting_asked_for_by_title_still_goes_first(db_session, use) ->
     other = await _posting(
         db_session, company, "Engineer", "Forward deployed engineer on Redpanda streaming."
     )
-    await chunk_postings(db_session, embedder=LEXICAL)
+    await embed_chunks(db_session)
     use(WordJudge("redpanda"))
 
     found = await retrieve(db_session, "Forward Deployed Engineer")
@@ -492,7 +497,7 @@ async def test_a_search_answered_by_vectors_alone_loses_nothing(db_session, use)
     richer = await _posting(
         db_session, company, "Analyst", "Data engineering on Redpanda.", days_ago=1
     )
-    await chunk_postings(db_session, embedder=LEXICAL)
+    await embed_chunks(db_session)
     use(WordJudge("redpanda"))
 
     found = await retrieve(db_session, "any data engineering roles?")

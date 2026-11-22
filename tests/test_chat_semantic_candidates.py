@@ -6,20 +6,25 @@ own by `_nearest_unfound`, and `tests/test_chat_cross_encoder.py` holds that
 path — including what each kind of model reads, which is why the title-with-the-
 chunk test that used to sit in this file is not here: a likeness model reads the
 chunk alone, as it was measured on 2026-10-05.
+
+Chunks are searched by their Qwen vectors only (since 2026-11-22), so the
+question is "embedded" by a fake that puts it level with every chunk. Semantic
+candidates join what the keywords found and never stand in for it: bge-small's
+chunk vectors once filled an empty keyword pool, and Qwen never has
+(`test_qwen_search.test_semantics_never_fills_a_missing_rare_word`).
 """
 
 import pytest
 
 from packages.core.config import Settings
-from packages.core.models_chunks import PostingChunk
+from packages.core.models_chunks import LARGE_EMBEDDING_DIM, PostingChunk, PostingChunkVector
+from packages.matching import query_vectors
 from packages.matching import retrieve as R
-from packages.matching.embed import EMBEDDING_DIM, SentenceTransformerEmbedder
+from packages.matching.chunk_vectors import QWEN_4B
 from tests.test_chat_retrieval import _company, _posting
 
-
-class SemanticEncoder:
-    def encode(self, texts):
-        return [[1.0] + [0.0] * (EMBEDDING_DIM - 1) for _ in texts]
+#: Every chunk and every question: all equally near, so the filters decide.
+LEVEL = [1.0] + [0.0] * (LARGE_EMBEDDING_DIM - 1)
 
 
 class RecordingReranker:
@@ -37,33 +42,32 @@ class RecordingReranker:
 
 @pytest.fixture
 def experiment(monkeypatch):
-    settings = Settings(_env_file=None, chat_semantic_candidates=True)
+    settings = Settings(_env_file=None, chat_semantic_candidates=True, chat_qwen_search=True)
+
+    async def embed(question, *, keep_alive=None):
+        return query_vectors.QueryVector(QWEN_4B, "fake-qwen", tuple(LEVEL), 0.0)
+
+    async def released():
+        pass
+
     monkeypatch.setattr(R, "get_settings", lambda: settings)
     monkeypatch.setattr(R, "get_reranker", lambda: None)
-    monkeypatch.setattr(
-        R,
-        "_encoders",
-        lambda spaces, *_: {
-            space: SemanticEncoder()
-            for space in spaces
-            if space[0] == SentenceTransformerEmbedder.name
-        },
-    )
+    monkeypatch.setattr(query_vectors, "embed_question", embed)
+    monkeypatch.setattr(query_vectors, "unload_embedder", released, raising=False)
     return settings
 
 
 async def _chunk(session, posting, *, stale=False):
-    session.add(
-        PostingChunk(
-            posting_id=posting.id,
-            ordinal=0,
-            start=0,
-            length=len(posting.description_raw),
-            content_hash="stale" if stale else posting.content_hash,
-            embedding_model=SentenceTransformerEmbedder.name,
-            embedding=[1.0] + [0.0] * (EMBEDDING_DIM - 1),
-        )
+    chunk = PostingChunk(
+        posting_id=posting.id,
+        ordinal=0,
+        start=0,
+        length=len(posting.description_raw),
+        content_hash="stale" if stale else posting.content_hash,
     )
+    session.add(chunk)
+    await session.flush()
+    session.add(PostingChunkVector(chunk_id=chunk.id, embedding_model=QWEN_4B, embedding=LEVEL))
     await session.flush()
 
 
@@ -102,14 +106,6 @@ async def test_flag_off_keeps_keyword_candidates(db_session, experiment):
     assert _ids(await R.retrieve(db_session, "jobs using documents")) == [literal.id]
 
 
-async def test_semantic_only_results_can_fill_an_empty_keyword_pool(db_session, experiment):
-    company = await _company(db_session)
-    semantic = await _posting(db_session, company, "Engineer", "Build retrieval systems.")
-    await _chunk(db_session, semantic)
-
-    assert _ids(await R.retrieve(db_session, "jobs grounding answers")) == [semantic.id]
-
-
 async def test_semantic_candidates_keep_company_area_closed_and_freshness_filters(
     db_session, experiment
 ):
@@ -127,10 +123,12 @@ async def test_semantic_candidates_keep_company_area_closed_and_freshness_filter
         await _chunk(db_session, posting)
     stale = await _posting(db_session, company, "Engineer", "Retrieval systems.")
     await _chunk(db_session, stale, stale=True)
+    # What the keywords find, so that semantic candidates are looked for at all.
+    literal = await _posting(db_session, company, "Records Clerk", "Grounding answers.")
 
     found = await R.retrieve(db_session, "jobs grounding answers at Streamco")
 
-    assert _ids(found) == [kept.id]
+    assert _ids(found) == [literal.id, kept.id]
 
 
 async def test_explicit_role_does_not_expand_into_other_roles(db_session, experiment):
@@ -172,6 +170,7 @@ async def test_application_status_does_not_start_semantic_search(db_session, exp
 
 async def test_semantic_expansion_is_bounded(db_session, experiment):
     company = await _company(db_session)
+    literal = await _posting(db_session, company, "Records Clerk", "Grounding answers.")
     for index in range(R.KEYWORD_POOL + 5):
         posting = await _posting(
             db_session, company, "Engineer", f"Retrieval systems. Team {index}."
@@ -180,7 +179,8 @@ async def test_semantic_expansion_is_bounded(db_session, experiment):
 
     found = await R.retrieve(db_session, "jobs grounding answers")
 
-    assert len(_ids(found)) == R.KEYWORD_POOL
+    assert literal.id in _ids(found)
+    assert len(set(_ids(found)) - {literal.id}) == R.KEYWORD_POOL
 
 
 async def test_an_exact_title_stays_first_with_semantic_candidates(

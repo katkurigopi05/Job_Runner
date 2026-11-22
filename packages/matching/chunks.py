@@ -1,4 +1,4 @@
-"""Split postings into fixed chunks and embed each one.
+"""Split postings into fixed chunks, the windows Qwen vectors are made for.
 
 The recipe is the owner's DP-800 work, `AI_GENERATE_CHUNKS(CHUNK_TYPE = FIXED,
 CHUNK_SIZE = 500, OVERLAP = 25)`, applied to job postings. Its `OVERLAP` is a
@@ -10,8 +10,8 @@ first 512 tokens and requirements come last. Fixed-size chunks rather than
 paragraph-aware ones because the numbers above were measured with them, and
 because postings arrive with their structure flattened by the extractors.
 
-**Characters, not tokens.** 500 characters is about 110 tokens, well inside
-bge-small's 512, so no chunk is truncated. The 125-character overlap means a
+**Characters, not tokens.** 500 characters is about 110 tokens, so no chunk
+is truncated by any embedder. The 125-character overlap means a
 phrase cut by a boundary still appears whole in one of the two chunks, as long
 as it is shorter than 125 characters: a skill name, and most requirement lines.
 
@@ -23,10 +23,13 @@ quarter more chunks (5,580 to 6,931 on that pool). A chunk records the overlap
 it was cut at (`PostingChunk.overlap`), so changing `OVERLAP_PERCENT` re-cuts
 every posting on the next pass and its Qwen vectors go with the old chunks.
 
-**Only a semantic model embeds chunks.** Chunk vectors from the lexical
-embedder would only repeat what the keyword scan already reads. With
-`EMBEDDING_BACKEND=lexical` this pass does nothing, and search falls back to
-the one-vector-per-posting behaviour it had before.
+**This pass embeds nothing.** It cut and embedded with bge-small until
+2026-11-22, when the owner replaced bge-small with Qwen3-Embedding-4B for chunk
+search. Qwen is too slow for this Mac (3.3 chunks a second), so the vectors are
+made in Colab or Kaggle batches: `make export-chunk-vectors-pending` writes out
+the chunks cut here, and `make import-chunk-vectors` attaches what comes back
+(`matching/chunk_vectors.py`). Cutting is cheap, so it runs whatever
+`EMBEDDING_BACKEND` says.
 
 **A chunk is offsets, not text.** See `core/models_chunks.py`. The offsets
 point into `normalize(description_raw)`, and `content_hash` says which version
@@ -36,7 +39,6 @@ offsets.
 
 from __future__ import annotations
 
-import asyncio
 import time
 
 import structlog
@@ -45,7 +47,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import Posting
 from packages.core.models_chunks import PostingChunk
-from packages.matching.embed import Embedder, SentenceTransformerEmbedder, get_embedder
 
 log = structlog.get_logger(__name__)
 
@@ -56,8 +57,8 @@ OVERLAP_PERCENT = 25
 #: Characters a chunk shares with the next: 125.
 OVERLAP = CHUNK_SIZE * OVERLAP_PERCENT // 100
 
-#: Postings chunked per call. About 13.6 chunks each, so 500 postings is
-#: roughly 7,000 vectors per call.
+#: Postings chunked per call. About 17 chunks each, so 500 postings is
+#: roughly 8,500 rows per call.
 DEFAULT_LIMIT = 500
 
 
@@ -79,20 +80,8 @@ def spans(body: str) -> list[tuple[int, int]]:
         start += CHUNK_SIZE - OVERLAP
 
 
-def chunk_embedder() -> Embedder | None:
-    """bge-small when it is the configured backend and loads; otherwise None."""
-    from packages.core.config import get_settings
-
-    if get_settings().embedding_backend.lower() != "sentence-transformers":
-        return None
-    embedder = get_embedder()
-    return embedder if isinstance(embedder, SentenceTransformerEmbedder) else None
-
-
-async def chunk_postings(
-    session: AsyncSession, *, embedder: Embedder | None = None, limit: int = DEFAULT_LIMIT
-) -> int:
-    """Chunk and embed open postings whose chunks are missing or stale.
+async def chunk_postings(session: AsyncSession, *, limit: int = DEFAULT_LIMIT) -> int:
+    """Chunk open postings whose chunks are missing or stale.
 
     Returns how many postings were chunked. Does not commit. Newest postings
     first, so a backlog reaches the jobs the owner is most likely to ask about
@@ -113,14 +102,8 @@ async def chunk_postings(
             )
         )
     )
-    active = embedder or chunk_embedder()
-    if active is None:
-        return 0
-    stamp = active.name
-
     current = exists().where(
         PostingChunk.posting_id == Posting.id,
-        PostingChunk.embedding_model == stamp,
         PostingChunk.content_hash.is_not_distinct_from(Posting.content_hash),
         PostingChunk.overlap == OVERLAP,
     )
@@ -136,57 +119,36 @@ async def chunk_postings(
         return 0
 
     # Stale chunks go first: a changed posting's old offsets point at text
-    # that is no longer there.
+    # that is no longer there. Their Qwen vectors go with them (cascade).
     await session.execute(
         delete(PostingChunk).where(PostingChunk.posting_id.in_([row.id for row in pending]))
     )
 
-    texts: list[str] = []
-    rows: list[dict[str, object]] = []
-    for posting_id, description, content_hash in pending:
-        body = normalize(description or "")
-        for ordinal, (start, length) in enumerate(spans(body)):
-            texts.append(body[start : start + length])
-            rows.append(
-                {
-                    "posting_id": posting_id,
-                    "ordinal": ordinal,
-                    "start": start,
-                    "length": length,
-                    "content_hash": content_hash,
-                    "embedding_model": stamp,
-                    "overlap": OVERLAP,
-                }
-            )
-    # An employer's boilerplate repeats across its postings, so a text is
-    # encoded once and every chunk that reads the same takes its vector. Each
-    # still gets a row of its own: the offsets and the hash are the posting's.
-    distinct = list(dict.fromkeys(texts))
-    started = time.perf_counter()
-    # Off the event loop: encoding thousands of chunks is seconds of CPU.
-    encoded = await asyncio.to_thread(active.encode, distinct)
-    vectors = dict(zip(distinct, encoded, strict=True))
-    encode_seconds = time.perf_counter() - started
-
+    rows = [
+        {
+            "posting_id": posting_id,
+            "ordinal": ordinal,
+            "start": start,
+            "length": length,
+            "content_hash": content_hash,
+            "overlap": OVERLAP,
+        }
+        for posting_id, description, content_hash in pending
+        for ordinal, (start, length) in enumerate(spans(normalize(description or "")))
+    ]
     # One statement for the batch rather than an object per row, which nothing
     # here reads back. Guarded, because executed with no rows it would insert
     # one of defaults.
     started = time.perf_counter()
     if rows:
-        await session.execute(
-            insert(PostingChunk),
-            [{**row, "embedding": vectors[text]} for row, text in zip(rows, texts, strict=True)],
-        )
+        await session.execute(insert(PostingChunk), rows)
     log.info(
         "postings_chunked",
         postings=len(pending),
         chunks=len(rows),
-        distinct=len(distinct),
-        encode_seconds=round(encode_seconds, 3),
         write_seconds=round(time.perf_counter() - started, 3),
-        model=stamp,
     )
     return len(pending)
 
 
-__all__ = ["CHUNK_SIZE", "OVERLAP", "chunk_embedder", "chunk_postings", "normalize", "spans"]
+__all__ = ["CHUNK_SIZE", "OVERLAP", "chunk_postings", "normalize", "spans"]

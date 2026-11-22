@@ -1,5 +1,11 @@
 # Optional vector backends and retrieval benchmark
 
+> **2026-11-22:** the 384-dimensional chunk vectors this page is about were dropped
+> (migration `fd52bc47f90b`), and with them `VECTOR_BACKEND`, `scripts/sync_vectors.py`,
+> `scripts/benchmark_vectors.py` and their Make targets. Chunks are searched by Qwen
+> alone; its optional Redis index is `QWEN_VECTOR_BACKEND` (`packages/matching/qwen_redis.py`).
+> The rest of this page is the record of what was built and measured.
+
 PostgreSQL remains the system of record. `VECTOR_BACKEND=pgvector` keeps the exact chunk search as the default. `pgvector_hnsw` and `redis_hnsw` accelerate corpus search for the 384-dimensional `posting_chunks` table. Bounded keyword candidate reranking stays exact, and the separate 2,560-dimensional Qwen path retains its existing PostgreSQL implementation. `packages/matching/retrieve.py` calls the shared chunk-search boundary; keyword gates, fusion, location rules, and citations stay there.
 
 ## Setup

@@ -1,9 +1,11 @@
-"""Chunk search spaces: bge-small, Qwen with bge-small for uncovered postings, or Qwen alone.
+"""Chunk search, by Qwen3-Embedding-4B: the one model posting chunks are searched by.
 
-Distances never cross model boundaries. Both use the same ranking query and
-current-text predicate; the caller merges their ranks. Plain string keys retain
-the original search exactly when CHAT_QWEN_SEARCH is off. CHAT_QWEN_ONLY leaves
-bge-small out entirely and refuses a question Qwen cannot embed.
+Chunks carried bge-small vectors too until 2026-11-22, and this module chose
+between three spaces. Now a chunk space is Qwen's. With CHAT_QWEN_SEARCH and
+not CHAT_QWEN_ONLY, a posting without Qwen vectors is still reached by
+bge-small's one vector per posting (`retrieve._nearest`); distances never cross
+models, and the caller merges ranks. CHAT_QWEN_ONLY leaves bge-small out
+entirely and refuses a question Qwen cannot embed.
 """
 
 from __future__ import annotations
@@ -156,11 +158,10 @@ class ShortlistRanking:
 @dataclass(frozen=True)
 class ChunkSpace:
     model: str
-    without_qwen: bool = False
     ranking: ShortlistRanking | None = field(default=None, compare=False, repr=False)
 
 
-type Space = str | ChunkSpace
+type Space = ChunkSpace
 
 
 def has_qwen() -> ColumnElement[bool]:
@@ -183,7 +184,7 @@ def has_qwen() -> ColumnElement[bool]:
 
 
 def is_qwen(space: Space) -> bool:
-    return isinstance(space, ChunkSpace) and space.model == QWEN_4B
+    return space.model == QWEN_4B
 
 
 def _current_chunks() -> list[ColumnElement[bool]]:
@@ -194,18 +195,15 @@ def _current_chunks() -> list[ColumnElement[bool]]:
 
 
 def chunk_filter(space: Space) -> list[ColumnElement[bool]]:
-    model = space.model if isinstance(space, ChunkSpace) else space
-    stamp = PostingChunkVector.embedding_model if is_qwen(space) else PostingChunk.embedding_model
-    filters = [*_current_chunks(), stamp == model]
-    if isinstance(space, ChunkSpace) and space.without_qwen:
-        filters.append(~has_qwen())
-    return filters
+    return [*_current_chunks(), PostingChunkVector.embedding_model == space.model]
 
 
 def reachable(space: Space) -> ColumnElement[bool]:
-    query = select(1).select_from(PostingChunk)
-    if is_qwen(space):
-        query = query.join(PostingChunkVector, PostingChunkVector.chunk_id == PostingChunk.id)
+    query = (
+        select(1)
+        .select_from(PostingChunk)
+        .join(PostingChunkVector, PostingChunkVector.chunk_id == PostingChunk.id)
+    )
     return exists(
         query.where(PostingChunk.posting_id == Posting.id, *chunk_filter(space)).correlate(Posting)
     )
@@ -248,47 +246,16 @@ async def chunk_ranking(
                         hit.posting_id, (hit.posting_id, hit.start, hit.length)
                     )
             return list(accelerated_qwen.values()), len(hits) < limit
-    if isinstance(model, ChunkSpace) and is_qwen(model) and model.ranking is not None:
+    if model.ranking is not None:
         # The question's shortlist, shared by its stages and widened on demand.
         return await model.ranking.read(session, among=among, companies=companies, limit=limit)
-    backend = get_settings().vector_backend
-    if backend != "pgvector" and among is None and not is_qwen(model):
-        from packages.matching.vector_search import Filters, search
-
-        name = model.model if isinstance(model, ChunkSpace) else model
-        hits = await search(
-            session,
-            vector,
-            name,
-            backend=backend,
-            k=limit,
-            filters=Filters(companies=tuple(companies or ())),
-        )
-        pool_size = len(hits)
-        if isinstance(model, ChunkSpace) and model.without_qwen and hits:
-            uncovered = set(
-                (
-                    await session.scalars(
-                        select(Posting.id).where(
-                            Posting.id.in_([hit.posting_id for hit in hits]), ~has_qwen()
-                        )
-                    )
-                ).all()
-            )
-            hits = [hit for hit in hits if hit.posting_id in uncovered]
-        accelerated: dict[uuid.UUID, tuple[uuid.UUID, int, int]] = {}
-        for hit in hits:
-            if hit.distance < 1.0 and hit.posting_id not in accelerated:
-                accelerated[hit.posting_id] = (hit.posting_id, hit.start, hit.length)
-        return list(accelerated.values()), pool_size < limit
-    column = PostingChunkVector.embedding if is_qwen(model) else PostingChunk.embedding
-    distance = column.cosine_distance(vector)
-    query = select(PostingChunk.posting_id, PostingChunk.start, PostingChunk.length, distance).join(
-        Posting, Posting.id == PostingChunk.posting_id
+    distance = PostingChunkVector.embedding.cosine_distance(vector)
+    query = (
+        select(PostingChunk.posting_id, PostingChunk.start, PostingChunk.length, distance)
+        .join(Posting, Posting.id == PostingChunk.posting_id)
+        .join(PostingChunkVector, PostingChunkVector.chunk_id == PostingChunk.id)
+        .where(*chunk_filter(model))
     )
-    if is_qwen(model):
-        query = query.join(PostingChunkVector, PostingChunkVector.chunk_id == PostingChunk.id)
-    query = query.where(*chunk_filter(model))
     if among is not None:
         query = query.where(one_of(PostingChunk.posting_id, among))
     else:
@@ -337,13 +304,12 @@ class QwenSearchUnavailable(RuntimeError):
 
 @dataclass(frozen=True)
 class ChunkQueries:
-    vectors: dict[Space, list[float]]
+    vectors: dict[Space, list[float]] = field(default_factory=dict)
     qwen: bool = False
     fallback_reason: str | None = None
-    #: (open postings the Qwen space covers, open postings only bge-small
-    #: reaches), counted once per question; None when not counted. Under
-    #: `strict` the second is the postings bge-small has vectors for (chunks
-    #: or the one posting vector) and Qwen has none, which nothing ranks by meaning.
+    #: (open postings the Qwen space covers, open postings only bge-small's
+    #: one posting vector reaches), counted once per question; None when not
+    #: counted. Under `strict` the second is what nothing ranks by meaning.
     covered: tuple[int, int] | None = None
     strict: bool = False
 
@@ -354,33 +320,23 @@ class ChunkQueries:
 
 
 async def queries(
-    vectors: dict[str, list[float]],
     subject: str,
     *,
     enabled: bool,
     keep_alive: str | None = None,
     strict: bool = False,
 ) -> ChunkQueries:
+    """The question's Qwen chunk space, or none: chunks have no other vectors."""
     if not enabled or not subject:
-        return ChunkQueries({model: vector for model, vector in vectors.items()}, strict=strict)
+        return ChunkQueries(strict=strict)
     try:
         query = await query_vectors.embed_question(subject, keep_alive=keep_alive)
     except query_vectors.QueryEmbeddingError as exc:
         if strict:
             raise QwenSearchUnavailable(str(exc)) from exc
-        return ChunkQueries(
-            {model: vector for model, vector in vectors.items()}, fallback_reason=str(exc)
-        )
+        return ChunkQueries(fallback_reason=str(exc))
     qwen = ChunkSpace(QWEN_4B, ranking=ShortlistRanking(list(query.values)))
-    if strict:
-        return ChunkQueries({qwen: list(query.values)}, qwen=True, strict=True)
-    return ChunkQueries(
-        {
-            qwen: list(query.values),
-            **{ChunkSpace(model, without_qwen=True): vector for model, vector in vectors.items()},
-        },
-        qwen=True,
-    )
+    return ChunkQueries({qwen: list(query.values)}, qwen=True, strict=strict)
 
 
 async def release_embedder() -> None:
@@ -408,7 +364,6 @@ class Question:
 
     async def queries(
         self,
-        vectors: dict[str, list[float]],
         subject: str,
         *,
         enabled: bool,
@@ -416,17 +371,16 @@ class Question:
         posting_spaces: Sequence[tuple[str, int | None]] = (),
         strict: bool = False,
     ) -> ChunkQueries:
-        """The question's spaces, with bge-small left out when Qwen covers every posting.
+        """The question's Qwen space, and the coverage that decides bge-small's part.
 
         Coverage is counted once per question. With nothing uncovered, the
-        bge-small spaces for "postings without Qwen vectors" can only find
-        nothing, and each of their scans cost about 0.2 s (2026-11-03).
-        `strict` leaves them out whatever the coverage, and counts what that
-        leaves unranked by meaning.
+        bge-small posting spaces for "postings without Qwen vectors" can only
+        find nothing, and each of their scans cost about 0.2 s (2026-11-03), so
+        `bge_needed` says to skip them. `strict` leaves them out whatever the
+        coverage, and counts what that leaves unranked by meaning.
         """
         self.attempted |= enabled and bool(subject)
         result = await queries(
-            vectors,
             subject,
             enabled=enabled,
             keep_alive="5m" if self.free_embedder else None,
@@ -435,27 +389,21 @@ class Question:
         if not result.qwen or session is None:
             return result
         if self.covered is None:
-            self.covered = await coverage(session, result.vectors, posting_spaces, uncovered=strict)
-        if strict:
-            return replace(result, covered=self.covered)
-        if self.covered[1] == 0:
-            only_qwen = {space: v for space, v in result.vectors.items() if is_qwen(space)}
-            return ChunkQueries(only_qwen, qwen=True, covered=self.covered)
-        return ChunkQueries(result.vectors, qwen=True, covered=self.covered)
+            self.covered = await coverage(session, posting_spaces, uncovered=strict)
+        return replace(result, covered=self.covered)
 
 
 async def coverage(
     session: AsyncSession,
-    vectors: dict[Space, list[float]],
     posting_spaces: Sequence[tuple[str, int | None]] = (),
     *,
     uncovered: bool = False,
 ) -> tuple[int, int]:
     """Disjoint coverage, counted as sets rather than a lookup for every posting.
 
-    The second count is what bge-small reaches and Qwen does not: the spaces
-    searched, or with `uncovered` every bge-small space, for the postings a
-    Qwen-only search leaves unranked by meaning.
+    The second count is what bge-small's one posting vector reaches and Qwen
+    does not: when that space is searched, or with `uncovered` whatever it
+    holds, for the postings a Qwen-only search leaves unranked by meaning.
     """
     qwen = (
         select(PostingChunk.posting_id)
@@ -465,16 +413,6 @@ async def coverage(
         .distinct()
         .cte("qwen_coverage")
     )
-    bge_chunks = select(PostingChunk.posting_id).join(
-        Posting, Posting.id == PostingChunk.posting_id
-    )
-    bge_chunks = bge_chunks.where(*chunk_filter(SentenceTransformerEmbedder.name))
-    has_bge_query = any(
-        isinstance(space, ChunkSpace) and space.model == SentenceTransformerEmbedder.name
-        for space in vectors
-    )
-    if not (has_bge_query or uncovered):
-        bge_chunks = bge_chunks.where(Posting.id.is_(None))
     bge_postings = select(Posting.id.label("posting_id")).where(
         Posting.closed_at.is_(None),
         Posting.description_embedding.is_not(None),
@@ -483,7 +421,7 @@ async def coverage(
     )
     if not uncovered and (SentenceTransformerEmbedder.name, None) not in posting_spaces:
         bge_postings = bge_postings.where(Posting.id.is_(None))
-    bge = bge_chunks.union(bge_postings).cte("bge_coverage")
+    bge = bge_postings.cte("bge_coverage")
     qwen_count, bge_count = (
         await session.execute(
             select(

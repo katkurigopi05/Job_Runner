@@ -110,10 +110,10 @@ Four things are load-bearing:
   A posting with no text keeps no chunks at all (2026-11-02): one that loses
   its description, or that the backfill leaves without one, has its chunks
   deleted by the next pass, so the index holds only postings with text.
-- **Only bge-small chunks.** Lexical chunk vectors would repeat what the
-  keyword scan reads, so with `EMBEDDING_BACKEND=lexical` the pass does
-  nothing and search behaves exactly as before. Chunk queries carry bge's
-  documented search prefix, which the measurement used.
+- **Only Qwen chunk vectors (since 2026-11-22).** Chunks were embedded with
+  bge-small, its queries carrying bge's search prefix, until the owner
+  replaced it with Qwen3-Embedding-4B (see the section of that date). The
+  pass now cuts offsets only, whatever `EMBEDDING_BACKEND` says.
 - **384 dimensions, not DP-800's 1536.** That is Gemini's embedding size;
   using it here would send every posting chunk and every chat question to
   Google, ending the property that retrieval runs on this machine.
@@ -1376,7 +1376,8 @@ the owner saw: Ollama was not running, and a question went out "searched with bg
 could undo, each held by `tests/test_qwen_only_search.py`:
 
 - **No other model is loaded or scanned.** No bge-small or lexical encoder is built, and no SQL
-  touches `posting_chunks.embedding` or `postings.description_embedding`.
+  touches `postings.description_embedding` (nor `posting_chunks.embedding`, until it was dropped
+  on 2026-11-22).
 - **Qwen orders the keyword matches**, by the question's one Qwen vector, the same one discovery
   uses: one embedding a question. A match with no Qwen vectors still counts, keywords decide
   relevance (§14), and takes the middle rank. This reverses the 2026-11-02 review's choice for
@@ -1389,7 +1390,7 @@ could undo, each held by `tests/test_qwen_only_search.py`:
   down. One that does is refused even when the keywords matched ("jobs at Stripe"): the order
   shown is Qwen's, and there is none to give.
 - **What Qwen cannot rank is counted, not searched**: `Retrieval.qwen_uncovered` is the open postings
-  bge-small has vectors for (chunks or the one posting vector) and Qwen has none, and the context says keywords can find them but nothing ranked them
+  with a bge-small posting vector and no Qwen vector, and the context says keywords can find them but nothing ranked them
   by meaning. A vector-only question cannot reach them, and `unsearchable` counts them.
 
 On the live database that day: 14,542 open postings in the owner's area had Qwen vectors, 45 did
@@ -1421,3 +1422,26 @@ postings then waiting to be chunked, 243 repeated embedded text and 144 repeated
   its text was edited before the import, nothing is copied and the repeat goes in the next export.
 
 `tests/test_chunk_vector_copies.py`.
+
+## bge-small's chunk vectors removed (2026-11-22)
+
+The owner asked to replace bge-small's chunk work with Qwen3-Embedding-4B. Chat had searched only
+the Qwen vectors since `CHAT_QWEN_ONLY`, and the bge-small vectors and their HNSW index took 767 MB
+of `posting_chunks` (307 MB and 460 MB). Migration `fd52bc47f90b` drops them; run
+`VACUUM FULL posting_chunks` once afterwards, since a dropped column's space comes back only when
+the table is rewritten. What a later change could quietly undo:
+
+- **A chunk is offsets only.** `chunks.chunk_postings` cuts and embeds nothing, under any
+  `EMBEDDING_BACKEND`; Qwen vectors arrive by `make import-chunk-vectors`. Cutting still deletes a
+  stale posting's chunks, and their Qwen vectors with them.
+- **A chunk space is Qwen's.** `chunk_search.ChunkSpace` has no bge-small form and
+  `chunk_search.queries` takes no bge-small vectors. With `CHAT_QWEN_SEARCH` and not
+  `CHAT_QWEN_ONLY`, a posting without Qwen vectors is still reached by its one posting vector
+  (`retrieve._nearest`, `without_qwen`), and keyword matches are ordered by posting vectors only.
+- **Semantic candidates need Qwen and a keyword match.** bge-small's chunk vectors once filled an
+  empty keyword pool; nothing does now (`test_semantics_never_fills_a_missing_rare_word`).
+- **Gone with them:** `VECTOR_BACKEND` (`pgvector_hnsw`, `redis_hnsw` for 384-wide chunks),
+  `matching/vector_sync.py`, `make sync-vectors`, `make benchmark-vectors`. `vector_search.py`
+  keeps the Redis helpers `qwen_redis` and interview evidence use. `QWEN_VECTOR_BACKEND` stays.
+- Tests that searched by meaning use `tests/fake_qwen.py`: the lexical embedder padded to 2,560,
+  for chunks and question alike.
