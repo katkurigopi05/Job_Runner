@@ -40,6 +40,12 @@ from packages.llm.provider import LLMError
 from packages.matching.skill_links import link_resume
 from packages.tailor.assemble import assemble_pdf
 from packages.tailor.ats import AtsReport
+from packages.tailor.code_evidence import (
+    add_linked_claim,
+    claim_destination,
+    retrieve_evidence,
+    review_evidence,
+)
 from packages.tailor.evidence import linked_evidence
 from packages.tailor.guard import line_key
 from packages.tailor.parse import Contact, ParsedResume
@@ -51,6 +57,8 @@ from packages.tailor.studio import (
     STUDIO_STAMP,
     Draft,
     RoleTrack,
+    as_printed,
+    project_lines,
     saved_lines_check,
     synthesize,
 )
@@ -61,6 +69,7 @@ from packages.tailor.studio_load import (
     resolve_profile,
     studio_source,
 )
+from packages.tailor.verify import check_pdf
 
 router = APIRouter(prefix="/resumes", tags=["resume studio"])
 
@@ -178,11 +187,14 @@ async def synthesize_draft(body: StudioRequest, session: SessionDep) -> StudioPr
     track = RoleTrack(body.role_track)
     projects = await candidate_projects(session, body.candidate_id)
     notice = "Imported GitHub metadata; live checking was not requested."
-    if body.live_projects:
+    if body.live_projects and not body.live_code:
         try:
             projects, notice = await refresh_projects(projects)
         except LLMError as exc:
             raise ApiError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
+    code = await retrieve_evidence(body.job_description, projects) if body.live_code else None
+    if code is not None:
+        notice = f"Live code evidence checked {code.searched} GitHub repositories."
     provider = None
     if body.use_model:
         provider = (
@@ -196,7 +208,7 @@ async def synthesize_draft(body: StudioRequest, session: SessionDep) -> StudioPr
         body.job_description,
         track,
         projects=projects,
-        linked=await linked_evidence(session, body.candidate_id),
+        linked=None if body.live_code else await linked_evidence(session, body.candidate_id),
         selected_project_ids=(
             None
             if body.selected_project_ids is None
@@ -204,10 +216,26 @@ async def synthesize_draft(body: StudioRequest, session: SessionDep) -> StudioPr
         ),
         project_limit=body.project_limit,
         provider=provider,
-        replace_source_projects=body.replace_source_projects,
-        declared=None if body.live_projects else await saved_declarations(session, projects),
+        replace_source_projects=body.replace_source_projects and not body.live_code,
+        declared=(
+            None
+            if body.live_projects or body.live_code
+            else await saved_declarations(session, projects)
+        ),
+        code_verified=code.implemented() if code is not None else None,
     )
-    return preview_of(draft, base_row, track).model_copy(update={"project_evidence": notice})
+    preview = preview_of(draft, base_row, track)
+    preview.project_evidence = notice
+    if code is not None:
+        preview.code_review = review_evidence(
+            body.job_description,
+            source.resume,
+            code,
+            projects=projects,
+            chosen={project.id for project in draft.projects},
+            draft_resume=draft.resume,
+        )
+    return preview
 
 
 async def _printable(
@@ -262,7 +290,7 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
         certification_ids=body.selected_certification_ids,
     )
     projects = await _printable(session, body.candidate_id, body.selected_project_ids)
-    if body.live_projects and projects:
+    if body.live_projects and not body.live_code and projects:
         try:
             checked, _ = await refresh_projects(projects)
         except LLMError as exc:
@@ -274,6 +302,12 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
                 "A selected project could not be checked. Generate a new preview.",
             )
         projects = [by_id[project.id] for project in projects]
+    if body.live_code and body.project_rewrites:
+        raise ApiError(ErrorCode.INVALID_REQUEST, "Review live project claims individually.")
+    if (body.code_approvals and not body.live_code) or (
+        body.live_code and (body.code_approvals or body.rewrites) and not body.job_description
+    ):
+        raise ApiError(ErrorCode.INVALID_REQUEST, "Generate a live GitHub code evidence preview.")
     by_id = {project.id: project for project in projects}
     rewritten_ids = [item.project_id for item in body.project_rewrites]
     if len(set(rewritten_ids)) != len(rewritten_ids) or not set(rewritten_ids) <= set(by_id):
@@ -295,7 +329,8 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
         sections,
         rewrites=[(r.original, r.tailored) for r in body.rewrites],
         owner_edits=body.owner_edits,
-        linked=await linked_evidence(session, body.candidate_id),
+        linked=None if body.live_code else await linked_evidence(session, body.candidate_id),
+        live_posting=(body.job_description or "") if body.live_code else None,
     )
     if refused:
         quoted = "; ".join(f"“{line[:120]}”" for line in refused[:QUOTED_REFUSALS])
@@ -308,6 +343,79 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
             "Type them yourself on the studio screen, or remove them.",
         )
 
+    claims = []
+    approved_wording: list[str] = []
+    approved_generated: dict[uuid.UUID, list[str]] = {}
+    added_project_lines: list[str] = []
+    if body.code_approvals and body.job_description:
+        owned = await candidate_projects(session, body.candidate_id)
+        code = await retrieve_evidence(body.job_description, owned)
+        by_finding = {item.id: item for item in code.findings if item.can_support_claim}
+        owned_by_id = {project.id: project for project in owned}
+        proposed_wording = {
+            line_key(wording) for item in by_finding.values() for wording in item.wording
+        }
+        for name, lines in sections.items():
+            if name == "projects":
+                continue
+            existing = {line_key(line.lstrip("•-* ")) for line in source.resume.section(name)}
+            if any(
+                (key := line_key(line.lstrip("•-* "))) in proposed_wording and key not in existing
+                for line in lines
+            ):
+                raise ApiError(ErrorCode.INVALID_REQUEST, "GitHub claims belong in Projects.")
+        checked_ids: set[str] = set()
+        for approval in body.code_approvals:
+            finding = by_finding.get(approval.finding_id)
+            if (
+                finding is None
+                or approval.finding_id in checked_ids
+                or approval.wording not in finding.wording
+            ):
+                reason = " ".join(code.limitations)
+                raise ApiError(
+                    ErrorCode.INVALID_REQUEST,
+                    "A project claim changed or could not be verified. "
+                    f"Generate a new preview. {reason}".strip(),
+                )
+            checked_ids.add(approval.finding_id)
+            project = owned_by_id[finding.project_id]
+            destination = claim_destination(project, set(by_id), base)
+            if destination is None or destination[1] != approval.entry:
+                raise ApiError(ErrorCode.INVALID_REQUEST, "The approved Projects entry changed.")
+            if approval.entry is None:
+                approved_generated.setdefault(project.id, []).append(approval.wording)
+            else:
+                if not add_linked_claim(approval.entry, approval.wording, base, sections):
+                    raise ApiError(ErrorCode.INVALID_REQUEST, "The linked Projects title changed.")
+                added_project_lines.append(f"• {approval.wording}")
+            approved_wording.append(approval.wording)
+            claims.append(
+                {
+                    "id": finding.id,
+                    "project_id": str(project.id),
+                    "entry": approval.entry,
+                    "commit_sha": finding.commit_sha,
+                    "path": finding.path,
+                    "start_line": finding.start_line,
+                    "end_line": finding.end_line,
+                    "wording": approval.wording,
+                }
+            )
+        # Materialize approved project bullets as Projects entries in the saved
+        # résumé itself so an adopted version can carry them into later tailoring.
+        for project in projects:
+            if project.id in approved_generated:
+                title, *details = project_lines(project)
+                lines = [
+                    f"{title} [GitHub]",
+                    *(f"• {wording}" for wording in approved_generated[project.id]),
+                    *details,
+                ]
+                sections.setdefault("projects", []).extend(lines)
+                added_project_lines.extend(lines)
+        projects = [project for project in projects if project.id not in approved_generated]
+
     printed = {line_key(line) for lines in sections.values() for line in lines}
     final = ParsedResume(
         contact=Contact.model_validate(body.contact.model_dump()),
@@ -315,6 +423,7 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
         sections=sections,
         raw_lines=[
             *source.resume.raw_lines,
+            *added_project_lines,
             *(edit for edit in body.owner_edits if line_key(edit) in printed),
         ],
     )
@@ -328,6 +437,21 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
             ErrorCode.INTERNAL_ERROR,
             f"the draft could not be rendered to PDF ({type(exc).__name__}), so it was not saved",
         ) from exc
+
+    if body.live_code:
+        try:
+            verdict = await asyncio.to_thread(
+                check_pdf,
+                pdf,
+                as_printed(final, projects),
+                terms=approved_wording,
+            )
+        except Exception as exc:
+            raise ApiError(ErrorCode.INTERNAL_ERROR, "The draft PDF could not be checked.") from exc
+        if not verdict.ok:
+            raise ApiError(
+                ErrorCode.INVALID_REQUEST, "The PDF did not preserve the reviewed draft."
+            )
 
     version = await _next_version(session, body.candidate_id)
     key = resume_key(str(body.candidate_id), version, "studio.pdf")
@@ -355,6 +479,8 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
             for p in projects
         },
     }
+    if claims:
+        stored[STUDIO_STAMP]["github_code_approvals"] = claims
     resume = Resume(
         candidate_id=body.candidate_id,
         version=version,

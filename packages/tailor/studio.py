@@ -39,6 +39,8 @@ from packages.github.select import (
     select_projects,
 )
 from packages.llm.provider import LLMProvider
+from packages.matching.requirements import Requirement, extract
+from packages.matching.skill_vocab import CODE_SKILLS
 from packages.tailor import ats
 from packages.tailor.assemble import AssemblyOptions, assemble_html
 from packages.tailor.edit import rebuild_raw_lines
@@ -50,7 +52,7 @@ from packages.tailor.projects import ProjectEntry
 from packages.tailor.publish import apply_rewrites
 from packages.tailor.rewrite import BulletRewrite, TailorResult, vet
 from packages.tailor.studio_sources import Source, same_skills
-from packages.tailor.targeted import Plan, Revision, classify, revise
+from packages.tailor.targeted import Plan, Revision, classify, judge, revise
 
 #: Stamped beside the résumé's fields on a saved draft, like `publish.MODE_STAMP`.
 STUDIO_STAMP = "resume_studio"
@@ -124,6 +126,7 @@ def pick_projects(
     limit: int = 4,
     replace_source_projects: bool = False,
     declared: Mapping[uuid.UUID, Collection[str]] | None = None,
+    code_verified: Mapping[uuid.UUID, Collection[str]] | None = None,
 ) -> list[ProjectPick]:
     """Rank every project; choose the owner's selection, or the best eligible ones."""
     projects = [project for project in projects if not project.is_fork]
@@ -147,10 +150,44 @@ def pick_projects(
         return ""
 
     usable = [p for p in projects if not held_back(p)]
+    weights: dict[str, int] = {}
+    direct_labels: dict[str, str] = {}
+    if code_verified is not None:
+        needs = extract(job_description, vocabulary=CODE_SKILLS).skills
+        direct_labels = {
+            need.skill: need.label
+            for need in needs
+            if need.requirement is Requirement.REQUIRED and not need.option
+        }
+        weights = {
+            need.skill: len(needs) + 1 if need.skill in direct_labels else 1 for need in needs
+        }
+
+    def rank(project: Project) -> float:
+        if code_verified is not None:
+            matched = sum(weights.get(skill, 0) for skill in code_verified.get(project.id, ()))
+            return matched / max(sum(weights.values()), 1)
+        return score(
+            project, text, declared=None if declared is None else declared.get(project.id, ())
+        )
+
+    def order(project: Project) -> tuple[bool, float]:
+        return bool(project.pinned), rank(project)
+
+    if code_verified is not None:
+        usable.sort(key=order, reverse=True)
+
     if selected_ids is not None:
         wanted = [str(i) for i in selected_ids]
         by_id = {str(p.id): p for p in usable if is_eligible(p, require_description=False)}
         chosen = [by_id[i] for i in wanted if i in by_id][:limit]
+    elif code_verified is not None:
+        chosen = [
+            project
+            for project in usable
+            if is_eligible(project, require_description=False)
+            and (project.pinned or code_verified.get(project.id))
+        ][:limit]
     else:
         if required_skills(job_description):
             chosen = projects_for_posting(usable, text, limit=limit, declared=declared)
@@ -158,27 +195,27 @@ def pick_projects(
             chosen = select_projects(usable, text, limit=limit)
     chosen_ids = {p.id for p in chosen}
 
-    def rank(project: Project) -> float:
-        return score(
-            project, text, declared=None if declared is None else declared.get(project.id, ())
+    def matched(project: Project) -> tuple[str, ...]:
+        if code_verified is not None:
+            keys = direct_labels.keys() & set(code_verified.get(project.id, ()))
+            return tuple(direct_labels[key] for key in sorted(keys))
+        return tuple(
+            matched_requirements(
+                project,
+                job_description,
+                declared=None if declared is None else declared.get(project.id, ()),
+            )
         )
 
-    ranked = sorted(projects, key=lambda p: (bool(p.pinned), rank(p)), reverse=True)
     return [
         ProjectPick(
             project=project,
             score=round(rank(project), 4),
-            matched_terms=tuple(
-                matched_requirements(
-                    project,
-                    job_description,
-                    declared=None if declared is None else declared.get(project.id, ()),
-                )
-            ),
+            matched_terms=matched(project),
             chosen=project.id in chosen_ids,
             held_back=held_back(project),
         )
-        for project in ranked
+        for project in sorted(projects, key=order, reverse=True)
     ]
 
 
@@ -292,6 +329,7 @@ async def synthesize(
     provider: LLMProvider | None = None,
     replace_source_projects: bool = False,
     declared: Mapping[uuid.UUID, Collection[str]] | None = None,
+    code_verified: Mapping[uuid.UUID, Collection[str]] | None = None,
 ) -> Draft:
     """A draft for one posting. Calls `provider` only for bullets that can gain a term."""
     picks = pick_projects(
@@ -303,6 +341,7 @@ async def synthesize(
         limit=project_limit,
         replace_source_projects=replace_source_projects,
         declared=declared,
+        code_verified=code_verified,
     )
     chosen = [pick.project for pick in picks if pick.chosen]
     corpus = SourceCorpus.from_resume(
@@ -320,7 +359,7 @@ async def synthesize(
             provider,
             working,
             job_description,
-            projects=chosen,
+            projects=chosen if code_verified is None else (),
             linked=linked,
             verified=source.verified,
             kinds=source.kinds,
@@ -330,7 +369,7 @@ async def synthesize(
         plan = classify(
             working,
             job_description,
-            projects=chosen,
+            projects=chosen if code_verified is None else (),
             linked=linked,
             verified=source.verified,
             kinds=source.kinds,
@@ -338,7 +377,7 @@ async def synthesize(
         result = TailorResult(bullets=[BulletRewrite(original=b, tailored=b) for b in plan.bullets])
 
     project_rewrites = []
-    if provider is not None:
+    if provider is not None and code_verified is None:
         for project in chosen:
             project_rewrites.append(await rewrite_project(provider, project, job_description))
         descriptions = {item.project_id: item.tailored for item in project_rewrites}
@@ -371,6 +410,7 @@ def saved_lines_check(
     rewrites: Sequence[tuple[str, str]] = (),
     owner_edits: Sequence[str] = (),
     linked: Mapping[str, str] | None = None,
+    live_posting: str | None = None,
 ) -> list[str]:
     """Lines of a draft about to be saved that nothing backs. Empty means it may be saved.
 
@@ -382,16 +422,43 @@ def saved_lines_check(
     corpus = SourceCorpus.from_resume(
         source.resume, linked=linked, verified=source.verified, kinds=source.kinds
     )
-    source_keys = {line_key(line) for lines in source.resume.sections.values() for line in lines}
+    source_by_section = {
+        name: {line_key(line) for line in lines} for name, lines in source.resume.sections.items()
+    }
+    source_keys = set().union(*source_by_section.values())
     skills = source.resume.section("skills")
-    allowed = source_keys | {line_key(edit) for edit in owner_edits}
-    for original, tailored in rewrites:
-        if line_key(original) in source_keys and vet(original, tailored, corpus)[0]:
-            allowed.add(line_key(tailored))
+    authored = {line_key(edit) for edit in owner_edits}
+    accepted = []
+    if live_posting is not None and rewrites:
+        plan = classify(
+            source.resume, live_posting, linked=linked, verified=source.verified, kinds=source.kinds
+        )
+        targets_by_line = {
+            line_key(plan.bullets[index]): targets for index, targets in plan.targets.items()
+        }
+        for original, tailored in rewrites:
+            targets = targets_by_line.get(line_key(original))
+            if not targets or line_key(original) not in source_keys:
+                continue
+            asked = {target.term for target in targets}
+            off_limits = tuple(term.term for term in plan.terms if term.term not in asked)
+            if judge(original, tailored, targets, corpus, off_limits)[0]:
+                accepted.append((line_key(original), line_key(tailored)))
+    else:
+        accepted = [
+            (line_key(original), line_key(tailored))
+            for original, tailored in rewrites
+            if line_key(original) in source_keys and vet(original, tailored, corpus)[0]
+        ]
 
     def backed(section: str, line: str) -> bool:
         key = line_key(line)
-        if not key or key in allowed:
+        if not key or key in authored:
+            return True
+        local = source_by_section.get(section, set()) if live_posting is not None else source_keys
+        if key in local or any(
+            original in local and key == tailored for original, tailored in accepted
+        ):
             return True
         return section == "skills" and any(same_skills(line, s) for s in skills)
 

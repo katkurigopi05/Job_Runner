@@ -328,6 +328,21 @@ export function ReviewCard({
           </div>
         ) : null}
 
+      {review.github_code_evidence ? (
+        <details className="border-b border-rule px-6 py-4">
+          <summary className="cursor-pointer text-label text-ink-soft">
+            Live GitHub evidence
+          </summary>
+          <div className="mt-2 space-y-1 text-sm text-ink-soft">
+            <p>{review.github_code_evidence.repositories_checked} repositories checked.</p>
+            {review.github_code_evidence.implemented_skills.length > 0 ? (
+              <p>Implementation found, contribution unconfirmed{" "}
+                ({review.github_code_evidence.implemented_skills.join(", ")}).</p>
+            ) : null}
+            {review.github_code_evidence.limitations.map((item) => <p key={item}>{item}</p>)}
+          </div>
+        </details>
+      ) : null}
       {review.resume_diff ? (
           <details className="border-b border-rule px-6 py-4" open>
             <summary className="cursor-pointer text-label text-ink-soft hover:text-ink">

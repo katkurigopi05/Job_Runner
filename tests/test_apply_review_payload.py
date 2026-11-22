@@ -282,3 +282,44 @@ async def test_owner_pinned_resume_outranks_both_modes(db_session) -> None:
     assert payload.get("owner_pinned") == "owner_edit"
     assert payload.get("reused") is True
     assert application.tailored_resume_id == pinned_resume.id
+
+
+async def test_opt_in_github_code_review_stays_advisory(db_session, monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from apps.worker import apply_job
+    from packages.core.config import get_settings
+    from packages.github.code_search import search_code
+    from packages.matching.requirements import extract
+    from packages.matching.skill_vocab import CODE_SKILLS
+    from tests.test_github_code import LAMBDA, MockRepository
+    from tests.test_github_live import REPO, project
+
+    application, profile, _ = await _fixture(db_session)
+    application.tailored_resume_id = profile.base_resume_id
+    application.review_json = {"owner_pinned": True}
+    original_id = application.tailored_resume_id
+    repository = project(candidate_id=application.candidate_id, language="Python", is_private=True)
+    load_projects = AsyncMock(return_value=[repository])
+    mock = MockRepository({"handler.py": LAMBDA}, repo=REPO | {"private": True})
+
+    async def retrieve(text, projects):
+        needs = extract(text, vocabulary=CODE_SKILLS).skills
+        return await search_code(projects, needs, github=mock.client())
+
+    monkeypatch.setattr("packages.tailor.studio_load.candidate_projects", load_projects)
+    monkeypatch.setattr("packages.tailor.code_evidence.retrieve_evidence", retrieve)
+    assert not get_settings().tailor_live_github_code
+    await apply_job._review_github_code(db_session, application, "Requires AWS Lambda")
+    load_projects.assert_not_awaited()
+    assert not mock.requests and "github_code_evidence" not in application.review_json
+
+    monkeypatch.setattr(get_settings(), "tailor_live_github_code", True)
+    await apply_job._review_github_code(db_session, application, "Requires AWS Lambda")
+    load_projects.assert_awaited_once_with(db_session, application.candidate_id)
+    report = application.review_json["github_code_evidence"]
+    assert report["implemented_skills"] == ["AWS", "AWS Lambda"]
+    assert report["repositories_checked"] == 1
+    assert "handler.py" not in str(report) and "owner/example" not in str(report)
+    assert application.review_json["owner_pinned"] is True
+    assert application.tailored_resume_id == original_id

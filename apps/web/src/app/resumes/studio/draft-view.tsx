@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Pencil, X } from "lucide-react";
+import { Check, Pencil, Undo2, X } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,12 +48,14 @@ function EditableLine({
   original,
   onSave,
   onRemove,
+  onRestore,
 }: {
   text: string;
   origin: Origin;
   original: string | null;
   onSave: (text: string) => void;
   onRemove: () => void;
+  onRestore: (() => void) | null;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   if (draft !== null) {
@@ -113,6 +115,16 @@ function EditableLine({
       >
         <Pencil aria-hidden />
       </Button>
+      {onRestore ? (
+        <Button
+          size="icon"
+          variant="ghost"
+          aria-label={`Restore original: ${original}`}
+          onClick={onRestore}
+        >
+          <Undo2 aria-hidden />
+        </Button>
+      ) : null}
       <Button
         size="icon"
         variant="ghost"
@@ -133,7 +145,12 @@ export function DraftView({
 }: DraftViewProps) {
   const known = new Map<string, StudioLine>();
   for (const lines of Object.values(preview.lines)) {
-    for (const line of lines) known.set(line.text, line);
+    for (const line of lines) {
+      known.set(line.text, line);
+      if (line.original && !known.has(line.original)) {
+        known.set(line.original, { ...line, text: line.original, origin: "resume", original: null });
+      }
+    }
   }
   const edited = new Set(ownerEdits);
 
@@ -172,6 +189,11 @@ export function DraftView({
                   origin={origin}
                   original={
                     origin === "rewrite" ? (line?.original ?? null) : null
+                  }
+                  onRestore={
+                    origin === "rewrite" && line?.original
+                      ? () => replaceLine(section, index, line.original ?? "")
+                      : null
                   }
                   onSave={(next) => replaceLine(section, index, next)}
                   onRemove={() => replaceLine(section, index, "")}
