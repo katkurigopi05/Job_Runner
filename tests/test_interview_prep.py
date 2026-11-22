@@ -422,3 +422,29 @@ def test_a_long_run_of_spaces_is_read_at_once(text) -> None:
     started = time.perf_counter()
     suggest(text)
     assert time.perf_counter() - started < 0.5
+
+
+#: The "Topics:" reader before its whitespace was held to one line.
+_OLD_TOPICS = r"^\s*(?:topics?|focus|covers)\s*:\s*([^\n]+)"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Topics: system design, behavioral",
+        "Hi\n\n   Topics: a; b",
+        "Topics:\n- System design\n- Behavioral",
+        "Focus : distributed systems",
+        "covers: SQL",
+        "Topic: one",
+        "Topicsx: none",
+        "no topics here",
+        "Topics:   ",
+        "\t\u00a0Topics:\tKafka\r\n",
+    ],
+)
+def test_topics_are_read_where_the_old_pattern_read_them(text) -> None:
+    old = re.search(_OLD_TOPICS, text, re.I | re.M)
+    expected = old.group(1).strip() if old else ""
+    found = suggest(text).topics
+    assert found == [t.strip()[:120] for t in re.split(r"[,;]", expected) if t.strip()][:10]

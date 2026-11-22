@@ -474,6 +474,11 @@ _OLD_EMAIL = re.compile(r"[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+", re.UNIC
         "josé@exämple.com",
         "a@b..com",
         "a@b.c-d.e_f",
+        "a@b.com.",
+        "a@b.-.c",
+        "a@b.c.d.e.f",
+        "a@_.-",
+        "a@b.com\nc@d.org",
         "",
     ],
 )
@@ -481,7 +486,10 @@ def test_emails_are_found_exactly_where_the_old_pattern_found_them(text) -> None
     assert privacy.email_spans(text) == [m.span() for m in _OLD_EMAIL.finditer(text)]
 
 
-@pytest.mark.parametrize("filler", ["!" * 40_000, "a" * 40_000, "a." * 20_000, "@" * 40_000])
+@pytest.mark.parametrize(
+    "filler",
+    ["!" * 40_000, "a" * 40_000, "a." * 20_000, "@" * 40_000, "a@" + "-" * 40_000, "a@b" * 13_000],
+)
 def test_a_long_run_with_no_address_is_masked_at_once(identities, filler) -> None:
     redactor = privacy.Redactor(identities)
 
