@@ -47,6 +47,9 @@ export default async function ApplicationPage({ params }: { params: Promise<{ id
           <StatusPill status={application.status} reason={application.failure_reason} />
           <FillRate rate={review.fill_rate} />
           <span className="text-xs text-ink-faint">{application.ats ?? "unknown ats"}</span>
+          <Link href={`/applications/${id}/interview`} className="text-sm underline underline-offset-4">
+            Prepare for interview
+          </Link>
         </div>
       </header>
 

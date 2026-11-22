@@ -16,6 +16,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from functools import partial
 
 import structlog
 from sqlalchemy import text
@@ -31,6 +32,7 @@ from apps.worker.discover_company_job import (
 )
 from apps.worker.discover_job import DISCOVER_TASK_KIND, handle_discover
 from apps.worker.inbox_job import INBOX_TASK_KIND, ensure_inbox_poll, handle_inbox
+from apps.worker.interview_job import INTERVIEW_TASK_KIND, handle_interview
 from apps.worker.rescore_job import RESCORE_TASK_KIND, handle_rescore
 from packages.core import db as core_db
 from packages.core.config import get_settings
@@ -76,6 +78,7 @@ HANDLERS = {
     DEEP_DIVE_TASK_KIND: handle_deep_dive_company,
     DISCOVER_TASK_KIND: handle_discover,
     INBOX_TASK_KIND: handle_inbox,
+    INTERVIEW_TASK_KIND: handle_interview,
 }
 
 #: How a failed task of each kind is retried (`queue.RetryPolicy`): the first
@@ -134,9 +137,11 @@ async def run_once(
     worker_id: str,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
     heartbeat: Heartbeat | None = None,
+    only: str | None = None,
 ) -> bool:
     """Claim and run at most one task. Returns True if one was processed."""
-    active_kinds = load_worker_controls().active_kinds(list(HANDLERS))
+    available = list(HANDLERS) if only is None else [kind for kind in HANDLERS if kind == only]
+    active_kinds = load_worker_controls().active_kinds(available)
     if not active_kinds:
         return False
     async with core_db.get_sessionmaker()() as session:
@@ -448,6 +453,7 @@ async def run_forever(
     lease_seconds: int | None = None,
     stop: asyncio.Event | None = None,
     schedule_inbox: bool = True,
+    only: str | None = None,
 ) -> None:
     settings = get_settings()
     # A configured WORKER_ID is what lets a restarted worker recognize the
@@ -462,16 +468,21 @@ async def run_forever(
     await heartbeat.pulse(force=True)
     last_reminder_tick = 0.0
     inbox_scheduler = (
-        asyncio.create_task(_maintain_inbox_schedule(stop)) if schedule_inbox else None
+        asyncio.create_task(_maintain_inbox_schedule(stop))
+        if schedule_inbox and only is None
+        else None
     )
     # One pruner per pool, beside the inbox scheduler: it runs whether or not
     # the workers are busy, which the idle-time reminders do not.
-    queue_pruner = asyncio.create_task(_prune_queue(stop)) if schedule_inbox else None
+    queue_pruner = (
+        asyncio.create_task(_prune_queue(stop)) if schedule_inbox and only is None else None
+    )
 
+    claim = partial(run_once, only=only) if only is not None else run_once
     try:
         while not stop.is_set():
             try:
-                did_work = await run_once(
+                did_work = await claim(
                     worker_id=wid, lease_seconds=lease_seconds, heartbeat=heartbeat
                 )
             except Exception as exc:  # noqa: BLE001 - a bad claim must not kill the loop
@@ -483,7 +494,8 @@ async def run_forever(
                 # Throttled inside: an idle loop turns every second and writes
                 # every HEARTBEAT_INTERVAL_S.
                 await heartbeat.pulse()
-                last_reminder_tick = await _ring_reminders(last_reminder_tick)
+                if only is None:
+                    last_reminder_tick = await _ring_reminders(last_reminder_tick)
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=IDLE_SLEEP_SECONDS)
     finally:
@@ -655,8 +667,11 @@ def main() -> None:
         default=1,
         help="how many workers to run in this process (default 1)",
     )
+    parser.add_argument("--only", choices=sorted(HANDLERS), help="claim only this task kind")
     args = parser.parse_args()
 
+    if args.only and args.workers != 1:
+        parser.error("--only uses one worker")
     if args.workers < 1:
         parser.error("--workers must be at least 1")
     settings = get_settings()
@@ -666,7 +681,7 @@ def main() -> None:
     if refusal is not None:
         parser.error(refusal)
     if args.workers == 1:
-        asyncio.run(run_forever())
+        asyncio.run(run_forever(only=args.only))
     else:
         asyncio.run(run_pool(args.workers))
 

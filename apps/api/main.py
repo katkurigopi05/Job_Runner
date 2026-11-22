@@ -20,6 +20,7 @@ from apps.api.routers import (
     detect,
     events,
     inbox,
+    interview,
     judgments,
     kaggle,
     labels,
@@ -66,6 +67,7 @@ app.include_router(resumes.router)
 app.include_router(resume_studio.router)
 app.include_router(postings.router)
 app.include_router(inbox.router)
+app.include_router(interview.router)
 app.include_router(chat.router)
 app.include_router(chat_stream.router)
 app.include_router(kaggle.router)

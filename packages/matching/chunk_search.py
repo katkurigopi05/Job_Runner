@@ -221,6 +221,33 @@ async def chunk_ranking(
     limit: int,
 ) -> tuple[list[tuple[uuid.UUID, int, int]], bool]:
     """Postings by their best current chunk; whether the read exhausted its pool."""
+    if is_qwen(model) and among is None and get_settings().qwen_vector_backend == "redis_hnsw":
+        from packages.matching.qwen_redis import search as search_qwen
+        from packages.matching.vector_search import Filters
+
+        try:
+            hits = await search_qwen(
+                session,
+                vector,
+                k=limit,
+                filters=Filters(companies=tuple(companies or ())),
+                redis=True,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            log.warning("qwen_redis_unavailable", error=type(exc).__name__)
+        except Exception as exc:
+            # redis is optional; avoid importing its exception types on the shipped path.
+            if type(exc).__module__.split(".")[0] != "redis":
+                raise
+            log.warning("qwen_redis_unavailable", error=type(exc).__name__)
+        else:
+            accelerated_qwen: dict[uuid.UUID, tuple[uuid.UUID, int, int]] = {}
+            for hit in hits:
+                if hit.distance < 1.0:
+                    accelerated_qwen.setdefault(
+                        hit.posting_id, (hit.posting_id, hit.start, hit.length)
+                    )
+            return list(accelerated_qwen.values()), len(hits) < limit
     if isinstance(model, ChunkSpace) and is_qwen(model) and model.ranking is not None:
         # The question's shortlist, shared by its stages and widened on demand.
         return await model.ranking.read(session, among=among, companies=companies, limit=limit)
