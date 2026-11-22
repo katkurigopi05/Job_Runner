@@ -37,6 +37,8 @@ ROLE_FOCUS = (
 )
 GENERAL_PRACTICE = "General practice suggestion."
 PRODUCTION = re.compile(r"\b(production|at scale|on.call|commercial|professional)\b", re.I)
+# Preserve the two extra I forms accepted by the old case-insensitive heading regex.
+_HEADING_CASE = str.maketrans("İı", "ii")
 
 
 def key(*parts: str) -> str:
@@ -81,6 +83,32 @@ def _opens_quoted_reply(line: str) -> bool:
     if head.startswith("on ") and head.find(" wrote:", 4) != -1:
         return True
     return head.lstrip("- ").startswith("original message")
+
+
+def _topic_text(text: str) -> str:
+    """Read an explicit topic heading without rescanning blank-line runs."""
+    cursor = 0
+    while cursor < len(text):
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        for heading in ("topics", "topic", "focus", "covers"):
+            if text[cursor : cursor + len(heading)].translate(_HEADING_CASE).casefold() != heading:
+                continue
+            colon = cursor + len(heading)
+            while colon < len(text) and text[colon].isspace():
+                colon += 1
+            if colon == len(text) or text[colon] != ":":
+                continue
+            start = colon + 1
+            while start < len(text) and text[start].isspace():
+                start += 1
+            end = text.find("\n", start)
+            return text[start : end if end >= 0 else len(text)].strip()
+        end = text.find("\n", cursor)
+        if end < 0:
+            break
+        cursor = end + 1
+    return ""
 
 
 def suggest(text: str) -> Details:
@@ -132,7 +160,7 @@ def suggest(text: str) -> Details:
     round_name = match(
         r"\b(round\s+[0-9]+|phone screen|technical screen|final (?:round|interview)|assessment)\b"
     )
-    topics = match(r"^\s*(?:topics?|focus|covers)\s*:\s*([^\n]+)")
+    topics = _topic_text(text)
     duration = match(r"\b(\d{1,3})[- ]*(?:minutes?|mins?)\b")
     return Details(
         round=round_name,
