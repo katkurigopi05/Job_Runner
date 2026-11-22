@@ -177,13 +177,20 @@ test("application and tracker tables sort and filter without losing detail links
 
   await page.goto("/tracker");
   const tracker = page.getByRole("table");
+  const trackerRows = tracker.locator("tbody").getByRole("row");
   await page.getByRole("button", { name: "Match Score" }).click();
-  await expect(tracker.getByRole("link").first()).toHaveAttribute("href", "/applications/synthetic-application");
+  await expect(trackerRows.first().getByRole("link", { name: "Software Engineer, Agent Tools", exact: true }))
+    .toHaveAttribute("href", "/applications/synthetic-application");
+  await expect(trackerRows.first().getByRole("link", { name: "Prepare for interview", exact: true }))
+    .toHaveAttribute("href", "/applications/synthetic-application/interview");
   await expect(tracker.getByText("0.300", { exact: true })).toBeVisible();
   await expect(tracker.getByText("Not available", { exact: true })).toBeVisible();
   await page.getByRole("searchbox", { name: "Search tracker" }).fill("rejected");
-  await expect(tracker.getByRole("link")).toHaveCount(1);
-  await expect(tracker.getByRole("link")).toHaveAttribute("href", "/applications/synthetic-second");
+  await expect(trackerRows).toHaveCount(1);
+  await expect(trackerRows.first().getByRole("link", { name: "https://alpha.example/jobs/platform", exact: true }))
+    .toHaveAttribute("href", "/applications/synthetic-second");
+  await expect(trackerRows.first().getByRole("link", { name: "Prepare for interview", exact: true }))
+    .toHaveAttribute("href", "/applications/synthetic-second/interview");
   await expect(page.getByRole("heading", { name: "Interview", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Rejection", exact: true })).toBeVisible();
 });
