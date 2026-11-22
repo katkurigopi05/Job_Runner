@@ -21,6 +21,8 @@ from tests.test_graph_rag import OWNER, posting, seed
         "in London",
         "for backend engineer roles",
         "for AI/ML engineer roles",
+        "for backend engineer roles in the Bay Area",
+        "in the Bay Area for backend engineer roles",
     ],
 )
 async def test_recognized_suffixes_parse(suffix):
@@ -39,6 +41,14 @@ async def test_recognized_suffixes_parse(suffix):
         "for wizard roles",
         "for senior backend engineer roles",
         "for backend engineer using Python roles",
+        "for backend engineer roles in Narnia",
+        "in the Bay Area for wizard roles",
+        "for senior backend engineer roles in the Bay Area",
+        "for backend engineer roles in the Bay Area using Python",
+        "in the Bay Area for backend engineer roles using Python",
+        "for backend engineer roles in the Bay Area at Acme",
+        "in the Bay Area for backend engineer roles about RAG",
+        "for backend engineer roles in California in the Bay Area",
         "at Unknown Employer",
     ],
 )
@@ -89,6 +99,9 @@ async def fixture(session, linked):
         ("at Acme", [1, 2, 4]),
         ("for backend engineer roles", [0, 2, 4]),
         ("in Paris", [3]),
+        ("for backend engineer roles in the Bay Area", [0]),
+        ("in the Bay Area for backend engineer roles", [0]),
+        ("for backend engineer roles in Paris", [3]),
     ],
 )
 async def test_each_constraint_applies_in_both_paths(worker_session, linked, suffix, indices):
@@ -104,7 +117,7 @@ async def test_each_constraint_applies_in_both_paths(worker_session, linked, suf
     assert label in result.summary and label in result.answer([e.label for e in result.evidence])
     if suffix in {"at Acme", "for backend engineer roles"}:
         assert "within your search area" in result.answer_note
-    if suffix == "in Paris":
+    if suffix.endswith("in Paris"):
         assert "standing search area waived" in result.summary
         assert "your search area" not in result.answer_note
 
@@ -156,7 +169,17 @@ async def test_place_filter_precedes_sample_limit(worker_session):
 
 
 @pytest.mark.parametrize("path", ["/chat", "/chat/stream"])
-async def test_chat_evidence_obeys_place(path, client, worker_session, monkeypatch):
+@pytest.mark.parametrize(
+    "suffix,label",
+    [
+        ("in San Francisco", "in San Francisco"),
+        (
+            "in the Bay Area for backend engineer roles",
+            "for backend engineer roles in the Bay Area",
+        ),
+    ],
+)
+async def test_chat_evidence_obeys_scope(path, suffix, label, client, worker_session, monkeypatch):
     from apps.api.routers import chat
     from packages.llm.provider import StubProvider
 
@@ -168,7 +191,7 @@ async def test_chat_evidence_obeys_place(path, client, worker_session, monkeypat
 
     monkeypatch.setattr(chat, "provider_for", lambda selected: (Selector(), "local-model"))
     response = await client.post(
-        path, json={"message": "Which jobs match my projects in San Francisco?"}
+        path, json={"message": f"Which jobs match skills from my projects {suffix}?"}
     )
     assert response.status_code == 200
     result = (
@@ -178,7 +201,7 @@ async def test_chat_evidence_obeys_place(path, client, worker_session, monkeypat
     )
     assert result["retrieval_method"] == "graph"
     assert {s["posting_id"] for s in result["sources"]} == {str(jobs[0].id)}
-    assert "in San Francisco" in result["reply"]
+    assert label in result["reply"]
 
 
 @pytest.mark.parametrize("linked", [False, True])
