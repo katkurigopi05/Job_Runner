@@ -6,13 +6,15 @@ questions, available as prompt buttons in the dashboard:
 - **Jobs from my projects:** “Which jobs match skills from my projects?”
 - **What am I lagging on?:** “Which skill gaps recur across jobs in my area?” (“…across my strongest matches?” is read the same way)
 
-The projects question also accepts one fully recognized suffix: `in California`,
+Both questions accept fully recognized suffixes such as `in California`,
 `in the Bay Area`, `in San Francisco`, `in London`, `at Acme` (when the registry
 knows that employer), or `for backend engineer roles`. Place names use the shared
 locality vocabulary and office rules; companies use the assistant's existing name
-resolver; role aliases come from `roles.py`. Unknown names, additional skill or
-level constraints, and mixed suffixes keep normal retrieval. No part of a suffix
-is silently discarded. The gaps question remains unchanged.
+resolver; role aliases come from `roles.py`. Role and place can be combined in
+either order, for example `for backend engineer roles in the Bay Area` or
+`in the Bay Area for backend engineer roles`. Both filters apply to the same jobs.
+Unknown names, additional skill or level constraints, and other combined suffixes
+keep normal retrieval. No part of a suffix is silently discarded.
 
 Both the saved-link path and the top-100 fallback apply the constraint before
 selecting results. Answers name the applied scope; a place abroad waives the
@@ -169,12 +171,11 @@ pipelines: 41 of the 200 nearest need a project technology, 3.8 s including the 
 ## The skill-gaps question takes the same constraints (2026-11-19)
 
 "Which skill gaps recur across jobs in my area for data engineer roles?" counts the gaps over
-the IT jobs the constraint keeps. Both questions share one suffix parser
-(`graph_questions._constraint`): a place, an employer, a role from the role table, or a topic,
-and a suffix it cannot read in full is not a graph question. The gaps search applies
-`GraphConstraint.keeps`, which reads no description, before the area rule, and a place abroad
-waives the area as it does for projects. A topic lists its most related jobs first, so each
-gap's example requirement comes from one of them.
+the IT jobs the constraint keeps. Both questions share the suffix parser
+(`graph_questions._constraint`), which requires the whole suffix to match a supported scope.
+The gaps search applies `GraphConstraint.keeps`, which reads no description, before the area
+rule. A place abroad waives the area as it does for projects. A topic lists its most related
+jobs first, so each gap's example requirement comes from one of them.
 
 Measured read-only on the live database, 2026-11-19 (warm):
 
