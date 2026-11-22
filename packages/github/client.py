@@ -241,7 +241,7 @@ class GitHubClient:
             return
         if response.status_code in (403, 429):
             remaining = response.headers.get("x-ratelimit-remaining")
-            if remaining == "0":
+            if response.status_code == 429 or remaining == "0" or "retry-after" in response.headers:
                 raise RateLimited(
                     "GitHub API rate limit exhausted. Set GITHUB_TOKEN to raise "
                     "the limit from 60/hour to 5000/hour."

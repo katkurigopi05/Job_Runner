@@ -247,6 +247,11 @@ export interface ReviewRecord {
   unanswered?: UnansweredQuestion[];
   screenshot_ref?: string | null;
   resume_diff?: ResumeDiff | null;
+  github_code_evidence?: {
+    repositories_checked: number;
+    implemented_skills: string[];
+    limitations: string[];
+  };
   /** Which of the owner's résumés this application tailored from, and why. */
   base_resume?: BaseResumeChoice | null;
   /** Present once the owner has asked for a local-vs-cloud comparison. */

@@ -241,6 +241,7 @@ async def _run_pipeline(
         # of a file nobody sent. Tailoring has to finish before there is
         # anything worth uploading.
         diff = await _tailor(session, application, profile, posting)
+        await _review_github_code(session, application, posting.description_raw or "")
 
         # Same rule as the résumé above, for the same reason: the document has
         # to exist before there is anything to put in the field. Reads
@@ -283,6 +284,30 @@ async def _run_pipeline(
             screening=screening,
             cover_letter=letter,
         )
+
+
+async def _review_github_code(
+    session: AsyncSession, application: Application, posting_text: str
+) -> None:
+    """Add an advisory coverage report to review. Studio owns claim approval."""
+    if not get_settings().tailor_live_github_code:
+        return
+
+    from packages.matching.skill_vocab import CODE_SKILLS
+    from packages.tailor.code_evidence import retrieve_evidence
+    from packages.tailor.studio_load import candidate_projects
+
+    projects = await candidate_projects(session, application.candidate_id)
+    result = await retrieve_evidence(posting_text, projects)
+    skills = sorted({skill for keys in result.implemented().values() for skill in keys})
+    application.review_json = {
+        **(application.review_json or {}),
+        "github_code_evidence": {
+            "repositories_checked": result.searched,
+            "implemented_skills": [skill.label for skill in CODE_SKILLS if skill.key in skills],
+            "limitations": result.limitations,
+        },
+    }
 
 
 async def _posting_hash(session: AsyncSession, application: Application) -> str | None:

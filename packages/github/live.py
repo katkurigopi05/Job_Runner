@@ -46,11 +46,11 @@ class LiveProjectEvidence(BaseModel):
     description: str | None = None
 
 
-def eligible(project: Project) -> bool:
+def eligible(project: Project, *, allow_private: bool = False) -> bool:
     return (
         project.source == "github"
         and not project.is_fork
-        and not project.is_private
+        and (allow_private or not project.is_private)
         and project.include is not False
         and project.full_name is not None
         and _REPOSITORY.fullmatch(project.full_name) is not None
@@ -70,6 +70,35 @@ async def _read_file(client: httpx.AsyncClient, url: str, limit: int) -> tuple[s
         return content.decode("utf-8", errors="replace"), len(content)
 
 
+async def resolve_snapshot(
+    client: httpx.AsyncClient, github: GitHubClient, project: Project
+) -> tuple[Repository, str, str | None]:
+    """Check the imported identity and resolve its current default-branch commit."""
+    base = f"{github.api_root}/repos/{project.full_name}"
+    response = await client.get(base)
+    github._raise_for_status(response)
+    metadata = response.json()
+    if metadata.get("private") is not bool(project.is_private) or metadata.get("fork") is not False:
+        raise GitHubError("GitHub repository visibility or ownership cannot be verified.")
+    repository = Repository.from_api(metadata)
+    if (
+        repository.external_id != project.external_id
+        or repository.full_name.casefold() != (project.full_name or "").casefold()
+        or repository.is_fork
+    ):
+        raise GitHubError("GitHub repository identity or visibility changed; sync projects.")
+    branch = quote(repository.default_branch or "HEAD", safe="")
+    response = await client.get(f"{base}/commits/{branch}")
+    github._raise_for_status(response)
+    payload = response.json()
+    commit = payload.get("sha")
+    if not isinstance(commit, str) or not re.fullmatch(_SHA, commit):
+        raise GitHubError("GitHub did not return a verifiable commit.")
+    tree = (payload.get("commit") or {}).get("tree") or {}
+    tree_sha = tree.get("sha")
+    return repository, commit, tree_sha if isinstance(tree_sha, str) else None
+
+
 async def read_live_project(
     session: AsyncSession, project_id: uuid.UUID, *, github: GitHubClient | None = None
 ) -> LiveProjectEvidence:
@@ -84,28 +113,8 @@ async def read_live_project(
             headers=github._headers(),
             follow_redirects=False,
         ) as client:
-            base = f"{github.api_root}/repos/{project.full_name}"
-            response = await client.get(base)
-            github._raise_for_status(response)
-            metadata = response.json()
-            if metadata.get("private") is not False or metadata.get("fork") is not False:
-                raise GitHubError("GitHub repository visibility or ownership cannot be verified.")
-            repository = Repository.from_api(metadata)
-            if (
-                repository.external_id != project.external_id
-                or repository.full_name.casefold() != project.full_name.casefold()
-                or repository.is_private
-                or repository.is_fork
-            ):
-                raise GitHubError(
-                    "GitHub repository identity or visibility changed; sync projects."
-                )
-            branch = quote(repository.default_branch or "HEAD", safe="")
-            response = await client.get(f"{base}/commits/{branch}")
-            github._raise_for_status(response)
-            commit = response.json().get("sha")
-            if not isinstance(commit, str) or not re.fullmatch(_SHA, commit):
-                raise GitHubError("GitHub did not return a verifiable commit.")
+            repository, commit, _ = await resolve_snapshot(client, github, project)
+            base = f"{github.api_root}/repos/{repository.full_name}"
             response = await client.get(f"{base}/git/trees/{commit}", params={"recursive": "1"})
             github._raise_for_status(response)
             listing = response.json()

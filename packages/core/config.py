@@ -217,6 +217,8 @@ class Settings(BaseSettings):
     #: nothing to gain. An enum, so a typo refuses to start: read as a string,
     #: "targetted" would have been neither and rewritten everything.
     tailor_mode: TailorMode = TailorMode.REWRITE
+    #: Include a live GitHub coverage report during application review.
+    tailor_live_github_code: bool = False
     #: The face a tailored résumé and its cover letter are set in
     #: (`packages/tailor/style.py`). An enum of faces macOS installs, so
     #: "calibri" refuses to start rather than printing in Verdana.
