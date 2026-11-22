@@ -26,8 +26,9 @@ from packages.matching.chunk_vectors import QWEN_4B
 from packages.matching.embed import SentenceTransformerEmbedder
 
 BGE = SentenceTransformerEmbedder.name
-#: What a bge-small scan looks like in SQL: chunk vectors, or a posting's one vector.
-BGE_SCANS = ("posting_chunks.embedding <=>", "postings.description_embedding <=>")
+#: What a bge-small scan looks like in SQL: a posting's one vector. Chunks have
+#: had no bge-small vector since 2026-11-22, so it is the only one left.
+BGE_SCANS = ("postings.description_embedding <=>",)
 OLLAMA_DOWN = "Ollama is not reachable at http://localhost:11434. Start it with `ollama serve`."
 
 
@@ -53,14 +54,13 @@ def fakes(monkeypatch):
             assert not spaces, f"Qwen-only mode built encoders for {spaces}"
         return {}
 
-    def chunk_queries(encoders, subject):
-        return {} if settings.chat_qwen_only else {BGE: vector(384)}
+    def posting_queries(encoders, subject):
+        return {} if settings.chat_qwen_only else {(BGE, None): vector(384)}
 
     monkeypatch.setattr(query_vectors, "unload_embedder", released, raising=False)
     monkeypatch.setattr(query_vectors, "embed_question", embed)
-    monkeypatch.setattr(R, "_encode", lambda *args: {})
+    monkeypatch.setattr(R, "_encode", posting_queries)
     monkeypatch.setattr(R, "_encoders", encoders)
-    monkeypatch.setattr(R, "_encode_chunk_queries", chunk_queries)
     monkeypatch.setattr(R, "get_settings", lambda: settings)
     monkeypatch.setattr(chat, "get_settings", lambda: settings)
     return settings, calls
@@ -84,19 +84,14 @@ async def posting(session, title, *, qwen=True, bge=(1.0, 0.0), large=(1.0, 0.0)
         url=f"https://jobs.test/{uuid.uuid4()}",
         description_raw="Kafka event streaming pipelines.",
         content_hash="current",
+        # bge-small's one vector per posting, the only bge-small vector left.
+        description_embedding=vector(384, *bge),
+        embedding_model=BGE,
         **kw,
     )
     session.add(p)
     await session.flush()
-    c = PostingChunk(
-        posting_id=p.id,
-        ordinal=0,
-        start=0,
-        length=31,
-        content_hash="current",
-        embedding_model=BGE,
-        embedding=vector(384, *bge),
-    )
+    c = PostingChunk(posting_id=p.id, ordinal=0, start=0, length=31, content_hash="current")
     session.add(c)
     await session.flush()
     if qwen:

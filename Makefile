@@ -501,7 +501,7 @@ fetch-board-directories:
 	$(PY)/python -m scripts.fetch_board_directories
 
 # make chunk-postings — split every open posting into 500-character chunks
-# (125-character overlap, 25%) and embed each with bge-small, for the chat search.
+# (125-character overlap, 25%), the windows the Qwen chunk vectors are made for.
 # A posting cut at another overlap is cut again, which drops its Qwen vectors.
 # The matching pass after each crawl does new postings; this clears a backlog.
 chunk-postings:
@@ -663,13 +663,6 @@ nltk-data:
 
 # make demo — a separate, seeded demo database and the API and dashboard on it.
 # Synthetic data only (demo.invalid); see README "Quickstart".
-.PHONY: demo sync-vectors benchmark-vectors
+.PHONY: demo
 demo:
 	bash scripts/demo.sh
-
-# Optional derived Redis index; install .[redis] and start the redis profile first.
-sync-vectors:
-	$(PY)/python -m scripts.sync_vectors $(ARGS)
-
-benchmark-vectors:
-	$(PY)/python -m scripts.benchmark_vectors $(ARGS)

@@ -397,8 +397,9 @@ are no host the crawler asks, and they are the owner's table to tidy.
 ### Qwen search regression proof (2026-11-02)
 
 `test_qwen_search.py` uses hand-built 384- and 2,560-wide unit directions, never
-a real model or network: Qwen can outrank a disagreeing bge-small result; chunks
-and posting vectors without Qwen remain reachable; spaces interleave by rank;
+a real model or network: Qwen can outrank a disagreeing bge-small result; posting
+vectors without Qwen remain reachable (chunks have had no bge-small vector since
+2026-11-22, and other search tests use `tests/fake_qwen.py`); spaces interleave by rank;
 closed/stale/other-model rows do not count as Qwen coverage. Company, area,
 place and level rules apply to semantic additions, and a nonexistent rare term
 still returns nothing. Embedding failure is visible in both context and reply.

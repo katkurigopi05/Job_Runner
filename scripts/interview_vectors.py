@@ -96,8 +96,6 @@ async def _fixture(session):
                     "length": 10,
                     "overlap": OVERLAP,
                     "content_hash": "fixture",
-                    "embedding_model": "synthetic-384-fixture",
-                    "embedding": [1.0] + [0.0] * 383,
                 }
                 for n, chunk_id, _ in batch
             ],

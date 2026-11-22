@@ -16,9 +16,12 @@ would have added 40 MB back. `content_hash` says which version of the text
 the offsets point into, so an edited posting is re-chunked rather than read
 at the wrong place.
 
-`halfvec`, float16: half of float32's storage. The owner's DP-800 notes
-measured the same top 10 in the same order at 106 rows; here, the same top-10
-precision over 80,440 chunks, with near-ties further down reordering.
+A chunk carries no vector of its own. Each had a bge-small vector until
+2026-11-22, when the owner replaced bge-small with Qwen3-Embedding-4B for chunk
+search: chat had searched only the Qwen vectors since `CHAT_QWEN_ONLY`, and the
+bge-small vectors and their index took 767 MB (307 MB and 460 MB). A chunk's vectors live in
+`posting_chunk_vectors`, `halfvec`, float16: half of float32's storage. The
+owner's DP-800 notes measured the same top 10 in the same order at 106 rows.
 """
 
 from __future__ import annotations
@@ -42,11 +45,11 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from packages.core.models import EMBEDDING_DIM, Base
+from packages.core.models import Base
 
 
 class PostingChunk(Base):
-    """One fixed-size window of a posting's description, and its vector."""
+    """One fixed-size window of a posting's description; its vectors are `PostingChunkVector`."""
 
     __tablename__ = "posting_chunks"
 
@@ -67,10 +70,6 @@ class PostingChunk(Base):
     #: (`chunks.OVERLAP`). Rows from before 2026-11-06 were cut at 25; a row cut
     #: at any other overlap than today's is stale, like one cut from old text.
     overlap: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("25"))
-    #: Which embedder made the vector. Vectors from different models are not
-    #: comparable, so a search only ever compares within one.
-    embedding_model: Mapped[str] = mapped_column(String(64), nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(HALFVEC(EMBEDDING_DIM), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -78,13 +77,6 @@ class PostingChunk(Base):
     __table_args__ = (
         UniqueConstraint("posting_id", "ordinal", name="uq_posting_chunks_posting_ordinal"),
         Index("ix_posting_chunks_posting_id", "posting_id"),
-        Index(
-            "ix_posting_chunks_embedding_hnsw",
-            "embedding",
-            postgresql_using="hnsw",
-            postgresql_ops={"embedding": "halfvec_cosine_ops"},
-            postgresql_with={"m": 16, "ef_construction": 200},
-        ),
     )
 
 
@@ -93,14 +85,13 @@ LARGE_EMBEDDING_DIM = 2560
 
 
 class PostingChunkVector(Base):
-    """A chunk's vector from a larger model, beside the 384-dim one it already has.
+    """A chunk's vector, made by Qwen3-Embedding-4B on a Colab or Kaggle batch.
 
     Qwen3-Embedding-4B found the posting a question was written from in its
     top five for 35 of 56 natural questions and 10 of 56 paraphrased ones over
-    the whole index, where bge-small found 21 and 2 (2026-11-02). Its vectors
-    are 2,560 wide, so they are a table of their own rather than a second
-    width in `posting_chunks.embedding`, which everything that reads
-    bge-small's vectors would then have to tell apart.
+    the whole index, where bge-small found 21 and 2 (2026-11-02). It is the
+    only model chunks are searched by: the bge-small vector each chunk also
+    had went on 2026-11-22.
 
     A row belongs to one chunk and goes with it: a re-chunked posting loses
     its old chunks and their vectors together, so a vector never outlives the

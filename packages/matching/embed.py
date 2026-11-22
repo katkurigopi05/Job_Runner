@@ -162,8 +162,7 @@ class LexicalEmbedder:
 #: The model `SentenceTransformerEmbedder` loads, per CLAUDE.md §3.
 DEFAULT_SENTENCE_MODEL = "BAAI/bge-small-en-v1.5"
 
-#: `posting_chunks.embedding_model` and `postings.embedding_model` are
-#: `String(64)`.
+#: `postings.embedding_model` is `String(64)`.
 STAMP_MAX_CHARS = 64
 
 _SENTENCE_STAMP = "sentence-transformers"

@@ -44,7 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.config import get_settings
 from packages.core.models import Posting
-from packages.core.models_chunks import PostingChunk
+from packages.core.models_chunks import PostingChunkVector
 from packages.matching import retrieve as search
 
 DEFAULT_SEED = Path("seeds/retrieval_questions.json")
@@ -156,7 +156,9 @@ async def _stamp(session: AsyncSession) -> dict[str, Any]:
     open_postings = await session.scalar(
         select(func.count()).select_from(Posting).where(Posting.closed_at.is_(None))
     )
-    chunk_models = (await session.scalars(select(PostingChunk.embedding_model).distinct())).all()
+    chunk_models = (
+        await session.scalars(select(PostingChunkVector.embedding_model).distinct())
+    ).all()
     return {
         "measured": datetime.now(UTC).isoformat(timespec="seconds"),
         "open_postings": int(open_postings or 0),

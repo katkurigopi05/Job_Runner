@@ -56,8 +56,6 @@ async def _stored(session, location: str = "2 Locations", content_hash: str = "f
             start=start,
             length=length,
             content_hash=posting.content_hash,
-            embedding_model="sentence-transformers",
-            embedding=[0.0] * 384,
             overlap=OVERLAP,
         )
         session.add(chunk)
@@ -168,8 +166,6 @@ async def test_one_store_moves_only_the_postings_whose_text_is_unchanged(db_sess
             start=0,
             length=500,
             content_hash="other-first",
-            embedding_model="sentence-transformers",
-            embedding=[0.0] * 384,
             overlap=OVERLAP,
         )
     )
