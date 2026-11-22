@@ -6,6 +6,7 @@ import subprocess
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import load_only
 
 from packages.core.enums import ApplicationStatus
 from packages.core.models import Application, AppliedPosting
@@ -28,7 +29,14 @@ async def test_backfill_preserves_history_and_protects_old_attempts(scratch_data
         rolled_back_id = await _application(maker)
         untouched_id = await _application(maker)
         async with maker() as session:
-            sent = await session.get(Application, sent_id)
+            # Read only fields this fixture needs from the pre-backfill schema.
+            sent = await session.get(
+                Application,
+                sent_id,
+                options=[
+                    load_only(Application.status, Application.candidate_id, Application.profile_id)
+                ],
+            )
             await transition(session, sent, ApplicationStatus.SUBMITTED)
             duplicate = Application(
                 candidate_id=sent.candidate_id,

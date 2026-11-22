@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { request } from "@/lib/api";
+import { CITATION_LINK } from "@/lib/external";
 
 type Details = {
   round: string;
@@ -322,7 +323,7 @@ function Citation({ source }: { source: Source }) {
           source.retrieved && `Retrieved ${source.retrieved.slice(0, 10)}`].filter(Boolean).join(" · ")}
       </p>
       {source.caveat && <p className="mt-2">{source.caveat}</p>}
-      {source.url && /^https?:\/\//i.test(source.url) && <a className="mt-2 inline-block underline" href={source.url} target="_blank" rel="noreferrer">Open source</a>}
+      {source.url && /^https?:\/\//i.test(source.url) && <a className="mt-2 inline-block underline" href={source.url} {...CITATION_LINK}>Open source</a>}
     </details>
   );
 }

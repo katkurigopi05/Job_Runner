@@ -15,6 +15,7 @@
  * - **An application form** opens a new tab each time, with no opener. Sign-in
  *   pages are where a site most often treats itself as a popup and redirects
  *   the window that opened it, and here that window is the dashboard.
+ *   Interview citations use the same isolated tab policy.
  *
  * `DOC_WINDOW` holds the résumé PDF, which this dashboard serves itself, so
  * its opener link reaches nothing outside. It is its own tab so a posting and
@@ -47,6 +48,9 @@ export const POSTING_LINK = { target: POSTING_WINDOW } as const;
 
 /** `<a {...APPLY_LINK}>`: a new tab for an application form, with no way back. */
 export const APPLY_LINK = { target: "_blank", rel: "noopener noreferrer" } as const;
+
+/** `<a {...CITATION_LINK}>`: a new tab for an external interview source. */
+export const CITATION_LINK = APPLY_LINK;
 
 /** `APPLY_LINK` for a button. */
 export function openApplyForm(url: string): void {
