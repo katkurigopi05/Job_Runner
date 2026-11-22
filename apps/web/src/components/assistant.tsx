@@ -16,6 +16,7 @@ import { historyFrom } from "@/lib/chat-history";
 import { newChatId } from "@/lib/chat-recents";
 import { readFrames } from "@/lib/chat-stream";
 import { AssistantEvidence } from "@/components/assistant-evidence";
+import { gapsOf, type GapEvidence } from "@/lib/gap-evidence";
 import { PostingLink } from "@/components/assistant-posting-link";
 
 /**
@@ -101,6 +102,8 @@ interface Turn {
   postingsScope?: "open_postings" | "top_matches";
   retrievalMethod?: "standard" | "graph";
   retrievalDetails?: string | null;
+  /** The jobs and projects behind each recurring gap. Absent from older saved answers. */
+  gapEvidence?: GapEvidence[];
   /** Labels the answer cites that were never among its sources: "P7" over five. */
   unsupportedCitations?: string[];
   /** A chart the API drew from the database for a chart request. No model wrote it. */
@@ -308,7 +311,8 @@ function RetrievedPostings({ turn }: { turn: Turn }) {
       ) : null}
       <MoreMatches turn={turn} />
       <AssistantEvidence searched={turn.searched} unsearchable={turn.unsearchable}
-        scope={turn.postingsScope} details={turn.retrievalDetails} method={turn.retrievalMethod} />
+        scope={turn.postingsScope} details={turn.retrievalDetails} method={turn.retrievalMethod}
+        gaps={gapsOf(turn.gapEvidence)} />
     </div>
   );
 }
@@ -362,6 +366,7 @@ interface Reply {
   postings_scope?: "open_postings" | "top_matches";
   retrieval_method?: "standard" | "graph";
   retrieval_details?: string | null;
+  graph_gaps?: GapEvidence[];
   unsupported_citations?: string[];
   chart?: Chart | null;
 }
@@ -393,6 +398,7 @@ function turnFrom(body: Reply): Turn {
     postingsScope: body.postings_scope,
     retrievalMethod: body.retrieval_method,
     retrievalDetails: body.retrieval_details,
+    gapEvidence: gapsOf(body.graph_gaps),
     unsupportedCitations: body.unsupported_citations,
     chart: body.chart,
   };
