@@ -17,8 +17,10 @@ import {
   type Evidence,
   type RoleTrack,
   type StudioPreview,
+  type StudioCodeApproval,
   type StudioRequest,
 } from "@/lib/studio-api";
+import { CodeEvidenceReview } from "./code-evidence";
 import { BulletTrace, DraftView } from "./draft-view";
 import { EvidenceEditor } from "./evidence-editor";
 import { Readout } from "./readout";
@@ -54,6 +56,8 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
   const [skippedCerts, setSkippedCerts] = useState<string[]>([]);
   const [pickedProjects, setPickedProjects] = useState<string[]>([]);
   const [useModel, setUseModel] = useState(false);
+  const [liveCode, setLiveCode] = useState(false);
+  const [codeApprovals, setCodeApprovals] = useState<StudioCodeApproval[]>([]);
   const [liveProjects, setLiveProjects] = useState(true);
   const [replaceProjects, setReplaceProjects] = useState(true);
   const [modelProvider, setModelProvider] = useState<"configured" | "kaggle">("kaggle");
@@ -84,6 +88,7 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
       setPreview(result);
       setSections(result.sections);
       setOwnerEdits([]);
+      setCodeApprovals([]);
       setSaved(null);
     },
   });
@@ -101,7 +106,10 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
           .map((p) => p.id),
         selected_certification_ids: asked.selected_certification_ids,
         live_projects: asked.live_projects,
-        project_rewrites: preview.projects.filter((p) => p.chosen).map((p) => ({
+        live_code: asked.live_code,
+        code_approvals: codeApprovals,
+        job_description: asked.live_code ? asked.job_description : undefined,
+        project_rewrites: preview.projects.filter((p) => p.chosen && !asked.live_code).map((p) => ({
           project_id: p.id,
           original: p.original_description,
           tailored: p.tailored_description,
@@ -143,9 +151,10 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
         .filter((id) => !skippedCerts.includes(id)),
       include_internships: includeInternships,
       use_model: useModel,
-      live_projects: liveProjects,
+      live_projects: liveProjects && !liveCode,
+      live_code: liveCode,
       model_provider: modelProvider,
-      replace_source_projects: replaceProjects,
+      replace_source_projects: replaceProjects && !liveCode,
     });
 
   const toggle = (list: string[], id: string) =>
@@ -286,17 +295,25 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
             ))}
           </fieldset>
           <label className="flex items-start gap-2 text-xs">
-            <input type="checkbox" className="mt-0.5 accent-go" checked={replaceProjects}
+            <input type="checkbox" className="mt-0.5 accent-go" checked={replaceProjects && !liveCode} disabled={liveCode}
               onChange={(e) => setReplaceProjects(e.target.checked)} />
             <span>Use ranked GitHub projects as this draft’s Projects section.
               This replaces the base résumé’s project entries with the selected descriptions.
               Review the print preview before saving.</span>
           </label>
           <label className="flex items-start gap-2 text-xs">
-            <input type="checkbox" className="mt-0.5 accent-go" checked={liveProjects}
+            <input type="checkbox" className="mt-0.5 accent-go" checked={liveProjects && !liveCode} disabled={liveCode}
               onChange={(e) => setLiveProjects(e.target.checked)} />
             <span>Check current public GitHub projects before ranking (up to 20).
-              Failed checks are left out. Private projects are available with live checking off.</span>
+              Failed checks are left out of this catalog check.</span>
+          </label>
+          <label className="flex items-start gap-2 text-xs">
+            <input type="checkbox" className="mt-0.5 accent-go" checked={liveCode}
+              onChange={(e) => {
+                setLiveCode(e.target.checked);
+                if (e.target.checked) setModelProvider("configured");
+              }} />
+            <span>Use live GitHub code evidence</span>
           </label>
           <label className="flex items-start gap-2 text-xs">
             <input
@@ -306,7 +323,9 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
               onChange={(e) => setUseModel(e.target.checked)}
             />
             <span>
-              Rewrite selected project descriptions for this job and revise supported résumé bullets.
+              {liveCode
+                ? "Revise supported résumé bullets for this job."
+                : "Rewrite selected project descriptions for this job and revise supported résumé bullets."}
               Each rewrite is checked against its own source; unsupported claims keep the original.
             </span>
           </label>
@@ -339,6 +358,13 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
 
       {preview ? (
         <>
+          {preview.code_review ? (
+            <CodeEvidenceReview
+              review={preview.code_review}
+              approvals={codeApprovals}
+              onChange={setCodeApprovals}
+            />
+          ) : null}
           <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
             <DraftView
               preview={preview}
@@ -392,7 +418,7 @@ export function StudioWorkspace(props: StudioWorkspaceProps) {
             </label>
             <Button
               variant="default"
-              disabled={save.isPending}
+              disabled={save.isPending || synthesize.isPending || codeApprovals.length > 12}
               onClick={() => save.mutate()}
             >
               {save.isPending ? "Saving…" : "Save as a new version"}

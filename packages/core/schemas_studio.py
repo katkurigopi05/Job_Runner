@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from packages.core.schemas import ResumeContactEdit, ResumeOut
+from packages.tailor.code_evidence import CodeReview
 
 RoleTrackName = Literal["swe", "fullstack", "data_ml", "ai_agentic", "cloud_devops", "fde_harness"]
 
@@ -92,6 +93,7 @@ class StudioRequest(BaseModel):
     #: tailoring (CLAUDE.md §2.8).
     use_model: bool = False
     live_projects: bool = False
+    live_code: bool = False
     model_provider: Literal["configured", "kaggle"] = "configured"
     replace_source_projects: bool = False
 
@@ -168,6 +170,7 @@ class StudioPreview(BaseModel):
     skipped: list[str]
     tailored_by: str | None = None
     calls: int = 0
+    code_review: CodeReview | None = None
     project_evidence: str = "Imported GitHub metadata; live checking was not requested."
 
 
@@ -180,6 +183,13 @@ class StudioProjectRewrite(StudioRewrite):
     project_id: uuid.UUID
 
 
+class StudioCodeApproval(BaseModel):
+    finding_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+    entry: Line | None = None
+    wording: Bullet
+    contribution_confirmed: Literal[True]
+
+
 class StudioSave(BaseModel):
     """A previewed draft, possibly edited, to keep as a new résumé version."""
 
@@ -188,8 +198,14 @@ class StudioSave(BaseModel):
     base_resume_id: uuid.UUID
     role_track: RoleTrackName = "swe"
     selected_project_ids: list[uuid.UUID] = Field(default_factory=list, max_length=8)
+    code_approvals: list[StudioCodeApproval] = Field(default_factory=list, max_length=12)
+    job_description: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=25_000)]
+        | None
+    ) = None
     project_rewrites: list[StudioProjectRewrite] = Field(default_factory=list, max_length=8)
     live_projects: bool = False
+    live_code: bool = False
     selected_certification_ids: list[uuid.UUID] | None = Field(default=None, max_length=30)
     include_internships: bool = True
     contact: ResumeContactEdit

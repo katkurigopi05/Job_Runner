@@ -21,6 +21,7 @@ against `tests/fixtures/golden/` first.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 #: Characters that continue a technology token, so `C++` is not `C` and
@@ -133,9 +134,21 @@ SKILLS: tuple[Skill, ...] = (
 BY_KEY: dict[str, Skill] = {skill.key: skill for skill in SKILLS}
 
 
-def find_skills(line: str) -> list[Skill]:
+# The live review recognizes specific code patterns without changing saved
+# posting requirements, job filters, or the ordinary tailoring keyword model.
+_CODE_SPELLINGS = {
+    "rest": _skill("rest", "REST APIs", r"RESTful(?:\s+APIs?)?", r"REST\s+APIs?", r"(?-i:REST)"),
+    "cicd": _skill("cicd", "CI/CD", r"CI\s*/\s*CD", r"continuous integration"),
+}
+CODE_SKILLS = (
+    *(_CODE_SPELLINGS.get(skill.key, skill) for skill in SKILLS),
+    _skill("aws_lambda", "AWS Lambda", r"(?:AWS|Amazon(?: Web Services)?) Lambda"),
+)
+
+
+def find_skills(line: str, vocabulary: Sequence[Skill] = SKILLS) -> list[Skill]:
     """Every vocabulary skill named in `line`, in vocabulary order, once each."""
-    return [skill for skill in SKILLS if skill.pattern.search(line)]
+    return [skill for skill in vocabulary if skill.pattern.search(line)]
 
 
 def normalize_skill(term: str) -> str | None:
@@ -162,4 +175,4 @@ def normalize_skill(term: str) -> str | None:
     return None
 
 
-__all__ = ["BY_KEY", "SKILLS", "Skill", "find_skills", "normalize_skill"]
+__all__ = ["BY_KEY", "CODE_SKILLS", "SKILLS", "Skill", "find_skills", "normalize_skill"]

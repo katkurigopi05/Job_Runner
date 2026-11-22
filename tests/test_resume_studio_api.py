@@ -276,3 +276,163 @@ async def test_a_studio_request_for_another_candidates_resume_is_refused(
     )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_request"
+
+
+async def test_live_code_preview_review_save_and_pdf(
+    client, complete_candidate, committing_sessionmaker, monkeypatch
+) -> None:
+    from packages.github.code_search import search_code
+    from packages.matching.requirements import extract
+    from packages.matching.skill_vocab import CODE_SKILLS
+    from tests.test_github_code import LAMBDA, MockRepository
+
+    candidate_id = complete_candidate["candidate_id"]
+    profile_id = complete_candidate["profile_id"]
+    jd = "Requirements:\n- AWS Lambda, Docker and Kubernetes"
+    mock = MockRepository(
+        {
+            "src/lambda.py": LAMBDA,
+            "README.md": "Docker is described here.\n",
+        }
+    )
+
+    async def retrieve(text, projects):
+        return await search_code(
+            projects, extract(text, vocabulary=CODE_SKILLS).skills, github=mock.client()
+        )
+
+    monkeypatch.setattr("apps.api.routers.resume_studio.retrieve_evidence", retrieve)
+    async with committing_sessionmaker() as session:
+        project = Project(
+            candidate_id=uuid.UUID(candidate_id),
+            external_id="17",
+            name="example",
+            full_name="owner/example",
+            url="https://github.com/owner/example",
+            description="A project example.",
+            language="Python",
+            topics_json=[],
+        )
+        session.add(project)
+        await session.commit()
+        project_id = str(project.id)
+
+    body = {
+        "candidate_id": candidate_id,
+        "profile_id": profile_id,
+        "job_description": jd,
+        "selected_project_ids": [project_id],
+    }
+    before = await _resumes(client, candidate_id)
+    legacy = await client.post("/resumes/synthesize", json=body)
+    assert legacy.status_code == 200 and legacy.json()["code_review"] is None
+    assert mock.requests == []
+
+    response = await client.post("/resumes/synthesize", json={**body, "live_code": True})
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    review = preview["code_review"]
+    needs = {item["skill"]: item for item in review["requirements"]}
+    assert "contribution unconfirmed" in needs["aws_lambda"]["status"]
+    assert needs["docker"]["status"] == "unsubstantiated by implementation"
+    assert needs["kubernetes"]["status"] == "no verified match"
+    assert len(review["suggestions"]) == 1
+    suggestion = review["suggestions"][0]
+    wording = suggestion["wording"][1]
+    assert wording not in preview["html"] and await _resumes(client, candidate_id) == before
+
+    save = {
+        **body,
+        "live_code": True,
+        "base_resume_id": preview["base_resume_id"],
+        "sections": preview["sections"],
+        "contact": preview["contact"],
+    }
+    approval = {
+        "finding_id": suggestion["finding_id"],
+        "entry": None,
+        "wording": wording,
+        "contribution_confirmed": True,
+    }
+    invalid = [
+        {"code_approvals": [{**approval, "contribution_confirmed": False}]},
+        {"code_approvals": [{**approval, "wording": "Led a production Lambda migration."}]},
+        {"code_approvals": [{**approval, "entry": "Unrelated employer"}]},
+        {
+            "sections": {
+                **save["sections"],
+                "experience": [*save["sections"]["experience"], wording],
+            }
+        },
+    ]
+    invalid.append(
+        {
+            "code_approvals": [approval],
+            "owner_edits": [wording],
+            "sections": {
+                **save["sections"],
+                "experience": [*save["sections"]["experience"], wording],
+            },
+        }
+    )
+    for changes in invalid:
+        refused = await client.post("/resumes/synthesize/save", json={**save, **changes})
+        assert refused.status_code in {400, 422}, refused.text
+    assert await _resumes(client, candidate_id) == before
+
+    # Rejection is represented by withholding approval. A later change to the
+    # branch also invalidates a previously reviewed finding.
+    rejected = await client.post("/resumes/synthesize/save", json=save)
+    assert rejected.status_code == 201, rejected.text
+    mock.commit = "e" * 40
+    stale = await client.post(
+        "/resumes/synthesize/save",
+        json={**save, "code_approvals": [approval]},
+    )
+    assert stale.status_code == 400 and "new preview" in stale.text
+    mock.commit = "a" * 40
+
+    approved = await client.post(
+        "/resumes/synthesize/save",
+        json={**save, "code_approvals": [approval]},
+    )
+    assert approved.status_code == 201, approved.text
+    for saved in [rejected, approved]:
+        resume_id = saved.json()["resume"]["id"]
+        pdf = await client.get(f"/resumes/{resume_id}/file")
+        extracted = " ".join(
+            page.extract_text() for page in PdfReader(io.BytesIO(pdf.content)).pages
+        )
+        assert (wording in " ".join(extracted.split())) is (saved is approved)
+        assert "/blob/" not in extracted and "src/lambda.py" not in extracted
+    approved_id = approved.json()["resume"]["id"]
+    parsed = (await client.get(f"/resumes/{approved_id}/parsed")).json()["parsed"]
+    assert f"• {wording}" in parsed["sections"]["projects"]
+    assert parsed["resume_studio"]["github_code_approvals"][0]["commit_sha"] == mock.commit
+    profile = (await client.get(f"/profiles/{profile_id}")).json()
+    assert profile["base_resume_id"] == preview["base_resume_id"]
+
+
+async def test_live_code_invalid_pdf_is_never_saved(
+    client, complete_candidate, monkeypatch
+) -> None:
+    candidate_id = complete_candidate["candidate_id"]
+    before = await _resumes(client, candidate_id)
+    response = await client.post(
+        "/resumes/synthesize",
+        json={"candidate_id": candidate_id, "job_description": POSTING, "live_code": True},
+    )
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    monkeypatch.setattr("apps.api.routers.resume_studio.assemble_pdf", lambda *args: b"broken PDF")
+    rejected = await client.post(
+        "/resumes/synthesize/save",
+        json={
+            "candidate_id": candidate_id,
+            "base_resume_id": preview["base_resume_id"],
+            "live_code": True,
+            "sections": preview["sections"],
+            "contact": preview["contact"],
+        },
+    )
+    assert rejected.status_code >= 400 and await _resumes(client, candidate_id) == before

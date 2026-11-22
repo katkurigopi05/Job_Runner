@@ -65,6 +65,7 @@ export interface StudioRequest {
   include_internships: boolean;
   use_model: boolean;
   live_projects?: boolean;
+  live_code?: boolean;
   model_provider?: "configured" | "kaggle";
   replace_source_projects?: boolean;
 }
@@ -121,6 +122,48 @@ export interface StudioContact {
   links: string[];
 }
 
+export interface StudioCodeApproval {
+  finding_id: string;
+  entry: string | null;
+  wording: string;
+  contribution_confirmed: true;
+}
+
+export interface StudioCodeReview {
+  requirements: {
+    skill: string;
+    label: string;
+    demand: string;
+    quote: string;
+    option: boolean;
+    resume_sources: string[];
+    finding_ids: string[];
+    status: string;
+  }[];
+  context: { quote: string; kind: string; demand: string | null; related_skills: string[] }[];
+  findings: {
+    id: string;
+    repository_name: string;
+    full_name: string;
+    is_private: boolean;
+    path: string;
+    start_line: number;
+    end_line: number;
+    commit_sha: string;
+    permalink: string | null;
+    explanation: string;
+    classification: string;
+    verification_status: string;
+  }[];
+  limitations: string[];
+  suggestions: {
+    finding_id: string;
+    project_name: string;
+    entry: string | null;
+    wording: string[];
+  }[];
+}
+
 export interface StudioPreview {
   role_track: RoleTrack;
   role_label: string;
@@ -140,6 +183,7 @@ export interface StudioPreview {
   tailored_by: string | null;
   calls: number;
   project_evidence: string;
+  code_review?: StudioCodeReview | null;
 }
 
 export interface StudioSave {
@@ -148,8 +192,11 @@ export interface StudioSave {
   base_resume_id: string;
   role_track: RoleTrack;
   selected_project_ids: string[];
+  code_approvals?: StudioCodeApproval[];
+  job_description?: string;
   project_rewrites?: { project_id: string; original: string; tailored: string }[];
   live_projects?: boolean;
+  live_code?: boolean;
   selected_certification_ids: string[] | null;
   include_internships: boolean;
   contact: StudioContact;

@@ -106,8 +106,11 @@ export function Readout({ preview }: { preview: StudioPreview }) {
       <div className="space-y-2">
         <h3 className="text-xs text-ink-soft">Projects ranked for this job</h3>
         <p className="text-xs text-ink-faint">{preview.project_evidence}</p>
-        <p className="text-xs text-ink-faint">Direct required technologies first; pins take priority.
-          When none are stated, ranking uses posting relevance and recency.</p>
+        <p className="text-xs text-ink-faint">
+          {preview.code_review
+            ? "Pins take priority, followed by verified matches for required skills."
+            : "Direct required technologies first; pins take priority. When none are stated, ranking uses posting relevance and recency."}
+        </p>
         {chosen.length === 0 ? (
           <p className="text-xs text-ink-faint">None.</p>
         ) : (

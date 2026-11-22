@@ -33,11 +33,12 @@ is the nice-to-have one.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
 from packages.matching.experience import Demand, heading_kind, line_demand
-from packages.matching.skill_vocab import BY_KEY, find_skills
+from packages.matching.skill_vocab import SKILLS, Skill, find_skills
 
 #: Bump when extraction changes, so the backfill knows which rows to redo.
 EXTRACTOR_VERSION = 5
@@ -367,7 +368,7 @@ class PostingRequirements:
 _BULLET_START = re.compile(r"^\s*(?:[-–—*•·▪]\s+|\d+[.)]\s+)")
 
 
-def _is_content(line: str) -> bool:
+def _is_content(line: str, vocabulary: Sequence[Skill]) -> bool:
     """Whether a short line is an item rather than a heading."""
     if _BULLET_START.match(line):
         return True
@@ -377,12 +378,12 @@ def _is_content(line: str) -> bool:
         return False
     # "Kubernetes" or "PhD in Machine Learning" on a line of its own names a
     # thing; an unrecognized heading does not.
-    return bool(find_skills(line)) or any(
+    return bool(find_skills(line, vocabulary)) or any(
         pattern.search(line) for _level, pattern in _EDUCATION_PATTERNS
     )
 
 
-def extract(text: str | None) -> PostingRequirements:
+def extract(text: str | None, *, vocabulary: Sequence[Skill] = SKILLS) -> PostingRequirements:
     """Read pay, skills and education from a posting's text. Never guesses."""
     if not text:
         return PostingRequirements()
@@ -399,7 +400,7 @@ def extract(text: str | None) -> PostingRequirements:
         line = raw.strip()
         if not line:
             continue
-        kind = None if _is_content(line) else heading_kind(line)
+        kind = None if _is_content(line, vocabulary) else heading_kind(line)
         if kind is not None:
             heading = kind
             continue
@@ -410,7 +411,7 @@ def extract(text: str | None) -> PostingRequirements:
             skill_requirement = _FROM_DEMAND[line_demand(clause, heading)]
             if _NOT_REQUIRED.search(clause):
                 skill_requirement = Requirement.UNCLASSIFIED
-            for skill in find_skills(clause):
+            for skill in find_skills(clause, vocabulary):
                 current = best.get(skill.key)
                 option = is_option(clause, skill)
                 direct_required = (
@@ -437,8 +438,9 @@ def extract(text: str | None) -> PostingRequirements:
                 Education(lowest, requirement, bool(_EQUIVALENT.search(line)), _quote(line))
             )
 
+    skill_order = {skill.key: index for index, skill in enumerate(vocabulary)}
     ordered = tuple(
-        sorted(best.values(), key=lambda m: (_STRENGTH[m.requirement], list(BY_KEY).index(m.skill)))
+        sorted(best.values(), key=lambda m: (_STRENGTH[m.requirement], skill_order[m.skill]))
     )
     return PostingRequirements(
         compensation=read_compensation(text),
