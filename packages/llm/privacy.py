@@ -27,7 +27,8 @@ if TYPE_CHECKING:
     from packages.llm.provider import LLMProvider
 
 T = TypeVar("T", bound=BaseModel)
-_EMAIL = re.compile(r"[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+", re.UNICODE)
+#: What may stand before an address's "@": a word character or one of these.
+_LOCAL_PUNCTUATION = frozenset(".!#$%&'*+/=?^`{|}~-")
 # Horizontal whitespace only: dates and numbers on adjacent lines are not a
 # phone. A country prefix or ten digits is required; years/metrics stay facts.
 _PHONE = re.compile(
@@ -37,6 +38,59 @@ _PHONE = re.compile(
     re.IGNORECASE,
 )
 _URL = re.compile(r"(?:https?://|mailto:)[^\s<>\"]+", re.IGNORECASE)
+
+
+def _in_local_part(char: str) -> bool:
+    return char.isalnum() or char == "_" or char in _LOCAL_PUNCTUATION
+
+
+def _domain_end(text: str, start: int) -> int | None:
+    """Read two or more nonempty word/hyphen labels, with dots between them.
+
+    Keep the last complete dotted domain when another dot has no label.
+    Each character is visited once; email domains need no regex backtracking.
+    """
+    cursor, labels = start, 0
+    end = None
+    while cursor < len(text):
+        label_start = cursor
+        while cursor < len(text) and (text[cursor].isalnum() or text[cursor] in "_-"):
+            cursor += 1
+        if cursor == label_start:
+            break
+        labels += 1
+        if labels >= 2:
+            end = cursor
+        if cursor == len(text) or text[cursor] != ".":
+            break
+        cursor += 1
+    return end
+
+
+def email_spans(text: str) -> list[tuple[int, int]]:
+    """Where addresses stand, left to right: a local part, "@", a dotted domain.
+
+    Read outward from each "@" rather than searched for with one pattern. The
+    pattern's local part restarted at every character of a long run with no
+    "@" (CodeQL alert #21): 1.5 s on 40,000 characters, and a prompt carries a
+    whole posting. Finds exactly what that pattern found
+    (`tests/test_cloud_privacy.py` keeps it as the reference).
+    """
+    spans: list[tuple[int, int]] = []
+    taken = 0
+    at = text.find("@")
+    while at != -1:
+        start = at
+        while start > taken and _in_local_part(text[start - 1]):
+            start -= 1
+        end = _domain_end(text, at + 1) if start < at else None
+        if end is None:
+            at = text.find("@", at + 1)
+            continue
+        spans.append((start, end))
+        taken = end
+        at = text.find("@", taken)
+    return spans
 
 
 @dataclass(frozen=True, repr=False)
@@ -137,7 +191,11 @@ class Redactor:
         return self._tokens[value]
 
     def _mask(self, text: str) -> str:
-        text = _EMAIL.sub(lambda match: self._token(match[0]), text)
+        pieces, last = [], 0
+        for start, end in email_spans(text):
+            pieces += [text[last:start], self._token(text[start:end])]
+            last = end
+        text = "".join([*pieces, text[last:]])
 
         def phone(match: re.Match[str]) -> str:
             value = match[0]

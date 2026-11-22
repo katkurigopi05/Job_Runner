@@ -37,6 +37,8 @@ ROLE_FOCUS = (
 )
 GENERAL_PRACTICE = "General practice suggestion."
 PRODUCTION = re.compile(r"\b(production|at scale|on.call|commercial|professional)\b", re.I)
+# Preserve the two extra I forms accepted by the old case-insensitive heading regex.
+_HEADING_CASE = str.maketrans("İı", "ii")
 
 
 def key(*parts: str) -> str:
@@ -57,6 +59,58 @@ def invitation_key(application_id: UUID, subject: str, body: str) -> str:
     return key(str(application_id), " ".join(subject.split()), " ".join(body.split()))
 
 
+def without_quoted_reply(text: str) -> str:
+    """The text before the first line that opens a quoted reply, or all of it.
+
+    A line opens one when, after its indent, it starts with ">", reads
+    "On … wrote:", or reads "Original Message" between dashes. Read a line at a
+    time rather than with one pattern: `^\\s*` and `[- ]*` both took spaces, and
+    that pattern took 6.4 s on 40,000 characters (CodeQL alert #27).
+    """
+    offset = 0
+    for line in text.split("\n"):
+        if _opens_quoted_reply(line):
+            return text[:offset]
+        offset += len(line) + 1
+    return text
+
+
+def _opens_quoted_reply(line: str) -> bool:
+    head = line.lstrip().lower()
+    if head.startswith(">"):
+        return True
+    # "On " and at least one character before " wrote:", as "On .+ wrote:" asked.
+    if head.startswith("on ") and head.find(" wrote:", 4) != -1:
+        return True
+    return head.lstrip("- ").startswith("original message")
+
+
+def _topic_text(text: str) -> str:
+    """Read an explicit topic heading without rescanning blank-line runs."""
+    cursor = 0
+    while cursor < len(text):
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        for heading in ("topics", "topic", "focus", "covers"):
+            if text[cursor : cursor + len(heading)].translate(_HEADING_CASE).casefold() != heading:
+                continue
+            colon = cursor + len(heading)
+            while colon < len(text) and text[colon].isspace():
+                colon += 1
+            if colon == len(text) or text[colon] != ":":
+                continue
+            start = colon + 1
+            while start < len(text) and text[start].isspace():
+                start += 1
+            end = text.find("\n", start)
+            return text[start : end if end >= 0 else len(text)].strip()
+        end = text.find("\n", cursor)
+        if end < 0:
+            break
+        cursor = end + 1
+    return ""
+
+
 def suggest(text: str) -> Details:
     """Extract explicit tokens only. The owner confirms all suggestions."""
 
@@ -65,7 +119,7 @@ def suggest(text: str) -> Details:
         return result.group(1).strip() if result else ""
 
     # Skip quoted replies when their boundary is explicit. Ambiguous alternatives remain blank.
-    text = re.split(r"(?im)^\s*(?:On .+ wrote:|[- ]*Original Message[- ]*|>)", text, maxsplit=1)[0]
+    text = without_quoted_reply(text)
     moved = re.search(r"\b(?:rescheduled|moved)\b[^\n]*?\bto\s+([^\n]+)", text, re.I)
     schedule = moved[1] if moved else text
     dates: set[date] = set()
@@ -106,7 +160,7 @@ def suggest(text: str) -> Details:
     round_name = match(
         r"\b(round\s+[0-9]+|phone screen|technical screen|final (?:round|interview)|assessment)\b"
     )
-    topics = match(r"^\s*(?:topics?|focus|covers)\s*:\s*([^\n]+)")
+    topics = _topic_text(text)
     duration = match(r"\b(\d{1,3})[- ]*(?:minutes?|mins?)\b")
     return Details(
         round=round_name,
