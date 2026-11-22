@@ -86,11 +86,16 @@ def _reason(response: httpx.Response) -> str:
 
 
 def _checked(raw: object) -> tuple[float, ...]:
-    """The first embedding in Ollama's answer, normalised, or why it cannot be used."""
+    """The first embedding in Ollama's answer, normalised."""
     vectors = raw.get("embeddings") if isinstance(raw, dict) else None
-    if not isinstance(vectors, list) or not vectors or not isinstance(vectors[0], list):
+    if not isinstance(vectors, list) or not vectors:
         raise QueryEmbeddingError("Ollama answered without an embedding")
-    vector = vectors[0]
+    return _checked_vector(vectors[0])
+
+
+def _checked_vector(vector: object) -> tuple[float, ...]:
+    if not isinstance(vector, list):
+        raise QueryEmbeddingError("Ollama answered without an embedding")
     if len(vector) != LARGE_EMBEDDING_DIM:
         raise QueryEmbeddingError(
             f"the vector is {len(vector)} wide, not {LARGE_EMBEDDING_DIM}: "
@@ -110,7 +115,7 @@ async def _post(
 ) -> httpx.Response:
     if client is not None:
         return await client.post(url, json=body, timeout=TIMEOUT_S)
-    async with httpx.AsyncClient(timeout=TIMEOUT_S) as own:
+    async with httpx.AsyncClient(timeout=TIMEOUT_S, trust_env=False) as own:
         return await own.post(url, json=body)
 
 
@@ -159,6 +164,31 @@ async def embed_question(
     return QueryVector(space=QWEN_4B, build=model, values=values, seconds=seconds)
 
 
+async def embed_passages(passages: list[str]) -> list[tuple[float, ...]]:
+    """Embed local document excerpts with the same model, without the query instruction."""
+    if not passages:
+        return []
+    settings = get_settings()
+    base_url, model = settings.ollama_base_url, settings.query_embed_model
+    _refuse_remote(base_url, model)
+    body: dict[str, object] = {
+        "model": model,
+        "input": passages,
+        "truncate": False,
+        "options": {"num_ctx": settings.query_embed_num_ctx},
+        "keep_alive": settings.query_embed_keep_alive,
+    }
+    try:
+        response = await _post(None, base_url.rstrip("/") + "/api/embed", body)
+        response.raise_for_status()
+        vectors = response.json()["embeddings"]
+        if not isinstance(vectors, list) or len(vectors) != len(passages):
+            raise ValueError("Embedding count mismatch.")
+        return [_checked_vector(vector) for vector in vectors]
+    except (httpx.HTTPError, TypeError, ValueError, KeyError) as exc:
+        raise QueryEmbeddingError("The local Qwen embedding batch could not complete.") from exc
+
+
 async def unload_embedder(*, client: httpx.AsyncClient | None = None) -> None:
     """Release a warm query model for local chat, without loading an absent one.
 
@@ -173,7 +203,7 @@ async def unload_embedder(*, client: httpx.AsyncClient | None = None) -> None:
         # This configuration cannot have loaded a local query model.
         return
     if client is None:
-        async with httpx.AsyncClient(timeout=TIMEOUT_S) as own:
+        async with httpx.AsyncClient(timeout=TIMEOUT_S, trust_env=False) as own:
             await unload_embedder(client=own)
         return
     try:

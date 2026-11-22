@@ -861,6 +861,7 @@ class Application(Base):
     )
     cover_letter_ref: Mapped[str | None] = mapped_column(String(500))
     receipt_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    submission_sources: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     #: What the employer did after submission. Separate from `status`, which
     #: tracks our automation and ends at `submitted`. See enums.Outcome.
     outcome: Mapped[str | None] = mapped_column(String(30))
@@ -1145,6 +1146,7 @@ class QueueTask(Base):
 # last, because those modules import `Base` from here.
 from packages.core import models_chunks as _models_chunks  # noqa: E402, F401
 from packages.core import models_evidence as _models_evidence  # noqa: E402, F401
+from packages.core import models_interview as _models_interview  # noqa: E402, F401
 from packages.core import models_issues as _models_issues  # noqa: E402, F401
 from packages.core import models_jobs as _models_jobs  # noqa: E402, F401
 from packages.core import models_judgments as _models_judgments  # noqa: E402, F401

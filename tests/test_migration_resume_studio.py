@@ -27,7 +27,7 @@ async def test_studio_migration_upgrades_existing_hnsw_and_roundtrips(scratch_da
 
 
 async def test_studio_migration_preserves_tables_from_early_development(scratch_database):  # noqa: F811
-    _alembic("upgrade", "head", scratch_database)
+    _alembic("upgrade", "b7d9f1a3c5e8", scratch_database)
     engine = create_async_engine(scratch_database)
     try:
         async with engine.begin() as connection:

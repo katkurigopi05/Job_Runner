@@ -92,6 +92,14 @@ export function ApplicationDataTable({
                           {row.original.company} ·{" "}
                           {row.original.application.ats ?? "unknown ats"}
                         </p>
+                        {label === "Tracker" && (
+                          <Link
+                            href={`/applications/${row.original.id}/interview`}
+                            className="mt-2 inline-block text-xs font-medium underline underline-offset-4"
+                          >
+                            Prepare for interview
+                          </Link>
+                        )}
                       </>
                     ) : cell.column.id === "status" ? (
                       <>

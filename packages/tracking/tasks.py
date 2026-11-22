@@ -57,6 +57,10 @@ async def ensure_task_for_outcome(
     """One open interview or assessment task after a routed reply. Does not commit."""
     if outcome not in ("interview", "assessment"):
         return None
+    # Serialize the inbox task check with other invite deliveries and round confirmation.
+    await session.scalar(
+        select(Application.id).where(Application.id == application.id).with_for_update()
+    )
     existing = await session.scalar(
         select(ApplicationTask).where(
             ApplicationTask.application_id == application.id,

@@ -1,7 +1,7 @@
 """Optional chunk accelerators. PostgreSQL owns all facts and final distances.
 
 Redis stores only derived vectors and filter metadata, never candidate data.
-Named/keyword candidate re-ranking and the 2,560-wide Qwen path stay exact.
+Named and keyword candidate re-ranking stays exact.
 """
 
 from __future__ import annotations
@@ -42,12 +42,12 @@ class Hit:
     distance: float
 
 
-def vector_blob(vector: list[float]) -> bytes:
-    if len(vector) != EMBEDDING_DIM or not all(math.isfinite(v) for v in vector):
-        raise ValueError(f"expected {EMBEDDING_DIM} finite vector values")
+def vector_blob(vector: list[float], *, dim: int = EMBEDDING_DIM) -> bytes:
+    if len(vector) != dim or not all(math.isfinite(v) for v in vector):
+        raise ValueError(f"expected {dim} finite vector values")
     if not any(vector):
         raise ValueError("cosine search requires a nonzero vector")
-    return struct.pack(f"<{EMBEDDING_DIM}f", *vector)
+    return struct.pack(f"<{dim}f", *vector)
 
 
 def model_tag(model: str) -> str:
@@ -68,7 +68,13 @@ def redis_client() -> Any:
     )
 
 
-async def ensure_redis_index(client: Any, *, index: str = INDEX) -> None:
+async def ensure_redis_index(
+    client: Any,
+    *,
+    index: str = INDEX,
+    dim: int = EMBEDDING_DIM,
+    tags: tuple[str, ...] = ("model", "company", "remote", "open"),
+) -> None:
     try:
         await client.execute_command(
             "FT.CREATE",
@@ -79,14 +85,7 @@ async def ensure_redis_index(client: Any, *, index: str = INDEX) -> None:
             1,
             f"{index}:doc:",
             "SCHEMA",
-            "model",
-            "TAG",
-            "company",
-            "TAG",
-            "remote",
-            "TAG",
-            "open",
-            "TAG",
+            *(item for tag in tags for item in (tag, "TAG")),
             "embedding",
             "VECTOR",
             "HNSW",
@@ -94,7 +93,7 @@ async def ensure_redis_index(client: Any, *, index: str = INDEX) -> None:
             "TYPE",
             "FLOAT32",
             "DIM",
-            EMBEDDING_DIM,
+            dim,
             "DISTANCE_METRIC",
             "COSINE",
             "M",
@@ -105,6 +104,38 @@ async def ensure_redis_index(client: Any, *, index: str = INDEX) -> None:
     except Exception as exc:
         if "Index already exists" not in str(exc):
             raise
+
+
+async def redis_knn(
+    client: Any,
+    index: str,
+    filters: str,
+    blob: bytes,
+    k: int,
+    *,
+    field: str,
+) -> list[uuid.UUID]:
+    raw = await client.execute_command(
+        "FT.SEARCH",
+        index,
+        f"({filters})=>[KNN {k} @embedding $vec "
+        f"EF_RUNTIME {max(k, get_settings().vector_ef_search)} AS distance]",
+        "PARAMS",
+        2,
+        "vec",
+        blob,
+        "SORTBY",
+        "distance",
+        "RETURN",
+        1,
+        field,
+        "LIMIT",
+        0,
+        k,
+        "DIALECT",
+        2,
+    )
+    return [uuid.UUID(raw[i + 1][1].decode()) for i in range(1, len(raw), 2)]
 
 
 def redis_filter(model: str, filters: Filters) -> str:
@@ -184,27 +215,9 @@ async def search(
         try:
             if not await client.get(f"{index}:synced"):
                 raise RuntimeError("Redis chunks are not synced; run make sync-vectors")
-            raw = await client.execute_command(
-                "FT.SEARCH",
-                index,
-                f"({redis_filter(model, filters)})=>[KNN {k} @embedding $vec "
-                f"EF_RUNTIME {max(k, get_settings().vector_ef_search)} AS distance]",
-                "PARAMS",
-                2,
-                "vec",
-                blob,
-                "SORTBY",
-                "distance",
-                "RETURN",
-                1,
-                "chunk_id",
-                "LIMIT",
-                0,
-                k,
-                "DIALECT",
-                2,
+            ids = await redis_knn(
+                client, index, redis_filter(model, filters), blob, k, field="chunk_id"
             )
-            ids = [uuid.UUID(raw[i + 1][1].decode()) for i in range(1, len(raw), 2)]
         finally:
             if owned:
                 await client.aclose()

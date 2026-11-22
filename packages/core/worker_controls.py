@@ -22,6 +22,7 @@ ALL_WORKER_KINDS: tuple[str, ...] = (
     "deep_dive_company",
     "discover",
     "inbox",
+    "interview_prep",
 )
 
 CRAWLER_TASK_KINDS: frozenset[str] = frozenset(

@@ -200,13 +200,16 @@ class KaggleProvider:
         connection_file: Path | None = None,
         connection: Connection | None = None,
         model: str = QWEN38_MODEL,
+        audit_task: str | None = None,
     ) -> None:
         if model not in HELPERS:
             raise LLMError("Unsupported Kaggle model.")
         self.connection = connection or read_connection(connection_file or connection_path())
         self.connection.socket_url()
         self._preferred_model = model
+        self._audit_task = audit_task
         self._helper: str | None = None
+        self.last_usage: dict[str, int] = {}
 
     async def _exchange(self, expression: str, *, timeout: float) -> dict[str, Any]:
         message_id = uuid4().hex
@@ -336,6 +339,7 @@ class KaggleProvider:
         max_tokens: int = 1024,
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> str:
+        self.last_usage = {}
         if not 1 <= max_tokens <= 1024 or not 0 <= temperature <= 2:
             raise LLMError("Kaggle answer budget or temperature is outside the supported range.")
         health = await self.health()
@@ -351,7 +355,7 @@ class KaggleProvider:
                 temperature=temperature,
             )
         )
-        record(self.name, system, user, model=self.model)
+        record(self.name, system, user, model=self.model, task=self._audit_task)
         result = await self._exchange(
             f"{self._helper}({payload!r})", timeout=self.REQUEST_TIMEOUT_S
         )
@@ -367,6 +371,11 @@ class KaggleProvider:
             raise LLMError(
                 "The loaded Kaggle model returned no usable answer. Check its helper cell."
             )
+        self.last_usage = {
+            name: result[name]
+            for name in ("prompt_tokens", "completion_tokens")
+            if type(result.get(name)) is int and result[name] >= 0
+        }
         return text.strip()
 
     async def complete_json(self, system: str, user: str, schema: type[T]) -> T:
