@@ -15,6 +15,7 @@ from packages.core.enums import (
     FailureReason,
     SeniorityLevel,
 )
+from packages.core.schemas_graph import GapEvidenceOut
 
 
 class ErrorDetail(BaseModel):
@@ -918,6 +919,10 @@ class ChatReply(BaseModel):
     retrieval_method: Literal["standard", "graph"] = "standard"
     #: Source-derived diagnostics shown separately from the readable answer.
     retrieval_details: str | None = None
+    #: Per recurring skill gap the answer reports, the jobs behind its count and
+    #: the projects declaring the skill (`matching/gap_evidence.py`). Shown under
+    #: Evidence details; never sent to a model, and absent from older answers.
+    graph_gaps: list[GapEvidenceOut] = Field(default_factory=list)
     #: The local model that re-ordered `sources`, or None when the search's
     #: own order stands (`matching/rerank.py`).
     postings_reranked_by: str | None = None

@@ -13,6 +13,7 @@ from apps.api.routers import (
     audit,
     candidates,
     chat,
+    chat_gaps,
     chat_stream,
     companies,
     company_issues,
@@ -69,6 +70,7 @@ app.include_router(postings.router)
 app.include_router(inbox.router)
 app.include_router(interview.router)
 app.include_router(chat.router)
+app.include_router(chat_gaps.router)
 app.include_router(chat_stream.router)
 app.include_router(kaggle.router)
 app.include_router(crawl.router)
