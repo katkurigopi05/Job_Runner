@@ -704,10 +704,10 @@ not an independent verification of applicant eligibility.
 
 ## Opt-in Qwen search (2026-11-02)
 
-`CHAT_QWEN_SEARCH` defaults to false. `chunk_search.py` owns the two chunk
-spaces and their shared ranking query. Qwen compares only its stamped vectors;
-postings without a current Qwen row retain their original bge-small chunks
-and posting vectors. Ranks, never distances, merge the spaces. Closed postings,
+`CHAT_QWEN_SEARCH` defaults to false. `chunk_search.py` owns the chunk space
+and its ranking query. Qwen compares only its stamped vectors; postings without
+a current Qwen row are reached by their one posting vector (they kept their
+bge-small chunks too until those went on 2026-11-22). Ranks, never distances, merge the spaces. Closed postings,
 stale offsets and the existing company/area/place/level predicates still apply.
 
 A failed local question embedding returns the original bge-small search with

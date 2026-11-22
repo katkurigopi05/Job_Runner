@@ -57,7 +57,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    # Derived vectors only. Rebuild with make sync-vectors after recreation.
+    # Derived Qwen vectors only (QWEN_VECTOR_BACKEND=redis_hnsw). Rebuild with
+    # packages/matching/qwen_redis.sync after recreation.
 
 volumes:
   jobrunner-pgdata:

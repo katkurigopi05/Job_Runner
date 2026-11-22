@@ -420,9 +420,9 @@ class Settings(BaseSettings):
     #: still wins.
     embedding_backend: str = "lexical"
 
-    # Optional acceleration for 384-dimensional posting chunks. PostgreSQL
-    # remains authoritative; bounded keyword re-ranking stays exact.
-    vector_backend: Literal["pgvector", "pgvector_hnsw", "redis_hnsw"] = "pgvector"
+    # Optional Redis acceleration for Qwen chunk vectors. PostgreSQL remains
+    # authoritative; bounded keyword re-ranking stays exact. VECTOR_BACKEND,
+    # its bge-small twin, went with bge-small's chunk vectors on 2026-11-22.
     qwen_vector_backend: Literal["pgvector", "redis_hnsw"] = "pgvector"
     interview_qwen_embeddings: bool = False
     redis_url: str = "redis://127.0.0.1:6379/0"
@@ -459,7 +459,9 @@ class Settings(BaseSettings):
     #: question that names its job, and it finds more paraphrased targets.
     #: It is still off: what it adds to the five shown has no relevance
     #: grades behind it, and `docs/ML_EVALUATION.md` says what would change
-    #: that.
+    #: that. Since 2026-11-22 it needs `CHAT_QWEN_SEARCH` or `CHAT_QWEN_ONLY`:
+    #: candidates come from Qwen chunk vectors, the only ones chunks have, and
+    #: only beside what the keywords found.
     chat_semantic_candidates: bool = False
 
     #: Opt-in Qwen discovery; keyword ordering and uncovered postings retain bge-small.

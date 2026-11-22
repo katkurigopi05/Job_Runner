@@ -9,7 +9,9 @@ from tests.test_migration_posting_dedupe import scratch_database  # noqa: F401
 
 async def test_studio_migration_upgrades_existing_hnsw_and_roundtrips(scratch_database):  # noqa: F811
     _alembic("upgrade", "d7e9f1a3b5c7", scratch_database)
-    _alembic("upgrade", "head", scratch_database)
+    # The studio migration itself; at head the index has gone with bge-small's
+    # chunk vectors (`fd52bc47f90b`), which is no doing of the studio's.
+    _alembic("upgrade", "b7d9f1a3c5e8", scratch_database)
     engine = create_async_engine(scratch_database)
     try:
         async with engine.connect() as connection:
@@ -18,6 +20,9 @@ async def test_studio_migration_upgrades_existing_hnsw_and_roundtrips(scratch_da
             assert await connection.scalar(
                 sa.text("SELECT to_regclass('ix_posting_chunks_embedding_hnsw')")
             )
+        _alembic("upgrade", "head", scratch_database)
+        async with engine.connect() as connection:
+            assert await connection.scalar(sa.text("SELECT to_regclass('internships')"))
         _alembic("downgrade", "d7e9f1a3b5c7", scratch_database)
         async with engine.connect() as connection:
             assert await connection.scalar(sa.text("SELECT to_regclass('internships')")) is None

@@ -34,11 +34,9 @@ from packages.core.config import Settings
 from packages.core.models import Company, CorpusStats, Posting
 from packages.matching import rerank
 from packages.matching import retrieve as R
-from packages.matching.chunks import chunk_postings
-from packages.matching.embed import LexicalEmbedder
 from packages.matching.retrieve import retrieve
+from tests.fake_qwen import embed_chunks, use_fake_qwen
 
-LEXICAL = LexicalEmbedder()
 FILLER = "Our team values ownership and curiosity in everything we ship. " * 40
 
 
@@ -209,8 +207,11 @@ async def test_a_reranker_that_fails_leaves_the_search_order(db_session, use) ->
     assert found.reranked_by is None
 
 
-async def test_it_reorders_a_search_answered_by_vectors_alone(db_session, use) -> None:
-    """No distinguishing word, so chunks answer; the best chunk is what is re-scored."""
+async def test_it_reorders_a_search_answered_by_vectors_alone(db_session, use, monkeypatch) -> None:
+    """No distinguishing word, so chunks answer; the best chunk is what is re-scored.
+
+    Chunks are searched by their Qwen vectors, here a lexical stand-in.
+    """
     db_session.add(
         CorpusStats(revision=1, total_documents=100, counts_json={"data": 90, "engineering": 90})
     )
@@ -225,7 +226,8 @@ async def test_it_reorders_a_search_answered_by_vectors_alone(db_session, use) -
         FILLER + " Data engineering with streaming streaming.",
         days_ago=1,
     )
-    await chunk_postings(db_session, embedder=LEXICAL)
+    await embed_chunks(db_session)
+    use_fake_qwen(monkeypatch)
     fake = WordReranker("streaming")
     use(fake)
 

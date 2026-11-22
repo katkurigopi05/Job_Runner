@@ -19,7 +19,6 @@ from sqlalchemy import func, select, text
 
 from packages.core.config import get_settings
 from packages.core.models import (
-    EMBEDDING_DIM,
     Application,
     Candidate,
     Company,
@@ -319,8 +318,6 @@ async def test_the_matching_pass_prunes_and_the_chunks_go_with_it(db_session, th
             ordinal=0,
             start=0,
             length=10,
-            embedding_model="bge",
-            embedding=[0.1] * EMBEDDING_DIM,
         )
     )
     await db_session.flush()

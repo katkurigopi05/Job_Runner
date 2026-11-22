@@ -2,9 +2,9 @@
 
 A posting's single vector covers its first 512 tokens; a skill named in the
 requirements, which come last, is invisible to it. Chunks of 500 characters
-overlapping by 25% (125 characters) make every part of a posting searchable. These tests use
-the lexical embedder as the chunk model, which is deterministic; production
-chunks with bge-small, which `chunk_embedder` requires.
+overlapping by 25% (125 characters) make every part of a posting searchable.
+Chunks carry no vector of their own: their Qwen vectors come from a Colab or
+Kaggle batch. The search tests here give them fake ones (`tests/fake_qwen.py`).
 """
 
 from __future__ import annotations
@@ -14,13 +14,13 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
+from packages.core.config import get_settings
 from packages.core.models import Company, CorpusStats, Posting
 from packages.core.models_chunks import PostingChunk
 from packages.matching.chunks import CHUNK_SIZE, OVERLAP, chunk_postings, normalize, spans
-from packages.matching.embed import LexicalEmbedder
 from packages.matching.retrieve import retrieve
+from tests.fake_qwen import embed_chunks, use_fake_qwen
 
-LEXICAL = LexicalEmbedder()
 FILLER = "Our team values ownership and curiosity in everything we ship. " * 40  # ~2,500 chars
 
 
@@ -92,7 +92,7 @@ async def test_open_postings_are_chunked_and_the_offsets_read_back(db_session) -
     open_ = await _posting(db_session, company, "Data Engineer", FILLER + " Build Kafka pipelines.")
     await _posting(db_session, company, "Closed", FILLER, closed=True)
 
-    assert await chunk_postings(db_session, embedder=LEXICAL) == 1
+    assert await chunk_postings(db_session) == 1
 
     chunks = await _chunks(db_session, open_)
     body = normalize(open_.description_raw)
@@ -100,29 +100,28 @@ async def test_open_postings_are_chunked_and_the_offsets_read_back(db_session) -
     assert body[chunks[-1].start : chunks[-1].start + chunks[-1].length].endswith(
         "Kafka pipelines."
     )
-    assert {c.embedding_model for c in chunks} == {LEXICAL.name}
 
 
 async def test_chunking_twice_does_nothing_the_second_time(db_session) -> None:
     company = await _company(db_session)
     await _posting(db_session, company, "Data Engineer", FILLER)
 
-    await chunk_postings(db_session, embedder=LEXICAL)
-    assert await chunk_postings(db_session, embedder=LEXICAL) == 0
+    await chunk_postings(db_session)
+    assert await chunk_postings(db_session) == 0
 
 
 async def test_chunks_cut_at_another_overlap_are_cut_again(db_session) -> None:
     """Rows from before the 25% overlap (25 characters) are stale, as old text is."""
     company = await _company(db_session)
     posting = await _posting(db_session, company, "Data Engineer", FILLER)
-    await chunk_postings(db_session, embedder=LEXICAL)
+    await chunk_postings(db_session)
     await db_session.execute(
         PostingChunk.__table__.update()
         .where(PostingChunk.posting_id == posting.id)
         .values(overlap=25)
     )
 
-    assert await chunk_postings(db_session, embedder=LEXICAL) == 1
+    assert await chunk_postings(db_session) == 1
 
     chunks = await _chunks(db_session, posting)
     assert {c.overlap for c in chunks} == {OVERLAP}
@@ -133,12 +132,12 @@ async def test_an_edited_posting_is_chunked_again(db_session) -> None:
     """Old offsets point into text that is no longer there."""
     company = await _company(db_session)
     posting = await _posting(db_session, company, "Data Engineer", FILLER)
-    await chunk_postings(db_session, embedder=LEXICAL)
+    await chunk_postings(db_session)
 
     posting.description_raw = "Now a short posting about Rust."
     posting.content_hash = "h2"
     await db_session.flush()
-    assert await chunk_postings(db_session, embedder=LEXICAL) == 1
+    assert await chunk_postings(db_session) == 1
 
     chunks = await _chunks(db_session, posting)
     assert [(c.start, c.length, c.content_hash) for c in chunks] == [(0, 31, "h2")]
@@ -154,63 +153,45 @@ async def test_a_posting_that_loses_its_text_loses_its_chunks(db_session) -> Non
     company = await _company(db_session)
     lost = await _posting(db_session, company, "ML Scientist", FILLER)
     kept = await _posting(db_session, company, "Data Engineer", FILLER, hash_="h9")
-    await chunk_postings(db_session, embedder=LEXICAL)
+    await chunk_postings(db_session)
     assert await _chunks(db_session, lost)
 
     lost.description_raw = None
     lost.content_hash = "h2"
     await db_session.flush()
-    assert await chunk_postings(db_session, embedder=LEXICAL) == 0
+    assert await chunk_postings(db_session) == 0
 
     assert await _chunks(db_session, lost) == []
     assert await _chunks(db_session, kept), "a posting with text keeps its chunks"
 
 
-async def test_without_a_semantic_model_nothing_is_chunked(db_session) -> None:
-    """The suite runs EMBEDDING_BACKEND=lexical, where chunk vectors would add nothing."""
-    company = await _company(db_session)
-    await _posting(db_session, company, "Data Engineer", FILLER)
+async def test_chunking_needs_no_embedder(db_session) -> None:
+    """The suite runs EMBEDDING_BACKEND=lexical. Cutting is offsets only, so it runs anyway.
 
-    assert await chunk_postings(db_session) == 0
-    assert await db_session.scalar(select(func.count()).select_from(PostingChunk)) == 0
-
-
-class _Recording:
-    """The lexical embedder, remembering every text it was asked to encode."""
-
-    name = LEXICAL.name
-    dim = LEXICAL.dim
-
-    def __init__(self) -> None:
-        self.seen: list[str] = []
-
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        self.seen.extend(texts)
-        return LEXICAL.encode(texts)
-
-
-async def test_text_two_postings_share_is_encoded_once(db_session) -> None:
-    """An employer's boilerplate repeats across its postings.
-
-    12.7% of the chunks in the newest 500 postings on 2026-10-10 were a text
-    already in the batch. The vector is reused; each posting still gets a row
-    of its own for it, with its own offsets.
+    Until 2026-11-22 chunks were cut and embedded with bge-small in one pass,
+    and without bge-small nothing was cut. Now the cut is what a Qwen batch
+    is made from, whatever scores the feed.
     """
+    company = await _company(db_session)
+    posting = await _posting(db_session, company, "Data Engineer", FILLER)
+
+    assert await chunk_postings(db_session) == 1
+    assert len(await _chunks(db_session, posting)) == len(spans(normalize(FILLER)))
+
+
+async def test_postings_that_share_text_each_get_rows_of_their_own(db_session) -> None:
+    """An employer's boilerplate repeats across its postings; the offsets are each posting's."""
     company = await _company(db_session)
     first = await _posting(db_session, company, "Data Engineer", FILLER + " Build Kafka pipelines.")
     second = await _posting(db_session, company, "Chef", FILLER + " Laminate the doughs.")
-    recording = _Recording()
 
-    assert await chunk_postings(db_session, embedder=recording) == 2
+    assert await chunk_postings(db_session) == 2
 
-    assert len(recording.seen) == len(set(recording.seen)), "no text is encoded twice"
     ours, theirs = await _chunks(db_session, first), await _chunks(db_session, second)
     assert len(ours) == len(spans(normalize(first.description_raw)))
     assert len(theirs) == len(spans(normalize(second.description_raw)))
-    assert len(recording.seen) < len(ours) + len(theirs), "the shared opening was reused"
     assert (ours[0].start, ours[0].length) == (theirs[0].start, theirs[0].length) == (0, CHUNK_SIZE)
-    assert ours[0].embedding == theirs[0].embedding
-    assert ours[-1].embedding != theirs[-1].embedding, "their endings differ, so do the vectors"
+    assert {c.id for c in ours}.isdisjoint({c.id for c in theirs})
 
 
 async def test_a_description_of_only_whitespace_writes_no_chunks(db_session) -> None:
@@ -218,7 +199,7 @@ async def test_a_description_of_only_whitespace_writes_no_chunks(db_session) -> 
     company = await _company(db_session)
     await _posting(db_session, company, "Blank", "  \n ")
 
-    await chunk_postings(db_session, embedder=LEXICAL)
+    await chunk_postings(db_session)
 
     assert await db_session.scalar(select(func.count()).select_from(PostingChunk)) == 0
 
@@ -226,7 +207,7 @@ async def test_a_description_of_only_whitespace_writes_no_chunks(db_session) -> 
 async def test_deleting_a_posting_deletes_its_chunks(db_session) -> None:
     company = await _company(db_session)
     posting = await _posting(db_session, company, "Data Engineer", FILLER)
-    await chunk_postings(db_session, embedder=LEXICAL)
+    await chunk_postings(db_session)
 
     await db_session.delete(posting)
     await db_session.flush()
@@ -242,7 +223,7 @@ async def _common(session, *words: str) -> None:
     await session.flush()
 
 
-async def test_vector_search_finds_what_the_end_of_a_posting_says(db_session) -> None:
+async def test_vector_search_finds_what_the_end_of_a_posting_says(db_session, monkeypatch) -> None:
     """The whole point. The matching text is 2,500 characters in.
 
     No posting here has a single vector, so only chunks can answer, and the
@@ -254,7 +235,8 @@ async def test_vector_search_finds_what_the_end_of_a_posting_says(db_session) ->
         db_session, company, "Engineer", FILLER + " You will own data engineering for payments."
     )
     await _posting(db_session, company, "Chef", "Laminated doughs and early mornings.")
-    await chunk_postings(db_session, embedder=LEXICAL)
+    await embed_chunks(db_session)
+    use_fake_qwen(monkeypatch)
 
     found = await retrieve(db_session, "any data engineering roles?")
 
@@ -264,8 +246,12 @@ async def test_vector_search_finds_what_the_end_of_a_posting_says(db_session) ->
     assert (found.searched, found.unsearchable) == (2, 0), "both chunked, both reachable"
 
 
-async def test_keyword_matches_are_ordered_by_their_best_chunk(db_session) -> None:
+async def test_keyword_matches_are_ordered_by_their_best_chunk(db_session, monkeypatch) -> None:
     """Equal keyword scores, so the vectors decide, and they read chunks.
+
+    Under CHAT_QWEN_ONLY, the owner's setting: since bge-small's chunk vectors
+    went (2026-11-22), Qwen's are the only chunk vectors, and only that
+    setting orders keyword matches by them.
 
     Each posting says "kafka" once as far as the keyword scan is concerned
     (presence, not count), so the keyword order is newest first: C, B, A.
@@ -278,19 +264,24 @@ async def test_keyword_matches_are_ordered_by_their_best_chunk(db_session) -> No
     a = await _posting(db_session, company, "A", FILLER + " Kafka Kafka Kafka.", seen_days_ago=3)
     b = await _posting(db_session, company, "B", FILLER + " Kafka Kafka.", seen_days_ago=2)
     c = await _posting(db_session, company, "C", FILLER + " Kafka.", seen_days_ago=1)
-    await chunk_postings(db_session, embedder=LEXICAL)
+    await embed_chunks(db_session)
+    use_fake_qwen(monkeypatch)
+    monkeypatch.setattr(get_settings(), "chat_qwen_only", True)
+    # The keyword order alone: semantic candidates would merge in a second list.
+    monkeypatch.setattr(get_settings(), "chat_semantic_candidates", False)
 
     found = await retrieve(db_session, "kafka roles")
 
     assert [p.posting_id for p in found.passages] == [c.id, a.id, b.id]
 
 
-async def test_a_chunk_from_old_text_is_not_used(db_session) -> None:
+async def test_a_chunk_from_old_text_is_not_used(db_session, monkeypatch) -> None:
     """A posting edited since it was chunked is searched as if unchunked."""
     await _common(db_session, "data", "engineering")
     company = await _company(db_session)
     posting = await _posting(db_session, company, "Engineer", FILLER + " data engineering.")
-    await chunk_postings(db_session, embedder=LEXICAL)
+    await embed_chunks(db_session)
+    use_fake_qwen(monkeypatch)
     posting.content_hash = "edited"
     await db_session.flush()
 

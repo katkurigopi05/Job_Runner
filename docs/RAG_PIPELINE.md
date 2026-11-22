@@ -17,7 +17,7 @@ Read from the settings and the database, not from the documentation.
 
 | | |
 |---|---|
-| Chunk vectors | `BAAI/bge-small-en-v1.5`, 384 dimensions, local, stored as `halfvec(384)` in `posting_chunks` |
+| Chunk vectors | `BAAI/bge-small-en-v1.5`, 384 dimensions, local, stored as `halfvec(384)` in `posting_chunks`. Replaced 2026-11-22 by Qwen3-Embedding-4B, `halfvec(2560)` in `posting_chunk_vectors` |
 | Posting vectors | `lexical-idf@2` revision 1, `vector(384)` on `postings`. This is what the feed scores with, whatever `EMBEDDING_BACKEND` says |
 | Vector index | none. Every vector search is an exact scan |
 | Corpus | 10,925 open postings, 145,421 chunks of 500 characters overlapping by 25, about 14.3 million tokens. `posting_chunks` is 174 MB |

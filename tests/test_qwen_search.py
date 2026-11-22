@@ -38,9 +38,10 @@ def fake_embeddings(monkeypatch):
 
     monkeypatch.setattr(query_vectors, "unload_embedder", released, raising=False)
     monkeypatch.setattr(query_vectors, "embed_question", embed)
-    monkeypatch.setattr(R, "_encode", lambda *args: {})
+    # bge-small's one vector per posting: the only bge-small vector since chunks
+    # lost theirs (2026-11-22), and the space a posting without Qwen vectors is in.
+    monkeypatch.setattr(R, "_encode", lambda *args: {(BGE, None): vector(384)})
     monkeypatch.setattr(R, "_encoders", lambda *args: {})
-    monkeypatch.setattr(R, "_encode_chunk_queries", lambda *args: {BGE: vector(384)})
     settings = Settings(_env_file=None, chat_qwen_search=True, search_us_only=False)
     monkeypatch.setattr(R, "get_settings", lambda: settings)
     monkeypatch.setattr(chat, "get_settings", lambda: settings)
@@ -57,19 +58,13 @@ async def posting(session, title, *, qwen=True, bge=(1.0, 0.0), large=(1.0, 0.0)
         url=f"https://jobs.test/{uuid.uuid4()}",
         description_raw="Kafka event streaming pipelines.",
         content_hash="current",
+        description_embedding=vector(384, *bge),
+        embedding_model=BGE,
         **kw,
     )
     session.add(p)
     await session.flush()
-    c = PostingChunk(
-        posting_id=p.id,
-        ordinal=0,
-        start=0,
-        length=31,
-        content_hash="current",
-        embedding_model=BGE,
-        embedding=vector(384, *bge),
-    )
+    c = PostingChunk(posting_id=p.id, ordinal=0, start=0, length=31, content_hash="current")
     session.add(c)
     await session.flush()
     if qwen:
@@ -149,7 +144,9 @@ async def test_full_coverage_skips_the_empty_bge_fallback_scans(db_session, fake
 
     assert ids(found) == [near.id]
     assert found.qwen_searched == 1 and found.bge_fallback_searched == 0
-    assert not any("posting_chunks.embedding <=>" in s for s in statements), "no bge-small scan"
+    assert not any("postings.description_embedding <=>" in s for s in statements), (
+        "no bge-small scan"
+    )
     assert sum("qwen_coverage" in s for s in statements) == 1, "coverage counted once"
 
 
@@ -230,6 +227,8 @@ async def test_stale_closed_and_other_model_rows_never_rank(db_session, fake_emb
     kept, _ = await posting(db_session, "Platform Builder")
     stale, c = await posting(db_session, "Platform Builder")
     stale.content_hash = "edited"
+    # As the crawler stores an edit: the posting's bge-small vector is cleared too.
+    stale.description_embedding = None
     closed, _ = await posting(db_session, "Platform Builder", closed_at=datetime.now(UTC))
     other, c2 = await posting(db_session, "Platform Builder")
     await db_session.execute(delete(PostingChunkVector).where(PostingChunkVector.chunk_id == c2.id))
@@ -373,15 +372,7 @@ async def test_the_shortlist_is_shared_across_stages_and_widenings(db_session):
         entries.append((p, c))
     # Repeated chunks and a non-positive match exercise grouping and the cutoff.
     p, _ = entries[0]
-    c = PostingChunk(
-        posting_id=p.id,
-        ordinal=1,
-        start=8,
-        length=10,
-        content_hash="current",
-        embedding_model=BGE,
-        embedding=vector(384),
-    )
+    c = PostingChunk(posting_id=p.id, ordinal=1, start=8, length=10, content_hash="current")
     db_session.add(c)
     await db_session.flush()
     db_session.add(
@@ -466,8 +457,8 @@ async def test_two_question_embeddings_release_exactly_once(fake_embeddings, mon
 
     monkeypatch.setattr(query_vectors, "unload_embedder", release)
     async with CS.Question(free_embedder=True) as question:
-        await question.queries({BGE: vector(384)}, "kafka", enabled=True)
-        await question.queries({BGE: vector(384)}, "kafka jobs", enabled=True)
+        await question.queries("kafka", enabled=True)
+        await question.queries("kafka jobs", enabled=True)
         assert releases == []
     assert fake_embeddings[1] == [("kafka", "5m"), ("kafka jobs", "5m")]
     assert releases == [True]

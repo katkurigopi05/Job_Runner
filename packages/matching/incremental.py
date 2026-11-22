@@ -188,10 +188,10 @@ async def run_matching_pass(
         report.per_profile[profile.label] = len(batch)
         report.scored += len(batch)
 
-    # Search reads chunks, scoring does not, so this runs last: a slow chunk
-    # pass never delays a score. Bounded separately, since a posting is about
-    # fourteen vectors here rather than one; `make chunk-postings` clears a
-    # backlog.
+    # Search reads chunks, scoring does not, so this runs last. It only cuts
+    # offsets now; their Qwen vectors come from a Colab or Kaggle batch.
+    # Bounded separately, since a posting is about seventeen chunks;
+    # `make chunk-postings` clears a backlog.
     from packages.matching.chunks import chunk_postings
 
     report.chunked = await chunk_postings(session)

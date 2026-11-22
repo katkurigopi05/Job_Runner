@@ -36,7 +36,7 @@ from sqlalchemy import func, select, text
 from packages.core.config import get_settings
 from packages.core.db import get_engine, get_sessionmaker
 from packages.core.models import Posting
-from packages.core.models_chunks import PostingChunk
+from packages.core.models_chunks import PostingChunkVector
 from packages.core.models_judgments import RetrievalJudgment
 from packages.matching import judged, judged_scores
 
@@ -208,7 +208,9 @@ async def main() -> int:
                     select(func.count()).select_from(Posting).where(Posting.closed_at.is_(None))
                 ),
                 "chunk_models": sorted(
-                    (await session.scalars(select(PostingChunk.embedding_model).distinct())).all()
+                    (
+                        await session.scalars(select(PostingChunkVector.embedding_model).distinct())
+                    ).all()
                 ),
             }
             scores = await judged_scores.score(session, questions)

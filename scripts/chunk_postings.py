@@ -1,8 +1,9 @@
-"""Chunk and embed every open posting for search — `make chunk-postings`.
+"""Chunk every open posting for search — `make chunk-postings`.
 
 The matching pass after each crawl chunks new postings 500 at a time; this
 clears a backlog in one go, committing after each batch so an interrupted run
-keeps what it finished. Needs EMBEDDING_BACKEND=sentence-transformers.
+keeps what it finished. It cuts offsets only: the chunks' Qwen vectors come
+from `make export-chunk-vectors-pending` and `make import-chunk-vectors`.
 """
 
 from __future__ import annotations
@@ -14,21 +15,14 @@ from sqlalchemy import func, select
 
 from packages.core import db as core_db
 from packages.core.models_chunks import PostingChunk
-from packages.matching.chunks import chunk_embedder, chunk_postings
+from packages.matching.chunks import chunk_postings
 
 
 async def run() -> int:
-    embedder = chunk_embedder()
-    if embedder is None:
-        print(
-            "no semantic model: set EMBEDDING_BACKEND=sentence-transformers "
-            "and install the embeddings extra"
-        )
-        return 1
     started, total = time.perf_counter(), 0
     while True:
         async with core_db.get_sessionmaker()() as session:
-            done = await chunk_postings(session, embedder=embedder)
+            done = await chunk_postings(session)
             await session.commit()
         if not done:
             break
