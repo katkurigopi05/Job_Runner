@@ -107,6 +107,7 @@ from packages.core.schemas import (
     ChatRequest,
     ChatSource,
 )
+from packages.core.schemas_graph import GapEvidenceOut
 from packages.crawler.discover import slug_from_ats_url
 from packages.llm import router as llm_router
 from packages.llm.audit import is_local
@@ -1487,6 +1488,7 @@ def reply_for(ready: Ready, model: str | None, answer: str) -> ChatReply:
             if ready.graph_result is not None
             else None
         ),
+        graph_gaps=list(ready.graph_result.gaps) if ready.graph_result is not None else [],
         count_facts=list(count_facts(found)),
         provider=selected,
         model=model,
@@ -1653,6 +1655,7 @@ async def selected_reply(ready: Ready) -> ChatReply:
                 source.model_copy(update={"cited": source.label in labels})
                 for source in reply.sources
             ],
+            "graph_gaps": _gaps_shown(reply, labels),
         }
     )
 
@@ -1695,8 +1698,14 @@ def selection_reply_for(ready: Ready, model: str | None, raw: str) -> ChatReply:
                 source.model_copy(update={"cited": source.label in labels})
                 for source in reply.sources
             ],
+            "graph_gaps": _gaps_shown(reply, labels),
         }
     )
+
+
+def _gaps_shown(reply: ChatReply, labels: set[str]) -> list[GapEvidenceOut]:
+    """The drill-downs of the gaps the answer lists: those its selection cites."""
+    return [gap for gap in reply.graph_gaps if gap.source_label in labels]
 
 
 @router.post("", response_model=ChatReply)

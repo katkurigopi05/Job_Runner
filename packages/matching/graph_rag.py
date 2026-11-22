@@ -12,7 +12,7 @@ import json
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from sqlalchemy import and_, func, or_, select
@@ -22,8 +22,10 @@ from sqlalchemy.orm import defer
 from packages.core.config import get_settings
 from packages.core.models import Candidate, Company, Match, Posting, Profile, Project, Resume
 from packages.core.models_skill_links import PostingSkill, PostingSkillRead
+from packages.core.schemas_graph import GapEvidenceOut
 from packages.matching import skill_links
 from packages.matching.evidence import Strength, skill_evidence
+from packages.matching.gap_evidence import gap_evidence
 from packages.matching.gaps import resume_skills
 from packages.matching.graph_questions import GraphConstraint, GraphIntent, GraphQuestion
 from packages.matching.graph_questions import graph_intent as graph_intent
@@ -100,6 +102,9 @@ class GraphResult:
     answer_summary: str = ""
     answer_note: str = ""
     scope: GraphScope = "top_matches"
+    #: Per reported gap, the jobs behind its count and the projects declaring it.
+    #: Rendered locally under Evidence details; never part of a prompt.
+    gaps: tuple[GapEvidenceOut, ...] = ()
 
     def answer(self, labels: Sequence[str]) -> str:
         by_label = {item.label: item for item in self.evidence}
@@ -128,6 +133,18 @@ class GraphResult:
                 ensure_ascii=False,
             )
         )
+
+
+def one_per_job(edges: Sequence[Edge]) -> list[Edge]:
+    """Each job's first requirement edge, in the order the jobs were read.
+
+    A gap's count is its distinct jobs: a job that states the skill twice
+    counts once, so the count and the jobs listed under it always agree.
+    """
+    first: dict[str, Edge] = {}
+    for edge in edges:
+        first.setdefault(edge.source.key, edge)
+    return list(first.values())
 
 
 def project_keys(project: Project) -> set[str]:
@@ -269,6 +286,7 @@ def graph_result(
     summary += f" Requirements readable: {read}; unread: {len(postings) - read}."
     passages: list[Passage] = []
     items: list[GraphEvidence] = []
+    drilldowns: list[GapEvidenceOut] = []
     answer_summary = ""
 
     if intent == "projects":
@@ -358,7 +376,7 @@ def graph_result(
             )
         else:
             gaps = [
-                (skill, graph.links(skill, "requires", incoming=True))
+                (skill, one_per_job(graph.links(skill, "requires", incoming=True)))
                 for skill in graph.incoming
                 if skill.kind == "skill" and skill not in listed
             ]
@@ -410,6 +428,16 @@ def graph_result(
                     )
                 )
                 _append_evidence(passages, items, posting, company, text, text, answer=human)
+                drilldowns.append(
+                    gap_evidence(
+                        skill.key,
+                        BY_KEY[skill.key].label,
+                        items[-1].label,
+                        [(*by_id[edge.source.key], edge.quote) for edge in edges],
+                        reviewed=len(postings),
+                        projects=[project_by_id[node.key] for node in project_skills[skill]],
+                    )
+                )
     if constraint is not None:
         search = "Project search" if intent == "projects" else "Skill-gap search"
         scope_note = f"{search} {constraint.label}: {len(postings)} jobs reviewed. "
@@ -422,7 +450,7 @@ def graph_result(
             )
             if not postings and project_skills:
                 answer_summary = f"No open project matches found {constraint.label}."
-    return GraphResult(
+    result = GraphResult(
         found=Retrieval(
             attempted=True, passages=tuple(passages), searched=len(postings), ranked=len(items)
         ),
@@ -460,7 +488,14 @@ def graph_result(
             )
             + ("A résumé omission does not mean you lack a skill." if intent == "gaps" else "")
         ).strip(),
+        gaps=tuple(drilldowns),
     )
+    if drilldowns:
+        result = replace(
+            result,
+            answer_note=result.answer_note + " Evidence details lists the jobs behind each count.",
+        )
+    return result
 
 
 def _markdown(text: str) -> str:

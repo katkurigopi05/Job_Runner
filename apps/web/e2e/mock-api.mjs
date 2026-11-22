@@ -35,6 +35,31 @@ let crawlPaused = false;
 const defaultWorkerKinds = ["rescore", "apply", "crawl", "crawl_company", "discover_company", "deep_dive_company", "discover", "inbox"];
 let workerControls = { crawler_paused: false, enabled_kinds: [...defaultWorkerKinds], available_kinds: [...defaultWorkerKinds], max_workers: 1, alive_workers: 1 };
 let calls = [];
+// A recurring-gap answer (`ChatReply.graph_gaps`): 37 jobs counted, the first
+// ten carried in full, the rest read again by id through POST /chat/gap-jobs.
+const gapSha = "0123456789abcdef0123456789abcdef01234567";
+const gapIds = Array.from({ length: 37 }, (_, n) => `00000000-0000-4000-9000-${String(n).padStart(12, "0")}`);
+const gapJob = (id, state = "as_answered") => {
+  const n = gapIds.indexOf(id) + 1;
+  return {
+    posting_id: id, title: `Platform Engineer ${n}`, company: "Example Cloud", location: "Remote, US",
+    url: `https://careers.example.com/jobs/platform-${n}`, quote: `Kubernetes is required for platform ${n}`, state,
+  };
+};
+const gapReply = {
+  reply: "These skills are directly required across 912 open IT jobs in your area but are not listed on your base résumés:\n\n"
+    + "**Kubernetes** — directly required by 37 of 912 open IT jobs in your area. An available project also declares this technology. [P1]\n\n"
+    + "Based on all 912 open IT jobs in your area that state a direct requirement. A résumé omission does not mean you lack a skill. Evidence details lists the jobs behind each count.",
+  provider: "ollama", model: "qwen3:8b", grounded: true, local: true, shared_mail: false, mail_in_context: false,
+  sources: [{ label: "P1", posting_id: gapIds[0], title: "Platform Engineer 1", company: "Example Cloud", location: "Remote, US", url: "https://careers.example.com/jobs/platform-1", cited: true, locations: [] }],
+  postings_searched: 912, postings_unsearchable: 0, postings_scope: "open_postings", retrieval_method: "graph",
+  retrieval_details: "Graph retrieval read the saved requirements of every open, unskipped posting.\n\nP1: Platform Engineer 1 at Example Cloud: Kubernetes: directly required by 37 of 912 open IT jobs.",
+  graph_gaps: [{
+    skill: "kubernetes", label: "Kubernetes", source_label: "P1", total: 37, reviewed: 912, posting_ids: gapIds,
+    jobs: gapIds.slice(0, 10).map((id) => gapJob(id)),
+    projects: [{ project_id: "00000000-0000-4000-9100-000000000001", repository: "example/infra", url: `https://github.com/example/infra/tree/${gapSha}`, category: "declared", declared_in: ["dependency_file"], commit_sha: gapSha }],
+  }],
+};
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1");
   let raw = "";
@@ -138,6 +163,13 @@ const server = createServer(async (req, res) => {
   }
   if (key === "POST /resumes/synthesize/save") {
     return json({ resume: { ...resume, id: "00000000-0000-4000-8000-000000000004", version: 2, is_default: false }, adopted: body.adopt }, 201);
+  }
+  if (key === "POST /chat/stream") {
+    res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+    res.end(JSON.stringify({ type: "done", reply: gapReply }) + "\n"); return;
+  }
+  if (key === "POST /chat/gap-jobs") {
+    return json({ skill: body.skill, jobs: body.posting_ids.map((id) => gapJob(id, id === gapIds[12] ? "closed" : "current")) });
   }
   console.error(`Unexpected mock API request: ${key}`);
   json({ error: { code: "not_found", message: `No synthetic fixture for ${key}` } }, 404);

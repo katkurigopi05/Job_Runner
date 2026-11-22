@@ -285,3 +285,51 @@ about that rescue's results. The session was rolled back.
 placements removed and none added. No direct requirement coverage was gained
 or lost. Reading and comparing the sample took 106.1 seconds; this includes
 both selectors and is not a feed/request latency measurement.
+
+## What stands behind a gap's count (2026-11-22)
+
+"Kubernetes — directly required by 283 of 2151 open IT jobs" was a number the
+owner could not check. Each gap the answer lists now opens, under the dock's
+existing Evidence details, onto the jobs behind the count and the projects
+declaring the skill (`matching/gap_evidence.py`, `components/gap-evidence.tsx`).
+The answer itself only gains one sentence saying so.
+
+- **The count is the jobs listed.** A gap's N is its distinct jobs
+  (`graph_rag.one_per_job`): a job naming the skill twice counts once. The
+  drill-down is built from the same graph edges, over the population retrieval
+  handed answer construction, so it cannot count differently.
+  `GapEvidenceOut` refuses a total that is not its distinct ids.
+- **The population is fixed when the answer is written.** The reply carries all
+  N ids and the first 10 jobs with their requirement lines. The rest are read on
+  request by those ids (`POST /chat/gap-jobs`, 50 at most a call): nothing is
+  searched again and no job joins. A job read again says whether it still
+  counts (`current`, `closed`, `changed`). The dock shows "Showing 10 of 283"
+  and pages through the rest.
+- **Direct requirements only.** Preferences and alternatives never make an edge,
+  so they never enter a list.
+- **Projects are the eligible ones** (`graph_rag.is_eligible`): forks, private,
+  excluded and other candidates' projects stay out.
+- **A declaration is labelled a declaration.** Primary language or a dependency
+  file, in Studio's categories (`code_signals.Classification`), attributed to
+  the repository, pinned to a commit when a live Kaggle check read it this
+  request. `GapProjectOut` refuses any category but `declared`. The dock says a
+  declaration is neither code that uses the technology nor the owner's own
+  work, and that contribution is confirmed in Resume Studio.
+- **Local rendering only.** The drill-down is a reply field (`graph_gaps`),
+  never in a prompt or in history; models still see anonymous project
+  references. Older saved answers have no such field and render as before.
+
+**Why there is no implementation evidence yet.** Studio's code findings (file
+and lines at a commit, `implemented`) are made inside one draft's live check
+for one job description and are not kept. Respecting that, chat shows
+declarations only. The smallest follow-up to share richer evidence: when the
+owner saves a Studio draft with live code evidence, keep its public,
+commit-verified findings (project, skill, path, lines, commit, category; no
+source text) in a table, and let the drill-down cite them as Studio's
+`implemented` items with their permalinks, still behind Studio's
+contribution confirmation. `GapProjectOut` would gain those citation fields,
+and its validator would accept `implemented` only with them.
+
+Measured read-only on the live database, worktree code via `PYTHONPATH`: 8 gaps
+over 2151 open IT jobs, each with ids equal to its count (Kubernetes 283, GCP
+201, Go 69, … PyTorch 46 with 4 repositories declaring it in dependency files).

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from packages.github.code_signals import Classification
 
 
 class ProjectJobOut(BaseModel):
@@ -35,3 +37,112 @@ class ProjectJobsOut(BaseModel):
     note: str
     #: The best five, most shared technologies first.
     jobs: list[ProjectJobOut]
+
+
+#: Jobs a gap's drill-down carries in full with the answer. The rest of the N are
+#: carried as ids and read on request (`POST /chat/gap-jobs`), so a saved
+#: conversation does not hold hundreds of quotes per gap.
+GAP_JOBS_INLINE = 10
+#: Jobs one `POST /chat/gap-jobs` reads.
+GAP_JOBS_PAGE = 50
+
+
+class GapJobOut(BaseModel):
+    """One job behind a recurring-gap count: it directly requires the skill."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    posting_id: uuid.UUID
+    title: str
+    company: str | None
+    location: str | None
+    url: str
+    #: The job's own direct-requirement line for the skill. None only when read
+    #: again later and the job no longer states one.
+    quote: str | None
+    #: as_answered: read when the answer was written. Read again on request:
+    #: current (still open, still a direct requirement), closed, or changed
+    #: (its text or saved requirements no longer require the skill directly).
+    state: Literal["as_answered", "current", "closed", "changed"] = "as_answered"
+
+
+class GapProjectOut(BaseModel):
+    """An eligible public project whose repository declares the skill.
+
+    Repository evidence, never a statement about the owner's own work: a
+    claim of personal contribution is confirmed by the owner in Resume Studio
+    (`StudioCodeApproval.contribution_confirmed`), not here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: uuid.UUID
+    #: owner/name when known, else the project's name.
+    repository: str
+    #: The repository, at the commit read when a live check ran for this answer.
+    url: str
+    #: Resume Studio's evidence categories. Chat has declarations only: Studio's
+    #: implementation findings (a file and lines at a commit) are made inside one
+    #: draft's live check and are not kept, so none can reach an answer.
+    category: Classification
+    declared_in: list[Literal["dependency_file", "primary_language"]]
+    #: The commit a live GitHub check read the declaration at; None for imported metadata.
+    commit_sha: str | None = None
+
+    @model_validator(mode="after")
+    def _declarations_only(self) -> Self:
+        # A declaration alone is never implementation evidence. Anything else
+        # needs a commit-pinned file citation this surface does not carry.
+        if self.category is not Classification.DECLARED:
+            raise ValueError("chat gap evidence carries declarations only")
+        if not self.declared_in:
+            raise ValueError("a declaration names where the repository declares the skill")
+        return self
+
+
+class GapEvidenceOut(BaseModel):
+    """The jobs and projects behind one recurring skill gap (`gap_evidence.py`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    skill: str
+    label: str
+    #: The source the answer cites for this gap, e.g. "P1".
+    source_label: str
+    #: N: distinct jobs of the reviewed population that directly require the skill.
+    total: int
+    #: The population the count was taken over: every job the answer reviewed.
+    reviewed: int
+    #: All N, in the order the population was read. Fixed when the answer was
+    #: written, so later pages list the same jobs the count was taken over.
+    posting_ids: list[uuid.UUID]
+    #: The first `GAP_JOBS_INLINE` of them, as the answer read them.
+    jobs: list[GapJobOut]
+    projects: list[GapProjectOut]
+
+    @model_validator(mode="after")
+    def _reconciles(self) -> Self:
+        if len(self.posting_ids) != self.total or len(set(self.posting_ids)) != self.total:
+            raise ValueError("a gap's count is its distinct jobs")
+        if self.total > self.reviewed:
+            raise ValueError("a gap cannot count more jobs than were reviewed")
+        if [job.posting_id for job in self.jobs] != self.posting_ids[: len(self.jobs)]:
+            raise ValueError("the jobs shown are the first of the jobs counted")
+        return self
+
+
+class GapJobsRequest(BaseModel):
+    """More of a gap's jobs: ids from `GapEvidenceOut.posting_ids`, read again now."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    skill: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
+    posting_ids: list[uuid.UUID] = Field(min_length=1, max_length=GAP_JOBS_PAGE)
+
+
+class GapJobsOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    skill: str
+    #: In the order asked for; a posting that no longer exists is left out.
+    jobs: list[GapJobOut]
