@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from packages.core.config import get_settings
 from packages.core.models import Project
-from packages.github.client import GitHubClient, GitHubError, RateLimited
+from packages.github.client import GitHubClient, GitHubError, RateLimited, TransientGitHubError
 from packages.github.code_signals import Classification, Signal, inspect_file
 from packages.github.infrastructure import is_infrastructure_path
 from packages.github.live import _SHA, eligible, resolve_snapshot
@@ -94,6 +94,24 @@ class CodeFinding(BaseModel):
     verification_status: str = "commit verified"
     can_support_claim: bool
     wording: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CodeSearchPlan:
+    """Eligible repositories chosen once across the full candidate inventory."""
+
+    candidates: tuple[Project, ...]
+    limitations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RepoScanOutcome:
+    """Compact result of checking one repository at its default-branch commit."""
+
+    findings: tuple[CodeFinding, ...] = ()
+    limitations: tuple[str, ...] = ()
+    searched: int = 0
+    rate_limited: bool = False
 
 
 @dataclass
@@ -246,6 +264,8 @@ async def _scan(
     project: Project,
     needs: Sequence[SkillMention],
     result: SearchResult,
+    *,
+    raise_transient: bool = False,
 ) -> None:
     repository, commit, tree_sha = await resolve_snapshot(client, github, project)
     if tree_sha is None or not re.fullmatch(_SHA, tree_sha):
@@ -327,6 +347,11 @@ async def _scan(
             signals = await _signals(client, github, project, base, commit, path, blob)
         except RateLimited:
             raise
+        except (TransientGitHubError, httpx.TransportError, TimeoutError):
+            if raise_transient:
+                raise
+            result.limitations.append("At least one source file could not be verified.")
+            continue
         except (GitHubError, httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
             result.limitations.append("At least one source file could not be verified.")
             continue
@@ -378,6 +403,128 @@ async def _scan(
             )
 
 
+def plan_code_search(
+    projects: Sequence[Project],
+    needs: Sequence[SkillMention],
+    *,
+    allow_private: bool,
+) -> CodeSearchPlan:
+    """Rank eligible repositories across the full inventory and apply the repository cap."""
+    candidates = _candidates(projects, needs, allow_private=allow_private)
+    limitations: list[str] = []
+    if not candidates and needs:
+        limitations.append("No eligible imported GitHub repositories matched the requirements.")
+    if not allow_private and any(
+        p.is_private and eligible(p, allow_private=True) for p in projects
+    ):
+        limitations.append("Private repositories require the configured GitHub token.")
+    if len(candidates) > REPO_LIMIT:
+        limitations.append(f"Repository coverage was limited to the top {REPO_LIMIT} matches.")
+    return CodeSearchPlan(
+        candidates=tuple(candidates[:REPO_LIMIT]),
+        limitations=tuple(limitations),
+    )
+
+
+async def scan_repository(
+    project: Project,
+    needs: Sequence[SkillMention],
+    *,
+    github: GitHubClient,
+    client: httpx.AsyncClient | None = None,
+    raise_transient: bool = False,
+) -> RepoScanOutcome:
+    """Verify and inspect one repository at its default-branch commit."""
+    single = SearchResult()
+    try:
+        if client is not None:
+            async with asyncio.timeout(7):
+                await _scan(client, github, project, needs, single, raise_transient=raise_transient)
+        else:
+            async with httpx.AsyncClient(
+                transport=github._transport,
+                timeout=github._timeout,
+                headers=github._headers(),
+                follow_redirects=False,
+            ) as owned_client:
+                async with asyncio.timeout(7):
+                    await _scan(
+                        owned_client,
+                        github,
+                        project,
+                        needs,
+                        single,
+                        raise_transient=raise_transient,
+                    )
+    except RateLimited:
+        if raise_transient:
+            raise
+        single.limitations.append("GitHub rate limit reached. Retry after the quota resets.")
+        return RepoScanOutcome(
+            findings=tuple(single.findings),
+            limitations=tuple(single.limitations),
+            searched=single.searched,
+            rate_limited=True,
+        )
+    except (TransientGitHubError, httpx.TransportError, TimeoutError):
+        if raise_transient:
+            raise
+        single.limitations.append("At least one GitHub repository could not be fully checked.")
+    except (
+        GitHubError,
+        httpx.HTTPError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+    ):
+        single.limitations.append("At least one GitHub repository could not be fully checked.")
+    return RepoScanOutcome(
+        findings=tuple(single.findings),
+        limitations=tuple(single.limitations),
+        searched=single.searched,
+    )
+
+
+def finalize_search_result(
+    outcomes: Sequence[RepoScanOutcome],
+    initial_limitations: Sequence[str] = (),
+) -> SearchResult:
+    """Combine per-repository outcomes and apply conflicting-evidence rules."""
+    findings = [finding for outcome in outcomes for finding in outcome.findings]
+    limitations = [
+        *initial_limitations,
+        *(note for outcome in outcomes for note in outcome.limitations),
+    ]
+    searched = sum(outcome.searched for outcome in outcomes)
+    # A checked-in caveat is a reason to ask for clarification, even when an
+    # implementation pattern also matched. It cannot authorize a new claim.
+    contradicted = {
+        (finding.project_id, skill)
+        for finding in findings
+        if finding.classification is Classification.INSUFFICIENT
+        for skill in finding.skills
+    }
+    resolved = [
+        finding.model_copy(
+            update={
+                "can_support_claim": False,
+                "wording": (),
+                "verification_status": "commit verified · conflicting documentation",
+            }
+        )
+        if finding.can_support_claim
+        and any((finding.project_id, skill) in contradicted for skill in finding.skills)
+        else finding
+        for finding in findings
+    ]
+    return SearchResult(
+        findings=resolved,
+        limitations=list(dict.fromkeys(limitations)),
+        searched=searched,
+    )
+
+
 async def search_code(
     projects: Sequence[Project],
     needs: Sequence[SkillMention],
@@ -386,60 +533,19 @@ async def search_code(
 ) -> SearchResult:
     """Read a bounded set of files from relevant imported repositories."""
     github = github or GitHubClient(token=get_settings().github_token, timeout=3.0)
-    result = SearchResult()
-    candidates = _candidates(projects, needs, allow_private=bool(github.token))
-    if not candidates and needs:
-        result.limitations.append(
-            "No eligible imported GitHub repositories matched the requirements."
-        )
-    if not github.token and any(p.is_private and eligible(p, allow_private=True) for p in projects):
-        result.limitations.append("Private repositories require the configured GitHub token.")
-    if len(candidates) > REPO_LIMIT:
-        result.limitations.append(
-            f"Repository coverage was limited to the top {REPO_LIMIT} matches."
-        )
+    plan = plan_code_search(projects, needs, allow_private=bool(github.token))
+    outcomes: list[RepoScanOutcome] = []
     async with httpx.AsyncClient(
         transport=github._transport,
         timeout=github._timeout,
         headers=github._headers(),
         follow_redirects=False,
     ) as client:
-        for project in candidates[:REPO_LIMIT]:
-            try:
-                async with asyncio.timeout(7):
-                    await _scan(client, github, project, needs, result)
-            except RateLimited:
-                result.limitations.append(
-                    "GitHub rate limit reached. Retry after the quota resets."
-                )
+        for project in plan.candidates:
+            outcome = await scan_repository(
+                project, needs, github=github, client=client, raise_transient=False
+            )
+            outcomes.append(outcome)
+            if outcome.rate_limited:
                 break
-            except (
-                GitHubError,
-                httpx.HTTPError,
-                TimeoutError,
-                ValueError,
-                TypeError,
-                KeyError,
-                AttributeError,
-            ):
-                result.limitations.append(
-                    "At least one GitHub repository could not be fully checked."
-                )
-    # A checked-in caveat is a reason to ask for clarification, even when an
-    # implementation pattern also matched. It cannot authorize a new claim.
-    contradicted = {
-        (finding.project_id, skill)
-        for finding in result.findings
-        if finding.classification is Classification.INSUFFICIENT
-        for skill in finding.skills
-    }
-    for finding in result.findings:
-        if finding.can_support_claim and any(
-            (finding.project_id, skill) in contradicted for skill in finding.skills
-        ):
-            finding.can_support_claim = False
-            finding.wording = ()
-            finding.verification_status = "commit verified · conflicting documentation"
-
-    result.limitations = list(dict.fromkeys(result.limitations))
-    return result
+    return finalize_search_result(outcomes, plan.limitations)

@@ -21,30 +21,22 @@ from apps.api.errors import ApiError
 from apps.api.studio_projects import refresh_projects
 from packages.core.enums import ErrorCode
 from packages.core.models import Project, Resume
-from packages.core.schemas import ResumeContactEdit, ResumeOut
+from packages.core.schemas import ResumeOut
 from packages.core.schemas_studio import (
-    StudioAts,
-    StudioBullet,
-    StudioLine,
     StudioPreview,
-    StudioProject,
     StudioRequest,
     StudioSave,
     StudioSaved,
-    StudioTarget,
-    StudioTerm,
 )
 from packages.core.storage import get_storage, resume_key
 from packages.llm import router as llm_router
 from packages.llm.provider import LLMError
 from packages.matching.skill_links import link_resume
 from packages.tailor.assemble import assemble_pdf
-from packages.tailor.ats import AtsReport
 from packages.tailor.code_evidence import (
     add_linked_claim,
     claim_destination,
     retrieve_evidence,
-    review_evidence,
 )
 from packages.tailor.evidence import linked_evidence
 from packages.tailor.guard import line_key
@@ -53,9 +45,7 @@ from packages.tailor.project_rewrite import validate_description, with_descripti
 from packages.tailor.project_selection import saved_declarations
 from packages.tailor.publish import house_options
 from packages.tailor.studio import (
-    ROLE_PRESETS,
     STUDIO_STAMP,
-    Draft,
     RoleTrack,
     as_printed,
     project_lines,
@@ -69,99 +59,13 @@ from packages.tailor.studio_load import (
     resolve_profile,
     studio_source,
 )
+from packages.tailor.studio_preview import assemble_live_code_preview, preview_of
 from packages.tailor.verify import check_pdf
 
 router = APIRouter(prefix="/resumes", tags=["resume studio"])
 
 #: How many unbacked lines a refusal quotes. The rest are counted.
 QUOTED_REFUSALS = 3
-
-
-def _ats(report: AtsReport) -> StudioAts:
-    return StudioAts(
-        parse=report.parse,
-        keywords=report.keywords,
-        overall=report.overall,
-        supported=list(report.supported),
-        missing=list(report.missing),
-        findings=[str(finding) for finding in report.findings],
-    )
-
-
-def _lines(draft: Draft) -> dict[str, list[StudioLine]]:
-    """Every draft line with where it came from. A rewrite names the line it replaced."""
-    rewritten = {line_key(b.tailored): b.original for b in draft.bullets if b.status == "rewritten"}
-    out: dict[str, list[StudioLine]] = {}
-    for section, lines in draft.resume.sections.items():
-        rows = []
-        for text in lines:
-            original = rewritten.get(line_key(text))
-            if original is not None:
-                rows.append(StudioLine(text=text, origin="rewrite", original=original))
-                continue
-            origin = draft.source.origin_of(text)
-            rows.append(StudioLine(text=text, origin=origin.kind, label=origin.label))
-        out[section] = rows
-    return out
-
-
-def preview_of(draft: Draft, base: Resume, track: RoleTrack) -> StudioPreview:
-    rewrites = {item.project_id: item for item in draft.project_rewrites}
-    return StudioPreview(
-        role_track=track.value,
-        role_label=ROLE_PRESETS[track].label,
-        base_resume_id=base.id,
-        base_version=base.version,
-        contact=ResumeContactEdit.model_validate(draft.resume.contact.model_dump()),
-        sections={name: list(lines) for name, lines in draft.resume.sections.items()},
-        lines=_lines(draft),
-        html=draft.html,
-        bullets=[
-            StudioBullet(
-                ref=b.ref,
-                original=b.original,
-                tailored=b.tailored,
-                status=b.status,
-                reason=b.reason,
-                targets=[StudioTarget(term=t, evidence=e, kind=k) for t, e, k in b.targets],
-            )
-            for b in draft.bullets
-        ],
-        terms=[
-            StudioTerm(term=t.term, status=t.status.value, sources=list(t.sources))
-            for t in draft.plan.terms
-        ],
-        projects=[
-            StudioProject(
-                id=pick.project.id,
-                name=pick.project.name,
-                is_private=pick.project.is_private,
-                score=pick.score,
-                matched_terms=list(pick.matched_terms),
-                chosen=pick.chosen,
-                held_back=pick.held_back,
-                original_description=pick.project.description or "",
-                tailored_description=(
-                    rewrites[pick.project.id].tailored
-                    if pick.project.id in rewrites
-                    else pick.project.description or ""
-                ),
-                rewrite_status=(
-                    rewrites[pick.project.id].status if pick.project.id in rewrites else "not asked"
-                ),
-                rewrite_reason=(
-                    rewrites[pick.project.id].reason if pick.project.id in rewrites else None
-                ),
-            )
-            for pick in draft.picks
-        ],
-        ats_before=_ats(draft.ats_before),
-        ats_after=_ats(draft.ats_after),
-        added=list(draft.source.added),
-        skipped=list(draft.source.skipped),
-        tailored_by=draft.tailored_by,
-        calls=draft.calls,
-    )
 
 
 @router.post("/synthesize", response_model=StudioPreview)
@@ -192,9 +96,6 @@ async def synthesize_draft(body: StudioRequest, session: SessionDep) -> StudioPr
             projects, notice = await refresh_projects(projects)
         except LLMError as exc:
             raise ApiError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
-    code = await retrieve_evidence(body.job_description, projects) if body.live_code else None
-    if code is not None:
-        notice = f"Live code evidence checked {code.searched} GitHub repositories."
     provider = None
     if body.use_model:
         provider = (
@@ -202,13 +103,27 @@ async def synthesize_draft(body: StudioRequest, session: SessionDep) -> StudioPr
             if body.model_provider == "kaggle"
             else llm_router.tailor_resume()
         )
+    if body.live_code:
+        code = await retrieve_evidence(body.job_description, projects)
+        return await assemble_live_code_preview(
+            base_row=base_row,
+            base=base,
+            source=source,
+            job_description=body.job_description,
+            track=track,
+            projects=projects,
+            code=code,
+            selected_project_ids=body.selected_project_ids,
+            project_limit=body.project_limit,
+            provider=provider,
+        )
     draft = await synthesize(
         base,
         source,
         body.job_description,
         track,
         projects=projects,
-        linked=None if body.live_code else await linked_evidence(session, body.candidate_id),
+        linked=await linked_evidence(session, body.candidate_id),
         selected_project_ids=(
             None
             if body.selected_project_ids is None
@@ -216,25 +131,12 @@ async def synthesize_draft(body: StudioRequest, session: SessionDep) -> StudioPr
         ),
         project_limit=body.project_limit,
         provider=provider,
-        replace_source_projects=body.replace_source_projects and not body.live_code,
-        declared=(
-            None
-            if body.live_projects or body.live_code
-            else await saved_declarations(session, projects)
-        ),
-        code_verified=code.implemented() if code is not None else None,
+        replace_source_projects=body.replace_source_projects,
+        declared=None if body.live_projects else await saved_declarations(session, projects),
+        code_verified=None,
     )
     preview = preview_of(draft, base_row, track)
     preview.project_evidence = notice
-    if code is not None:
-        preview.code_review = review_evidence(
-            body.job_description,
-            source.resume,
-            code,
-            projects=projects,
-            chosen={project.id for project in draft.projects},
-            draft_resume=draft.resume,
-        )
     return preview
 
 
