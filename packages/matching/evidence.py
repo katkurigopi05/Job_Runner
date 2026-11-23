@@ -67,6 +67,10 @@ _EXAMPLE_BEFORE = re.compile(
     re.IGNORECASE,
 )
 _CLAUSE_END = re.compile(r"[.;!?]")
+#: Where `requirements.extract` ends a clause: a full stop only before a space
+#: or the end, so "Node.js" and ".NET" stay inside one. Used by the list rule
+#: below; the older rules keep `_CLAUSE_END`, as they were measured with it.
+_SENTENCE_END = re.compile(r"[;!?]|\.(?=\s|$)")
 #: Its full stops are not the end of a clause.
 _EG = re.compile(r"\be\.\s?g\.?", re.IGNORECASE)
 _AND_OR = re.compile(r"\band\s*/\s*or\b", re.IGNORECASE)
@@ -82,6 +86,37 @@ _QUANTIFIED_LIST = re.compile(
     r"(?:[\w-]{1,40}\s+){0,4}"
     r"(?:frameworks?|librar(?:y|ies)|languages?|tools?|databases?|platforms?)\s*\(",
     re.IGNORECASE,
+)
+#: The same choice without the quantifier: a plural category, then a bracketed
+#: list of what counts as one, "public cloud platforms (AWS, GCP, Azure)" or
+#: "modern web frameworks (React, Angular, Vue)". Measured on the live corpus
+#: (2026-11-22): 293 of 374 direct GCP requirements were such lists. A list
+#: joined by "and" names a stack, not a choice, and is left alone: "databases
+#: (Postgres, Redis and ClickHouse)". "services" is not a category here:
+#: "backend services (Java, Spring Boot, Kafka)" describes the team's stack.
+_CATEGORY_LIST = re.compile(
+    r"\b(?:frameworks|libraries|languages|tools|databases|platforms|providers"
+    r"|environments|technologies|engines|clouds|vendors)\s*\(",
+    re.IGNORECASE,
+)
+_CONJUNCTION = re.compile(r"\band\b|&", re.IGNORECASE)
+#: "Linux, Bash, Go, or similar technologies": every item of a list that ends
+#: in one of these is a choice. Read token by token (`_list_then_comparable`),
+#: so the "or similar" is only reached across list items, never across a
+#: clause: "SQL expertise and experience with Snowflake and dbt (or equivalent)"
+#: leaves SQL required.
+_COMPARABLE = frozenset({"comparable", "similar", "equivalent", "other", "alternative"})
+_TOKEN = re.compile(r"\s*([(),]|[\w.+#/-]+|\S)")
+_WORD = re.compile(r"[\w.+#/-]+")
+#: Words one list item may run to: "lakehouse technologies", "Apache Spark".
+_ITEM_WORDS = 4
+#: A list item is a name. These make it a phrase: "Excel and PowerPoint, with
+#: experience in Python, SQL, R or similar" offers the tools, not Excel.
+_NOT_IN_A_NAME = frozenset(
+    {
+        *("with", "in", "using", "for", "of", "to", "on", "from", "by", "as", "at", "via"),
+        *("including", "like", "such", "especially"),
+    }
 )
 
 
@@ -122,6 +157,42 @@ def _or_after(text: str) -> bool:
     return False
 
 
+def _list_then_comparable(after: str) -> bool:
+    """Whether the skill is offered with "or similar": its own, or its list's.
+
+    `after` is the rest of the skill's clause. A bracketed "(or similar …)"
+    belongs to the item right before it, so it counts only straight after the
+    skill: "Snowflake, Kafka (or similar streaming platforms)" offers Kafka,
+    not Snowflake. A trailing ", or similar" belongs to a comma list, reached
+    across list items only: never across a phrase like "with experience in".
+    """
+    tokens = [found.group(1).lower() for found in _TOKEN.finditer(after[:400])]
+    if tokens[:2] == ["(", "or"]:
+        return _comparable(tokens[2:])
+    if not tokens or tokens[0] not in {",", "and"}:
+        return False
+    commas = words = 0
+    for index, token in enumerate(tokens):
+        if token == "or":
+            return commas > 0 and _comparable(tokens[index + 1 :])
+        if token in {",", "and"}:
+            commas += token == ","
+            words = 0
+            continue
+        if token in _NOT_IN_A_NAME or not _WORD.fullmatch(token):
+            return False
+        words += 1
+        if words > _ITEM_WORDS:
+            return False
+    return False
+
+
+def _comparable(tokens: list[str]) -> bool:
+    if tokens[:1] == ["any"]:
+        tokens = tokens[1:]
+    return bool(tokens) and tokens[0] in _COMPARABLE
+
+
 def _slash_after(text: str) -> bool:
     after = text.lstrip()
     if not after.startswith("/"):
@@ -150,6 +221,15 @@ def is_option(quote: str, skill: Skill) -> bool:
         end = quote.find(")", heading.end())
         if end != -1 and len({entry.key for entry in find_skills(quote[heading.end() : end])}) > 1:
             quantified_choices.append((heading.end(), end))
+    for heading in _CATEGORY_LIST.finditer(quote):
+        end = quote.find(")", heading.end())
+        listed = quote[heading.end() : end] if end != -1 else ""
+        if (
+            listed
+            and not _CONJUNCTION.search(listed)
+            and len({entry.key for entry in find_skills(listed)}) > 1
+        ):
+            quantified_choices.append((heading.end(), end))
     quantified_option = False
     direct_outside_choice = False
     for match in skill.pattern.finditer(quote):
@@ -163,12 +243,15 @@ def is_option(quote: str, skill: Skill) -> bool:
         clause_before = before[ends[-1] :] if ends else before
         stop = _CLAUSE_END.search(after)
         clause_after = after[: stop.start()] if stop else after
+        sentence_stop = _SENTENCE_END.search(after)
+        sentence_after = after[: sentence_stop.start()] if sentence_stop else after
         if (
             _or_after(clause_after)
             or _slash_after(clause_after)
             or _OR_BEFORE.search(clause_before)
             or _slash_before(clause_before)
             or _EXAMPLE_BEFORE.search(clause_before)
+            or _list_then_comparable(sentence_after)
         ):
             return True
         if not in_choice:

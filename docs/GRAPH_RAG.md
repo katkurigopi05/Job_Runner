@@ -221,6 +221,49 @@ reading at version 4 stale: readers re-extract it in memory until `make extract-
 and every saved skill link is stale until `make skill-links` runs again.
 
 
+## Extractor version 6: lists that offer a choice (2026-11-22)
+
+"GCP — directly required by 201 of 2151 open IT jobs" was mostly not true: 293
+of the 374 saved direct GCP requirements were lines like "public cloud
+platforms (AWS, GCP, Azure)", which accept any one cloud. Version 6 reads two
+more shapes as choices (`evidence.is_option`):
+
+- **A category's bracketed list:** a plural category, then a bracketed list of
+  two or more skills with no "and": "cloud platforms (AWS, GCP, Azure)",
+  "web frameworks (React, Vue)", "BI tools (PowerBI, Tableau, etc.)". A list
+  joined by "and" is a stack and stays required ("databases (Postgres, Redis
+  and ClickHouse)"), as do a suite's parts ("Office Suite (Word, Excel)") and
+  "services", which describes a team's stack. A skill also asked for outside
+  the brackets stays required.
+- **A list ending "or similar"** (comparable, equivalent, other, alternative):
+  "Linux, Bash, Go, or similar technologies". Read token by token: a bracketed
+  "(or similar …)" belongs only to the item right before it ("Snowflake, Kafka
+  (or similar streaming platforms)" offers Kafka, not Snowflake); a trailing
+  ", or similar" needs a comma list and stops at a phrase ("Excel and
+  PowerPoint, with experience in Python, R or similar" keeps Excel).
+
+Measured read-only on the live database (worktree code via `PYTHONPATH`,
+saved v5 links as "before", 25,833 open postings with text):
+
+| | Before (v5) | After (v6) |
+|---|---:|---:|
+| Direct requirement rows | 8,918 | 8,053 (865 fewer, 0 added; 122 distinct lines) |
+| AWS / Azure / GCP | 542 / 394 / 374 | 333 / 197 / 176 |
+| Gap population (open IT jobs in the area with a direct requirement) | 2,151 | 2,059 |
+| Gap counts: Kubernetes / GCP / PyTorch | 283 / 201 / 46 | 273 / 106 / 40 |
+
+Two random samples of the dropped lines were read by hand (Claude's reading,
+not owner-graded labels). The rules were tightened after each; on the last, 54
+of 60 distinct lines were right to drop, 5 debatable (multi-cloud
+environments, "libraries (Pandas, NumPy, Scikit-learn)", "front-end tools and
+languages (React, HTML, CSS, JavaScript)") and 1 wrong, since fixed ("C++,
+Python and ML frameworks like LangChain, or other tools" kept C++).
+
+**Deploy:** the bump makes every saved link and stored reading stale. Graph
+answers fall back to the owner's top 100 matches until `make skill-links`
+runs again (about 6 minutes); `make extract-requirements` rewrites stored
+readings, which are otherwise re-read in memory.
+
 ## Optional Kaggle source prose (2026-11-19)
 
 `CHAT_KAGGLE_PROSE=false` is the shipped default. When explicitly enabled, a
