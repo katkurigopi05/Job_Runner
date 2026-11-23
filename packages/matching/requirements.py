@@ -41,7 +41,7 @@ from packages.matching.experience import Demand, heading_kind, line_demand
 from packages.matching.skill_vocab import SKILLS, Skill, find_skills
 
 #: Bump when extraction changes, so the backfill knows which rows to redo.
-EXTRACTOR_VERSION = 5
+EXTRACTOR_VERSION = 6
 #: Version history, because a bump re-reads every stored posting:
 #:   1 — first reading.
 #:   2 — found by sampling the live corpus: "€95.000" read as 95, benefit
@@ -53,6 +53,8 @@ EXTRACTOR_VERSION = 5
 #:   4 — treat quantified framework/tool lists as alternatives, not a direct
 #:       requirement for every named technology.
 #:   5 — read "Python and/or Golang" as alternatives rather than requiring Python.
+#:   6 — read a category's bracketed list ("cloud platforms (AWS, GCP, Azure)")
+#:       and a list ending "or similar" as alternatives (`evidence.is_option`).
 
 #: Evidence is a quote for a person to check, not a copy of the posting.
 MAX_QUOTE = 240

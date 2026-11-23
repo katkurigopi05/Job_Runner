@@ -292,3 +292,115 @@ def test_long_whitespace_is_not_an_optional_skill_clause():
 )
 def test_slash_choices_preserve_whitespace_and_ascii_name_boundaries(line, expected):
     assert is_option(line, KAFKA) is expected
+
+
+# --- version 6: category lists and "or similar" lists ------------------------------
+#
+# Measured on the live corpus (2026-11-22): 293 of 374 direct GCP requirements
+# were lines like "public cloud platforms (AWS, GCP, Azure)", so a recurring
+# gap of "GCP — 201 jobs" counted jobs that accept any one cloud.
+
+
+@pytest.mark.parametrize(
+    "line,skill_key",
+    [
+        (
+            "At least 2 years of experience with public cloud platforms (AWS, GCP, Azure), "
+            "cloud-based productivity tools, or virtualization technologies",
+            "gcp",
+        ),
+        ("Knowledge of cloud platforms (AWS, Azure, Google Cloud)", "azure"),
+        ("Modern web frameworks (React, Angular, Vue, Svelte)", "vue"),
+        ("RESTful web services and Relational Databases (Postgres, SQL Server)", "postgresql"),
+        ("Experience with monitoring and logging tools (Prometheus, Grafana, ELK)", "grafana"),
+        (
+            "Experience with software development or scripting in Linux, Bash, Python, C, "
+            "C++, Java, Go, or similar technologies",
+            "linux",
+        ),
+        (
+            "Hands-on experience with Databricks, Apache Spark and lakehouse technologies, "
+            "or comparable distributed data platforms",
+            "databricks",
+        ),
+        ("Advanced knowledge of Snowflake, Kafka (or similar streaming platforms)", "kafka"),
+        ("Experience with React, Node.js, TypeScript, or similar", "react"),
+    ],
+)
+def test_a_category_list_or_an_or_similar_list_offers_each_as_a_choice(line, skill_key):
+    assert is_option(line, BY_KEY[skill_key]), line
+
+
+@pytest.mark.parametrize(
+    "line,skill_key",
+    [
+        # A bracketed "or equivalent" belongs to the item right before it.
+        (
+            "Deep SQL expertise and production experience with Snowflake and dbt (or equivalent)",
+            "sql",
+        ),
+        (
+            "Deep SQL expertise and production experience with Snowflake and dbt (or equivalent)",
+            "snowflake",
+        ),
+        ("Fluency in SQL and Python (or equivalent) for analysis", "sql"),
+        ("Advanced knowledge of Snowflake, Kafka (or similar streaming platforms)", "snowflake"),
+        # The "or similar" ends a phrase about other tools.
+        (
+            "Strong proficiency in Excel and PowerPoint, with experience and comfort in using "
+            "Python, SQL, R or similar programming tools",
+            "excel",
+        ),
+        (
+            "Proficiency in C++, Python and ML frameworks like LangChain, LangSmith, "
+            "or other AI agentic tools",
+            "cpp",
+        ),
+        # Named on its own; the "or similar" is the cloud list's.
+        (
+            "Experience with containerized environments (Kubernetes), and public cloud "
+            "platforms (AWS, GCP, or similar)",
+            "kubernetes",
+        ),
+        # A stack, joined by "and".
+        ("Solid understanding of databases (Postgres, Redis and ClickHouse)", "postgresql"),
+        # A suite's parts, not a category's members.
+        (
+            "Advanced proficiency in Microsoft Office Suite (Word, Excel, PowerPoint, Outlook)",
+            "excel",
+        ),
+        # "services" describes the team's stack.
+        ("Full-stack proficiency spanning backend services (Java, Spring Boot, Kafka)", "java"),
+        # One item is a name, not a list of choices.
+        ("Experience with cloud platforms (AWS)", "aws"),
+        # Required outright as well as listed.
+        ("AWS is required; experience with cloud platforms (AWS, GCP, Azure)", "aws"),
+    ],
+)
+def test_a_skill_asked_for_outright_stays_required(line, skill_key):
+    assert not is_option(line, BY_KEY[skill_key]), line
+
+
+def test_an_extracted_cloud_list_is_no_longer_a_direct_requirement_of_each_cloud():
+    from packages.matching.requirements import extract
+
+    description = (
+        "Requirements\n"
+        "At least 2 years of experience with public cloud platforms (AWS, GCP, Azure)\n"
+        "Python is required"
+    )
+    required = {
+        entry["skill"]: entry["option"]
+        for entry in extract(description).as_json()["skills"]["required"]
+    }
+
+    assert required == {"aws": True, "gcp": True, "azure": True, "python": False}
+
+
+def test_a_long_list_is_read_in_linear_time():
+    import time
+
+    line = "Experience with Kafka" + ", tool" * 5000 + " or similar"
+    started = time.perf_counter()
+    is_option(line, KAFKA)
+    assert time.perf_counter() - started < 0.5
