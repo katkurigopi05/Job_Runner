@@ -838,10 +838,24 @@ are untouched. With no saved links (before `make skill-links`), the schedule alo
 Every company's Workday host (`{tenant}.wdN.myworkdayjobs.com`) had its own
 counter, so a pool of 40 workers reached about 210 boards within a second. On
 2026-11-23 Cloudflare, in front of all of them, answered the crawler's client
-429 on every board for more than an hour, `robots.txt` included. It is a rate
-limit, not a ban: the same client got 200 again about 25 minutes after the
-crawler stopped. 210 of 213 boards had failed on Nov 17 and Nov 23, and 150 had
-not been read since Nov 9.
+429 on every board, `robots.txt` included. 210 of 213 boards had failed on
+Nov 17 and Nov 23, and 150 had not been read since Nov 9.
+
+**This change does not get Workday read again, and it was first described as
+if it would.** It is not only pace. At 20:35 that day, after 90 minutes with no
+Workday request from this machine, the crawler's client (`httpx`, User-Agent
+`jobrunner`) got 429 on `robots.txt` while `curl` with the same User-Agent got
+200, in the same minute. One `httpx` request at 19:25 had got 200, and that one
+reading is what made it look like a limit that lifts. Cloudflare is refusing
+this kind of client most of the time. Changing the client to look like another
+one would be §2.5's bot-detection evasion, so Workday boards fail until that
+changes on Workday's side, and the owner finishes Workday applications by hand
+as before. To see whether it has, send one `httpx` request to one tenant's
+`robots.txt`; don't dispatch boards to find out.
+
+What this change is for: when Workday says 429, the crawler backs off all of
+Workday at once instead of 210 boards knocking within a minute, and a pool can
+never reach every tenant at once again.
 
 - **`ratelimit.SHARED_ZONES`** lists `myworkdayjobs.com`, and `budget_key` maps
   every host under it to the zone. Only the limiter uses it (pace, Crawl-delay,
@@ -855,7 +869,8 @@ not been read since Nov 9.
 - **Cost:** a full Workday read is about 3,200 requests (2,160 list pages,
   1,065 details), about 4.5 hours at 5 s. The description backfill is paced by
   the same zone counter, so a Workday backfill takes longer too.
-- **Not done:** pacing per data centre (`wd1`, `wd5`) would halve that, but the
-  429s reached wd1 and wd5 in the same second, so the limit looked zone-wide.
+- **Not done:** pacing per data centre (`wd1`, `wd5`) would halve that. The
+  429s reached wd1 and wd5 in the same second, so the zone is the unit Workday
+  answers as.
 
 `tests/test_workday_zone.py`.

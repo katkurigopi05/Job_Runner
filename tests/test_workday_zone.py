@@ -2,9 +2,9 @@
 
 Workday serves each company at its own host, so the limiter gave each one its
 own counter. On 2026-11-23 a pool reached about 210 Workday boards within a
-second, and Cloudflare, in front of all of them, answered 429 to every board
-for more than an hour, `robots.txt` included. The floor was being kept per
-company while what limited the crawler was the zone.
+second, and Cloudflare, in front of all of them, answered 429 to every board,
+`robots.txt` included, while the floor was kept per company. These tests hold
+the pacing and the shared backoff; they do not claim Workday reads again.
 """
 
 from __future__ import annotations

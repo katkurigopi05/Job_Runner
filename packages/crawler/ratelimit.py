@@ -78,15 +78,15 @@ SHARED_API_HOSTS: frozenset[str] = frozenset(
     }
 )
 
-#: One service that rate-limits many companies' hosts as one site.
+#: One service that answers for many companies' hosts as one site.
 #:
 #: Workday serves each company at its own host, `{tenant}.wdN.myworkdayjobs.com`,
 #: so `host_key` gave every company its own counter, and on 2026-11-23 a pool
 #: reached about 210 of them within a second. Cloudflare, in front of all of
-#: them, then answered 429 to every board for more than an hour, `robots.txt`
-#: included: the floor was kept per company and the limit was the zone's.
-#: Counted as one host, the zone gets the ordinary floor, and a 429 from any
-#: company backs every one of them off.
+#: them, answered 429 to every board, `robots.txt` included, and 210 boards each
+#: knocked once more. Counted as one host, the zone gets the ordinary floor, and
+#: a 429 from any company backs every one of them off. Why the 429s happen is
+#: not only pace: see `packages/crawler/CLAUDE.md`.
 #:
 #: Explicit, like `SHARED_API_HOSTS`, so nothing joins by resembling a zone,
 #: and its opposite: a zone is held to the ordinary floor, never the 2s one.
