@@ -78,6 +78,20 @@ SHARED_API_HOSTS: frozenset[str] = frozenset(
     }
 )
 
+#: One service that rate-limits many companies' hosts as one site.
+#:
+#: Workday serves each company at its own host, `{tenant}.wdN.myworkdayjobs.com`,
+#: so `host_key` gave every company its own counter, and on 2026-11-23 a pool
+#: reached about 210 of them within a second. Cloudflare, in front of all of
+#: them, then answered 429 to every board for more than an hour, `robots.txt`
+#: included: the floor was kept per company and the limit was the zone's.
+#: Counted as one host, the zone gets the ordinary floor, and a 429 from any
+#: company backs every one of them off.
+#:
+#: Explicit, like `SHARED_API_HOSTS`, so nothing joins by resembling a zone,
+#: and its opposite: a zone is held to the ordinary floor, never the 2s one.
+SHARED_ZONES: frozenset[str] = frozenset({"myworkdayjobs.com"})
+
 #: Bounds `acquire`, so a non-advancing clock fails loudly instead of hanging.
 _MAX_WAIT_ROUNDS = 100
 
@@ -120,6 +134,20 @@ def host_key(url: str) -> str:
         # bucket with every other unparseable URL.
         return url.strip().lower()
     return hostname.rstrip(".")
+
+
+def budget_key(host: str) -> str:
+    """The counter a request to `host` is paced and backed off against.
+
+    The host itself, unless it lies under a `SHARED_ZONES` entry: then the
+    zone. Only the limiter is keyed on this. robots.txt and redirects stay per
+    host, because each company's robots.txt is its own and a redirect to
+    another company is a new host however the two are counted.
+    """
+    for zone in SHARED_ZONES:
+        if host == zone or host.endswith("." + zone):
+            return zone
+    return host
 
 
 def floor_for(host: str) -> float:

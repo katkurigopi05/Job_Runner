@@ -832,3 +832,30 @@ order changes: poll intervals, host floors, robots.txt and the claim order betwe
 are untouched. With no saved links (before `make skill-links`), the schedule alone decides. On
 2026-11-19, 270 of 1,036 crawlable companies led (NVIDIA 245 matching jobs, Accenture 59, Cisco
 48); ranking the registry took 0.06 s. `tests/test_crawl_project_priority.py`.
+
+## Workday is paced as one site (2026-11-23)
+
+Every company's Workday host (`{tenant}.wdN.myworkdayjobs.com`) had its own
+counter, so a pool of 40 workers reached about 210 boards within a second. On
+2026-11-23 Cloudflare, in front of all of them, answered the crawler's client
+429 on every board for more than an hour, `robots.txt` included. It is a rate
+limit, not a ban: the same client got 200 again about 25 minutes after the
+crawler stopped. 210 of 213 boards had failed on Nov 17 and Nov 23, and 150 had
+not been read since Nov 9.
+
+- **`ratelimit.SHARED_ZONES`** lists `myworkdayjobs.com`, and `budget_key` maps
+  every host under it to the zone. Only the limiter uses it (pace, Crawl-delay,
+  a 429's backoff, the busy check). robots.txt and redirects stay per host.
+  The zone gets the ordinary floor, never `SHARED_API_HOSTS`' 2 s, so this
+  narrows §2.6. A 429 from any company backs every Workday company off.
+- **At most `defer.ZONE_BOARDS_AT_ONCE` (2) Workday boards are read at once**;
+  the rest are handed back for `ZONE_RECHECK_S` and do not spend retries. With
+  one counter, five interleaved boards put a 100-page board past the 1,800 s
+  task limit, and every worker would wait on Workday while other boards queued.
+- **Cost:** a full Workday read is about 3,200 requests (2,160 list pages,
+  1,065 details), about 4.5 hours at 5 s. The description backfill is paced by
+  the same zone counter, so a Workday backfill takes longer too.
+- **Not done:** pacing per data centre (`wd1`, `wd5`) would halve that, but the
+  429s reached wd1 and wd5 in the same second, so the limit looked zone-wide.
+
+`tests/test_workday_zone.py`.
