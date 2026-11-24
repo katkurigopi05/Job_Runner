@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import structlog
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -10,6 +11,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from packages.core.enums import ErrorCode
 from packages.core.state import InvalidTransitionError
+from packages.core.trace import TRACE_HEADER
+
+log = structlog.get_logger(__name__)
 
 STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.UNAUTHORIZED: status.HTTP_401_UNAUTHORIZED,
@@ -55,7 +59,45 @@ def _envelope(code: ErrorCode, message: str) -> JSONResponse:
     )
 
 
+def unhandled_message(error_type: str, trace_id: str | None) -> str:
+    """What the owner reads for a failure nothing mapped.
+
+    The exception's type, never its text: that text can carry a Kaggle
+    session URL, whose path is a credential, or quote a résumé (§2.7, §2.8).
+    The trace id finds the full traceback in the API's terminal.
+    """
+    where = f", trace {trace_id}" if trace_id else ""
+    return (
+        f"The API hit an unexpected error ({error_type}) and could not finish this "
+        f"request. The full error is in the terminal running `make api`{where}."
+    )
+
+
+async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
+    """Any exception nothing above mapped, in the envelope rather than plain text.
+
+    Starlette runs this outermost and then re-raises, so uvicorn still prints
+    the traceback just after this log line. The request's trace context has
+    closed by then, which is why the id is read from `request.state`.
+    """
+    trace_id = getattr(request.state, "trace_id", None)
+    error_type = type(exc).__name__
+    log.error(
+        "unhandled_error",
+        trace_id=trace_id,
+        method=request.method,
+        path=request.url.path,
+        error_type=error_type,
+    )
+    response = _envelope(ErrorCode.INTERNAL_ERROR, unhandled_message(error_type, trace_id))
+    if trace_id:
+        response.headers[TRACE_HEADER] = trace_id
+    return response
+
+
 def register_error_handlers(app: FastAPI) -> None:
+    app.add_exception_handler(Exception, _unhandled)
+
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
         return _envelope(exc.code, exc.message)
