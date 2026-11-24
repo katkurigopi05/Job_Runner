@@ -25,11 +25,14 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.core.enums import QueueTaskStatus
+from packages.core.models import Company, QueueTask
 from packages.core.queue import ClaimedTask, ClaimOwnershipLost, TaskDeferred, defer_task
 from packages.crawler.fetch import PoliteFetcher
-from packages.crawler.ratelimit import host_key
+from packages.crawler.ratelimit import budget_key, host_key
 
 log = structlog.get_logger(__name__)
 
@@ -77,7 +80,7 @@ async def defer_if_host_busy(
     threshold = DEFAULT_THRESHOLD_S if threshold_s is None else threshold_s
     bound = MAX_DEFERRALS if max_deferrals is None else max_deferrals
 
-    host = host_key(url)
+    host = budget_key(host_key(url))
     payload = dict(claimed.task.payload_json or {})
     deferrals = int(payload.get("deferrals", 0))
     if deferrals >= bound:
@@ -101,3 +104,62 @@ async def defer_if_host_busy(
         deferrals=deferrals + 1,
     )
     raise TaskDeferred(f"{host} busy for {waiting:.1f}s", run_after=run_after)
+
+
+#: Boards of one zone (`ratelimit.SHARED_ZONES`) read at once.
+#:
+#: A zone is one counter, so every board in it shares one request every few
+#: seconds, and `defer_if_host_busy` stops handing a task back after
+#: `MAX_DEFERRALS`. Without this bound each free worker would end up holding a
+#: Workday board, every other company would wait behind them, and with five
+#: boards interleaved a 100-page board takes longer than its task's time limit.
+#: Two keeps the largest board inside that limit.
+ZONE_BOARDS_AT_ONCE = 2
+
+#: How long a board waiting for its zone is handed back for. A Workday board
+#: takes a few minutes to read, so looking more often only spins the queue.
+ZONE_RECHECK_S = 120.0
+
+
+async def defer_if_zone_full(
+    session: AsyncSession,
+    claimed: ClaimedTask,
+    url: str,
+    *,
+    ats_type: str,
+    now: datetime | None = None,
+) -> None:
+    """Hand the task back while `ZONE_BOARDS_AT_ONCE` boards of its zone are read.
+
+    Raises `TaskDeferred` when it does, as `defer_if_host_busy` does. A zone's
+    boards are one ATS's, so the boards being read are this kind's running
+    tasks for that ATS, with a live lease: a worker that died holds no place.
+
+    Not counted against `MAX_DEFERRALS`. That bound protects one company from
+    being outrun on a busy host; here the boards ahead of it finish, so it
+    always gets its turn. Like the busy check it is a scheduling hint: two
+    tasks claimed in the same instant can both go ahead, and the zone's one
+    counter still paces every request they make.
+    """
+    if budget_key(host_key(url)) == host_key(url):
+        return
+    current = now or datetime.now(UTC)
+    reading = await session.scalar(
+        select(func.count())
+        .select_from(QueueTask)
+        .join(Company, cast(Company.id, String) == QueueTask.payload_json["company_id"].astext)
+        .where(
+            QueueTask.kind == claimed.task.kind,
+            QueueTask.status == QueueTaskStatus.RUNNING.value,
+            QueueTask.lease_expires_at > current,
+            QueueTask.id != claimed.task_id,
+            Company.ats_type == ats_type,
+        )
+    )
+    if (reading or 0) < ZONE_BOARDS_AT_ONCE:
+        return
+    run_after = current + timedelta(seconds=ZONE_RECHECK_S)
+    if not await defer_task(session, claimed, run_after=run_after):
+        raise ClaimOwnershipLost(str(claimed.task_id))
+    log.info("task_deferred_zone_full", ats=ats_type, reading=reading)
+    raise TaskDeferred(f"{ats_type}: {reading} boards being read", run_after=run_after)

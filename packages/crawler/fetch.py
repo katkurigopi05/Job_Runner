@@ -24,6 +24,7 @@ from packages.crawler.ratelimit import (
     MIN_DELAY_SECONDS,
     HostRateLimiter,
     RateLimiter,
+    budget_key,
     host_key,
 )
 from packages.crawler.robots import USER_AGENT, RobotsCache
@@ -226,9 +227,10 @@ class PoliteFetcher:
                         # is wrong, and it outranks whatever we had configured.
                         # This is the half that makes the faster shared-API
                         # floor defensible rather than merely faster, so it is
-                        # recorded against the host that actually sent it.
+                        # recorded against the host that actually sent it, or
+                        # its zone (`ratelimit.SHARED_ZONES`).
                         await self.rate_limiter.penalize(  # type: ignore[union-attr]
-                            host, _retry_after(response, default=_DEFAULT_BACKOFF)
+                            budget_key(host), _retry_after(response, default=_DEFAULT_BACKOFF)
                         )
                         # The body is not read: nothing in it is worth having,
                         # and reading it would delay the backoff just asked for.
@@ -249,14 +251,14 @@ class PoliteFetcher:
                 decision = await self.robots.check(next_url)  # type: ignore[union-attr]
                 if not decision.allowed:
                     raise Blocked(f"{next_url}: {decision.reason} (redirected from {host})")
-                await self.rate_limiter.acquire(next_host)  # type: ignore[union-attr]
+                await self.rate_limiter.acquire(budget_key(next_host))  # type: ignore[union-attr]
                 log.info("followed_cross_host_redirect", frm=host, to=next_host)
                 host = next_host
             else:
                 # Same machine, so no second robots fetch and no second wait —
                 # the hop is part of one logical request. It still cost the
                 # server a round trip, so it is recorded.
-                await self.rate_limiter.record(host)  # type: ignore[union-attr]
+                await self.rate_limiter.record(budget_key(host))  # type: ignore[union-attr]
 
             url = next_url
 
@@ -294,8 +296,11 @@ class PoliteFetcher:
         #
         # Recorded against *this host*. Writing it to `delay_seconds` would
         # make one slow site's crawl-delay the delay for every other site in
-        # the registry, which is not what that site asked for.
-        current = self.rate_limiter.delay_for(host)
+        # the registry, which is not what that site asked for. A host in a
+        # zone (`ratelimit.SHARED_ZONES`) is paced as the zone, so its
+        # crawl-delay is the zone's too.
+        budget = budget_key(host)
+        current = self.rate_limiter.delay_for(budget)
         if decision.crawl_delay and decision.crawl_delay > current:
             log.info(
                 "honouring_site_crawl_delay",
@@ -303,7 +308,7 @@ class PoliteFetcher:
                 site_delay=decision.crawl_delay,
                 our_delay=current,
             )
-            await self.rate_limiter.raise_delay(host, float(decision.crawl_delay))
+            await self.rate_limiter.raise_delay(budget, float(decision.crawl_delay))
 
         # The third gate, and the only one that is off by default. Taken
         # *before* the limiter: a request the budget will refuse should not
@@ -311,7 +316,7 @@ class PoliteFetcher:
         if self.request_budget > 0:
             await reserve(self.request_budget, self.budget_window_seconds)
 
-        waited = await self.rate_limiter.acquire(host)
+        waited = await self.rate_limiter.acquire(budget)
 
         # Both gates are behind us. Reusing the connection from here changes
         # how much setup is repeated, never how long anything waited.
@@ -350,7 +355,7 @@ class PoliteFetcher:
         async with client.stream(method.upper(), url, json=json) as response:
             if response.status_code in (429, 503):
                 await self.rate_limiter.penalize(  # type: ignore[union-attr]
-                    host, _retry_after(response, default=_DEFAULT_BACKOFF)
+                    budget_key(host), _retry_after(response, default=_DEFAULT_BACKOFF)
                 )
                 return response.status_code, ""
             if response.is_redirect:
