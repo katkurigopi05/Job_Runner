@@ -43,7 +43,7 @@ jobs:
         # Stop this advisory step before the job deadline, leaving time for
         # cleanup and an honest incomplete-review summary instead of cancellation.
         timeout-minutes: 20
-        uses: alibaba/open-code-review@0e9060da66af36a96a15516e76a001953095318b # v1.13.9
+        uses: alibaba/open-code-review@445ad9dea3057346986197385858a1a281253cc9 # v1.13.13
         with:
           ocr_version: '1.12.6'
           llm_url: https://openrouter.ai/api/v1
