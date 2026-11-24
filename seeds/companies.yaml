@@ -175,11 +175,6 @@ companies:
   ats: greenhouse
   checked: '2026-09-07'
   state: api
-- name: Parloa
-  slug: parloa
-  ats: greenhouse
-  checked: '2026-09-07'
-  state: api
 - name: Intercom
   slug: intercom
   ats: greenhouse
@@ -276,10 +271,8 @@ companies:
   checked: '2026-09-07'
   state: api
 - name: Mistral AI
-  slug: mistral
-  ats: lever
-  checked: '2026-09-07'
-  state: api
+  slug: mistral.ai
+  ats: ashby
 - name: Palantir
   slug: palantir
   ats: lever
@@ -559,8 +552,8 @@ companies:
   slug: baseten
   ats: ashby
 - name: Browserbase
-  slug: browserbase
-  ats: ashby
+  slug: browserbaseinc
+  ats: greenhouse
 - name: Collaborative Robotics
   slug: cobot
   ats: ashby
@@ -775,6 +768,12 @@ companies:
   slug: zoox
   ats: lever
 retired:
+- name: Parloa
+  slug: parloa
+  ats: greenhouse
+  checked: '2026-11-23'
+  state: missing
+  api_status: 404
 - name: Temporal
   slug: temporaltechnologies
   ats: greenhouse
