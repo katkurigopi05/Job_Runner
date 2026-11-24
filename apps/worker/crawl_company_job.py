@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.models import Company
 from packages.core.queue import ClaimedTask
 from packages.crawler.crawl import crawl_company
-from packages.crawler.defer import defer_if_host_busy
+from packages.crawler.defer import defer_if_host_busy, defer_if_zone_full
 from packages.crawler.dispatch import (
     CRAWL_COMPANY_TASK_KIND,
     close_if_complete,
@@ -90,12 +90,14 @@ async def handle_crawl_company(session: AsyncSession, claimed: ClaimedTask) -> N
     # cannot quietly remove the guarantee this file depends on.
     async with build_fetcher(shared=True) as fetcher:
         # Give the worker slot back rather than sleeping in it when this
-        # company's host is busy. Checked before anything is fetched, so
-        # nothing is replayed and no slot is reserved — see
-        # packages/crawler/defer.py.
+        # company's host is busy, or while its zone has as many boards being
+        # read as it may. Checked before anything is fetched, so nothing is
+        # replayed and no slot is reserved — see packages/crawler/defer.py.
         extractor = extractor_for(seed.ats)
         assert extractor is not None  # seed_from already refused an unknown ATS
-        await defer_if_host_busy(session, claimed, fetcher, extractor.board_url(seed.slug))
+        board_url = extractor.board_url(seed.slug)
+        await defer_if_zone_full(session, claimed, board_url, ats_type=seed.ats)
+        await defer_if_host_busy(session, claimed, fetcher, board_url)
         result = await crawl_company(session, seed, fetcher, force=bool(payload.get("force")))
 
     await record_attempt(session, company, result)
