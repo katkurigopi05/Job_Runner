@@ -45,7 +45,16 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from packages.core.models import Base
+#: Qwen3-Embedding-4B's width.
+#:
+#: Bound before `models` is imported, on purpose. `models.py` imports its
+#: feature modules at its end, and `models_interview` reads this name from
+#: here; when this module is the first one a process imports, that read
+#: happens while this module is still loading, at the line below.
+#: `tests/test_models_import_order.py`.
+LARGE_EMBEDDING_DIM = 2560
+
+from packages.core.models import Base  # noqa: E402  (after LARGE_EMBEDDING_DIM, see above)
 
 
 class PostingChunk(Base):
@@ -78,10 +87,6 @@ class PostingChunk(Base):
         UniqueConstraint("posting_id", "ordinal", name="uq_posting_chunks_posting_ordinal"),
         Index("ix_posting_chunks_posting_id", "posting_id"),
     )
-
-
-#: Qwen3-Embedding-4B's width.
-LARGE_EMBEDDING_DIM = 2560
 
 
 class PostingChunkVector(Base):
