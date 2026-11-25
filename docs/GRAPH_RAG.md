@@ -356,23 +356,36 @@ The answer itself only gains one sentence saying so.
 - **A declaration is labelled a declaration.** Primary language or a dependency
   file, in Studio's categories (`code_signals.Classification`), attributed to
   the repository, pinned to a commit when a live Kaggle check read it this
-  request. `GapProjectOut` refuses any category but `declared`. The dock says a
-  declaration is neither code that uses the technology nor the owner's own
-  work, and that contribution is confirmed in Resume Studio.
+  request. The dock says a declaration is neither code that uses the
+  technology nor the owner's own work, and that contribution is confirmed in
+  Resume Studio.
+- **Implementation only with a file.** A project is `implemented` only where a
+  Resume Studio save verified a file and lines at a commit (below), and the
+  drill-down cites them. `GapProjectOut` accepts `declared` or `implemented`,
+  and `implemented` only with `implemented_in` citations pinned to their commit.
 - **Local rendering only.** The drill-down is a reply field (`graph_gaps`),
   never in a prompt or in history; models still see anonymous project
   references. Older saved answers have no such field and render as before.
 
-**Why there is no implementation evidence yet.** Studio's code findings (file
-and lines at a commit, `implemented`) are made inside one draft's live check
-for one job description and are not kept. Respecting that, chat shows
-declarations only. The smallest follow-up to share richer evidence: when the
-owner saves a Studio draft with live code evidence, keep its public,
-commit-verified findings (project, skill, path, lines, commit, category; no
-source text) in a table, and let the drill-down cite them as Studio's
-`implemented` items with their permalinks, still behind Studio's
-contribution confirmation. `GapProjectOut` would gain those citation fields,
-and its validator would accept `implemented` only with them.
+**Implementation evidence kept from Studio saves (2026-11-25).** Studio's code
+findings (file and lines at a commit, `implemented`) used to live only inside
+one draft's preview, so chat showed declarations only. A save that keeps an
+approved code claim already checks the code again on the server; its public,
+commit-verified findings that can support a claim are now kept on the saved
+draft (`resume_studio.github_code_findings`, `packages/tailor/kept_findings.py`):
+project, skills, path, lines, commit, permalink and the rule's own sentence. No
+source text and no suggested wording. The gap drill-down reads them from the
+base résumés it already loads and cites up to three files per project and
+skill. Only projects the graph already lists are cited, so an excluded,
+private or forked repository never is.
+
+They are kept on the draft rather than in a table: they are what that save
+verified, deleting the draft takes them with it, and nothing needs a
+migration. A save that approved no code claim checks nothing and keeps
+nothing, so until the owner saves a draft with an approved claim every project
+stays `declared`. A citation is the repository's code at that commit, not
+proof the work was the owner's: contribution is still confirmed claim by claim
+in Studio, and nothing of it reaches a model.
 
 Measured read-only on the live database, worktree code via `PYTHONPATH`: 8 gaps
 over 2151 open IT jobs, each with ids equal to its count (Kubernetes 283, GCP

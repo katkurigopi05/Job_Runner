@@ -8,6 +8,7 @@ import { parseRecents } from "../src/lib/chat-recents.ts";
 import {
   DECLARATION_NOTE,
   GAP_PAGE,
+  citationsOf,
   declarationOf,
   gapsOf,
   nextIds,
@@ -82,6 +83,36 @@ describe("what a project's evidence is called", () => {
 
   test("the note keeps contribution the owner's to confirm", () => {
     assert.match(DECLARATION_NOTE, /confirm your contribution in Resume Studio/);
+    assert.doesNotMatch(DECLARATION_NOTE, /not kept for chat/);
+  });
+
+  test("implementation is said only with the file a Studio save verified", () => {
+    const cited = {
+      ...base,
+      category: "implemented",
+      declared_in: ["dependency_file"],
+      implemented_in: [
+        {
+          path: "app/routes.py",
+          start_line: 10,
+          end_line: 24,
+          commit_sha: SHA,
+          url: `https://github.com/example/infra/blob/${SHA}/app/routes.py#L10-L24`,
+          explanation: "An HTTP route is bound to a FastAPI app.",
+        },
+      ],
+    };
+    assert.deepEqual(citationsOf(cited), [
+      {
+        label: "app/routes.py lines 10–24",
+        pin: "at commit 0123456789",
+        url: `https://github.com/example/infra/blob/${SHA}/app/routes.py#L10-L24`,
+      },
+    ]);
+    assert.equal(citationsOf({ ...cited, implemented_in: [{ ...cited.implemented_in[0], end_line: 10 }] })[0].label, "app/routes.py line 10");
+    // A declared project, or one saved before citations existed, has none.
+    assert.deepEqual(citationsOf({ ...base, declared_in: ["dependency_file"] }), []);
+    assert.deepEqual(citationsOf({ ...base, declared_in: ["dependency_file"], implemented_in: [] }), []);
   });
 });
 
