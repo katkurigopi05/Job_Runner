@@ -2,7 +2,7 @@ import { test as base, expect } from "@playwright/test";
 
 // A recurring gap's count opens onto the jobs behind it (`gap-evidence.tsx`).
 // The answer stays short; Evidence details holds the jobs, each with its own
-// requirement line, the projects declaring the skill, and the rest of the N
+// requirement line, the projects declaring or implementing the skill, and the rest of the N
 // read by the answer's own ids. The mock API's fixture is 37 jobs.
 const test = base.extend<{ runtimeErrors: string[] }>({
   runtimeErrors: [async ({ page }, use) => {
@@ -44,8 +44,16 @@ test("a recurring gap opens onto every job behind its count", async ({ page, req
     "href",
     "https://github.com/example/infra/tree/0123456789abcdef0123456789abcdef01234567",
   );
-  await expect(gap).toContainText("Declared in a dependency file · checked live at commit 0123456789");
-  await expect(gap).not.toContainText(/implemented/i);
+  const declared = gap.getByRole("listitem").filter({ hasText: "example/infra" });
+  await expect(declared).toContainText("Declared in a dependency file · checked live at commit 0123456789");
+  await expect(declared).not.toContainText(/implemented/i);
+  // Implementation only with the file a Studio save verified, linked at its commit.
+  const implemented = gap.getByRole("listitem").filter({ hasText: "example/deploy" }).first();
+  await expect(implemented.getByRole("link", { name: "k8s/deployment.yaml lines 3–41" })).toHaveAttribute(
+    "href",
+    "https://github.com/example/deploy/blob/0123456789abcdef0123456789abcdef01234567/k8s/deployment.yaml#L3-L41",
+  );
+  await expect(implemented).toContainText("Implemented in k8s/deployment.yaml lines 3–41 at commit 0123456789");
   await expect(page.getByText("confirm your contribution in Resume Studio", { exact: false })).toBeVisible();
 
   await gap.getByRole("button", { name: "Show next 25 · 27 more" }).click();

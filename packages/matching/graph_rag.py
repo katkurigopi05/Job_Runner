@@ -35,6 +35,7 @@ from packages.matching.location_fields import office_facts
 from packages.matching.required_skills import fresh_requirements
 from packages.matching.retrieve import Passage, Retrieval
 from packages.matching.skill_vocab import BY_KEY, normalize_skill
+from packages.tailor.kept_findings import implemented as kept_implementation
 
 TARGET_LIMIT = 100
 #: Postings read per query when the saved links widen the search to every open job.
@@ -404,6 +405,8 @@ def graph_result(
                 else "sampled IT jobs" + (f" {population}" if constraint else "")
             )
             by_id = {str(posting.id): (posting, company) for posting, company in postings}
+            # Files Resume Studio saves verified, kept on those drafts: drill-down only.
+            implemented = kept_implementation(resumes)
             for skill, edges in gaps[:RESULT_LIMIT]:
                 posting, company = by_id[edges[0].source.key]
                 text = (
@@ -436,6 +439,7 @@ def graph_result(
                         [(*by_id[edge.source.key], edge.quote) for edge in edges],
                         reviewed=len(postings),
                         projects=[project_by_id[node.key] for node in project_skills[skill]],
+                        implemented=implemented,
                     )
                 )
     if constraint is not None:

@@ -57,7 +57,19 @@ const gapReply = {
   graph_gaps: [{
     skill: "kubernetes", label: "Kubernetes", source_label: "P1", total: 37, reviewed: 912, posting_ids: gapIds,
     jobs: gapIds.slice(0, 10).map((id) => gapJob(id)),
-    projects: [{ project_id: "00000000-0000-4000-9100-000000000001", repository: "example/infra", url: `https://github.com/example/infra/tree/${gapSha}`, category: "declared", declared_in: ["dependency_file"], commit_sha: gapSha }],
+    projects: [
+      { project_id: "00000000-0000-4000-9100-000000000001", repository: "example/infra", url: `https://github.com/example/infra/tree/${gapSha}`, category: "declared", declared_in: ["dependency_file"], commit_sha: gapSha },
+      // A file a Resume Studio save verified (`kept_findings.py`).
+      {
+        project_id: "00000000-0000-4000-9100-000000000002", repository: "example/deploy", url: "https://github.com/example/deploy",
+        category: "implemented", declared_in: ["dependency_file"], commit_sha: null,
+        implemented_in: [{
+          path: "k8s/deployment.yaml", start_line: 3, end_line: 41, commit_sha: gapSha,
+          url: `https://github.com/example/deploy/blob/${gapSha}/k8s/deployment.yaml#L3-L41`,
+          explanation: "A Kubernetes manifest declares a Deployment with containers.",
+        }],
+      },
+    ],
   }],
 };
 const server = createServer(async (req, res) => {

@@ -46,6 +46,7 @@ from packages.tailor.assemble import AssemblyOptions, assemble_html
 from packages.tailor.edit import rebuild_raw_lines
 from packages.tailor.evidence import comparable_name
 from packages.tailor.guard import SourceCorpus, line_key, project_names
+from packages.tailor.kept_findings import STUDIO_STAMP as STUDIO_STAMP
 from packages.tailor.parse import ParsedResume
 from packages.tailor.project_rewrite import ProjectRewrite, rewrite_project, with_description
 from packages.tailor.projects import ProjectEntry
@@ -53,9 +54,6 @@ from packages.tailor.publish import apply_rewrites
 from packages.tailor.rewrite import BulletRewrite, TailorResult, vet
 from packages.tailor.studio_sources import Source, same_skills
 from packages.tailor.targeted import Plan, Revision, classify, judge, revise
-
-#: Stamped beside the résumé's fields on a saved draft, like `publish.MODE_STAMP`.
-STUDIO_STAMP = "resume_studio"
 
 
 class RoleTrack(StrEnum):

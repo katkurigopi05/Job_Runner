@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Literal, Self
 
@@ -66,8 +67,35 @@ class GapJobOut(BaseModel):
     state: Literal["as_answered", "current", "closed", "changed"] = "as_answered"
 
 
+class CodeCitationOut(BaseModel):
+    """A file and lines that implement the skill, at a commit a Resume Studio save checked.
+
+    From `kept_findings.py`: the repository's code, never a statement about who
+    wrote it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    commit_sha: str = Field(pattern=r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+    #: The lines on github.com at that commit.
+    url: str
+    #: The static rule's own sentence for what it found.
+    explanation: str
+
+    @model_validator(mode="after")
+    def _pinned(self) -> Self:
+        if self.end_line < self.start_line:
+            raise ValueError("a line range ends after it starts")
+        if not re.match(rf"^https://github\.com/[^/]+/[^/]+/blob/{self.commit_sha}/", self.url):
+            raise ValueError("a citation links to its file at its commit")
+        return self
+
+
 class GapProjectOut(BaseModel):
-    """An eligible public project whose repository declares the skill.
+    """An eligible public project whose repository declares or implements the skill.
 
     Repository evidence, never a statement about the owner's own work: a
     claim of personal contribution is confirmed by the owner in Resume Studio
@@ -81,22 +109,31 @@ class GapProjectOut(BaseModel):
     repository: str
     #: The repository, at the commit read when a live check ran for this answer.
     url: str
-    #: Resume Studio's evidence categories. Chat has declarations only: Studio's
-    #: implementation findings (a file and lines at a commit) are made inside one
-    #: draft's live check and are not kept, so none can reach an answer.
+    #: Resume Studio's evidence categories: "declared" from the primary language
+    #: or a dependency file; "implemented" only with the files a Studio save
+    #: verified at a commit (`implemented_in`). Never documented or insufficient.
     category: Classification
     declared_in: list[Literal["dependency_file", "primary_language"]]
     #: The commit a live GitHub check read the declaration at; None for imported metadata.
     commit_sha: str | None = None
+    #: Files that implement the skill, kept from Resume Studio saves. Empty for a
+    #: declaration, and on answers written before they were kept.
+    implemented_in: list[CodeCitationOut] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _declarations_only(self) -> Self:
-        # A declaration alone is never implementation evidence. Anything else
-        # needs a commit-pinned file citation this surface does not carry.
-        if self.category is not Classification.DECLARED:
-            raise ValueError("chat gap evidence carries declarations only")
-        if not self.declared_in:
-            raise ValueError("a declaration names where the repository declares the skill")
+    def _evidence_matches_category(self) -> Self:
+        # A declaration alone is never implementation evidence, and
+        # implementation is never claimed without a commit-pinned file citation.
+        if self.category is Classification.IMPLEMENTED:
+            if not self.implemented_in:
+                raise ValueError("implementation needs a commit-pinned file citation")
+        elif self.category is Classification.DECLARED:
+            if self.implemented_in:
+                raise ValueError("a declared project carries no implementation citation")
+            if not self.declared_in:
+                raise ValueError("a declaration names where the repository declares the skill")
+        else:
+            raise ValueError("chat gap evidence is declared or implemented only")
         return self
 
 

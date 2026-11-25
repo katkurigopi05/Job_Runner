@@ -1,6 +1,7 @@
 /**
  * A recurring skill gap's drill-down: the jobs behind "required by N jobs", and
- * the projects whose repositories declare the skill.
+ * the projects whose repositories declare the skill, or implement it in a file
+ * a Resume Studio save verified at a commit.
  *
  * As the API sends it (`ChatReply.graph_gaps`, `packages/matching/gap_evidence.py`).
  * The answer carries the id of every one of the N, fixed when it was written,
@@ -22,15 +23,28 @@ export interface GapJob {
   state: "as_answered" | "current" | "closed" | "changed";
 }
 
+/** A file and lines that implement the skill, at a commit a Studio save checked. */
+export interface CodeCitation {
+  path: string;
+  start_line: number;
+  end_line: number;
+  commit_sha: string;
+  /** The lines on github.com at that commit. */
+  url: string;
+  explanation: string;
+}
+
 export interface GapProject {
   project_id: string;
   repository: string;
   url: string;
-  /** Resume Studio's evidence categories. Chat only ever carries "declared". */
+  /** "declared", or "implemented" only with `implemented_in` citations. */
   category: string;
   declared_in: Array<"dependency_file" | "primary_language">;
   /** The commit a live GitHub check read it at; null for imported metadata. */
   commit_sha: string | null;
+  /** Absent on answers written before Studio findings were kept. */
+  implemented_in?: CodeCitation[];
 }
 
 export interface GapEvidence {
@@ -54,9 +68,9 @@ export const GAP_PAGE = 25;
  * in the words Resume Studio asks the question in.
  */
 export const DECLARATION_NOTE =
-  "A declaration means the repository lists the technology, not that its code uses it, " +
-  "and not that the work was yours: confirm your contribution in Resume Studio before " +
-  "claiming it. Code-level evidence is checked per job in Resume Studio and is not kept for chat.";
+  "A declaration means the repository lists the technology, not that its code uses it. " +
+  "A cited file is code a Resume Studio save verified at that commit. Neither means the " +
+  "work was yours: confirm your contribution in Resume Studio before claiming it.";
 
 function isGap(value: unknown): value is GapEvidence {
   if (typeof value !== "object" || value === null) return false;
@@ -101,6 +115,25 @@ export function declarationOf(project: GapProject): string {
     place === "dependency_file" ? "in a dependency file" : "as its primary language",
   );
   return `Declared ${where.join(" and ")}`;
+}
+
+/** A cited file, said as where it is: never whose work it was. */
+export interface CitationView {
+  label: string;
+  pin: string;
+  url: string;
+}
+
+/** The files a Studio save verified for this project and skill; none for a declaration. */
+export function citationsOf(project: GapProject): CitationView[] {
+  return (project.implemented_in ?? []).map((cite) => ({
+    label:
+      cite.start_line === cite.end_line
+        ? `${cite.path} line ${cite.start_line}`
+        : `${cite.path} lines ${cite.start_line}–${cite.end_line}`,
+    pin: `at commit ${cite.commit_sha.slice(0, 10)}`,
+    url: cite.url,
+  }));
 }
 
 /** Which version of the repository the declaration was read from. */

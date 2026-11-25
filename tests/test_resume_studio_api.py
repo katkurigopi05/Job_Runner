@@ -409,6 +409,16 @@ async def test_live_code_preview_review_save_and_pdf(
     parsed = (await client.get(f"/resumes/{approved_id}/parsed")).json()["parsed"]
     assert f"• {wording}" in parsed["sections"]["projects"]
     assert parsed["resume_studio"]["github_code_approvals"][0]["commit_sha"] == mock.commit
+    # The save's own check is kept for skill-gap answers: public, commit-pinned
+    # findings only, never wording. A save that re-checked nothing keeps none.
+    findings = parsed["resume_studio"]["github_code_findings"]
+    assert suggestion["finding_id"] in {item["id"] for item in findings}
+    assert all(item["commit_sha"] == mock.commit for item in findings)
+    assert all(f"/blob/{mock.commit}/" in item["url"] for item in findings)
+    assert all("wording" not in item for item in findings)
+    rejected_id = rejected.json()["resume"]["id"]
+    unchecked = (await client.get(f"/resumes/{rejected_id}/parsed")).json()["parsed"]
+    assert "github_code_findings" not in unchecked["resume_studio"]
     profile = (await client.get(f"/profiles/{profile_id}")).json()
     assert profile["base_resume_id"] == preview["base_resume_id"]
 

@@ -40,6 +40,7 @@ from packages.tailor.code_evidence import (
 )
 from packages.tailor.evidence import linked_evidence
 from packages.tailor.guard import line_key
+from packages.tailor.kept_findings import FINDINGS_KEY, kept
 from packages.tailor.parse import Contact, ParsedResume
 from packages.tailor.project_rewrite import validate_description, with_description
 from packages.tailor.project_selection import saved_declarations
@@ -246,6 +247,7 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
         )
 
     claims = []
+    verified_findings: list[dict[str, object]] = []
     approved_wording: list[str] = []
     approved_generated: dict[uuid.UUID, list[str]] = {}
     added_project_lines: list[str] = []
@@ -317,6 +319,9 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
                 sections.setdefault("projects", []).extend(lines)
                 added_project_lines.extend(lines)
         projects = [project for project in projects if project.id not in approved_generated]
+        # This check's public findings outlive the preview: skill-gap answers
+        # cite them as implementation (`kept_findings.py`).
+        verified_findings = kept(code.findings)
 
     printed = {line_key(line) for lines in sections.values() for line in lines}
     final = ParsedResume(
@@ -383,6 +388,8 @@ async def save_draft(body: StudioSave, session: SessionDep) -> StudioSaved:
     }
     if claims:
         stored[STUDIO_STAMP]["github_code_approvals"] = claims
+    if verified_findings:
+        stored[STUDIO_STAMP][FINDINGS_KEY] = verified_findings
     resume = Resume(
         candidate_id=body.candidate_id,
         version=version,

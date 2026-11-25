@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { APPLY_LINK } from "@/lib/external";
 import {
+  citationsOf,
   DECLARATION_NOTE,
   declarationOf,
   GAP_PAGE,
@@ -116,16 +117,33 @@ function GapDrilldown({ gap }: { gap: GapEvidence }) {
       ) : null}
       {gap.projects.length > 0 ? (
         <>
-          <p className="text-ink">Projects whose repositories declare {gap.label}:</p>
+          <p className="text-ink">Projects whose repositories declare or implement {gap.label}:</p>
           <ul className="space-y-0.5 border-l border-rule-soft pl-2.5">
-            {gap.projects.map((project) => (
-              <li key={project.project_id}>
-                <a href={project.url} className={LINK} {...APPLY_LINK}>
-                  {project.repository}
-                </a>
-                {` · ${declarationOf(project)} · ${pinOf(project)}`}
-              </li>
-            ))}
+            {gap.projects.map((project) => {
+              const cited = citationsOf(project);
+              return (
+                <li key={project.project_id}>
+                  <a href={project.url} className={LINK} {...APPLY_LINK}>
+                    {project.repository}
+                  </a>
+                  {project.declared_in.length > 0 ? ` · ${declarationOf(project)}` : ""}
+                  {` · ${pinOf(project)}`}
+                  {cited.length > 0 ? (
+                    <ul className="mt-0.5 space-y-0.5 pl-3">
+                      {cited.map((cite) => (
+                        <li key={cite.url}>
+                          Implemented in{" "}
+                          <a href={cite.url} className={LINK} {...APPLY_LINK}>
+                            {cite.label}
+                          </a>
+                          {` ${cite.pin} (checked by a Resume Studio save)`}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </>
       ) : (

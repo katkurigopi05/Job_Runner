@@ -6,7 +6,9 @@ answer was written), the first few with the line each requires the skill in,
 and the eligible projects whose repositories declare it (`gap_evidence.py`).
 What must hold: the count is the distinct jobs listed; a preference never
 counts; an excluded project never appears; a declaration is never called
-implementation; none of it reaches a model; older answers still read.
+implementation, and implementation is claimed only with a file a Resume Studio
+save verified at a commit (`kept_findings.py`); none of it reaches a model;
+older answers still read.
 """
 
 from __future__ import annotations
@@ -21,19 +23,37 @@ from sqlalchemy import select
 
 from packages.core.models import Candidate, Company, Match, Posting, Profile, User
 from packages.core.schemas import ChatReply
-from packages.core.schemas_graph import GAP_JOBS_INLINE, GapEvidenceOut, GapProjectOut
+from packages.core.schemas_graph import (
+    GAP_JOBS_INLINE,
+    CodeCitationOut,
+    GapEvidenceOut,
+    GapProjectOut,
+)
 from packages.github.code_signals import Classification
 from packages.matching.gap_evidence import commit_of
 from packages.matching.graph_rag import RESULT_LIMIT, SavedLinks, graph_result
+from packages.tailor.kept_findings import FINDINGS_KEY, STUDIO_STAMP, kept
 from tests.test_graph_rag import OWNER, posting, project, resume
+from tests.test_kept_findings import finding
 
 KUBE = "Requirements\nKubernetes and Terraform are required."
 SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
-def _gaps(postings, projects=(), links=None):
+def _gaps(postings, projects=(), links=None, resumes=None):
     rows = [(job, f"Company {n}") for n, job in enumerate(postings)]
-    return graph_result(OWNER, [resume()], list(projects), rows, "gaps", links=links)
+    return graph_result(OWNER, resumes or [resume()], list(projects), rows, "gaps", links=links)
+
+
+def _studio_draft(*findings):
+    """A base résumé saved from Resume Studio, keeping its check's findings."""
+    return resume(
+        version=2,
+        parsed_json={
+            "raw_lines": ["Built services"],
+            STUDIO_STAMP: {FINDINGS_KEY: kept(list(findings))},
+        },
+    )
 
 
 def _gap(result, skill="kubernetes") -> GapEvidenceOut:
@@ -132,7 +152,8 @@ def test_a_declaration_is_labelled_a_declaration_and_never_implementation():
     ]
     assert [(p.repository, p.declared_in) for p in go.projects] == [("tools", ["primary_language"])]
     assert {p.category for gap in result.gaps for p in gap.projects} == {Classification.DECLARED}
-    with pytest.raises(ValidationError, match="declarations only"):
+    assert all(p.implemented_in == [] for gap in result.gaps for p in gap.projects)
+    with pytest.raises(ValidationError, match="file citation"):
         GapProjectOut(
             project_id=uuid.uuid4(),
             repository="infra",
@@ -140,6 +161,76 @@ def test_a_declaration_is_labelled_a_declaration_and_never_implementation():
             category=Classification.IMPLEMENTED,
             declared_in=["dependency_file"],
         )
+
+
+FASTAPI_JOB = "Requirements\nFastAPI and Kubernetes are required."
+
+
+def test_a_file_a_studio_save_verified_makes_the_project_implemented():
+    api = project(name="api", full_name="example/api", dependency_technologies=["FastAPI"])
+    other = project(name="other", dependency_technologies=["FastAPI"])
+    routes = finding(1, project_id=api.id, path="app/routes.py")
+    jobs = [posting(body=FASTAPI_JOB) for _ in range(2)]
+
+    gap = _gap(_gaps(jobs, [api, other], resumes=[resume(), _studio_draft(routes)]), "fastapi")
+
+    by_name = {p.repository: p for p in gap.projects}
+    assert by_name["example/api"].category is Classification.IMPLEMENTED
+    assert by_name["example/api"].declared_in == ["dependency_file"]
+    assert [
+        (c.path, c.start_line, c.end_line, c.commit_sha, c.url)
+        for c in by_name["example/api"].implemented_in
+    ] == [("app/routes.py", 10, 24, routes.commit_sha, routes.permalink)]
+    assert by_name["other"].category is Classification.DECLARED
+    assert by_name["other"].implemented_in == []
+
+
+def test_a_finding_for_another_skill_or_an_excluded_project_is_never_cited():
+    api = project(name="api", dependency_technologies=["FastAPI", "Kubernetes"])
+    hidden = project(name="hidden", dependency_technologies=["FastAPI"], include=False)
+    python_only = finding(1, project_id=api.id, skills=("python",))
+    excluded = finding(2, project_id=hidden.id)
+    jobs = [posting(body=FASTAPI_JOB) for _ in range(2)]
+
+    result = _gaps(jobs, [api, hidden], resumes=[resume(), _studio_draft(python_only, excluded)])
+
+    for skill in ("fastapi", "kubernetes"):
+        assert [(p.repository, p.category) for p in _gap(result, skill).projects] == [
+            ("api", Classification.DECLARED)
+        ]
+
+
+def test_implementation_is_claimed_only_with_a_citation_pinned_to_its_commit():
+    def citation(**changes):
+        values = dict(
+            path="app/routes.py",
+            start_line=10,
+            end_line=24,
+            commit_sha=SHA,
+            url=f"https://github.com/example/api/blob/{SHA}/app/routes.py#L10-L24",
+            explanation="An HTTP route is bound to a FastAPI app.",
+        )
+        return CodeCitationOut(**(values | changes))
+
+    base = dict(project_id=uuid.uuid4(), repository="api", url="https://github.com/example/api")
+    implemented = GapProjectOut(
+        **base,
+        category=Classification.IMPLEMENTED,
+        declared_in=["dependency_file"],
+        implemented_in=[citation()],
+    )
+    assert implemented.implemented_in[0].commit_sha == SHA
+    with pytest.raises(ValidationError, match="its commit"):
+        citation(url="https://github.com/example/api/blob/main/app/routes.py")
+    with pytest.raises(ValidationError, match="declared"):
+        GapProjectOut(
+            **base,
+            category=Classification.DECLARED,
+            declared_in=["dependency_file"],
+            implemented_in=[citation()],
+        )
+    with pytest.raises(ValidationError, match="declared|documented|insufficient|only"):
+        GapProjectOut(**base, category=Classification.DOCUMENTED, declared_in=["dependency_file"])
 
 
 def test_a_live_checked_repository_is_cited_at_its_commit():
@@ -184,11 +275,14 @@ def test_nothing_of_the_drilldown_reaches_the_selection_prompt():
         url=f"https://github.com/example/private-sounding-name/tree/{SHA}",
         dependency_technologies=["Kubernetes"],
     )
-    result = _gaps([posting(body=KUBE) for _ in range(2)], [secret])
+    cited = finding(1, project_id=secret.id, skills=("kubernetes",), path="deploy/secret-path.yaml")
+    result = _gaps(
+        [posting(body=KUBE) for _ in range(2)], [secret], resumes=[resume(), _studio_draft(cited)]
+    )
 
     prompt = result.prompt("Which skill gaps recur across my strongest matches?")
-    assert _gap(result).projects, "the drill-down has the project"
-    for private in ("private-sounding-name", SHA, "distinctive private"):
+    assert _gap(result).projects[0].implemented_in, "the drill-down has the citation"
+    for private in ("private-sounding-name", SHA, "distinctive private", "secret-path"):
         assert private not in prompt
         assert all(private not in item.model_text for item in result.evidence)
 
@@ -199,6 +293,18 @@ def test_an_answer_saved_before_drilldowns_still_reads():
     )
     del older["graph_gaps"]
     assert ChatReply.model_validate(older).graph_gaps == []
+
+
+def test_a_project_saved_before_implementation_citations_still_reads():
+    saved = {
+        "project_id": str(uuid.uuid4()),
+        "repository": "infra",
+        "url": "https://github.com/example/infra",
+        "category": "declared",
+        "declared_in": ["dependency_file"],
+        "commit_sha": None,
+    }
+    assert GapProjectOut.model_validate(saved).implemented_in == []
 
 
 # --- through the API ---------------------------------------------------------------
