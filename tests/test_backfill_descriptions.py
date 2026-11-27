@@ -24,7 +24,10 @@ from packages.crawler.crawl import crawl_company
 from packages.crawler.extract import CompanySeed
 from packages.crawler.fetch import PoliteFetcher
 from packages.crawler.ratelimit import MIN_DELAY_SECONDS, HostRateLimiter
-from scripts.backfill_descriptions import _args, _scope
+from packages.matching import incremental
+from packages.matching.incremental import MatchingReport
+from scripts import backfill_descriptions, chunk_postings
+from scripts.backfill_descriptions import MAX_PASSES, _args, _scope, index
 from tests.test_workday import HOST, SLUG, FakeClock, _job
 
 SEED = CompanySeed(name="Acme", slug=SLUG, ats="workday", poll_interval_s=0)
@@ -460,3 +463,64 @@ def test_naming_an_it_adjacent_group_reads_it_roles_and_that_group():
 def test_the_command_refuses_a_group_that_does_not_exist():
     with pytest.raises(SystemExit):
         _args(["--it-include", "pilots"])
+
+
+# --------------------------------------------------------------------------
+# The matching passes after a backfill
+# --------------------------------------------------------------------------
+
+
+class _Session:
+    async def commit(self) -> None:
+        pass
+
+
+@asynccontextmanager
+async def _open_session():
+    yield _Session()
+
+
+async def _run_index(monkeypatch, reports: list[MatchingReport]) -> tuple[int, int]:
+    """Run `index()` against scripted passes; returns (passes, chunk runs)."""
+    passes = iter(reports)
+    calls = {"passes": 0, "chunks": 0}
+
+    async def fake_pass(session):
+        calls["passes"] += 1
+        return next(passes, reports[-1])
+
+    async def fake_chunks() -> int:
+        calls["chunks"] += 1
+        return 0
+
+    monkeypatch.setattr(incremental, "run_matching_pass", fake_pass)
+    monkeypatch.setattr(chunk_postings, "run", fake_chunks)
+    monkeypatch.setattr(backfill_descriptions.core_db, "get_sessionmaker", lambda: _open_session)
+    await index()
+    return calls["passes"], calls["chunks"]
+
+
+async def test_the_passes_stop_once_one_keeps_nothing(monkeypatch):
+    """2,000 excluded postings are scored on every pass; that alone is not work."""
+    reports = [
+        MatchingReport(embedded=46, scored=2000, kept=46),
+        MatchingReport(scored=2000, kept=0),
+    ]
+
+    assert await _run_index(monkeypatch, reports) == (2, 1)
+
+
+async def test_embedding_alone_keeps_the_passes_going(monkeypatch):
+    reports = [
+        MatchingReport(embedded=2000, scored=2000, kept=0),
+        MatchingReport(embedded=12, scored=2000, kept=0),
+        MatchingReport(scored=2000, kept=0),
+    ]
+
+    assert await _run_index(monkeypatch, reports) == (3, 1)
+
+
+async def test_the_passes_are_bounded(monkeypatch):
+    reports = [MatchingReport(scored=2000, kept=1)]
+
+    assert await _run_index(monkeypatch, reports) == (MAX_PASSES, 1)
