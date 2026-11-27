@@ -168,7 +168,12 @@ async def index() -> None:
             report = await run_matching_pass(session)
             await session.commit()
         print(f"  matching pass: {report.summary()}", flush=True)
-        if not (report.embedded or report.scored):
+        # Not `scored`: a posting a hard filter excludes gets no Match row and
+        # is scored again by every pass, so `scored` stayed at 2,000 and all
+        # 50 passes ran, about 3.5 minutes a backfill (2026-11-25). A pass
+        # that embedded nothing and kept nothing leaves the next one the same
+        # batch.
+        if not (report.embedded or report.kept):
             break
     await chunk_all()
 

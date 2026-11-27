@@ -66,6 +66,10 @@ class MatchingReport:
     pruned: int = 0
     embedded: int = 0
     scored: int = 0
+    #: Scored postings given a `Match` row. The rest failed a hard filter and
+    #: get none, so the next pass selects them again: `scored` never reaches
+    #: 0 while one is open, and `kept` is what says a pass changed anything.
+    kept: int = 0
     #: Postings split into chunks and embedded for search (`chunks.py`).
     chunked: int = 0
     #: Whether the corpus statistics were rebuilt, which invalidates every
@@ -78,7 +82,7 @@ class MatchingReport:
         scope = "full (corpus rebuilt)" if self.rebuilt else "incremental"
         return (
             f"{scope}: {self.pruned} pruned, {self.embedded} embedded, "
-            f"{self.scored} scored, {self.chunked} chunked"
+            f"{self.scored} scored ({self.kept} kept), {self.chunked} chunked"
         )
 
 
@@ -177,7 +181,7 @@ async def run_matching_pass(
         batch = await postings_needing_scoring(session, profile, limit=limit, full=full)
         if not batch:
             continue
-        await score_and_store(
+        results = await score_and_store(
             session,
             profile,
             batch,
@@ -187,6 +191,7 @@ async def run_matching_pass(
         )
         report.per_profile[profile.label] = len(batch)
         report.scored += len(batch)
+        report.kept += sum(1 for result in results if not result.excluded)
 
     # Search reads chunks, scoring does not, so this runs last. It only cuts
     # offsets now; their Qwen vectors come from a Colab or Kaggle batch.

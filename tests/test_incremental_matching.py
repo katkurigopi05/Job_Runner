@@ -176,6 +176,31 @@ async def test_a_second_pass_does_nothing(db_session) -> None:
     assert second.scored == 0
 
 
+async def test_an_excluded_posting_is_scored_again_but_never_kept(db_session) -> None:
+    """Why `kept`, not `scored`, says whether a pass changed anything.
+
+    An excluded posting is given no Match row, so the next pass selects it
+    again. A loop that waited for `scored` to reach 0 ran all its passes.
+    """
+    await _profile(db_session)
+    await _postings(db_session, 2)
+    db_session.add(
+        Posting(
+            url="https://example.com/cleared/1",
+            external_id="cleared-1",
+            title="Backend Engineer",
+            description_raw="python django postgres. Requires an active TS/SCI clearance.",
+        )
+    )
+    await db_session.flush()
+
+    first = await run_matching_pass(db_session)
+    second = await run_matching_pass(db_session)
+
+    assert (first.scored, first.kept) == (3, 2)
+    assert (second.embedded, second.scored, second.kept) == (0, 1, 0)
+
+
 # --------------------------------------------------------------------------
 # Corpus statistics
 # --------------------------------------------------------------------------
