@@ -6,6 +6,10 @@ the root file, which keeps every heading and says where each section went.
 
 - The assistant's search (`retrieve.py`, `rerank.py`, `roles.py`, `gaps.py`, `evidence.py`, `chunks.py`) is in `.claude/rules/assistant-search.md`, which loads with those files.
 - Hybrid retrieval, `hybrid.py` (§19), is in `docs/CLAUDE.md`.
+- `skill_vocab.find_skills` runs a vocabulary through the Rust matcher when `make rust` has
+  installed it, and through `re` otherwise, with the same answers (`pattern_search.py` is the
+  reference). A new skill must stay in the syntax `pattern_search.py` takes, or its vocabulary
+  goes back to `re`: `rust/CLAUDE.md`.
 - The saved skill graph, `skill_links.py` (`make skill-links`, 2026-11-18): posting, project and
   base résumé links to vocabulary skills, what each link means, when each is written, and why a
   refresh skips postings a crawl holds, are in that module's docstring. A link must say what

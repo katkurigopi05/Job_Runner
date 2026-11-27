@@ -1,4 +1,4 @@
-.PHONY: install lock up down migrate revision test lint fmt typecheck check \
+.PHONY: install rust lock up down migrate revision test lint fmt typecheck check \
         check-crawler-locations check-migrations api worker workers mcp dab web web-install validate-seeds discover rescore fit-topics import-portals \
         bench-matching eval-retrieval eval-paraphrased judge-pool judge-pool-write score-judgments discovery-report company-issues company-sheet deep-dive fetch-board-directories chunk-postings export-chunk-vectors-pending import-chunk-vectors copy-chunk-vectors query-embedder-check backfill-descriptions audit-locations prune-postings merge-duplicate-boards export-labels export-postings import-csv inspect-csv registry-sync extract-requirements skill-links canonicalize backup backup-verify database-role private-paths crawl-metrics probe-bespoke import-mail score-mail review-resume load-golden validate-seeds-write vault-key kaggle-setup gate-0 gate-1 gate-1-live gate-2 gate-2-live gate-3 gate-4 gate-5 gate-6 \
         gate-1-only gate-2-only gate-3-only gate-4-only gate-5-only gate-6-only
@@ -9,6 +9,13 @@ install:
 	python3.12 -m venv .venv
 	$(PY)/pip install --upgrade pip
 	$(PY)/pip install -e ".[dev]" -c constraints.txt
+
+# make rust — build the Rust skill matcher into .venv (needs cargo; see
+# rust/pattern-search-rs). Optional: without it `skill_vocab.find_skills` asks
+# `re`, with the same answers 6x slower. Run again after changing the crate, and
+# `$(PY)/pip uninstall pattern-search-rs` turns it off.
+rust:
+	$(PY)/pip install ./rust/pattern-search-rs
 
 # make lock — re-resolve constraints.txt, the exact versions CI, the image and
 # `make install` use. Run it when the weekly "latest dependencies" CI leg is

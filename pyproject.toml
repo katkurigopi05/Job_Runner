@@ -105,7 +105,11 @@ target-version = "py312"
 # brought 56 lint errors), it is untracked, so CI never saw it, and `make
 # lint` and `make gate-0` failed on this machine alone for code that is
 # nobody's here to fix. Left out rather than reformatted: it is not ours.
-extend-exclude = ["docs", "*.md", "scripts/adhoc", ".agents"]
+#
+# `rust/*/python/` is the Python side of a Rust crate, written by
+# `rust-anything refresh` from the crate's signatures and rewritten on the next
+# one. Formatting it by hand would not survive that.
+extend-exclude = ["docs", "*.md", "scripts/adhoc", ".agents", "rust/*/python"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

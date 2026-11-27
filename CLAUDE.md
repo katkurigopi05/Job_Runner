@@ -104,6 +104,8 @@ provider abstraction (§7); embeddings run locally (bge-small, 384-dim);
 storage is `./storage/` behind an S3-shaped interface; dashboard components
 are hand-rolled, not shadcn; recruiter replies arrive through Gmail `+alias`
 addressing (`owner+app{id}@gmail.com`).
+One optional Rust extension reads skill vocabularies, `rust/pattern-search-rs`
+(`make rust`); without it `re` gives the same answers, 6x slower.
 
 No paid service is permitted in `requirements.txt` or `package.json` without asking the owner first.
 
@@ -148,6 +150,7 @@ of these loads only when work touches the directory or the files it names:
 | `packages/inbox/CLAUDE.md` | the reply alias and duplicate mail (§15) |
 | `packages/core/CLAUDE.md` | the doorbell (§15); the queue's claim order and its producers (§24); races (§27); retries, cancelling, time limits, finish times and pruning (§29) |
 | `tests/CLAUDE.md` | what each gate proves, and the test database (§15) |
+| `rust/CLAUDE.md` | the Rust skill matcher: what holds it to `re`, changing it, the macOS strip (§3) |
 | `docs/CLAUDE.md` | outside repositories and specs (§15); hybrid retrieval (§19) |
 | `.github/CLAUDE.md` | CI, the Dockerfile, pinned dependencies (§13) |
 | `.claude/rules/assistant-search.md` | the assistant's search (§14, §20, §21, §22, §27); loads with `retrieve.py`, `rerank.py`, `roles.py` and the chat routes |
