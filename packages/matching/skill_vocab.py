@@ -18,24 +18,19 @@ Adding an entry is safe. Loosening a case-sensitive one is not — measure it
 against `tests/fixtures/golden/` first.
 
 `find_skills` runs a whole vocabulary over a line in one pass through the Rust
-matcher, `rust/pattern-search-rs`, when `make rust` has installed it: 6.3x
-faster `requirements.extract`, with answers identical to `re` (measured
-2026-11-26, 3,002 postings). An entry in syntax it does not take sends that
-vocabulary back to `re`, with a warning; `tests/test_pattern_search.py` fails
-first.
+matcher (`pattern_set.py`) when `make rust` has installed it: 6.3x faster
+`requirements.extract`, with answers identical to `re` (measured 2026-11-26,
+3,002 postings). An entry in syntax it does not take sends that vocabulary back
+to `re`, with a warning; `tests/test_pattern_search.py` fails first.
 """
 
 from __future__ import annotations
 
-import importlib
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
 
-import structlog
-
-log = structlog.get_logger(__name__)
+from packages.matching.pattern_set import PatternSet
 
 #: Characters that continue a technology token, so `C++` is not `C` and
 #: `Node.js` is not `Node`.
@@ -159,75 +154,33 @@ CODE_SKILLS = (
 )
 
 
-#: The flags a pattern can carry inline for the Rust matcher. `re.UNICODE` is
-#: every str pattern's default.
-_INLINE_FLAGS: dict[int, str] = {re.UNICODE: "", re.UNICODE | re.IGNORECASE: "(?i)"}
-#: Vocabularies seen, by identity, with their Rust batch (None: read by `re`).
-#: Only tuples are kept: a list could change under its cached batch.
-_BATCHES: dict[int, tuple[tuple[Skill, ...], Any]] = {}
-_MAX_BATCHES = 16
+#: Vocabularies seen, by identity, with their `PatternSet`. Only tuples are
+#: kept: a list could change under its cached set.
+_SETS: dict[int, tuple[tuple[Skill, ...], PatternSet]] = {}
+_MAX_SETS = 16
 
 
-def _native_batch_class() -> Any:
-    """`pattern_search_rs.SearchesBatch` when `make rust` installed it, else None."""
-    try:
-        return importlib.import_module("pattern_search_rs").SearchesBatch
-    except ImportError as error:
-        if error.name != "pattern_search_rs":  # installed, but it would not load
-            log.warning("skill_vocab.rust_matcher_unloadable", error=str(error))
+def _set_for(vocabulary: Sequence[Skill]) -> PatternSet | None:
+    """The cached `PatternSet` for this vocabulary, or None for one that is not a tuple."""
+    if not isinstance(vocabulary, tuple):
         return None
-
-
-_BATCH_CLASS = _native_batch_class()
-
-
-def inline_pattern(skill: Skill) -> str | None:
-    """The skill's pattern with its flags written inline, or None for a flag that cannot be."""
-    prefix = _INLINE_FLAGS.get(skill.pattern.flags)
-    return None if prefix is None else prefix + skill.pattern.pattern
-
-
-def _new_batch(vocabulary: tuple[Skill, ...]) -> Any:
-    patterns = [inline_pattern(skill) for skill in vocabulary]
-    if None in patterns:
-        log.warning("skill_vocab.rust_matcher_refused", reason="a flag that cannot be inline")
-        return None
-    batch = _BATCH_CLASS(patterns)
-    try:
-        batch.run("")
-    except (ValueError, RuntimeError) as refused:  # syntax it does not take; a compile limit
-        log.warning("skill_vocab.rust_matcher_refused", reason=str(refused))
-        return None
-    return batch
-
-
-def _batch_for(vocabulary: Sequence[Skill]) -> Any:
-    """The Rust batch for this vocabulary, or None when `re` reads it."""
-    if _BATCH_CLASS is None or not isinstance(vocabulary, tuple):
-        return None
-    cached = _BATCHES.get(id(vocabulary))
+    cached = _SETS.get(id(vocabulary))
     if cached is not None and cached[0] is vocabulary:
         return cached[1]
-    if len(_BATCHES) >= _MAX_BATCHES:
-        _BATCHES.clear()
-    batch = _new_batch(vocabulary)
-    _BATCHES[id(vocabulary)] = (vocabulary, batch)
-    return batch
+    if len(_SETS) >= _MAX_SETS:
+        _SETS.clear()
+    patterns = PatternSet([skill.pattern for skill in vocabulary])
+    _SETS[id(vocabulary)] = (vocabulary, patterns)
+    return patterns
 
 
 def find_skills(line: str, vocabulary: Sequence[Skill] = SKILLS) -> list[Skill]:
     """Every vocabulary skill named in `line`, in vocabulary order, once each."""
-    batch = _batch_for(vocabulary)
-    if batch is not None:
-        try:
-            found = batch.run(line)
-        except UnicodeEncodeError:  # a lone surrogate cannot cross into Rust; `re` reads it
-            pass
-        except RuntimeError as error:  # the lookaround engine's backtracking limit
-            log.warning("skill_vocab.rust_matcher_failed", error=str(error))
-        else:
-            return [skill for skill, hit in zip(vocabulary, found, strict=True) if hit]
-    return [skill for skill in vocabulary if skill.pattern.search(line)]
+    patterns = _set_for(vocabulary)
+    if patterns is None:
+        return [skill for skill in vocabulary if skill.pattern.search(line)]
+    found = patterns.found(line)
+    return [skill for skill, hit in zip(vocabulary, found, strict=True) if hit]
 
 
 def normalize_skill(term: str) -> str | None:

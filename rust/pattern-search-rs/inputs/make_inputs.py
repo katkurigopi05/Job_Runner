@@ -1,12 +1,13 @@
 """Write the `--inputs` that `cases.jsonl` was recorded from.
 
 Real lines, the ones `requirements.extract` hands `find_skills`, against every
-pattern of `SKILLS` and `CODE_SKILLS`: where `re` finds the skill, near misses
-(found once case and lookarounds are ignored, which is what a port gets wrong),
-lines that name nothing, and traps built from the finds. A trap swaps in the
-characters Python's `re.IGNORECASE` pairs with an ASCII letter, Python-only
-whitespace, or a character either side of the find. Each line is cut to a
-window around its find, which keeps every lookaround and keeps the file small.
+pattern of `SKILLS` and `CODE_SKILLS` and the topic words `eligibility` looks
+for: where `re` finds it, near misses (found once case and lookarounds are
+ignored, which is what a port gets wrong), lines that name nothing, and traps
+built from the finds. A trap swaps in the characters Python's `re.IGNORECASE`
+pairs with an ASCII letter, Python-only whitespace, or a character either side
+of the find. Each line is cut to a window around its find, which keeps every
+lookaround and keeps the file small.
 
 From the repository root, with the project's Python first on PATH:
 
@@ -27,8 +28,9 @@ import re
 import sys
 from collections.abc import Sequence
 
-from packages.matching import chunks, requirements
-from packages.matching.skill_vocab import CODE_SKILLS, SKILLS, Skill, inline_pattern
+from packages.matching import chunks, eligibility, requirements
+from packages.matching.pattern_set import inline_pattern
+from packages.matching.skill_vocab import CODE_SKILLS, SKILLS, Skill
 
 STRIDE = chunks.CHUNK_SIZE - chunks.OVERLAP
 PER_KIND = 20
@@ -49,7 +51,13 @@ NEIGHBOURS = [
     *("a", "Z", "7", "+", "#", ".", ".x", ".7", "_", "-"),
     *("\u00e9", "\u212a", "\u017f", "\u0130", "\u0131"),
 ]
-LOOKAROUND = re.compile(r"\(\?<?[=!](?:[^()\\]|\\.|\[[^\]]*\]|\((?:[^()\\]|\\.)*\))*\)")
+#: A lookaround, with a class or one nested group inside. The alternatives are disjoint
+#: (`[` only opens a class), so no input backtracks exponentially.
+LOOKAROUND = re.compile(
+    r"\(\?<?[=!]"
+    r"(?:[^()\\\[]|\\.|\[[^\]]*\]|\((?:[^()\\\[]|\\.|\[[^\]]*\])*\))*"
+    r"\)"
+)
 SEED = 20261126
 
 
@@ -123,7 +131,8 @@ def cases_for(pattern: str, lines: list[str], rng: random.Random) -> list[tuple[
 def main() -> None:
     lines = corpus_lines(sys.argv[1])
     rng = random.Random(SEED)
-    patterns = sorted({p for s in (*SKILLS, *CODE_SKILLS) if (p := inline_pattern(s))})
+    compiled = [s.pattern for s in (*SKILLS, *CODE_SKILLS)] + list(eligibility._TOPICS.patterns)
+    patterns = sorted({p for c in compiled if (p := inline_pattern(c))})
     cases = dict.fromkeys(case for p in patterns for case in cases_for(p, lines, rng))
     with open(sys.argv[2], "w") as out:
         for pattern, line in cases:

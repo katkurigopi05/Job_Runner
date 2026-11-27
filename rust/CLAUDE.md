@@ -13,6 +13,18 @@ one `RegexSet` pass, confirming the few it finds with `fancy-regex` where a
 pattern has a lookaround. Measured on 3,002 postings: `extract` 12.6 ms to
 2.0 ms, 6.3x, with identical output for `SKILLS` and `CODE_SKILLS`.
 
+Its second use, 2026-11-27: `eligibility.read_posting`, which the feed's
+sponsorship and citizens-only filters run over every match on every request,
+with no cache. It looks for its topic words ("sponsor", "citizen", the phrases
+of residence) over the whole posting and then per sentence, and runs its
+patterns only where they can match. Live, 8,579 matches: those filtered feeds
+went from 5.0 s to 0.72 s a request, the same postings kept; over all 20,573
+open postings the verdicts are identical to every-sentence reading
+(`tests/test_eligibility_topics.py` keeps that reading as its oracle).
+
+Both go through `packages/matching/pattern_set.py`, which loads the crate and
+falls back to `re`. A third reader should too, not load the crate itself.
+
 It is optional. `make rust` builds it into `.venv`; without it, or for a
 vocabulary it refuses, `find_skills` asks `re` and gets the same answer.
 CI builds it and sets `REQUIRE_RUST_MATCHER=1`, so its tests fail there

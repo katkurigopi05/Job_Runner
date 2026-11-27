@@ -16,10 +16,12 @@ Two isolation strategies live here, and the difference matters:
 
 from __future__ import annotations
 
+import importlib
 import os
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -794,3 +796,18 @@ async def auto_submit_candidate(client: AsyncClient) -> dict[str, str]:
     profile_id = prof.json()["id"]
     await _attach_resume(client, candidate_id, profile_id)
     return {"candidate_id": candidate_id, "profile_id": profile_id}
+
+
+@pytest.fixture
+def rust_batch_class() -> Any:
+    """`pattern_search_rs.SearchesBatch`, the Rust matcher `make rust` builds.
+
+    Skips where it is not installed, and fails instead under REQUIRE_RUST_MATCHER,
+    which CI sets after building it: a skip there would hide a broken build.
+    """
+    if os.environ.get("REQUIRE_RUST_MATCHER") == "1":
+        return importlib.import_module("pattern_search_rs").SearchesBatch
+    module = pytest.importorskip(
+        "pattern_search_rs", reason="the Rust matcher is optional: make rust"
+    )
+    return module.SearchesBatch

@@ -47,6 +47,8 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from packages.matching.pattern_set import PatternSet
+
 #: Longest evidence sentence kept. Enough to read, short enough that an API
 #: response and a dashboard card do not become a second copy of the posting.
 MAX_EVIDENCE_CHARS = 240
@@ -164,6 +166,9 @@ _CITIZENS_OR_RESIDENTS = re.compile(
     re.I,
 )
 
+#: Both citizenship patterns need a word `_CITIZENSHIP_WORDS` lists, which is
+#: what lets `read_posting` skip them on a posting without one. A new
+#: alternative that does not must add its word there.
 _CITIZENS_ONLY = re.compile(
     r"(?:"
     r"(?:u\.?\s?s\.?|us|american|united\s+states)\s+citizens?(?:hip)?\s+"
@@ -174,6 +179,21 @@ _CITIZENS_ONLY = re.compile(
     r")",
     re.I,
 )
+
+
+#: What a sentence must contain for either half of the reading to find anything:
+#: every sponsorship pattern runs only where `_MENTIONS_SPONSORSHIP`, which needs
+#: "sponsor", matched, and both citizenship patterns need one of these words.
+#: Looked for over the whole text, so a posting that names neither (82% of the
+#: 8,579 postings in the feed on 2026-11-27) is never split into sentences, and
+#: then per sentence, so the patterns run only on the few that can match. In
+#: Rust when built (`pattern_set.py`): in `re` these scans cost most of what they
+#: saved.
+_SPONSORSHIP_WORD = re.compile(r"sponsor", re.I)
+_CITIZENSHIP_WORDS = re.compile(
+    r"citizen|permanent\s+residen|green\s+card|lawful\s+resident|lpr", re.I
+)
+_TOPICS = PatternSet((_SPONSORSHIP_WORD, _CITIZENSHIP_WORDS))
 
 
 @dataclass(frozen=True)
@@ -297,13 +317,18 @@ def read_posting(text: str | None) -> PostingEligibility:
     """
     if not text:
         return PostingEligibility()
+    about_sponsorship, about_citizenship = _TOPICS.found(text)
+    if not (about_sponsorship or about_citizenship):
+        return PostingEligibility()
 
     found: list[Evidence] = []
     refuses = offers = ambiguous = False
     citizenship = Citizenship.UNSTATED
 
     for sentence in _sentences(text):
-        if _MENTIONS_SPONSORSHIP.search(sentence):
+        # The same check per sentence: the patterns run only where they can match.
+        about_sponsorship, about_citizenship = _TOPICS.found(sentence)
+        if about_sponsorship and _MENTIONS_SPONSORSHIP.search(sentence):
             if _AMBIGUOUS_SPONSORSHIP.search(sentence):
                 ambiguous = True
                 found.append(Evidence.of("sponsorship_ambiguous", sentence))
@@ -314,7 +339,7 @@ def read_posting(text: str | None) -> PostingEligibility:
                 offers = True
                 found.append(Evidence.of("sponsorship_available", sentence))
 
-        if citizenship is Citizenship.UNSTATED:
+        if about_citizenship and citizenship is Citizenship.UNSTATED:
             if _CITIZENS_OR_RESIDENTS.search(sentence):
                 citizenship = Citizenship.CITIZENS_OR_RESIDENTS_ONLY
                 found.append(Evidence.of("citizens_or_residents_only", sentence))
