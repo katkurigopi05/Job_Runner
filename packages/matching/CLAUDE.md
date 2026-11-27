@@ -6,6 +6,10 @@ the root file, which keeps every heading and says where each section went.
 
 - The assistant's search (`retrieve.py`, `rerank.py`, `roles.py`, `gaps.py`, `evidence.py`, `chunks.py`) is in `.claude/rules/assistant-search.md`, which loads with those files.
 - Hybrid retrieval, `hybrid.py` (§19), is in `docs/CLAUDE.md`.
+- `skill_vocab.find_skills` and `eligibility.read_posting` run their patterns through the Rust
+  matcher (`pattern_set.py`) when `make rust` has installed it, and through `re` otherwise, with the same answers (`pattern_search.py` is the
+  reference). A new skill must stay in the syntax `pattern_search.py` takes, or its vocabulary
+  goes back to `re`: `rust/CLAUDE.md`.
 - The saved skill graph, `skill_links.py` (`make skill-links`, 2026-11-18): posting, project and
   base résumé links to vocabulary skills, what each link means, when each is written, and why a
   refresh skips postings a crawl holds, are in that module's docstring. A link must say what
@@ -566,6 +570,13 @@ Five things are load-bearing:
   already drops refusals when `Profile.needs_sponsorship` says the owner needs
   it, and that decides whether a `Match` row exists. This is the owner asking a
   question of the feed today. §1 keeps those separate and so does this.
+
+**The verdict is read on every request, so it has to be cheap** (2026-11-27). Over the
+8,579 matches the sponsorship and citizens-only filters cost 5.0 s a request, and
+`read_posting` was 64% of it. It now checks the posting, then each sentence, for its topic
+words first, and runs its patterns only where they can match: 0.72 s with the Rust matcher,
+2.2 s without, verdicts identical on all 20,573 open postings. A new citizenship pattern
+must contain a word `_CITIZENSHIP_WORDS` lists, or be added there.
 
 `sponsorship` is a vocabulary rather than a boolean for the reason
 `target_seniority` is a `SeniorityLevel`: a typo that reads as "no preference"

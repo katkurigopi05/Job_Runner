@@ -41,6 +41,9 @@ env:
   # The same bargain for the POS tagger: with the data fetched below, "the
   # chunker is unavailable" stops being an acceptable state to run tests in.
   REQUIRE_CHUNKER: "1"
+  # And for the Rust skill matcher built below: its tests hold it to `re`, and
+  # they would otherwise skip wherever it is not installed.
+  REQUIRE_RUST_MATCHER: "1"
 
 jobs:
   gates:
@@ -125,6 +128,16 @@ jobs:
           else
             .venv/bin/pip install -e ".[dev]" -c constraints.txt
           fi
+
+      # The Rust skill matcher (rust/pattern-search-rs). Optional on a developer
+      # box, where `re` answers without it; built here so the tests that hold
+      # it to `re` run. The crate asks for a recent rustc, so stable is fetched
+      # rather than trusting the runner image's.
+      - name: Build the Rust skill matcher
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          make rust
 
       # The POS tagger the fabrication guard reads noun phrases with. It is
       # data, not a package, so pip cannot carry it — and `packages/tailor/

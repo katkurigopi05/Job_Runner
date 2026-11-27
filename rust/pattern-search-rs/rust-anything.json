@@ -1,0 +1,42 @@
+{
+  "schema": "rust-anything/bridge@1",
+  "root": "../../packages/matching",
+  "unit": "pattern_search.py",
+  "language": "python",
+  "kind": "pyo3",
+  "crate_name": "pattern-search-rs",
+  "exports": [
+    {
+      "name": "searches",
+      "file": "pattern_search.py",
+      "line": 17,
+      "params": [
+        {
+          "name": "pattern",
+          "ts_type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "line",
+          "ts_type": "string",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "boolean",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    }
+  ],
+  "classes": [],
+  "js_only": [],
+  "batches": [
+    {
+      "function": "searches",
+      "param": "pattern"
+    }
+  ]
+}

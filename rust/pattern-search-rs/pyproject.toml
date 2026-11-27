@@ -1,0 +1,17 @@
+# `make rust` installs this into .venv: `pip install ./rust/pattern-search-rs`, which
+# builds the crate with cargo. Optional: without it `skill_vocab.find_skills` asks `re`.
+[build-system]
+# Pinned like constraints.txt pins the rest: a build backend release should not
+# change what CI builds.
+requires = ["maturin==1.16.0"]
+build-backend = "maturin"
+
+[project]
+name = "pattern-search-rs"
+version = "0.1.0"
+description = "Jobrunner's skill matcher: packages/matching/pattern_search.py for a whole vocabulary in one pass."
+requires-python = ">=3.12"
+
+[tool.maturin]
+python-source = "python"
+module-name = "pattern_search_rs._native"

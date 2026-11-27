@@ -16,6 +16,12 @@ Two rules keep false matches out, because a filter excludes on these:
 
 Adding an entry is safe. Loosening a case-sensitive one is not — measure it
 against `tests/fixtures/golden/` first.
+
+`find_skills` runs a whole vocabulary over a line in one pass through the Rust
+matcher (`pattern_set.py`) when `make rust` has installed it: 6.3x faster
+`requirements.extract`, with answers identical to `re` (measured 2026-11-26,
+3,002 postings). An entry in syntax it does not take sends that vocabulary back
+to `re`, with a warning; `tests/test_pattern_search.py` fails first.
 """
 
 from __future__ import annotations
@@ -23,6 +29,8 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+
+from packages.matching.pattern_set import PatternSet
 
 #: Characters that continue a technology token, so `C++` is not `C` and
 #: `Node.js` is not `Node`.
@@ -146,9 +154,33 @@ CODE_SKILLS = (
 )
 
 
+#: Vocabularies seen, by identity, with their `PatternSet`. Only tuples are
+#: kept: a list could change under its cached set.
+_SETS: dict[int, tuple[tuple[Skill, ...], PatternSet]] = {}
+_MAX_SETS = 16
+
+
+def _set_for(vocabulary: Sequence[Skill]) -> PatternSet | None:
+    """The cached `PatternSet` for this vocabulary, or None for one that is not a tuple."""
+    if not isinstance(vocabulary, tuple):
+        return None
+    cached = _SETS.get(id(vocabulary))
+    if cached is not None and cached[0] is vocabulary:
+        return cached[1]
+    if len(_SETS) >= _MAX_SETS:
+        _SETS.clear()
+    patterns = PatternSet([skill.pattern for skill in vocabulary])
+    _SETS[id(vocabulary)] = (vocabulary, patterns)
+    return patterns
+
+
 def find_skills(line: str, vocabulary: Sequence[Skill] = SKILLS) -> list[Skill]:
     """Every vocabulary skill named in `line`, in vocabulary order, once each."""
-    return [skill for skill in vocabulary if skill.pattern.search(line)]
+    patterns = _set_for(vocabulary)
+    if patterns is None:
+        return [skill for skill in vocabulary if skill.pattern.search(line)]
+    found = patterns.found(line)
+    return [skill for skill, hit in zip(vocabulary, found, strict=True) if hit]
 
 
 def normalize_skill(term: str) -> str | None:
