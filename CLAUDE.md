@@ -104,9 +104,9 @@ provider abstraction (§7); embeddings run locally (bge-small, 384-dim);
 storage is `./storage/` behind an S3-shaped interface; dashboard components
 are hand-rolled, not shadcn; recruiter replies arrive through Gmail `+alias`
 addressing (`owner+app{id}@gmail.com`).
-One optional Rust extension reads skill vocabularies and work-authorization
-topics, `rust/pattern-search-rs` (`make rust`); without it `re` gives the same
-answers, slower.
+One optional Rust extension reads skill vocabularies, work-authorization topics
+and the remote reader's screens, `rust/pattern-search-rs` (`make rust`); without
+it `re` gives the same answers, slower.
 
 No paid service is permitted in `requirements.txt` or `package.json` without asking the owner first.
 

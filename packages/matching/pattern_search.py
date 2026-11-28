@@ -14,13 +14,14 @@ in the same place by both, and `skill_vocab` then asks `re` itself:
 
 - literals; under `(?i)` only ASCII ones, whose case partners `re` decides (`k` also
   matches the Kelvin sign, `s` the long s, `i` the dotted and dotless i);
-- `.`, `\\s`, and a backslash before ASCII punctuation or a space;
+- `.`, `\\s`, `\\S`, and a backslash before ASCII punctuation or a space;
 - a class of ASCII characters and ASCII letter or digit ranges, never negated, and
   without `&`, `~` or `|`, which Rust reads as set operations when doubled;
 - `(...)`, `(?:...)`, `(?=...)`, `(?!...)`, `(?i:...)`, `(?-i:...)`, and `(?<=...)`,
   `(?<!...)` around a fixed run of single characters;
-- greedy `?`, `*` and `+` after a character, or after a group with one in it (Rust's
-  lookaround engine will not repeat a group that can only match nothing), and `|`;
+- greedy `?`, `*`, `+`, `{m}`, `{m,n}` and `{m,}` (at most 1000) after a character, or after
+  a group with one in it (Rust's lookaround engine will not repeat a group that can only
+  match nothing), and `|`;
 - `(?i)` at the very start.
 """
 
@@ -31,6 +32,9 @@ from typing import NoReturn
 
 _SPECIAL = frozenset(".^$*+?{}[]\\|()")
 _QUANTIFIERS = frozenset("?*+")
+#: A bounded repeat as taken: `{m}`, `{m,n}`, `{m,}`; Python's `{,n}` is refused.
+_REPEAT = re.compile(r"\{(\d+)(?:(,)(\d*))?\}")
+_MAX_REPEAT = 1000
 _PUNCTUATION = frozenset(chr(c) for c in range(0x20, 0x7F) if not chr(c).isalnum())
 _NOT_IN_CLASS = frozenset("\\[^-&~|")
 _GROUPS = ("(?<=", "(?<!", "(?-i:", "(?i:", "(?:", "(?=", "(?!", "(")
@@ -81,13 +85,26 @@ class _Checker:
         while (char := self._peek()) is not None and char not in "|)":
             atom = self._atom(ignore_case, lookbehind=lookbehind)
             consumes = consumes or atom
-            if self._peek() in _QUANTIFIERS:
+            if self._peek() in _QUANTIFIERS or self._peek() == "{":
                 if lookbehind or not atom:
                     self._refuse()
-                self.at += 1
-                if self._peek() in _QUANTIFIERS:
+                self._quantifier()
+                if self._peek() in _QUANTIFIERS or self._peek() == "{":
                     self._refuse()
         return consumes
+
+    def _quantifier(self) -> None:
+        if self._peek() != "{":
+            self.at += 1
+            return
+        repeat = _REPEAT.match(self.text, self.at)
+        if repeat is None:
+            self._refuse()
+        low, _, high = repeat.groups()
+        top = int(high) if high else int(low)
+        if int(low) > _MAX_REPEAT or top > _MAX_REPEAT or (high and int(low) > int(high)):
+            self._refuse()
+        self.at = repeat.end()
 
     def _atom(self, ignore_case: bool, *, lookbehind: bool) -> bool:
         """Consume one atom; whether it has a character in it, so a quantifier may follow."""
@@ -100,7 +117,7 @@ class _Checker:
             self._class()
         elif char == "\\":
             escaped = self.text[self.at + 1] if self.at + 1 < len(self.text) else None
-            if escaped != "s" and escaped not in _PUNCTUATION:
+            if escaped not in ("s", "S") and escaped not in _PUNCTUATION:
                 self._refuse()
             self.at += 2
         elif char == ".":

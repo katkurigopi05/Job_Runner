@@ -44,6 +44,13 @@ from enum import StrEnum
 from functools import lru_cache
 from hashlib import sha256
 
+import structlog
+
+from packages.matching.loosen import Unloosenable, loosened
+from packages.matching.pattern_set import PatternSet
+
+log = structlog.get_logger(__name__)
+
 
 class Locality(StrEnum):
     """Where a posting sits relative to the owner's search."""
@@ -150,6 +157,9 @@ _REMOTE_DENIAL_RE = re.compile(
 #: remote workers"), boilerplate, a scam warning about "remote interviews", an
 #: FAA "Remote Pilot Certificate" and LinkedIn's `#LI-Remote` tag. A location
 #: or title still declares a working mode with `_REMOTE_RE` alone.
+#: Every alternative needs a word or phrase `_DECLARATION_WORDS` lists, which is
+#: what lets `_declares_remote` skip a description without one. A new
+#: alternative that does not must add its word there.
 _REMOTE_DECLARED_RE = re.compile(
     # "This full-time position is remote": up to two words before the noun.
     r"\b(?:this|the)\s+(?:[\w-]+\s+){0,2}(?:role|position|job|opportunity)\s+"
@@ -203,14 +213,70 @@ _REMOTE_REGIONAL_RE = re.compile(
 )
 _REMOTE_REGIONAL_WINDOW = 160
 
+#: What `_REMOTE_DECLARED_RE` cannot match without, in the text it searches:
+#: "remote", or "from anywhere", "fully distributed", "from home", "home based",
+#: "wfh". That search, 17 alternatives with no common literal, was 1.6 ms a
+#: description, and a count of remote jobs read 16,195 of them: 31 s a question
+#: (2026-11-27). About three in four descriptions have none of these words. In
+#: Rust when built (`pattern_set.py`). Checked on the body the search reads,
+#: after the denials are cut, so a phrase the cut leaves joined is still seen.
+_DECLARATION_WORDS = PatternSet(
+    (re.compile(r"remote|from\s+anywhere|fully\s+distributed|from\s+home|home.based|wfh", re.I),)
+)
+
 # Only digests and verdicts survive a call: descriptions can be large, and
 # a changed body must be classified again even if its posting id is the same.
 _REMOTE_PROSE_CACHE: OrderedDict[bytes, bool] = OrderedDict()
+#: Verdicts kept, about 10 MB at this size. It was 4,096, and a count of remote
+#: jobs reads 16,195 descriptions (20,573 were open on 2026-11-27), so every
+#: entry was evicted before it was asked for again: the second count took as
+#: long as the first.
+_REMOTE_PROSE_CACHE_SIZE = 65_536
+
+
+def _screens() -> PatternSet | None:
+    """Looser forms of the denial, conditional and declaration patterns, in Rust, or None.
+
+    Each matches wherever its pattern does (`loosen.py` derives them from the
+    patterns, so a new alternative is screened too), and the Rust matcher answers
+    them in one pass. On the 20,573 open descriptions of 2026-11-27 they matched
+    172, 17 and 1,249 where the patterns matched 159, 17 and 1,028, so the two
+    cuts and the declaration search run on about one description in sixteen.
+    None without the Rust matcher: screened in `re`, they would cost what they save.
+    """
+    try:
+        screens = PatternSet(
+            tuple(
+                loosened(pattern)
+                for pattern in (_REMOTE_DENIAL_RE, _REMOTE_CONDITIONAL_RE, _REMOTE_DECLARED_RE)
+            )
+        )
+    except Unloosenable as error:
+        log.warning("locality.remote_screen_unavailable", reason=str(error))
+        return None
+    return screens if screens.native else None
+
+
+_SCREENS = _screens()
+
+
+def _searchable(description: str) -> str | None:
+    """The text `_REMOTE_DECLARED_RE` searches, or None where it can find nothing."""
+    if _SCREENS is not None:
+        denial, conditional, declaration = _SCREENS.found(description)
+        if not (denial or conditional):
+            return description if declaration else None  # neither cut changes it
+        body = _REMOTE_CONDITIONAL_RE.sub(" ", _REMOTE_DENIAL_RE.sub(" ", description))
+        return body if _SCREENS.found(body)[2] else None
+    body = _REMOTE_CONDITIONAL_RE.sub(" ", _REMOTE_DENIAL_RE.sub(" ", description))
+    return body if _DECLARATION_WORDS.found(body)[0] else None
 
 
 def _declares_remote(description: str) -> bool:
     """Whether a description says this role is remote, anywhere in the country."""
-    body = _REMOTE_CONDITIONAL_RE.sub(" ", _REMOTE_DENIAL_RE.sub(" ", description))
+    body = _searchable(description)
+    if body is None:
+        return False
     return any(
         not _REMOTE_REGIONAL_RE.search(body[found.start() : found.end() + _REMOTE_REGIONAL_WINDOW])
         for found in _REMOTE_DECLARED_RE.finditer(body)
@@ -226,7 +292,7 @@ def _prose_reads_as_remote(description: str) -> bool:
     except KeyError:
         remote = _declares_remote(description)
     _REMOTE_PROSE_CACHE[key] = remote
-    if len(_REMOTE_PROSE_CACHE) > 4096:
+    if len(_REMOTE_PROSE_CACHE) > _REMOTE_PROSE_CACHE_SIZE:
         _REMOTE_PROSE_CACHE.popitem(last=False)
     return remote
 

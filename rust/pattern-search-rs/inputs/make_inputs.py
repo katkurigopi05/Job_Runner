@@ -1,13 +1,13 @@
 """Write the `--inputs` that `cases.jsonl` was recorded from.
 
 Real lines, the ones `requirements.extract` hands `find_skills`, against every
-pattern of `SKILLS` and `CODE_SKILLS` and the topic words `eligibility` looks
-for: where `re` finds it, near misses (found once case and lookarounds are
-ignored, which is what a port gets wrong), lines that name nothing, and traps
-built from the finds. A trap swaps in the characters Python's `re.IGNORECASE`
-pairs with an ASCII letter, Python-only whitespace, or a character either side
-of the find. Each line is cut to a window around its find, which keeps every
-lookaround and keeps the file small.
+pattern of `SKILLS` and `CODE_SKILLS`, the topic words `eligibility` looks for
+and the screens `locality` derives: where `re` finds it, near misses (found
+once case and lookarounds are ignored, which is what a port gets wrong), lines
+that name nothing, and traps built from the finds. A trap swaps in the
+characters Python's `re.IGNORECASE` pairs with an ASCII letter, Python-only
+whitespace, or a character either side of the find. Each line is cut to a
+window around its find, which keeps every lookaround and keeps the file small.
 
 From the repository root, with the project's Python first on PATH:
 
@@ -28,7 +28,7 @@ import re
 import sys
 from collections.abc import Sequence
 
-from packages.matching import chunks, eligibility, requirements
+from packages.matching import chunks, eligibility, locality, requirements
 from packages.matching.pattern_set import inline_pattern
 from packages.matching.skill_vocab import CODE_SKILLS, SKILLS, Skill
 
@@ -38,6 +38,12 @@ TRAP_SOURCES = 5
 #: Characters kept either side of a find: past any lookaround, short enough to commit.
 MARGIN = 48
 NEGATIVE_CHARS = 160
+#: Every case repeats its pattern, so a long one (a derived screen is ~1,500 characters)
+#: gets fewer: about this many pattern characters a kind.
+CHARS_PER_KIND = 3000
+#: Traps kept from one find. A screen's find can run hundreds of characters, and a trap
+#: is made per letter and space in it.
+MAX_TRAPS = 60
 PARTNERS = {
     "i": "\u0130\u0131",
     "I": "\u0130\u0131",
@@ -112,6 +118,8 @@ def traps(pattern: str, line: str) -> list[str]:
 
 
 def cases_for(pattern: str, lines: list[str], rng: random.Random) -> list[tuple[str, str]]:
+    per_kind = max(5, min(PER_KIND, CHARS_PER_KIND // len(pattern)))
+    trap_sources = TRAP_SOURCES if per_kind == PER_KIND else 1
     exact = re.compile(pattern)
     loose = re.compile(LOOKAROUND.sub("", pattern.removeprefix("(?i)")), re.IGNORECASE)
     hits = list(dict.fromkeys(window(exact, ln) for ln in lines if exact.search(ln)))
@@ -120,11 +128,11 @@ def cases_for(pattern: str, lines: list[str], rng: random.Random) -> list[tuple[
             window(loose, ln) for ln in lines if loose.search(ln) and not exact.search(ln)
         )
     )
-    out = [(pattern, ln[:NEGATIVE_CHARS]) for ln in rng.sample(lines, PER_KIND)]
+    out = [(pattern, ln[:NEGATIVE_CHARS]) for ln in rng.sample(lines, per_kind)]
     for group in (hits, misses):
-        out.extend((pattern, ln) for ln in rng.sample(group, min(PER_KIND, len(group))))
-    for ln in hits[:TRAP_SOURCES]:
-        out.extend((pattern, trap) for trap in traps(pattern, ln))
+        out.extend((pattern, ln) for ln in rng.sample(group, min(per_kind, len(group))))
+    for ln in hits[:trap_sources]:
+        out.extend((pattern, trap) for trap in traps(pattern, ln)[:MAX_TRAPS])
     return out
 
 
@@ -132,6 +140,8 @@ def main() -> None:
     lines = corpus_lines(sys.argv[1])
     rng = random.Random(SEED)
     compiled = [s.pattern for s in (*SKILLS, *CODE_SKILLS)] + list(eligibility._TOPICS.patterns)
+    if locality._SCREENS is not None:
+        compiled += list(locality._SCREENS.patterns)
     patterns = sorted({p for c in compiled if (p := inline_pattern(c))})
     cases = dict.fromkeys(case for p in patterns for case in cases_for(p, lines, rng))
     with open(sys.argv[2], "w") as out:

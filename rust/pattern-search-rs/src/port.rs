@@ -21,6 +21,8 @@ use regex::{Regex, RegexSet};
 /// Characters that are not literals.
 const SPECIAL: &str = ".^$*+?{}[]\\|()";
 const QUANTIFIERS: &str = "?*+";
+/// A bounded repeat takes at most this many, as `pattern_search._MAX_REPEAT`.
+const MAX_REPEAT: u32 = 1000;
 /// Not taken inside a class: escapes, nesting, negation, and what Rust reads as set operations.
 const NOT_IN_CLASS: &str = "\\[^-&~|";
 /// Group openers, longest first where one is a prefix of another.
@@ -146,19 +148,66 @@ impl Translator {
         while let Some(c) = self.peek().filter(|c| *c != '|' && *c != ')') {
             let atom = self.atom(c, ignore_case, lookbehind)?;
             consumes |= atom;
-            if let Some(quantifier) = self.peek().filter(|q| QUANTIFIERS.contains(*q)) {
+            if self.at_quantifier() {
                 // fancy-regex will not repeat a group that can only match nothing.
                 if lookbehind || !atom {
                     return Err(unsupported(self.at));
                 }
-                self.emit(quantifier.encode_utf8(&mut [0; 4]));
-                self.at += 1;
-                if self.peek_in(QUANTIFIERS) {
+                self.quantifier()?;
+                if self.at_quantifier() {
                     return Err(unsupported(self.at));
                 }
             }
         }
         Ok(consumes)
+    }
+
+    fn at_quantifier(&self) -> bool {
+        self.peek_in(QUANTIFIERS) || self.peek() == Some('{')
+    }
+
+    /// `?`, `*`, `+`, or `{m}`, `{m,n}`, `{m,}` with at most `MAX_REPEAT`, written as is.
+    fn quantifier(&mut self) -> Result<(), String> {
+        let start = self.at;
+        if self.peek() != Some('{') {
+            let quantifier: String = self.chars[start..=start].iter().collect();
+            self.emit(&quantifier);
+            self.at += 1;
+            return Ok(());
+        }
+        let digits = |this: &mut Self| -> String {
+            let begin = this.at;
+            while this.peek().is_some_and(|c| c.is_ascii_digit()) {
+                this.at += 1;
+            }
+            this.chars[begin..this.at].iter().collect()
+        };
+        self.at += 1;
+        let low = digits(self);
+        let comma = self.peek() == Some(',');
+        if comma {
+            self.at += 1;
+        }
+        let high = if comma { digits(self) } else { String::new() };
+        if low.is_empty() || self.peek() != Some('}') {
+            return Err(unsupported(start));
+        }
+        self.at += 1;
+        let number = |text: &str| text.parse::<u32>().unwrap_or(u32::MAX);
+        let top = if high.is_empty() {
+            number(&low)
+        } else {
+            number(&high)
+        };
+        if number(&low) > MAX_REPEAT
+            || top > MAX_REPEAT
+            || (!high.is_empty() && number(&low) > number(&high))
+        {
+            return Err(unsupported(start));
+        }
+        let written: String = self.chars[start..self.at].iter().collect();
+        self.emit(&written);
+        Ok(())
     }
 
     /// The atom starting with `c`; whether it has a character in it, so a quantifier may follow.
@@ -171,6 +220,11 @@ impl Translator {
             '\\' => match self.chars.get(self.at + 1).copied() {
                 Some('s') => {
                     self.emit(PYTHON_SPACE);
+                    self.at += 2;
+                    return Ok(true);
+                }
+                Some('S') => {
+                    self.emit(&PYTHON_SPACE.replacen('[', "[^", 1));
                     self.at += 2;
                     return Ok(true);
                 }
@@ -413,6 +467,22 @@ mod tests {
         assert_eq!(search("(?=a)?", "a"), Err(unsupported(5)));
         assert_eq!(search("a)", "a"), Err(unsupported(1)));
         assert_eq!(search("(a", "a"), Err(unsupported(2)));
+    }
+
+    #[test]
+    fn bounded_repeats_and_non_space() {
+        assert_eq!(search("a{2}b", "aab"), Ok(true));
+        assert_eq!(search("a{2}b", "ab"), Ok(false));
+        assert_eq!(search("(?:x\\s+){0,2}y", "x x y"), Ok(true));
+        assert_eq!(search("a{2,}", "aa"), Ok(true));
+        assert_eq!(search("a{,3}", "a"), Err(unsupported(1)));
+        assert_eq!(search("a{3,2}", "a"), Err(unsupported(1)));
+        assert_eq!(search("a{1001}", "a"), Err(unsupported(1)));
+        assert_eq!(search("a{2}{3}", "a"), Err(unsupported(4)));
+        assert_eq!(search("a{x}", "a"), Err(unsupported(1)));
+        assert_eq!(search("\\S", "\u{1C}"), Ok(false));
+        assert_eq!(search("\\S", "\u{200B}"), Ok(true));
+        assert_eq!(search("(?<!\\S)go", "a go"), Ok(true));
     }
 
     #[test]

@@ -22,8 +22,19 @@ went from 5.0 s to 0.72 s a request, the same postings kept; over all 20,573
 open postings the verdicts are identical to every-sentence reading
 (`tests/test_eligibility_topics.py` keeps that reading as its oracle).
 
-Both go through `packages/matching/pattern_set.py`, which loads the crate and
-falls back to `re`. A third reader should too, not load the crate itself.
+Its third use, 2026-11-27: `locality._declares_remote`, the remote reader behind
+the feed's area filter and the assistant's counts. `packages/matching/loosen.py`
+derives a looser form of each of its three patterns (no word boundaries or
+lookarounds, `\w` read as `\S`, and so on: steps that can only add matches), and
+the crate answers those in one pass; Python cuts and searches only where they
+match, about one description in sixteen. Live, 20,573 open descriptions: the
+reader 30.5 s to 2.2 s, "how many remote jobs" 31 s to 4.1 s, the feed's first
+load 3.7 s to 0.3 s, verdicts identical (`tests/test_remote_prefilter.py`,
+`tests/test_loosen.py`). The screens needed `{m,n}` repeats and `\S`, which the
+syntax now takes in both `pattern_search.py` and `port.rs`.
+
+All three go through `packages/matching/pattern_set.py`, which loads the crate
+and falls back to `re`. A fourth reader should too, not load the crate itself.
 
 It is optional. `make rust` builds it into `.venv`; without it, or for a
 vocabulary it refuses, `find_skills` asks `re` and gets the same answer.
@@ -45,8 +56,8 @@ What a later change could undo:
   by both. A new skill in other syntax (`\b`, `\w`, `{2}`, a negated class)
   sends its whole vocabulary back to `re` with a warning, and the test that
   every vocabulary pattern is taken fails first. Widen the syntax in both,
-  re-record, and gate; do not loosen the check. A quantifier follows only
-  something with a character in it: fancy-regex will not compile a repeated
+  re-record, and gate; do not loosen the check. A quantifier (`?`, `*`, `+`, or
+  `{m}`, `{m,n}`, `{m,}` up to 1000) follows only something with a character in it: fancy-regex will not compile a repeated
   group that can match only nothing (`(?:)+(?!a)`), which `re` runs. Found by a
   review's fuzz (3.4M comparisons, 0 disagreements after the fix).
 - **`find_skills` keeps `re` as the answer of last resort:** a lone surrogate
