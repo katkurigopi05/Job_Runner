@@ -63,7 +63,7 @@ from sqlalchemy import text as sql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.models import CorpusStats
-from packages.matching.embed import tokenize
+from packages.matching.embed import _tokenize_uncached
 
 log = structlog.get_logger(__name__)
 
@@ -96,6 +96,9 @@ class DocumentFrequencies:
 
     total: int = 0
     counts: Mapping[str, int] = field(default_factory=dict)
+    _idf_cache: tuple[dict[str, float], float] | None = field(
+        default=None, init=False, repr=False, compare=False, hash=False
+    )
 
     @property
     def usable(self) -> bool:
@@ -110,8 +113,24 @@ class DocumentFrequencies:
             if not text or not text.strip():
                 continue
             total += 1
-            counts.update(set(tokenize(text)))
+            counts.update(set(_tokenize_uncached(text)))
         return cls(total=total, counts=dict(counts))
+
+    def idf_table(self) -> tuple[dict[str, float], float]:
+        """Cached `(per_term_idf, unseen_idf)` built once on first weight lookup."""
+        cached = self._idf_cache
+        if cached is not None:
+            return cached
+        if not self.total:
+            empty: tuple[dict[str, float], float] = ({}, 1.0)
+            object.__setattr__(self, "_idf_cache", empty)
+            return empty
+        numerator = self.total + 1
+        unseen = math.log(numerator / 1) + 1.0
+        table = {term: math.log(numerator / (df + 1)) + 1.0 for term, df in self.counts.items()}
+        built = (table, unseen)
+        object.__setattr__(self, "_idf_cache", built)
+        return built
 
     def document_share(self, term: str) -> float:
         """Fraction of documents containing `term`. 0.0 when unseen."""
@@ -126,9 +145,8 @@ class DocumentFrequencies:
         gets the highest weight rather than dividing by zero, and every weight
         stays positive so a common term is never *negative* evidence.
         """
-        if not self.total:
-            return 1.0
-        return math.log((self.total + 1) / (self.counts.get(term, 0) + 1)) + 1.0
+        table, unseen = self.idf_table()
+        return table.get(term, unseen)
 
     def is_boilerplate(self, term: str) -> bool:
         """Whether this term is too widespread to say anything."""
@@ -151,7 +169,9 @@ class DocumentFrequencies:
         """
         if occurrences <= 0:
             return 0.0
-        return (1.0 + math.log(occurrences)) * self.idf(term)
+        table, unseen = self.idf_table()
+        term_idf = table.get(term, unseen)
+        return term_idf if occurrences == 1 else (1.0 + math.log(occurrences)) * term_idf
 
 
 # --------------------------------------------------------------------------

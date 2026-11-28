@@ -24,6 +24,7 @@ import hashlib
 import math
 import re
 from collections import Counter
+from functools import lru_cache
 from typing import TYPE_CHECKING, Protocol
 
 import structlog
@@ -70,8 +71,46 @@ class Embedder(Protocol):
 #: its vector, and the gap report told owners they were missing "000".
 TOKENIZER_VERSION = 2
 
-#: Digit groups split by a comma are one number, not two tokens.
-_THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}(?:\D|$))")
+#: Digit groups split by a comma are one number, not two tokens. Matching the
+#: comma first lets `re` jump between commas instead of testing the lookbehind
+#: at every character (8.45s -> 6.69s over 20,573 open descriptions).
+_THOUSANDS_RE = re.compile(r",(?<=\d,)(?=\d{3}(?:\D|$))")
+
+
+def _tokenize_uncached(text: str) -> tuple[str, ...]:
+    lowered = text.lower()
+    if "," in lowered:
+        lowered = _THOUSANDS_RE.sub("", lowered)
+    return tuple(
+        stripped
+        for token in _TOKEN_RE.findall(lowered)
+        if len(token) > 1
+        and (stripped := token.rstrip("."))
+        and len(stripped) > 1
+        and stripped not in _STOPWORDS
+    )
+
+
+@lru_cache(maxsize=512)
+def _tokenize_tuple(text: str) -> tuple[str, ...]:
+    """Bounded cache of immutable token tuples.
+
+    `score_posting` tokenizes the profile on every posting and each posting's
+    description across `encode_one`, `missing_terms`, `_description_quality`
+    and `specificity`; callers of `tokenize` still receive a fresh list.
+    """
+    return _tokenize_uncached(text)
+
+
+@lru_cache(maxsize=131_072)
+def _bucket_for(token: str, dim: int) -> int:
+    """Deterministic sha256 bucket for `(token, dim)`.
+
+    Sized past the ~70k distinct tokens in the open corpus so full-corpus
+    re-embeds and scoring passes hash each term once instead of per posting.
+    """
+    digest = hashlib.sha256(token.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") % dim
 
 
 def tokenize(text: str) -> list[str]:
@@ -85,11 +124,7 @@ def tokenize(text: str) -> list[str]:
     different buckets of the lexical embedding depending on where the sentence
     ended. Only the trailing dot goes: ".net" keeps its leading one.
     """
-    return [
-        stripped
-        for token in _TOKEN_RE.findall(_THOUSANDS_RE.sub("", text.lower()))
-        if (stripped := token.rstrip(".")) and len(stripped) > 1 and stripped not in _STOPWORDS
-    ]
+    return list(_tokenize_tuple(text))
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -132,23 +167,31 @@ class LexicalEmbedder:
         self.name = f"{base}@{TOKENIZER_VERSION}"
 
     def _bucket(self, token: str) -> int:
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        return int.from_bytes(digest[:4], "big") % self.dim
+        return _bucket_for(token, self.dim)
 
     def encode_one(self, text: str) -> list[float]:
-        counts = Counter(tokenize(text))
+        counts = Counter(_tokenize_tuple(text))
         if not counts:
             return [0.0] * self.dim
 
-        vector = [0.0] * self.dim
-        for token, count in counts.items():
-            if self.frequencies is not None:
-                # tf-idf, with the same sublinear tf as the branch below.
-                weight = self.frequencies.weigh(token, count)
-            else:
+        dim = self.dim
+        vector = [0.0] * dim
+        frequencies = self.frequencies
+        if frequencies is not None:
+            idf_by_term, unseen_idf = frequencies.idf_table()
+            get_idf = idf_by_term.get
+            log = math.log
+            for token, count in counts.items():
+                # tf-idf, with the same sublinear tf and float addition order.
+                term_idf = get_idf(token, unseen_idf)
+                weight = term_idf if count == 1 else (1.0 + log(count)) * term_idf
+                vector[_bucket_for(token, dim)] += weight
+        else:
+            log = math.log
+            for token, count in counts.items():
                 # Sublinear scaling: the tenth "Python" says little the first did not.
-                weight = 1.0 + math.log(count)
-            vector[self._bucket(token)] += weight
+                weight = 1.0 if count == 1 else 1.0 + log(count)
+                vector[_bucket_for(token, dim)] += weight
 
         norm = math.sqrt(sum(v * v for v in vector))
         if norm > 0:
