@@ -805,6 +805,14 @@ as "can be performed remotely"). Of the 72 suspect 500-set targets, 70 left the 
 declare remote work. In a random 25 of the lost remote readings, 23 were the kinds above; the 2
 real ones ("a fully-remote company", "Other locations are remote") are now patterns.
 
+**It has to be cheap, because it is read on request** (2026-11-27). `_declares_remote` was
+1.6 ms a description, and the assistant's "how many remote jobs" reads 16,195 of them: 31 s a
+question, as long again the second time, since the 4,096-entry cache evicted each verdict before
+it was asked for again. It now checks the body for a word every `_REMOTE_DECLARED_RE` alternative
+needs (`_DECLARATION_WORDS`) before searching it, and caches 65,536 verdicts: 10.6 s the first
+time and 4.1 s after, verdicts identical on all 20,573 open descriptions. A new alternative must
+contain one of those words, or add it there.
+
 What a later change could undo:
 
 - **The same reader serves the feed, the scoring gate and the assistant's "remote" filter**

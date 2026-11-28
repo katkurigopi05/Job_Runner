@@ -44,6 +44,8 @@ from enum import StrEnum
 from functools import lru_cache
 from hashlib import sha256
 
+from packages.matching.pattern_set import PatternSet
+
 
 class Locality(StrEnum):
     """Where a posting sits relative to the owner's search."""
@@ -150,6 +152,9 @@ _REMOTE_DENIAL_RE = re.compile(
 #: remote workers"), boilerplate, a scam warning about "remote interviews", an
 #: FAA "Remote Pilot Certificate" and LinkedIn's `#LI-Remote` tag. A location
 #: or title still declares a working mode with `_REMOTE_RE` alone.
+#: Every alternative needs a word or phrase `_DECLARATION_WORDS` lists, which is
+#: what lets `_declares_remote` skip a description without one. A new
+#: alternative that does not must add its word there.
 _REMOTE_DECLARED_RE = re.compile(
     # "This full-time position is remote": up to two words before the noun.
     r"\b(?:this|the)\s+(?:[\w-]+\s+){0,2}(?:role|position|job|opportunity)\s+"
@@ -203,14 +208,32 @@ _REMOTE_REGIONAL_RE = re.compile(
 )
 _REMOTE_REGIONAL_WINDOW = 160
 
+#: What `_REMOTE_DECLARED_RE` cannot match without, in the text it searches:
+#: "remote", or "from anywhere", "fully distributed", "from home", "home based",
+#: "wfh". That search, 17 alternatives with no common literal, was 1.6 ms a
+#: description, and a count of remote jobs read 16,195 of them: 31 s a question
+#: (2026-11-27). About three in four descriptions have none of these words. In
+#: Rust when built (`pattern_set.py`). Checked on the body the search reads,
+#: after the denials are cut, so a phrase the cut leaves joined is still seen.
+_DECLARATION_WORDS = PatternSet(
+    (re.compile(r"remote|from\s+anywhere|fully\s+distributed|from\s+home|home.based|wfh", re.I),)
+)
+
 # Only digests and verdicts survive a call: descriptions can be large, and
 # a changed body must be classified again even if its posting id is the same.
 _REMOTE_PROSE_CACHE: OrderedDict[bytes, bool] = OrderedDict()
+#: Verdicts kept, about 10 MB at this size. It was 4,096, and a count of remote
+#: jobs reads 16,195 descriptions (20,573 were open on 2026-11-27), so every
+#: entry was evicted before it was asked for again: the second count took as
+#: long as the first.
+_REMOTE_PROSE_CACHE_SIZE = 65_536
 
 
 def _declares_remote(description: str) -> bool:
     """Whether a description says this role is remote, anywhere in the country."""
     body = _REMOTE_CONDITIONAL_RE.sub(" ", _REMOTE_DENIAL_RE.sub(" ", description))
+    if not _DECLARATION_WORDS.found(body)[0]:
+        return False
     return any(
         not _REMOTE_REGIONAL_RE.search(body[found.start() : found.end() + _REMOTE_REGIONAL_WINDOW])
         for found in _REMOTE_DECLARED_RE.finditer(body)
@@ -226,7 +249,7 @@ def _prose_reads_as_remote(description: str) -> bool:
     except KeyError:
         remote = _declares_remote(description)
     _REMOTE_PROSE_CACHE[key] = remote
-    if len(_REMOTE_PROSE_CACHE) > 4096:
+    if len(_REMOTE_PROSE_CACHE) > _REMOTE_PROSE_CACHE_SIZE:
         _REMOTE_PROSE_CACHE.popitem(last=False)
     return remote
 

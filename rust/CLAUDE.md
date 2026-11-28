@@ -22,8 +22,15 @@ went from 5.0 s to 0.72 s a request, the same postings kept; over all 20,573
 open postings the verdicts are identical to every-sentence reading
 (`tests/test_eligibility_topics.py` keeps that reading as its oracle).
 
-Both go through `packages/matching/pattern_set.py`, which loads the crate and
-falls back to `re`. A third reader should too, not load the crate itself.
+Its third use, 2026-11-27: `locality._declares_remote`, the remote reader behind
+the feed's area filter and the assistant's counts. It checks the text its big
+`_REMOTE_DECLARED_RE` searches for the words that pattern cannot match without,
+first, and the verdict cache now holds the corpus. Live: "how many remote jobs"
+31 s to 10.6 s (4.1 s asked again), the feed's first load 3.7 s to 1.7 s,
+verdicts identical on all 20,573 open descriptions (`tests/test_remote_prefilter.py`).
+
+All three go through `packages/matching/pattern_set.py`, which loads the crate
+and falls back to `re`. A fourth reader should too, not load the crate itself.
 
 It is optional. `make rust` builds it into `.venv`; without it, or for a
 vocabulary it refuses, `find_skills` asks `re` and gets the same answer.
