@@ -80,6 +80,16 @@ second measure reported beside it.
 
 ## From §15: What the gates do and do not prove
 
+### Reusing posting analysis for project selection
+
+On 2026-11-27, reusing a posting's terms and parsed requirements per project
+brought median project preview time from 307 ms to 17 ms and batch project
+filtering from 238 ms to 16 ms across 120 live postings. Bounded token
+memoization brought a single `job_terms` call from 1.61 ms to 0.57 ms on average
+across 3,002 postings. Keep the cached terms and requirements immutable and
+return fresh lists and dicts to callers. Preserve ties in first-seen order and
+the original phrase substring matches, including matches inside compounds.
+
 ### The ATS score was reading the sales pitch
 
 Found by running the guard and the ATS scorer over a rewritten résumé against
