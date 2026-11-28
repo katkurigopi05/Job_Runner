@@ -20,6 +20,7 @@ import re
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 # Aliased: this module has its own `_TOKEN_RE` with a different pattern, and
 # `borrowed_terms` has to tokenize the way the guard does to agree with it.
@@ -134,6 +135,12 @@ def job_terms(job_description: str, *, limit: int = 40) -> list[str]:
     phrase consumed are not also emitted alone, or the same skill appears twice
     with opposite verdicts.
     """
+    return list(_job_terms(job_description, limit))
+
+
+@lru_cache(maxsize=16)
+def _job_terms(job_description: str, limit: int) -> tuple[str, ...]:
+    """Several projects can ask about one posting; keep the cached order immutable."""
     phrases, consumed = _known_phrases(job_description)
 
     counts: Counter[str] = Counter()
@@ -155,7 +162,7 @@ def job_terms(job_description: str, *, limit: int = 40) -> list[str]:
     singles = [surface[key] for key, _ in counts.most_common(limit)]
     # Phrases first: a posting that names one is naming a skill, and the
     # single tokens below it are the long tail.
-    return (phrases + singles)[:limit]
+    return tuple((phrases + singles)[:limit])
 
 
 def _known_phrases(job_description: str) -> tuple[list[str], set[str]]:

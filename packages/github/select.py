@@ -15,6 +15,7 @@ import re
 import uuid
 from collections.abc import Collection, Mapping
 from datetime import UTC, datetime
+from functools import lru_cache
 
 from packages.core.models import Project
 from packages.matching.embed import Embedder, cosine
@@ -159,11 +160,17 @@ def score(
 
 def required_skills(job_text: str) -> dict[str, str]:
     """Direct required technologies only; alternatives and preferences stay out."""
-    return {
-        item.skill: item.label
+    return dict(_required_skills(job_text))
+
+
+@lru_cache(maxsize=16)
+def _required_skills(job_text: str) -> tuple[tuple[str, str], ...]:
+    # Ranking and displaying each project used to parse the same posting again.
+    return tuple(
+        (item.skill, item.label)
         for item in extract(job_text).skills
         if item.requirement is Requirement.REQUIRED and not item.option
-    }
+    )
 
 
 def project_skills(project: Project) -> set[str]:
