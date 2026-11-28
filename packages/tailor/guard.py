@@ -48,6 +48,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import lru_cache
 from types import MappingProxyType
 from typing import Literal
 
@@ -303,6 +304,7 @@ def _strip(token: str) -> str:
     return token.strip(".,;:!?()[]{}\"'")
 
 
+@lru_cache(maxsize=8192)
 def stem(word: str) -> str:
     """Fold common suffixes, so `reliability` and `reliable` compare equal.
 
@@ -374,6 +376,7 @@ def slash_members(token: str) -> list[str]:
     return text.split("/") if _SLASH_COMPOUND_RE.fullmatch(text) else []
 
 
+@lru_cache(maxsize=8192)
 def normalize(token: str) -> str:
     """Fold a token to the form the corpus is indexed under.
 
