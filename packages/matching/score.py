@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import structlog
@@ -24,9 +25,9 @@ from packages.core.models_evidence import Certification, Internship
 
 if TYPE_CHECKING:
     from packages.matching.experience import PostingExperience
-    from packages.matching.legitimacy import Assessment
+    from packages.matching.legitimacy import Assessment, SiblingIndex
 
-from packages.matching.embed import Embedder, cosine, get_embedder, tokenize
+from packages.matching.embed import Embedder, _tokenize_tuple, cosine, get_embedder
 from packages.matching.filters import apply_filters, experience_of
 from packages.matching.idf import DocumentFrequencies
 from packages.matching.roles import canonical, roles_in
@@ -192,6 +193,7 @@ def _assess(
     posting: Posting,
     *,
     siblings: list[Posting] | None,
+    sibling_ids: SiblingIndex | None = None,
     frequencies: DocumentFrequencies | None = None,
 ) -> Assessment:
     """Imported here rather than at module scope.
@@ -203,7 +205,7 @@ def _assess(
     """
     from packages.matching.legitimacy import assess
 
-    return assess(posting, siblings=siblings, frequencies=frequencies)
+    return assess(posting, siblings=siblings, sibling_ids=sibling_ids, frequencies=frequencies)
 
 
 def score_posting(
@@ -215,6 +217,7 @@ def score_posting(
     target_seniority: str | None = None,
     profile_text_value: str = "",
     siblings: list[Posting] | None = None,
+    sibling_ids: SiblingIndex | None = None,
     frequencies: DocumentFrequencies | None = None,
 ) -> ScoredPosting:
     """Score one posting. Filtered-out postings score exactly 0.0.
@@ -273,7 +276,9 @@ def score_posting(
             if profile_text_value
             else []
         ),
-        legitimacy=_assess(posting, siblings=siblings, frequencies=frequencies).as_dict(),
+        legitimacy=_assess(
+            posting, siblings=siblings, sibling_ids=sibling_ids, frequencies=frequencies
+        ).as_dict(),
         experience=demanded.as_dict(),
     )
     # Built from the result rather than inside it: every dimension reads
@@ -342,6 +347,9 @@ async def score_and_store(
         ).all()
     }
 
+    from packages.matching.legitimacy import sibling_index
+
+    indexed_siblings = sibling_index(postings)
     scored: list[ScoredPosting] = []
     for posting in postings:
         result = score_posting(
@@ -352,6 +360,7 @@ async def score_and_store(
             target_seniority=target_seniority,
             profile_text_value=text,
             siblings=postings,
+            sibling_ids=indexed_siblings,
             frequencies=frequencies,
         )
         scored.append(result)
@@ -498,6 +507,26 @@ _BOILERPLATE = frozenset(_BOILERPLATE_TEXT.split())
 _MIN_MENTIONS = 2
 
 
+_PROPER_NOUN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#.-]*")
+
+
+@lru_cache(maxsize=512)
+def _proper_nouns_cached(text: str) -> frozenset[str]:
+    seen: dict[str, int] = {}
+    capitalized: dict[str, int] = {}
+
+    for raw in _PROPER_NOUN_RE.findall(text):
+        bare = raw.rstrip(".")
+        if len(bare) < 2:
+            continue
+        key = bare.lower()
+        seen[key] = seen.get(key, 0) + 1
+        if bare[0].isupper():
+            capitalized[key] = capitalized.get(key, 0) + 1
+
+    return frozenset(token for token, total in seen.items() if capitalized.get(token, 0) == total)
+
+
 def _proper_nouns(text: str) -> set[str]:
     """Terms the posting always writes capitalized.
 
@@ -512,19 +541,7 @@ def _proper_nouns(text: str) -> set[str]:
     residual false positive, and stopwords plus boilerplate absorb most of
     those.
     """
-    seen: dict[str, int] = {}
-    capitalized: dict[str, int] = {}
-
-    for raw in re.findall(r"[A-Za-z][A-Za-z0-9+#.-]*", text):
-        bare = raw.rstrip(".")
-        if len(bare) < 2:
-            continue
-        key = bare.lower()
-        seen[key] = seen.get(key, 0) + 1
-        if bare[0].isupper():
-            capitalized[key] = capitalized.get(key, 0) + 1
-
-    return {token for token, total in seen.items() if capitalized.get(token, 0) == total}
+    return set(_proper_nouns_cached(text))
 
 
 def missing_terms(
@@ -550,9 +567,9 @@ def missing_terms(
     Without it, or when the corpus is too small to be a distribution rather
     than a sample, the hand list stands in.
     """
-    profile_tokens = set(tokenize(profile_text_value))
-    title_tokens = set(tokenize(posting.title or ""))
-    body_tokens = tokenize(posting.description_raw or "")
+    profile_tokens = set(_tokenize_tuple(profile_text_value))
+    title_tokens = set(_tokenize_tuple(posting.title or ""))
+    body_tokens = _tokenize_tuple(posting.description_raw or "")
 
     counts: dict[str, int] = {}
     order: dict[str, int] = {}
@@ -568,7 +585,7 @@ def missing_terms(
     # is the same proper-noun signal the fabrication guard reads, so a
     # capitalized term counts at a single mention where an ordinary word
     # needs the repetition to prove it was not an aside.
-    proper = _proper_nouns(posting.description_raw or "")
+    proper = _proper_nouns_cached(posting.description_raw or "")
 
     measured = frequencies is not None and frequencies.usable
 
@@ -611,10 +628,15 @@ def missing_terms(
 
 def keyword_overlap(profile_text_value: str, posting: Posting) -> list[str]:
     """Terms shared by profile and posting — the human-readable 'why'."""
-    profile_tokens = set(tokenize(profile_text_value))
-    posting_tokens = tokenize(f"{posting.title or ''} {posting.description_raw or ''}")
+    profile_tokens = set(_tokenize_tuple(profile_text_value))
     seen: list[str] = []
-    for token in posting_tokens:
-        if token in profile_tokens and token not in seen:
-            seen.append(token)
-    return seen[:20]
+    for part in (
+        _tokenize_tuple(posting.title or ""),
+        _tokenize_tuple(posting.description_raw or ""),
+    ):
+        for token in part:
+            if token in profile_tokens and token not in seen:
+                seen.append(token)
+                if len(seen) == 20:
+                    return seen
+    return seen

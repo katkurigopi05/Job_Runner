@@ -885,3 +885,44 @@ later change could quietly break.
   rewritten; `personalized_score` is computed on read and every adjustment is
   explained. `/ranking/evaluation` reports no learned model and refuses
   promotion below 100 owner grades from two streams.
+
+## Lexical embedder, IDF and scoring passes (2026-11-28)
+
+Over the 49,703 open postings (20,573 with descriptions, 126.8 MB, stamped `lexical-idf@2` at
+revision 3), a 2,000-posting matching pass spent 2.8 s in `LexicalEmbedder.encode` and 10.2 s
+in `score_posting`, `DocumentFrequencies.from_texts` took 16.1 s, and full-corpus encoding took
+25.9 s. Under the profiler (`rust-anything profile`), `score_posting` tokenized each description
+four to five times and the profile on every posting (27%), scanned `siblings` linearly in
+`legitimacy._reposting` (17%, quadratic on `make rescore`), hashed every token occurrence with
+sha256 in `_bucket` (7%), recomputed `math.log` per occurrence in `DocumentFrequencies.weigh`/`idf`
+(10%), and scanned `_proper_nouns` twice per posting (7%).
+
+Five pure-Python changes cut those passes with zero bit changes (`tests/test_lexical_speed.py`):
+
+- `_bucket_for(token, dim)` is memoized (`maxsize=131_072`, above the ~70k corpus vocabulary);
+- `DocumentFrequencies.idf_table()` builds per-term and unseen IDF floats once on first lookup;
+- `_THOUSANDS_RE` matches `,` before its lookbehind, `_tokenize_tuple` caches 512 immutable token
+  tuples (`tokenize` still returns a fresh `list`), and `keyword_overlap` reads title and body
+  tuples separately instead of concatenating and re-tokenizing;
+- `_proper_nouns_cached` caches 512 immutable sets (`_proper_nouns` still returns a fresh `set`);
+- `legitimacy.sibling_index` groups sibling ids by `(company_id, lowered_title)` once in
+  `score_and_store`, turning `_reposting` from $O(N^2)$ to $O(1)$.
+
+Measured read-only on the live corpus: 2,000-posting `encode` 2.79 s → 1.86 s, 20,573-posting
+`encode` 25.94 s → 15.36 s, 49,701-doc `from_texts` 16.10 s → 10.44 s, and 2,000-posting
+`score_and_store` CPU 10.18 s → 4.40 s (a 2,000-posting pass 13.0 s → 6.3 s). Every token list,
+70,320-term DF count, and IEEE-754 float64 vector (`0 / 20,573` packed-byte mismatches) is
+identical to the frozen oracle, and 500 sampled live rows match their stored `pgvector` float32
+bytes.
+
+What a later change could undo:
+
+- **Float addition order in `encode_one` is part of the vector.** `Counter(_tokenize_tuple(text))`
+  iterates in first-seen token order; sorting terms or parallelising bucket accumulation changes
+  rounding under the same `lexical-idf@2` stamp.
+- **Keep this in Python rather than Rust** unless a new stamp is chosen on purpose: Python's
+  `str.lower()` uses Python 3.12's pinned Unicode 15.0 tables while `rustc` stable tracks newer
+  Unicode releases, and `f64::ln` is not guaranteed 0-ULP identical to `math.log` across macOS and
+  Linux `libm`.
+- **Cached helpers must return immutable values**, copying to `list`/`set` at the public boundary
+  so callers that mutate a return value cannot poison the cache.
