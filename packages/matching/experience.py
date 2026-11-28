@@ -159,7 +159,7 @@ _MAX_HEADING_WORDS = 8
 #: the same trick `tailor/ats.py` uses on résumé sections, and the reason
 #: "Observability: Datadog, Splunk, AppD, New Relic or Dynatrace" is read as a
 #: bullet rather than as a heading that would reset the context.
-_NOT_IN_A_HEADING = ",;()[]0123456789•·▪|"
+_NOT_IN_A_HEADING = frozenset(",;()[]0123456789•·▪|")
 
 
 #: Wording inside the line itself, which outranks the heading it sits under:
@@ -283,7 +283,7 @@ def _heading_kind(line: str) -> Demand | None:
         return None
     if stripped.endswith((".", ",", ";", "!", "?")):
         return None
-    if any(c in _NOT_IN_A_HEADING for c in stripped):
+    if not _NOT_IN_A_HEADING.isdisjoint(stripped):
         return None
     if _PREFERRED_HEADING.match(stripped):
         return Demand.PREFERRED
@@ -301,6 +301,13 @@ def _demand_of(line: str, heading: Demand) -> Demand:
     return heading
 
 
+def _mentions_years(text: str) -> bool:
+    # The unit alternatives in _YEARS start with these literals. Their letters
+    # have no extra re.IGNORECASE partners beyond ASCII case.
+    lowered = text.lower()
+    return "year" in lowered or "yr" in lowered
+
+
 def read_posting(text: str | None) -> PostingExperience:
     """Read every years demand in a posting. Never guesses a number.
 
@@ -309,7 +316,7 @@ def read_posting(text: str | None) -> PostingExperience:
     question — where the requirements *start* — and a preferred sub-list lives
     inside that same section.
     """
-    if not text:
+    if not text or not _mentions_years(text):
         return PostingExperience()
 
     heading = Demand.AMBIGUOUS
@@ -323,6 +330,8 @@ def read_posting(text: str | None) -> PostingExperience:
             heading = kind
             continue
 
+        if not _mentions_years(line):
+            continue
         for match in _YEARS.finditer(line):
             if not _is_demand(line, match):
                 continue
