@@ -55,6 +55,10 @@ DESCRIPTIONS = [
     "We are a fully\u3000distributed team.",
     "We are a fully di\u017ftributed company.",
     "This role is not remote. You can work from home.",
+    "Remote work is not available. This is a remote position.",
+    "If this role is remote, see the range. Location: Remote",
+    "We can\u2019t offer remote work. Location: Remote",
+    "Work is never performed remotely; you can work from anywhere in the US.",
     "We build distributed systems for home automation.",
     "",
 ]
@@ -108,3 +112,22 @@ def test_the_cache_holds_a_whole_count(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_with_the_rust_matcher_the_words_are_found_in_rust(rust_batch_class: Any) -> None:
     assert locality._DECLARATION_WORDS.native
+
+
+def test_with_the_rust_matcher_the_screens_run_in_rust(rust_batch_class: Any) -> None:
+    assert locality._SCREENS is not None
+
+
+class _Uncut:
+    def sub(self, replacement: str, text: str) -> str:
+        raise AssertionError("cut a description the screens cleared")
+
+
+def test_a_description_the_screens_clear_is_never_cut(
+    rust_batch_class: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(locality, "_REMOTE_DENIAL_RE", _Uncut())
+    monkeypatch.setattr(locality, "_REMOTE_CONDITIONAL_RE", _Uncut())
+
+    assert locality._declares_remote("Location: This is a remote position.")
+    assert not locality._declares_remote("We build distributed systems in Go.")

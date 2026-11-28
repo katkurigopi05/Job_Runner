@@ -340,9 +340,13 @@ def test_unchanged_remote_prose_is_scanned_once_but_edits_are_rechecked(monkeypa
     description = "This position offers remote work."
     for location in ("Austin, TX", "Chicago, IL", "Seattle, WA"):
         assert reads_as_remote(title="Engineer", location=location, description=description)
-    edited = "This position requires office work."
+    # An edit the screens let through, so the search itself must run again; an edit they
+    # rule out ("requires office work") is rechecked without one.
+    edited = "This position offers remote work. Candidates live within 50 miles of Austin."
     assert not reads_as_remote(title="Engineer", location="Austin, TX", description=edited)
     assert scanned == [description, edited]
+    office = "This position requires office work."
+    assert not reads_as_remote(title="Engineer", location="Austin, TX", description=office)
 
 
 # --------------------------------------------------------------------------

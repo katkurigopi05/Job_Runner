@@ -143,3 +143,34 @@
 {"fn": "searches", "args": ["(?:(?=a)b)*c", "abc"]}
 {"fn": "searches", "args": ["(?:a|)*b(?!c)", "bc"]}
 {"fn": "searches", "args": ["(?:(?!x).)+y", "aay"]}
+{"fn": "searches", "args": ["a{2}b", "aab"]}
+{"fn": "searches", "args": ["a{2}b", "ab"]}
+{"fn": "searches", "args": ["a{0,3}b", "b"]}
+{"fn": "searches", "args": ["a{0,3}b", "aaaab"]}
+{"fn": "searches", "args": ["(?:x\\s+){0,2}y", "x x y"]}
+{"fn": "searches", "args": ["a{2,}", "aa"]}
+{"fn": "searches", "args": ["a{2,}", "a"]}
+{"fn": "searches", "args": ["(?i)k{2}", "\u212ak"]}
+{"fn": "searches", "args": ["a{,3}", "a"]}
+{"fn": "searches", "args": ["a{3,2}", "a"]}
+{"fn": "searches", "args": ["a{1001}", "a"]}
+{"fn": "searches", "args": ["a{2}{3}", "aaaaaa"]}
+{"fn": "searches", "args": ["a{2}?", "aa"]}
+{"fn": "searches", "args": ["a{x}", "a{x}"]}
+{"fn": "searches", "args": ["{2}", "aa"]}
+{"fn": "searches", "args": ["a{2", "aa"]}
+{"fn": "searches", "args": ["(?:){2}a", "a"]}
+{"fn": "searches", "args": ["(?<!a{2})b", "b"]}
+{"fn": "searches", "args": ["\\S", "\u001c"]}
+{"fn": "searches", "args": ["\\S", "\u200b"]}
+{"fn": "searches", "args": ["\\S", "\u3000"]}
+{"fn": "searches", "args": ["\\S", " "]}
+{"fn": "searches", "args": ["\\S", "\u00e9"]}
+{"fn": "searches", "args": ["(?i)\\S", "K"]}
+{"fn": "searches", "args": ["(?<!\\S)go", "a go"]}
+{"fn": "searches", "args": ["(?<!\\S)go", "ago"]}
+{"fn": "searches", "args": ["\\S+\\s+\\S+", "can\u2019t go"]}
+{"fn": "searches", "args": ["[\\S]", "a"]}
+{"fn": "searches", "args": [".{0,60}x", "aaax"]}
+{"fn": "searches", "args": ["(?:.|\\s){0,60}x", "\n\nx"]}
+{"fn": "searches", "args": ["(?:.|\\s)*", ""]}

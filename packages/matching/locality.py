@@ -44,7 +44,12 @@ from enum import StrEnum
 from functools import lru_cache
 from hashlib import sha256
 
+import structlog
+
+from packages.matching.loosen import Unloosenable, loosened
 from packages.matching.pattern_set import PatternSet
+
+log = structlog.get_logger(__name__)
 
 
 class Locality(StrEnum):
@@ -229,10 +234,48 @@ _REMOTE_PROSE_CACHE: OrderedDict[bytes, bool] = OrderedDict()
 _REMOTE_PROSE_CACHE_SIZE = 65_536
 
 
+def _screens() -> PatternSet | None:
+    """Looser forms of the denial, conditional and declaration patterns, in Rust, or None.
+
+    Each matches wherever its pattern does (`loosen.py` derives them from the
+    patterns, so a new alternative is screened too), and the Rust matcher answers
+    them in one pass. On the 20,573 open descriptions of 2026-11-27 they matched
+    172, 17 and 1,249 where the patterns matched 159, 17 and 1,028, so the two
+    cuts and the declaration search run on about one description in sixteen.
+    None without the Rust matcher: screened in `re`, they would cost what they save.
+    """
+    try:
+        screens = PatternSet(
+            tuple(
+                loosened(pattern)
+                for pattern in (_REMOTE_DENIAL_RE, _REMOTE_CONDITIONAL_RE, _REMOTE_DECLARED_RE)
+            )
+        )
+    except Unloosenable as error:
+        log.warning("locality.remote_screen_unavailable", reason=str(error))
+        return None
+    return screens if screens.native else None
+
+
+_SCREENS = _screens()
+
+
+def _searchable(description: str) -> str | None:
+    """The text `_REMOTE_DECLARED_RE` searches, or None where it can find nothing."""
+    if _SCREENS is not None:
+        denial, conditional, declaration = _SCREENS.found(description)
+        if not (denial or conditional):
+            return description if declaration else None  # neither cut changes it
+        body = _REMOTE_CONDITIONAL_RE.sub(" ", _REMOTE_DENIAL_RE.sub(" ", description))
+        return body if _SCREENS.found(body)[2] else None
+    body = _REMOTE_CONDITIONAL_RE.sub(" ", _REMOTE_DENIAL_RE.sub(" ", description))
+    return body if _DECLARATION_WORDS.found(body)[0] else None
+
+
 def _declares_remote(description: str) -> bool:
     """Whether a description says this role is remote, anywhere in the country."""
-    body = _REMOTE_CONDITIONAL_RE.sub(" ", _REMOTE_DENIAL_RE.sub(" ", description))
-    if not _DECLARATION_WORDS.found(body)[0]:
+    body = _searchable(description)
+    if body is None:
         return False
     return any(
         not _REMOTE_REGIONAL_RE.search(body[found.start() : found.end() + _REMOTE_REGIONAL_WINDOW])
