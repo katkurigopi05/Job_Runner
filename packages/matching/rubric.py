@@ -38,6 +38,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from packages.core.models import Posting, Profile
+from packages.matching.experience import PostingExperience
 from packages.matching.experience import read_posting as read_experience
 from packages.matching.filters import SENIORITY_LEVELS, detect_seniority
 from packages.matching.salary import Comparison, compare
@@ -195,7 +196,9 @@ def _salary(posting: Posting, profile: Profile) -> Dimension:
     return Dimension("salary", score, 0.15, finding.finding)
 
 
-def _experience(posting: Posting, max_years: int | None) -> Dimension:
+def _experience(
+    posting: Posting, max_years: int | None, *, demanded: PostingExperience | None = None
+) -> Dimension:
     """The years the posting demands, against the owner's bound.
 
     This is where a *preferred* demand has its effect. `filters.experience_ok`
@@ -212,7 +215,8 @@ def _experience(posting: Posting, max_years: int | None) -> Dimension:
     of how firm it is, and a dimension that scored one anyway would be deciding
     in the rubric what the filter declined to decide.
     """
-    demanded = read_experience(posting.description_raw)
+    if demanded is None:
+        demanded = read_experience(posting.description_raw)
     if not demanded.stated:
         return Dimension("experience", NEUTRAL, 0.0, "posting does not state a years requirement")
 
@@ -242,6 +246,7 @@ def evaluate(
     *,
     target_seniority: str | None = None,
     max_required_experience_years: int | None = None,
+    experience: PostingExperience | None = None,
 ) -> Rubric:
     """Break a score down into dimensions the owner can act on.
 
@@ -258,6 +263,7 @@ def evaluate(
                 max_required_experience_years
                 if max_required_experience_years is not None
                 else profile.max_required_experience_years,
+                demanded=experience,
             ),
             _eligibility(scored),
             _salary(posting, profile),

@@ -23,6 +23,7 @@ from packages.core.models import Match, Posting, Profile, Project, Resume
 from packages.core.models_evidence import Certification, Internship
 
 if TYPE_CHECKING:
+    from packages.matching.experience import PostingExperience
     from packages.matching.legitimacy import Assessment
 
 from packages.matching.embed import Embedder, cosine, get_embedder, tokenize
@@ -176,12 +177,15 @@ def _rubric(
     scored: ScoredPosting,
     *,
     target_seniority: str | None,
+    experience: PostingExperience,
 ) -> dict[str, object]:
     """Lazy for the same reason `_assess` is: rubric reads this module's
     ScoredPosting, so a top-level import would be a cycle."""
     from packages.matching.rubric import evaluate
 
-    return evaluate(posting, profile, scored, target_seniority=target_seniority).as_dict()
+    return evaluate(
+        posting, profile, scored, target_seniority=target_seniority, experience=experience
+    ).as_dict()
 
 
 def _assess(
@@ -235,7 +239,9 @@ def score_posting(
             excluded_by=verdict.reasons,
             experience=demanded.as_dict(),
         )
-        excluded.rubric = _rubric(posting, profile, excluded, target_seniority=target_seniority)
+        excluded.rubric = _rubric(
+            posting, profile, excluded, target_seniority=target_seniority, experience=demanded
+        )
         return excluded
 
     # Abbreviations expanded on both sides. Measured, "Site Reliability
@@ -272,7 +278,9 @@ def score_posting(
     )
     # Built from the result rather than inside it: every dimension reads
     # fields the scoring above has already filled in.
-    result.rubric = _rubric(posting, profile, result, target_seniority=target_seniority)
+    result.rubric = _rubric(
+        posting, profile, result, target_seniority=target_seniority, experience=demanded
+    )
     result.salary = compare(posting.description_raw or "", profile.salary_expectation).as_dict()
     return result
 

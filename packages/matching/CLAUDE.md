@@ -450,6 +450,14 @@ allowed to exclude. `filters.experience_ok` checks it against
 `profiles.max_required_experience_years`, and `rubric._experience` is where a
 preferred demand the owner is under lowers a dimension rather than hiding a job.
 
+Measured on 2026-11-28, the experience portion of a full rescore fell from
+10.2 s to 3.9 s over 49,703 open postings. The reader checks for `year` or
+`yr` before the years regex and still reads intervening headings before any
+demand. Scoring passes the same immutable reading to the rubric. At the feed's
+200-card limit, the experience read fell from about 60 ms to 36–38 ms.
+The read-only comparison kept the original demand order, quotes, headings and
+rubric results, and confirmed the chunk offsets for 20,573 descriptions.
+
 Measured on the twelve real crawled postings in `tests/fixtures/golden/`, which
 is where the rules came from rather than the other way round:
 
